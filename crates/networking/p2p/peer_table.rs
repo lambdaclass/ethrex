@@ -20,6 +20,8 @@ use bytes::Bytes;
 use ethrex_common::{H256, U256};
 use ethrex_storage::Store;
 use indexmap::IndexMap;
+use rand::distributions::WeightedIndex;
+use rand::prelude::Distribution;
 use rand::seq::{IteratorRandom, SliceRandom};
 use rustc_hash::{FxHashMap, FxHashSet};
 use spawned_concurrency::{
@@ -1277,7 +1279,7 @@ impl PeerTableServer {
     }
 
     fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
-        let peers: Vec<(H256, PeerConnection)> = self
+        let peers: Vec<(H256, &PeerConnection, i64)> = self
             .peers
             .iter()
             .filter_map(|(node_id, peer_data)| {
@@ -1289,11 +1291,21 @@ impl PeerTableServer {
                 }
                 peer_data
                     .connection
-                    .clone()
-                    .map(|connection| (*node_id, connection))
+                    .as_ref()
+                    .map(|connection| (*node_id, connection, peer_data.score))
             })
             .collect();
-        peers.choose(&mut rand::rngs::OsRng).cloned()
+        if peers.is_empty() {
+            return None;
+        }
+        // Weight by score: maps [-150, 50] to [1, 201] so bad peers are unlikely but not excluded
+        let weights: Vec<u64> = peers
+            .iter()
+            .map(|(_, _, score)| (score.max(&MIN_SCORE_CRITICAL) - MIN_SCORE_CRITICAL + 1) as u64)
+            .collect();
+        let dist = WeightedIndex::new(&weights).ok()?;
+        let idx = dist.sample(&mut rand::rngs::OsRng);
+        Some((peers[idx].0, peers[idx].1.clone()))
     }
 
     fn is_validation_needed(contact: &Contact, revalidation_interval: Duration) -> bool {
