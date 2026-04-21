@@ -36,8 +36,7 @@ impl Hook for DefaultHook {
         // and bypass EIP-7825, intrinsic gas, and block gas allowance checks.
         // Identified by: sender == coinbase && to is a BSC system contract && gas_price == 0.
         // Regular BSC user txs follow normal rules.
-        let is_bsc =
-            vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+        let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
         let is_bsc_system_tx = is_bsc
             && sender_address == vm.env.coinbase
             && vm.env.gas_price.is_zero()
