@@ -139,7 +139,11 @@ impl DiscoveryServer {
             "Adding bootnodes"
         );
 
-        peer_table.new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
+        peer_table.new_contacts(
+            bootnodes.clone(),
+            local_node.node_id(),
+            DiscoveryProtocol::Discv4,
+        )?;
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await?;
@@ -604,8 +608,11 @@ impl DiscoveryServer {
         }
 
         let nodes = neighbors_message.nodes;
-        self.peer_table
-            .new_contacts(nodes, DiscoveryProtocol::Discv4)?;
+        self.peer_table.new_contacts(
+            nodes,
+            self.local_node.node_id(),
+            DiscoveryProtocol::Discv4,
+        )?;
         Ok(())
     }
 
