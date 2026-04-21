@@ -98,6 +98,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -257,6 +258,7 @@ pub async fn request_account_range(
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                diagnostics,
             )
             .await
             .expect("Should be able to update pivot")
@@ -1280,6 +1282,7 @@ async fn request_storage_ranges_worker(
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
         response_bytes: MAX_RESPONSE_BYTES,
     });
+    tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", "Sending storage range request");
     let Ok(RLPxMessage::StorageRanges(StorageRanges {
         id: _,
         slots,
@@ -1290,11 +1293,17 @@ async fn request_storage_ranges_worker(
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await
     else {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
+        tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
         tracing::debug!("Failed to get storage range");
         tx.send(empty_task_result).await.ok();
         return Ok(());
     };
     if slots.is_empty() && proof.is_empty() {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
+        tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
         tx.send(empty_task_result).await.ok();
         tracing::debug!("Received empty storage range");
         return Ok(());
@@ -1390,6 +1399,7 @@ async fn request_storage_ranges_worker(
     } else {
         (start + account_storages.len(), end, H256::zero())
     };
+    let slot_count: usize = account_storages.iter().map(|s| s.len()).sum();
     let task_result = StorageTaskResult {
         start_index: start,
         account_storages,
@@ -1398,6 +1408,9 @@ async fn request_storage_ranges_worker(
         remaining_end,
         remaining_hash_range: (remaining_start_hash, task.end_hash),
     };
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
+    tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
 }
