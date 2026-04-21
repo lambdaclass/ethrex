@@ -1,4 +1,4 @@
-use ethrex_common::{H256, types::MIN_GAS_TIP};
+use ethrex_common::{H256, U256, types::MIN_GAS_TIP};
 use ethrex_storage::Store;
 use tracing::error;
 
@@ -70,7 +70,7 @@ impl GasTipEstimator {
             );
             return Err(RpcErr::Internal("Error calculating gas price".to_string()));
         }
-        let mut results = vec![];
+        let mut results: Vec<U256> = vec![];
         // TODO: Estimating gas price involves querying multiple blocks
         // and doing some calculations with each of them, let's consider
         // caching this result, also we can have a specific DB method
@@ -97,7 +97,7 @@ impl GasTipEstimator {
                 .transactions
                 .into_iter()
                 .filter_map(|tx| tx.effective_gas_tip(base_fee))
-                .collect::<Vec<u64>>();
+                .collect::<Vec<U256>>();
 
             gas_tip_samples.sort();
             results.extend(gas_tip_samples.into_iter().take(TXS_SAMPLE_SIZE));
@@ -105,7 +105,10 @@ impl GasTipEstimator {
         results.sort();
 
         // If we cannot get a median sample due to blocks being empty, use the last calculated tip
-        let estimated_tip = *results.get(results.len() / 2).unwrap_or(&self.last_tip);
+        let last_tip_u256 = U256::from(self.last_tip);
+        let estimated_tip = *results.get(results.len() / 2).unwrap_or(&last_tip_u256);
+        // Gas tips in practice always fit in u64; clamp to u64::MAX if somehow larger
+        let estimated_tip = u64::try_from(estimated_tip).unwrap_or(u64::MAX);
 
         // Update last estimation results
         self.last_hash = latest_block_hash;

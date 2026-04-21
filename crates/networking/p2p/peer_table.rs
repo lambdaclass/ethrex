@@ -187,6 +187,8 @@ pub struct PeerData {
     score: i64,
     /// Track the amount of concurrent requests this peer is handling
     requests: i64,
+    /// Timestamp (seconds since UNIX epoch) of the last successful response from this peer
+    pub last_response_time: Option<u64>,
 }
 
 impl PeerData {
@@ -204,8 +206,23 @@ impl PeerData {
             connection,
             score: Default::default(),
             requests: Default::default(),
+            last_response_time: None,
         }
     }
+}
+
+/// Diagnostic snapshot of a peer's state, used by admin RPC endpoints.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PeerDiagnostics {
+    pub peer_id: H256,
+    pub score: i64,
+    pub inflight_requests: i64,
+    pub eligible: bool,
+    pub capabilities: Vec<String>,
+    pub ip: IpAddr,
+    pub client_version: String,
+    pub connection_direction: String,
+    pub last_response_time: Option<u64>,
 }
 
 /// Result of contact validation.
@@ -281,6 +298,11 @@ pub trait PeerTableServerProtocol: Send + Sync {
         &self,
         capabilities: Vec<Capability>,
     ) -> Response<Option<(H256, PeerConnection)>>;
+    fn get_best_peer_excluding(
+        &self,
+        capabilities: Vec<Capability>,
+        excluded: Vec<H256>,
+    ) -> Response<Option<(H256, PeerConnection)>>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
@@ -303,6 +325,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
         capabilities: Vec<Capability>,
     ) -> Response<Option<(H256, PeerConnection)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
+    fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
 }
 
 #[derive(Debug)]
@@ -451,9 +474,14 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::RecordSuccess,
         _ctx: &Context<Self>,
     ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.score = (peer_data.score + 1).min(MAX_SCORE));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.peers.entry(msg.node_id).and_modify(|peer_data| {
+            peer_data.score = (peer_data.score + 1).min(MAX_SCORE);
+            peer_data.last_response_time = Some(now);
+        });
     }
 
     #[send_handler]
@@ -682,6 +710,15 @@ impl PeerTableServer {
     }
 
     #[request_handler]
+    async fn handle_get_best_peer_excluding(
+        &mut self,
+        msg: peer_table_server_protocol::GetBestPeerExcluding,
+        _ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection)> {
+        self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)
+    }
+
+    #[request_handler]
     async fn handle_get_score(
         &mut self,
         msg: peer_table_server_protocol::GetScore,
@@ -808,6 +845,36 @@ impl PeerTableServer {
             .or_else(|| self.contacts.get(&msg.node_id)?.session.clone())
     }
 
+    #[request_handler]
+    async fn handle_get_peer_diagnostics(
+        &mut self,
+        _msg: peer_table_server_protocol::GetPeerDiagnostics,
+        _ctx: &Context<Self>,
+    ) -> Vec<PeerDiagnostics> {
+        self.peers
+            .iter()
+            .map(|(id, peer_data)| PeerDiagnostics {
+                peer_id: *id,
+                score: peer_data.score,
+                inflight_requests: peer_data.requests,
+                eligible: self.can_try_more_requests(&peer_data.score, &peer_data.requests),
+                capabilities: peer_data
+                    .supported_capabilities
+                    .iter()
+                    .map(|c| format!("{}/{}", c.protocol(), c.version))
+                    .collect(),
+                ip: peer_data.node.ip,
+                client_version: peer_data.node.version.clone().unwrap_or_default(),
+                connection_direction: if peer_data.is_connection_inbound {
+                    "inbound".to_string()
+                } else {
+                    "outbound".to_string()
+                },
+                last_response_time: peer_data.last_response_time,
+            })
+            .collect()
+    }
+
     // === Private helper methods ===
 
     // Weighting function used to select best peer
@@ -824,10 +891,21 @@ impl PeerTableServer {
     }
 
     fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
+        self.do_get_best_peer_excluding(capabilities, &[])
+    }
+
+    /// Like `do_get_best_peer`, but excludes specific peers from selection.
+    /// Used by `update_pivot` to rotate through peers on repeated failures.
+    fn do_get_best_peer_excluding(
+        &self,
+        capabilities: &[Capability],
+        excluded: &[H256],
+    ) -> Option<(H256, PeerConnection)> {
         self.peers
             .iter()
             .filter_map(|(id, peer_data)| {
-                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                if excluded.contains(id)
+                    || !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -938,6 +1016,9 @@ impl PeerTableServer {
 
     /// Get closest nodes for discv4 (returns Vec<Node>)
     fn do_get_closest_nodes(&self, node_id: H256) -> Vec<Node> {
+        #[cfg(feature = "metrics")]
+        let scan_start = std::time::Instant::now();
+
         let mut nodes: Vec<(Node, usize)> = vec![];
 
         for (contact_id, contact) in &self.contacts {
@@ -953,6 +1034,13 @@ impl PeerTableServer {
                 }
             }
         }
+
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.observe_iter_contacts_duration(scan_start.elapsed().as_secs_f64());
+        }
+
         nodes.into_iter().map(|(node, _)| node).collect()
     }
 
@@ -986,15 +1074,29 @@ impl PeerTableServer {
             if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
                 continue;
             }
-            match self.contacts.entry(node_id) {
+            #[cfg(feature = "metrics")]
+            let insert_start = std::time::Instant::now();
+
+            let is_new = match self.contacts.entry(node_id) {
                 Entry::Vacant(vacant_entry) => {
                     vacant_entry.insert(Contact::new(node, protocol));
-                    METRICS.record_new_discovery().await;
+                    true
                 }
                 Entry::Occupied(mut occupied_entry) => {
                     // Contact already exists, just add the protocol
                     occupied_entry.get_mut().add_protocol(protocol);
+                    false
                 }
+            };
+
+            #[cfg(feature = "metrics")]
+            {
+                use ethrex_metrics::p2p::METRICS_P2P;
+                METRICS_P2P.observe_insert_contact_duration(insert_start.elapsed().as_secs_f64());
+            }
+
+            if is_new {
+                METRICS.record_new_discovery().await;
             }
         }
     }
