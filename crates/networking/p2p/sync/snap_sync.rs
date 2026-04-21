@@ -168,8 +168,15 @@ pub async fn sync_cycle_snap(
             );
             // Converged: if we already have a pivot and this iteration advanced
             // it by fewer than 10 blocks, further attempts just chase chain
-            // progression, not a better peer view. Bail out.
-            if attempt > 0 && best_number > 0 && best_number.saturating_sub(prev_best_number) < 10 {
+            // progression, not a better peer view. Bail out — but only after
+            // we've seen enough candidates and iterations, otherwise a single
+            // peer advertising a stale/old head can trap us into picking it
+            // (and forcing a huge catch-up jump on the first pivot refresh).
+            if attempt >= 3
+                && candidates.len() >= 3
+                && best_number > 0
+                && best_number.saturating_sub(prev_best_number) < 10
+            {
                 break;
             }
             prev_best_number = best_number;
