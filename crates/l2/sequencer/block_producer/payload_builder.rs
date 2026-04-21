@@ -219,23 +219,23 @@ pub async fn fill_transactions(
         // TODO: Privileged transactions (L1->L2 deposits) currently bypass the Credible Layer
         // check entirely. This should be revisited — the sidecar should be aware of all
         // transactions for accurate state tracking, even if privileged txs are never dropped.
-        if let Some(ref cl) = credible_layer {
-            if !head_tx.is_privileged() {
-                let tx_index: u64 = context
-                    .payload
-                    .body
-                    .transactions
-                    .len()
-                    .try_into()
-                    .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
-                let _ = cl.send_transaction(
-                    tx_hash,
-                    context.block_number(),
-                    tx_index,
-                    head_tx.tx.sender(),
-                    tx.clone(),
-                );
-            }
+        if let Some(ref cl) = credible_layer
+            && !head_tx.is_privileged()
+        {
+            let tx_index: u64 = context
+                .payload
+                .body
+                .transactions
+                .len()
+                .try_into()
+                .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
+            let _ = cl.send_transaction(
+                tx_hash,
+                context.block_number(),
+                tx_index,
+                head_tx.tx.sender(),
+                tx.clone(),
+            );
         }
 
         // Set BAL index for this transaction (1-indexed per EIP-7928)
@@ -268,29 +268,29 @@ pub async fn fill_transactions(
 
         // Credible Layer: poll for the sidecar's verdict after execution.
         // If the sidecar rejected the transaction, undo execution and drop it.
-        if let Some(ref cl) = credible_layer {
-            if !head_tx.is_privileged() {
-                let check_tx_index: u64 = context
-                    .payload
-                    .body
-                    .transactions
-                    .len()
-                    .try_into()
-                    .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
-                let include = cl
-                    .check_transaction(tx_hash, context.block_number(), check_tx_index)
-                    .await
-                    .unwrap_or(true);
-                if !include {
-                    debug!("Credible layer rejected transaction: {tx_hash:#x}");
-                    txs.pop();
-                    context.vm.undo_last_tx()?;
-                    context.remaining_gas = previous_remaining_gas;
-                    context.block_value = previous_block_value;
-                    context.cumulative_gas_spent = previous_cumulative_gas_spent;
-                    blockchain.remove_transaction_from_pool(&tx_hash)?;
-                    continue;
-                }
+        if let Some(ref cl) = credible_layer
+            && !head_tx.is_privileged()
+        {
+            let check_tx_index: u64 = context
+                .payload
+                .body
+                .transactions
+                .len()
+                .try_into()
+                .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
+            let include = cl
+                .check_transaction(tx_hash, context.block_number(), check_tx_index)
+                .await
+                .unwrap_or(true);
+            if !include {
+                debug!("Credible layer rejected transaction: {tx_hash:#x}");
+                txs.pop();
+                context.vm.undo_last_tx()?;
+                context.remaining_gas = previous_remaining_gas;
+                context.block_value = previous_block_value;
+                context.cumulative_gas_spent = previous_cumulative_gas_spent;
+                blockchain.remove_transaction_from_pool(&tx_hash)?;
+                continue;
             }
         }
 

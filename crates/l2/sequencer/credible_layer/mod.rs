@@ -60,7 +60,7 @@ impl From<(Transaction, Address)> for sidecar_proto::TransactionEnv {
                             chain_id: chain_id_bytes.to_vec(),
                             address: auth.address.as_bytes().to_vec(),
                             nonce: auth.nonce,
-                            y_parity: auth.y_parity.as_u32(),
+                            y_parity: u32::try_from(auth.y_parity).unwrap_or(0),
                             r: r_bytes.to_vec(),
                             s: s_bytes.to_vec(),
                         }

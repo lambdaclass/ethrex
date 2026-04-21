@@ -93,6 +93,7 @@ impl CredibleLayerClient {
         Ok(client.start())
     }
 
+    #[allow(clippy::result_large_err)]
     fn new(sidecar_url: String) -> Result<Self, CredibleLayerError> {
         info!(url = %sidecar_url, "Configuring Credible Layer sidecar client");
 
@@ -199,12 +200,12 @@ impl CredibleLayerClient {
             event_id: self.next_event_id(),
             event: Some(event_payload),
         };
-        if let Some(ref sender) = self.sidecar_tx {
-            if sender.send(event).await.is_err() {
-                warn!("Event channel closed, marking disconnected");
-                self.stream_connected = false;
-                self.sidecar_tx = None;
-            }
+        if let Some(ref sender) = self.sidecar_tx
+            && sender.send(event).await.is_err()
+        {
+            warn!("Event channel closed, marking disconnected");
+            self.stream_connected = false;
+            self.sidecar_tx = None;
         }
     }
 
