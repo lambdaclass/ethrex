@@ -9,3 +9,5 @@ pub use input::{ProgramInputDecodeError, ProgramInputEncodeError};
 pub use input::{decode_eip8025, encode_eip8025};
 pub use output::ProgramOutput;
 pub use program::execution_program;
+#[cfg(feature = "eip-8025")]
+pub use program::execution_program_eip8025_bytes;

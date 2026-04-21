@@ -105,6 +105,23 @@ pub fn execution_program(
     })
 }
 
+/// Decode and execute the L1 stateless validation program from EIP-8025 wire
+/// bytes.
+///
+/// The wire format is `[ssz_len: u32 LE][ssz_bytes][rkyv_bytes]`, matching
+/// [`decode_eip8025`](super::decode_eip8025).
+#[cfg(feature = "eip-8025")]
+pub fn execution_program_eip8025_bytes(
+    bytes: &[u8],
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
+    let (new_payload_request, execution_witness) = super::decode_eip8025(bytes).map_err(|err| {
+        ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
+    })?;
+
+    execution_program(new_payload_request, execution_witness, crypto)
+}
+
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
 #[cfg(feature = "eip-8025")]
 fn new_payload_request_to_block(
@@ -224,4 +241,28 @@ fn validate_versioned_hashes(
     }
 
     Ok(())
+}
+
+#[cfg(all(test, feature = "eip-8025"))]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::{
+        common::ExecutionError, crypto::NativeCrypto, l1::execution_program_eip8025_bytes,
+    };
+
+    #[test]
+    fn execution_program_eip8025_bytes_rejects_invalid_wire_bytes() {
+        let err = match execution_program_eip8025_bytes(&[], Arc::new(NativeCrypto)) {
+            Ok(_) => panic!("expected invalid EIP-8025 input to fail decoding"),
+            Err(err) => err,
+        };
+
+        match err {
+            ExecutionError::Internal(msg) => {
+                assert_eq!(msg, "failed to decode EIP-8025 input: input too short");
+            }
+            other => panic!("expected internal decode error, got {other:?}"),
+        }
+    }
 }
