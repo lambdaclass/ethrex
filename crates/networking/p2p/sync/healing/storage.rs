@@ -102,7 +102,9 @@ pub struct StorageHealer {
     empty_count: usize,
     disconnected_count: usize,
     /// Count of loop iterations where dispatch was skipped because
-    /// `healing_queue.len() >= HEALING_QUEUE_SOFT_LIMIT`.
+    /// `healing_queue.len() >= HEALING_QUEUE_SOFT_LIMIT`. Reset every
+    /// progress interval — the logged value is a per-interval rate, not a
+    /// cumulative total.
     backpressure_stalls: usize,
 }
 
@@ -293,7 +295,13 @@ pub async fn heal_storage_trie(
         // the download queue is a max-heap by depth, the in-flight work is the
         // deepest available — exactly what cascades commits up through
         // `healing_queue` and frees entries fastest.
-        if state.healing_queue.len() < HEALING_QUEUE_SOFT_LIMIT {
+        //
+        // The `requests.is_empty()` escape hatch is required: only in-flight
+        // responses drain `healing_queue` via `commit_node` cascades. If we
+        // ever reach `requests.is_empty() && healing_queue >= SOFT_LIMIT`
+        // without this override, the loop spins with nothing in-flight to
+        // refill the channel, and healing stalls until staleness fires.
+        if state.healing_queue.len() < HEALING_QUEUE_SOFT_LIMIT || state.requests.is_empty() {
             ask_peers_for_nodes(
                 &mut state.download_queue,
                 &mut state.requests,
@@ -359,14 +367,14 @@ pub async fn heal_storage_trie(
                     .remove(&request_id)
                     .expect("request disappeared");
                 state.failed_downloads += 1;
+                let peer_id = inflight_request.peer_id;
                 state.download_queue.extend(
                     inflight_request
                         .requests
-                        .iter()
-                        .cloned()
+                        .into_iter()
                         .map(DepthOrderedRequest),
                 );
-                peers.peer_table.record_failure(inflight_request.peer_id)?;
+                peers.peer_table.record_failure(peer_id)?;
             }
         }
     }
@@ -643,7 +651,7 @@ fn get_initial_downloads(
     let trie = store
         .open_locked_state_trie(state_root)
         .expect("We should be able to open the store");
-    let initial: Vec<NodeRequest> = account_paths
+    account_paths
         .healed_accounts
         .par_iter()
         .filter_map(|acc_path| {
@@ -658,15 +666,14 @@ fn get_initial_downloads(
                 return None;
             }
 
-            Some(NodeRequest {
+            Some(DepthOrderedRequest(NodeRequest {
                 acc_path: Nibbles::from_bytes(&acc_path.0),
                 storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
                 parent: Nibbles::default(),
                 hash: account.storage_root,
-            })
+            }))
         })
-        .collect();
-    initial.into_iter().map(DepthOrderedRequest).collect()
+        .collect()
 }
 
 /// Returns the full paths to the node's missing children and grandchildren
