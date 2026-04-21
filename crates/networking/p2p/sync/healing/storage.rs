@@ -9,8 +9,8 @@ use crate::{
     snap::{
         RequestStorageTrieNodesError,
         constants::{
-            HEALING_QUEUE_SOFT_LIMIT, MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES,
-            NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION,
+            HEALING_QUEUE_SOFT_LIMIT, MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, NODE_BATCH_SIZE,
+            SHOW_PROGRESS_INTERVAL_DURATION,
         },
         request_storage_trienodes,
     },

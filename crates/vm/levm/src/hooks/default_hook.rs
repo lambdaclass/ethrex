@@ -208,6 +208,24 @@ impl Hook for DefaultHook {
         // Save pre-refund gas for EIP-7778 block accounting
         let gas_used_pre_refund = ctx_result.gas_used;
 
+        // BSC system transactions don't accrue EVM gas refunds in bsc-geth's
+        // canonical accounting: block header gas_used for the system tx equals
+        // the pre-refund execution cost (matching receipts on Chapel/mainnet).
+        // Zero out the accumulated refund so gas_spent == gas_used_pre_refund.
+        let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+        let is_bsc_system_tx = is_bsc
+            && vm.env.origin == vm.env.coinbase
+            && vm.env.gas_price.is_zero()
+            && match vm.tx.to() {
+                ethrex_common::types::TxKind::Call(to) => {
+                    ethrex_common::constants::is_bsc_system_contract(&to)
+                }
+                _ => false,
+            };
+        if is_bsc_system_tx {
+            vm.substate.refunded_gas = 0;
+        }
+
         // Note: compute_gas_refunded caps at gas_used / MAX_REFUND_QUOTIENT, where
         // gas_used already has the reservoir subtracted (line above). This matches
         // EELS, which applies the refund cap after reservoir removal but before the
