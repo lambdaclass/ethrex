@@ -464,21 +464,21 @@ impl PeerHandler {
                         return Ok(None);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
-                        self.peer_table.record_success(&peer_id).await?;
+                        self.peer_table.record_success(peer_id)?;
                         return Ok(Some(block_headers));
                     }
                     // Non-empty but unchained headers is a protocol violation
                     warn!(
                         "[SYNCING] Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
-                    self.peer_table.record_failure(&peer_id).await?;
+                    self.peer_table.record_failure(peer_id)?;
                     return Ok(None);
                 }
                 // Timeouted
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
-                self.peer_table.record_failure(&peer_id).await?;
+                self.peer_table.record_failure(peer_id)?;
                 Ok(None)
             }
         }
