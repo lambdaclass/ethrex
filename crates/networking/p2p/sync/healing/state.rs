@@ -178,8 +178,9 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
+            // Note: dec_requests is called inside the worker task itself so
+            // that the slot is released even when this loop exits before
+            // draining all in-flight responses.
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -270,10 +271,15 @@ async fn heal_state_trie(
                 // Reserve a request slot before spawning so get_best_peer sees
                 // this peer as busy immediately, preventing spawn floods.
                 // Workers call outgoing_request directly (not make_request) to
-                // avoid a double increment. Released via dec_requests on try_recv.
+                // avoid a double increment. The slot is released inside the
+                // worker (after the request completes, before the task ends)
+                // so it always fires — even if the main loop exits early (on
+                // staleness/error) or `tx.send` fails because the receiver
+                // was dropped.
                 peers.peer_table.inc_requests(peer_id)?;
 
                 let batch_len = batch.len();
+                let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
                     // TODO: check errors to determine whether the current block is stale
@@ -285,6 +291,9 @@ async fn heal_state_trie(
                         response.is_ok(),
                         response.as_ref().err(),
                     );
+                    // Release the peer request slot before exiting the task,
+                    // regardless of whether tx.send succeeds.
+                    let _ = peer_table.dec_requests(peer_id);
                     // TODO: add error handling
                     tx.send((peer_id, response, batch)).await.inspect_err(
                         |err| debug!(error=?err, "Failed to send state trie nodes response"),
