@@ -20,7 +20,7 @@ use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -325,12 +325,20 @@ async fn heal_state_trie(
 
         // We check with a clock if we are stale
         if !is_stale && current_unix_time() > staleness_timestamp {
-            debug!("state healing is stale");
+            warn!(
+                inflight_tasks,
+                paths_remaining = paths.len(),
+                nodes_to_heal_remaining = nodes_to_heal.len(),
+                "state healing: pivot became stale, draining inflight tasks"
+            );
             is_stale = true;
         }
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            debug!("Finished inflight tasks");
+            warn!(
+                paths_remaining = paths.len(),
+                "state healing: all inflight tasks drained, exiting"
+            );
             for result in db_joinset.join_all().await {
                 result?;
             }
