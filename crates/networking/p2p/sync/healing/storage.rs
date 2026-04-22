@@ -237,11 +237,16 @@ pub async fn heal_storage_trie(
         }
 
         if is_done {
+            // Await in-flight request tasks so `make_request`'s inc/dec
+            // stays balanced. Dropping the JoinSet aborts them mid-await
+            // and leaks peer reservation slots.
+            requests_task_joinset.join_all().await;
             db_joinset.join_all().await;
             return Ok(true);
         }
 
         if is_stale {
+            requests_task_joinset.join_all().await;
             db_joinset.join_all().await;
             state.healing_queue = HashMap::new();
             return Ok(false);

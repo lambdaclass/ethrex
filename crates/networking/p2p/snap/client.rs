@@ -597,6 +597,13 @@ pub async fn request_storage_ranges(
     // channel to send the result of dumping storages
     let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> = tokio::task::JoinSet::new();
 
+    // Track in-flight worker tasks so we can drain them before returning.
+    // The main loop can break early on staleness — detached `tokio::spawn`
+    // tasks would then try to `tx.send` to a dropped channel, skipping the
+    // `dec_requests` handler in the main loop's try_recv and leaking the
+    // peer's reservation slot.
+    let mut request_set: tokio::task::JoinSet<Result<(), SnapError>> = tokio::task::JoinSet::new();
+
     let mut task_count = tasks_queue_not_started.len();
     let mut completed_tasks = 0;
 
@@ -1002,7 +1009,7 @@ pub async fn request_storage_ranges(
         // Reserve a request slot before spawning (see account range comment).
         peers.peer_table.inc_requests(peer_id)?;
 
-        tokio::spawn(request_storage_ranges_worker(
+        request_set.spawn(request_storage_ranges_worker(
             task,
             peer_id,
             connection,
@@ -1011,6 +1018,17 @@ pub async fn request_storage_ranges(
             chunk_storage_roots,
             tx,
         ));
+    }
+
+    // Drain any remaining in-flight tasks and their responses so
+    // `dec_requests` fires for every worker. Without this, exiting the
+    // loop on staleness with in-flight workers would drop the receiver,
+    // causing the workers' `tx.send` to fail and leaking peer slots.
+    while !request_set.is_empty() {
+        let _ = request_set.join_next().await;
+        while let Ok(result) = task_receiver.try_recv() {
+            peers.peer_table.dec_requests(result.peer_id)?;
+        }
     }
 
     {
