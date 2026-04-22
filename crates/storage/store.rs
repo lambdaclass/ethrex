@@ -52,7 +52,9 @@ use std::{
     },
     thread::JoinHandle,
 };
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
+#[cfg(feature = "rocksdb")]
+use tracing::warn;
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
