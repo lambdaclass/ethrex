@@ -1331,27 +1331,31 @@ async fn handle_incoming_message(
             let chain_id = state.storage.get_chain_config().chain_id;
             if chain_id == 56 || chain_id == 97 {
                 let block = announce.block;
-                let block_number = block.header.number;
                 let block_hash = block.hash();
-                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
-                if block_number > latest {
-                    // `add_block_pipeline` validates; if the parent is missing,
-                    // it auto-queues the block in the pending-blocks store,
-                    // which the next sync cycle drains back into the chain.
-                    // This means out-of-order arrivals (peer sends latest+2
-                    // before we finish latest+1) are handled transparently.
+                // Skip if we already have this block stored (likely: multiple
+                // peers announced the same block). `add_block_pipeline` has
+                // no early duplicate check and would re-execute.
+                let already_have = state
+                    .storage
+                    .get_block_header_by_hash(block_hash)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !already_have {
+                    // Always hand to add_block_pipeline — it validates,
+                    // handles reorgs (side-chain blocks at `number == latest`
+                    // can still become canonical), and auto-queues to the
+                    // pending store when the parent is missing. Out-of-order
+                    // arrivals are handled transparently.
                     let blockchain = state.blockchain.clone();
                     tokio::task::spawn_blocking(move || {
                         let _ = blockchain.add_block_pipeline(block, None);
                     });
-                    // Wake the sync bridge so the pending queue gets drained
-                    // promptly instead of waiting for the next announcement.
-                    // BSC forward sync fetches by number, so peer-claimed hash
-                    // can't poison the import path.
-                    state.blockchain.set_bsc_sync_head(block_hash);
                 }
-                // Old blocks (number <= latest) are dropped — they can't improve
-                // our state and re-executing wastes CPU.
+                // Wake the sync bridge so any newly-pending blocks get
+                // drained promptly. BSC forward sync fetches by number,
+                // so peer-claimed hash can't poison the import path.
+                state.blockchain.set_bsc_sync_head(block_hash);
                 // Else: ignore. Other triggers (NewBlockHashes,
                 // BlockRangeUpdate) will drive the sync bridge if we're
                 // actually behind.
