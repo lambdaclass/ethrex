@@ -9,8 +9,8 @@
 //! All healed accounts will also have their bytecodes and storages healed by the corresponding processes
 
 use std::{
-    cmp::min,
-    collections::{BTreeMap, HashMap},
+    cmp::Ordering as CmpOrdering,
+    collections::{BTreeMap, BinaryHeap, HashMap},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -29,7 +29,7 @@ use crate::{
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
-        constants::{NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
+        constants::{HEALING_QUEUE_SOFT_LIMIT, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
         request_state_trienodes,
     },
     sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
@@ -37,6 +37,36 @@ use crate::{
 };
 
 use super::types::{HealingQueueEntry, StateHealingQueue};
+
+/// `RequestMetadata` ordered by `path` depth, deepest first.
+///
+/// Used inside a `BinaryHeap` (max-heap) so the dispatcher pops the deepest
+/// pending node available. Same rationale as storage healing: depth-first
+/// draining is what shrinks `healing_queue` fastest — committing a leaf
+/// cascades up through its ancestors via `commit_node`, freeing pending
+/// parents.
+#[derive(Debug, Clone)]
+struct DepthOrderedMetadata(RequestMetadata);
+
+impl PartialEq for DepthOrderedMetadata {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.path.len() == other.0.path.len()
+    }
+}
+
+impl Eq for DepthOrderedMetadata {}
+
+impl PartialOrd for DepthOrderedMetadata {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DepthOrderedMetadata {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        self.0.path.len().cmp(&other.0.path.len())
+    }
+}
 
 pub async fn heal_state_trie_wrap(
     state_root: H256,
@@ -75,13 +105,6 @@ pub async fn heal_state_trie_wrap(
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
 /// This method also stores modified storage roots in the db for heal_storage_trie
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
-// TODO: `paths` and `healing_queue` are both unbounded here. Storage healing
-// caps its pending-parents map via `HEALING_QUEUE_SOFT_LIMIT` and uses a
-// depth-ordered download queue to keep memory in check; state healing has
-// no equivalent guard. The state trie is much smaller than aggregate storage
-// so this has not been a problem in practice, but if state-healing OOMs ever
-// appear the same pattern (depth-priority heap + soft-limit backpressure)
-// applies.
 #[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
     state_root: H256,
@@ -93,12 +116,16 @@ async fn heal_state_trie(
     storage_accounts: &mut AccountStorageRoots,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
-    // Add the current state trie root to the pending paths
-    let mut paths: Vec<RequestMetadata> = vec![RequestMetadata {
-        hash: state_root,
-        path: Nibbles::default(), // We need to be careful, the root parent is a special case
-        parent_path: Nibbles::default(),
-    }];
+    // Add the current state trie root to the pending paths. `paths` is a
+    // max-heap by depth so the dispatcher always pops the deepest pending
+    // node — this bounds both `paths` and `healing_queue` by resolving deep
+    // subtrees first instead of expanding the BFS frontier.
+    let mut paths: BinaryHeap<DepthOrderedMetadata> =
+        BinaryHeap::from([DepthOrderedMetadata(RequestMetadata {
+            hash: state_root,
+            path: Nibbles::default(), // We need to be careful, the root parent is a special case
+            parent_path: Nibbles::default(),
+        })]);
     let mut last_update = Instant::now();
     let mut inflight_tasks: u64 = 0;
     let mut is_stale = false;
@@ -108,6 +135,10 @@ async fn heal_state_trie(
     let mut leafs_healed = 0;
     let mut empty_try_recv: u64 = 0;
     let mut heals_per_cycle: u64 = 0;
+    // Count of loop iterations where dispatch was skipped because
+    // `healing_queue.len() >= HEALING_QUEUE_SOFT_LIMIT`. Reset every progress
+    // interval — logged value is a per-interval rate, not a cumulative total.
+    let mut backpressure_stalls: u64 = 0;
     let mut nodes_to_write: Vec<(Nibbles, Node)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
@@ -148,11 +179,13 @@ async fn heal_state_trie(
                 downloads_rate,
                 paths_to_go = paths.len(),
                 pending_nodes = healing_queue.len(),
+                backpressure_stalls,
                 heals_per_cycle,
                 "State Healing",
             );
             downloads_success = 0;
             downloads_fail = 0;
+            backpressure_stalls = 0;
         }
 
         // Attempt to receive a response from one of the peers
@@ -201,19 +234,33 @@ async fn heal_state_trie(
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
-                    // TODO: Check if it's faster to reach the leafs of the trie
-                    // by doing batch.extend(paths);paths = batch
-                    // Or with a VecDequeue
-                    paths.extend(batch);
+                    paths.extend(batch.into_iter().map(DepthOrderedMetadata));
                     downloads_fail += 1;
                     peers.peer_table.record_failure(peer_id)?;
                 }
             }
         }
 
-        if !is_stale {
-            let batch: Vec<RequestMetadata> =
-                paths.drain(0..min(paths.len(), NODE_BATCH_SIZE)).collect();
+        // Backpressure: while the pending-parents map is at its soft limit,
+        // stop dispatching new downloads and let in-flight requests drain it.
+        // Because `paths` is a max-heap by depth, in-flight work is the
+        // deepest available — exactly what cascades commits up through
+        // `healing_queue` and frees entries fastest.
+        //
+        // The `inflight_tasks == 0` escape hatch is required: only in-flight
+        // responses drain `healing_queue` via `commit_node` cascades. Without
+        // it, reaching `inflight_tasks == 0 && healing_queue >= SOFT_LIMIT`
+        // would spin with nothing in-flight to refill the channel.
+        let gate_open = healing_queue.len() < HEALING_QUEUE_SOFT_LIMIT || inflight_tasks == 0;
+        if !is_stale && gate_open {
+            let batch_size = paths.len().min(NODE_BATCH_SIZE);
+            let mut batch: Vec<RequestMetadata> = Vec::with_capacity(batch_size);
+            for _ in 0..batch_size {
+                match paths.pop() {
+                    Some(DepthOrderedMetadata(req)) => batch.push(req),
+                    None => break,
+                }
+            }
             if !batch.is_empty() {
                 longest_path_seen = usize::max(
                     batch
@@ -233,7 +280,7 @@ async fn heal_state_trie(
                     .unwrap_or(None)
                 else {
                     // If there are no peers available, re-add the batch to the paths vector, and continue
-                    paths.extend(batch);
+                    paths.extend(batch.into_iter().map(DepthOrderedMetadata));
 
                     // Log ~ once every 10 seconds
                     if logged_no_free_peers_count == 0 {
@@ -268,6 +315,8 @@ async fn heal_state_trie(
                 });
                 tokio::task::yield_now().await;
             }
+        } else if !is_stale {
+            backpressure_stalls += 1;
         }
 
         // If there is at least one "batch" of nodes to heal, heal it
@@ -283,7 +332,7 @@ async fn heal_state_trie(
             .inspect_err(|err| {
                 debug!(error=?err, "We have found a sync error while trying to write to DB a batch")
             })?;
-            paths.extend(return_paths);
+            paths.extend(return_paths.into_iter().map(DepthOrderedMetadata));
         }
 
         let is_done = paths.is_empty() && nodes_to_heal.is_empty() && inflight_tasks == 0;
@@ -472,4 +521,47 @@ pub fn node_pending_children(
         _ => {}
     }
     Ok((pending_children_count, paths))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn metadata_at_depth(depth: usize) -> RequestMetadata {
+        RequestMetadata {
+            hash: H256::zero(),
+            path: Nibbles::from_bytes(&vec![0u8; depth.div_ceil(2)]).slice(0, depth),
+            parent_path: Nibbles::default(),
+        }
+    }
+
+    #[test]
+    fn binary_heap_pops_deepest_first() {
+        let depths = [1usize, 5, 3, 2, 4, 0, 7, 6];
+        let mut heap: BinaryHeap<DepthOrderedMetadata> = depths
+            .iter()
+            .map(|&d| DepthOrderedMetadata(metadata_at_depth(d)))
+            .collect();
+
+        let mut popped = Vec::new();
+        while let Some(DepthOrderedMetadata(req)) = heap.pop() {
+            popped.push(req.path.len());
+        }
+
+        let mut expected: Vec<usize> = depths.to_vec();
+        expected.sort_by(|a, b| b.cmp(a));
+        assert_eq!(popped, expected);
+    }
+
+    #[test]
+    fn equal_depth_pops_without_panic() {
+        let mut heap: BinaryHeap<DepthOrderedMetadata> = (0..10)
+            .map(|_| DepthOrderedMetadata(metadata_at_depth(4)))
+            .collect();
+        let mut count = 0;
+        while heap.pop().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 10);
+    }
 }
