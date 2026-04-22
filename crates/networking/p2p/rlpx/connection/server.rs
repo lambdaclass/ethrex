@@ -1304,10 +1304,7 @@ async fn handle_incoming_message(
             // BlockRangeUpdate (much sparser), closing the gap to chain tip.
             let chain_id = state.storage.get_chain_config().chain_id;
             if chain_id == 56 || chain_id == 97 {
-                if let Some((hash, _)) = announce
-                    .hashes_and_numbers
-                    .iter()
-                    .max_by_key(|(_, n)| *n)
+                if let Some((hash, _)) = announce.hashes_and_numbers.iter().max_by_key(|(_, n)| *n)
                     && !hash.is_zero()
                 {
                     state.blockchain.set_bsc_sync_head(*hash);
