@@ -253,11 +253,21 @@ pub struct Options {
     #[arg(
         long = "p2p.addr",
         value_name = "ADDRESS",
-        help = "Listening address for the P2P protocol.",
+        help = "Bind address for the P2P protocol (UDP discovery and TCP RLPx).",
+        long_help = "The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_ADDR"
     )]
     pub p2p_addr: Option<String>,
+    #[arg(
+        long = "nat.extip",
+        value_name = "IP",
+        help = "External IP address to announce to peers.",
+        long_help = "The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).",
+        help_heading = "P2P options",
+        env = "ETHREX_P2P_NAT_EXTIP"
+    )]
+    pub nat_extip: Option<String>,
     #[arg(
         long = "p2p.port",
         default_value = "30303",
@@ -417,6 +427,7 @@ impl Default for Options {
             authrpc_jwtsecret: Default::default(),
             p2p_disabled: Default::default(),
             p2p_addr: None,
+            nat_extip: None,
             p2p_port: Default::default(),
             discovery_port: Default::default(),
             discv4_enabled: true,
@@ -524,6 +535,14 @@ pub enum Subcommand {
         /// JSON-RPC endpoint URL
         #[arg(short = 'e', long, default_value = "http://localhost:8545")]
         endpoint: String,
+
+        /// Authenticated RPC endpoint URL (for engine namespace)
+        #[arg(long = "authrpc.endpoint", default_value = "http://localhost:8551")]
+        authrpc_endpoint: String,
+
+        /// Path to JWT secret file for authenticated RPC (hex-encoded)
+        #[arg(long = "authrpc.jwtsecret")]
+        authrpc_jwtsecret: Option<String>,
 
         /// Path to command history file
         #[arg(long, default_value = "~/.ethrex/history")]
@@ -637,10 +656,19 @@ impl Subcommand {
             }
             Subcommand::Repl {
                 endpoint,
+                authrpc_endpoint,
+                authrpc_jwtsecret,
                 history_file,
                 execute,
             } => {
-                ethrex_repl::run(endpoint, history_file, execute).await;
+                ethrex_repl::run(
+                    endpoint,
+                    authrpc_endpoint,
+                    authrpc_jwtsecret,
+                    history_file,
+                    execute,
+                )
+                .await;
             }
             #[cfg(feature = "l2")]
             Subcommand::L2(command) => command.run().await?,

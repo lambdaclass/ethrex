@@ -110,20 +110,29 @@ jobs:
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
+      - name: Load Amsterdam config
+        id: amsterdam-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
+          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
+          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
             # Use fork-specific fixtures to ensure comprehensive test coverage
             if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-              # Amsterdam tests use fixtures_bal which includes BAL-specific tests
-              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz"
-              FLAGS+=" --sim.buildarg branch=devnets/bal/3"
+              # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
+              FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+              FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
             else
               # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use fixtures_develop
               # which includes comprehensive test coverage including static tests

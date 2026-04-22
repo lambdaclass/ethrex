@@ -123,6 +123,14 @@ contract CommonBridge is
     mapping(uint256 chainId => uint256 index)
         public pendingMessagesIndexPerChain;
 
+    /// @notice The L2 block gas limit. Privileged transactions submitted via sendToL2
+    /// must have a gasLimit at or below this value.
+    uint256 public l2GasLimit;
+
+    /// @notice Minimum allowed value for l2GasLimit. Must be at least as large as the
+    /// highest hardcoded gas limit used by internal bridge functions.
+    uint256 public constant DEPOSIT_GAS_LIMIT = 21000 * 5;
+
     modifier onlyOnChainProposer() {
         require(
             msg.sender == ON_CHAIN_PROPOSER,
@@ -142,7 +150,8 @@ contract CommonBridge is
         address onChainProposer,
         uint256 inclusionMaxWait,
         address _sharedBridgeRouter,
-        uint256 chainId
+        uint256 chainId,
+        uint256 _l2GasLimit
     ) public initializer {
         require(
             onChainProposer != address(0),
@@ -162,6 +171,16 @@ contract CommonBridge is
         ReentrancyGuardUpgradeable.__ReentrancyGuard_init();
 
         CHAIN_ID = chainId;
+
+        require(
+            _l2GasLimit >= DEPOSIT_GAS_LIMIT,
+            "CommonBridge: l2GasLimit below minimum"
+        );
+        require(
+            _l2GasLimit <= type(uint64).max,
+            "CommonBridge: l2GasLimit exceeds uint64 max"
+        );
+        l2GasLimit = _l2GasLimit;
     }
 
     /// @inheritdoc ICommonBridge
@@ -232,6 +251,10 @@ contract CommonBridge is
     }
 
     function _sendToL2(address from, SendValues memory sendValues) private {
+        require(
+            sendValues.gasLimit <= l2GasLimit,
+            "CommonBridge: gasLimit exceeds l2GasLimit"
+        );
         bytes32 l2MintTxHash = keccak256(
             bytes.concat(
                 bytes32(CHAIN_ID),
@@ -280,7 +303,7 @@ contract CommonBridge is
         );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
-            gasLimit: 21000 * 5,
+            gasLimit: DEPOSIT_GAS_LIMIT,
             value: msg.value,
             data: callData
         });
@@ -307,7 +330,7 @@ contract CommonBridge is
         );
         SendValues memory sendValues = SendValues({
             to: L2_BRIDGE_ADDRESS,
-            gasLimit: 21000 * 5,
+            gasLimit: DEPOSIT_GAS_LIMIT,
             value: 0,
             data: callData
         });
@@ -742,6 +765,20 @@ contract CommonBridge is
             data: callData
         });
         _sendToL2(L2_BRIDGE_ADDRESS, sendValues);
+    }
+
+    /// @inheritdoc ICommonBridge
+    function setL2GasLimit(uint256 newL2GasLimit) external onlyOwner {
+        require(
+            newL2GasLimit >= DEPOSIT_GAS_LIMIT,
+            "CommonBridge: l2GasLimit below minimum"
+        );
+        require(
+            newL2GasLimit <= type(uint64).max,
+            "CommonBridge: l2GasLimit exceeds uint64 max"
+        );
+        l2GasLimit = newL2GasLimit;
+        emit L2GasLimitUpdated(newL2GasLimit);
     }
 
     /// @notice Allow owner to upgrade the contract.

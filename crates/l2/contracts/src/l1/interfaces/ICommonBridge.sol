@@ -39,6 +39,10 @@ interface ICommonBridge {
     /// @param withdrawalId the message Id of the claimed withdrawal
     event WithdrawalClaimed(uint256 indexed withdrawalId);
 
+    /// @notice The L2 gas limit has been updated.
+    /// @param newL2GasLimit The new L2 gas limit.
+    event L2GasLimitUpdated(uint256 newL2GasLimit);
+
     struct SendValues {
         address to;
         uint256 gasLimit;
@@ -238,6 +242,15 @@ interface ICommonBridge {
 
     /// @notice Checks if the sequencer has exceeded it's processing deadlines
     function hasExpiredPrivilegedTransactions() external view returns (bool);
+
+    /// @notice Returns the L2 block gas limit.
+    /// @return The L2 gas limit as a uint256.
+    function l2GasLimit() external view returns (uint256);
+
+    /// @notice Sets the L2 block gas limit. Privileged transactions submitted via sendToL2
+    /// must have a gasLimit at or below this value.
+    /// @param newL2GasLimit The new L2 gas limit.
+    function setL2GasLimit(uint256 newL2GasLimit) external;
 
     /// @notice Allows the owner to pause the contract
     function pause() external;

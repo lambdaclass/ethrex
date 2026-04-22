@@ -94,3 +94,35 @@ Because the counters are new storage variables, they initialize to zero after th
 **Precondition:** ensure all committed batches are verified (`lastCommittedBatch == lastVerifiedBatch`) before upgrading the OnChainProposer. This applies to both the standard and based variants of the contract.
 
 If this precondition cannot be met, revert all unverified batches before upgrading, or add a one-time reinitializer that recomputes the counters from the committed batch range.
+
+### CommonBridge: L2 gas limit stored on-chain
+
+From v11 onwards, the L2 block gas limit is stored in the `CommonBridge` contract as `l2GasLimit`. The sequencer fetches this value on startup instead of using a CLI flag.
+
+#### Upgrade requirement
+
+On existing deployments, `l2GasLimit` will default to `0` because `initialize()` has already run. This means `_sendToL2` will revert for any non-zero gas limit, **bricking the bridge** until the owner calls `setL2GasLimit()`.
+
+After upgrading (with the contract paused), call `setL2GasLimit` before unpausing (see [Updating the gas limit](#updating-the-gas-limit) below). The contract must not be unpaused until `l2GasLimit` is set to a valid value. Otherwise all deposits and privileged transactions will revert.
+
+#### CLI flag removed
+
+The `--block-producer.block-gas-limit` flag has been removed. The sequencer now reads the gas limit from the `CommonBridge` contract on startup. Update any scripts or deployment configurations that use this flag.
+
+#### Viewing the current gas limit
+
+```shell
+rex call <BRIDGE_ADDRESS> "l2GasLimit()" --rpc-url <L1_RPC_URL>
+```
+
+#### Updating the gas limit
+
+Only the bridge owner can update the gas limit:
+
+```shell
+rex send <BRIDGE_ADDRESS> "setL2GasLimit(uint256)" <NEW_GAS_LIMIT> \
+  --private-key <OWNER_PRIVATE_KEY> \
+  --rpc-url <L1_RPC_URL>
+```
+
+After updating the on-chain value, restart the sequencer for it to take effect. Until the restart, the sequencer continues using the previous gas limit, which may cause a temporary mismatch with the on-chain value.
