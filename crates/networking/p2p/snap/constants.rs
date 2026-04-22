@@ -64,7 +64,7 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout for block header fetches. Headers are small (a few KB) and cheap
 /// to serve, so a slow reply signals an unresponsive peer. Keeping this short
