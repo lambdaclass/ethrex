@@ -984,9 +984,17 @@ pub async fn update_pivot_bsc(
     block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<BlockHeader, SyncError> {
     let mut best_pivot: Option<BlockHeader> = Some(current_pivot.clone());
-    // Resolve all candidate hashes to headers, pick the highest-number one.
-    let mut candidates = blockchain.bsc_sync_head_candidates_snapshot();
-    candidates.sort();
+    // Cap candidate resolution — the set grows unboundedly as peers keep
+    // advertising new heads, and iterating all of them per refresh stalls
+    // update_pivot_bsc for minutes-to-hours. Most recent candidates are
+    // the freshest views anyway.
+    const MAX_CANDIDATES_TO_RESOLVE: usize = 20;
+    let all_candidates = blockchain.bsc_sync_head_candidates_snapshot();
+    let candidates = if all_candidates.len() > MAX_CANDIDATES_TO_RESOLVE {
+        all_candidates[all_candidates.len() - MAX_CANDIDATES_TO_RESOLVE..].to_vec()
+    } else {
+        all_candidates
+    };
     for hash in candidates.iter() {
         if let Ok(Some(headers)) = peers
             .request_block_headers_from_hash(
@@ -994,12 +1002,10 @@ pub async fn update_pivot_bsc(
                 crate::peer_handler::BlockRequestOrder::NewToOld,
             )
             .await
+            && let Some(header) = headers.into_iter().next()
+            && best_pivot.as_ref().is_none_or(|h| header.number > h.number)
         {
-            if let Some(header) = headers.into_iter().next() {
-                if best_pivot.as_ref().is_none_or(|h| header.number > h.number) {
-                    best_pivot = Some(header);
-                }
-            }
+            best_pivot = Some(header);
         }
     }
     // Probe forward aggressively to catch up to actual chain tip.
