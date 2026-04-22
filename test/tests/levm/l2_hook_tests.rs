@@ -740,34 +740,8 @@ fn undo_last_transaction_restores_storage_slots() {
     let test_db = TestDatabase::new();
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
 
-    let fork = Fork::Prague;
-    let blob_schedule = EVMConfig::canonical_values(fork);
-    let env = Environment {
-        origin: sender,
-        gas_limit,
-        config: EVMConfig::new(fork, blob_schedule),
-        block_number: 1,
-        coinbase,
-        timestamp: 1000,
-        prev_randao: Some(H256::zero()),
-        difficulty: U256::zero(),
-        slot_number: U256::zero(),
-        chain_id: U256::from(1),
-        base_fee_per_gas: U256::from(gas_price),
-        base_blob_fee_per_gas: U256::from(1),
-        gas_price: U256::from(gas_price),
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
-        tx_max_priority_fee_per_gas: Some(U256::zero()),
-        tx_max_fee_per_gas: Some(U256::from(gas_price)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: gas_limit * 2,
-        is_privileged: false,
-        fee_token: None,
-        disable_balance_check: false,
-    };
+    // priority fee = 0 (base_fee == gas_price), no operator fee
+    let env = non_privileged_l2_env(sender, coinbase, gas_limit, gas_price, gas_price);
 
     let fee_config = FeeConfig {
         base_fee_vault: None,
