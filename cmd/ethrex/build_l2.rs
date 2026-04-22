@@ -158,6 +158,26 @@ pub fn download_script() {
         );
     }
 
+    // Native rollup contracts (from levm/contracts, not l2/contracts)
+    let levm_contracts_path = Path::new("../../crates/vm/levm/contracts");
+    compile_contract_to_bytecode(
+        &output_contracts_path,
+        &levm_contracts_path.join("NativeRollup.sol"),
+        "NativeRollup",
+        false,
+        false,
+        None,
+        &[levm_contracts_path],
+    );
+    compile_contract_to_bytecode(
+        &output_contracts_path,
+        &levm_contracts_path.join("L2Bridge.sol"),
+        "L2Bridge",
+        true,
+        false,
+        None,
+        &[levm_contracts_path],
+    );
     // Based contracts
     compile_contract_to_bytecode(
         &output_contracts_path,
@@ -201,6 +221,8 @@ fn write_empty_bytecode_files(output_contracts_path: &Path) {
         "SequencerRegistry",
         "OnChainProposerBased",
         "Timelock",
+        "NativeRollup",
+        "L2Bridge",
     ];
 
     for name in &contract_names {

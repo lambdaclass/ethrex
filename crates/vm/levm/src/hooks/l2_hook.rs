@@ -835,6 +835,7 @@ fn simulate_common_bridge_call(
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
         vm.crypto,
+        None,
     )?;
     new_vm.hooks = vec![];
     default_hook::set_bytecode_and_code_address(&mut new_vm)?;

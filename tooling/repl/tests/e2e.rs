@@ -50,6 +50,8 @@ impl MockServer {
             RpcClient::new(self.endpoint.clone()),
             None,
             "/tmp/ethrex_repl_test_history".to_string(),
+            9200,
+            300,
         )
     }
 }

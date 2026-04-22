@@ -27,6 +27,7 @@ use ethrex_common::{
 };
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
+use ethrex_levm::StatelessValidator;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
@@ -95,6 +96,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -149,7 +151,15 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+            let report = Self::execute_tx(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                crypto,
+                stateless_validator,
+            )?;
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -250,6 +260,7 @@ impl LEVM {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,
@@ -258,6 +269,7 @@ impl LEVM {
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
+        #[allow(unused_variables)] stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -301,6 +313,7 @@ impl LEVM {
                 system_seed,
                 crypto,
                 &validation_index,
+                stateless_validator,
             );
 
             // If parallel execution failed (e.g. BAL validation), still check system
@@ -476,6 +489,7 @@ impl LEVM {
                 &mut shared_stack_pool,
                 false,
                 crypto,
+                stateless_validator,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -883,6 +897,7 @@ impl LEVM {
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
         validation_index: &BalAddressIndex,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<
         (
             Vec<Receipt>,
@@ -991,6 +1006,7 @@ impl LEVM {
                     &mut stack_pool,
                     false,
                     crypto,
+                    stateless_validator,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1627,6 +1643,7 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
@@ -1664,6 +1681,7 @@ impl LEVM {
                         stack_pool,
                         true,
                         crypto,
+                        stateless_validator,
                     );
                 }
             },
@@ -1822,6 +1840,7 @@ impl LEVM {
         Ok(env)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
@@ -1832,9 +1851,18 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionReport, EvmError> {
         let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stateless_validator,
+        )?;
 
         vm.execute().map_err(VMError::into)
     }
@@ -1853,10 +1881,19 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stateless_validator,
+        )?;
 
         std::mem::swap(&mut vm.stack_pool, stack_pool);
         let result = vm.execute().map_err(VMError::into);
@@ -1869,6 +1906,7 @@ impl LEVM {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,
@@ -1877,6 +1915,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<ExecutionResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
 
@@ -1884,7 +1923,7 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
+        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto, stateless_validator)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -2055,13 +2094,13 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto)?;
+        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto, None)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto)?;
+        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto, None)?;
 
         let report = vm.stateless_execute()?;
 
@@ -2161,9 +2200,17 @@ pub fn generic_system_contract_levm(
         recorder.enter_system_call();
     }
 
-    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
-        .and_then(|mut vm| vm.execute())
-        .map_err(EvmError::from);
+    let result = VM::new(
+        env,
+        db,
+        tx,
+        LevmCallTracer::disabled(),
+        vm_type,
+        crypto,
+        None,
+    )
+    .and_then(|mut vm| vm.execute())
+    .map_err(EvmError::from);
 
     // EIP-7928: Exit system call mode before restoring accounts (must run even on error)
     if let Some(recorder) = db.bal_recorder.as_mut() {
@@ -2369,6 +2416,7 @@ fn vm_from_generic<'a>(
     db: &'a mut GeneralizedDatabase,
     vm_type: VMType,
     crypto: &'a dyn Crypto,
+    stateless_validator: Option<&'a dyn StatelessValidator>,
 ) -> Result<VM<'a>, VMError> {
     let tx = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
@@ -2405,7 +2453,15 @@ fn vm_from_generic<'a>(
     };
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
+    VM::new(
+        env,
+        db,
+        &tx,
+        LevmCallTracer::disabled(),
+        vm_type,
+        crypto,
+        stateless_validator,
+    )
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

@@ -47,6 +47,8 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+#[cfg(feature = "experimental-devnet")]
+pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
@@ -454,11 +456,13 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        let stateless_validator_for_warmer = vm.stateless_validator.clone();
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                let stateless_validator_ref = stateless_validator_for_warmer.as_deref();
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -480,6 +484,7 @@ impl Blockchain {
                                 vm_type,
                                 &NativeCrypto,
                                 cancelled_ref,
+                                stateless_validator_ref,
                             ) {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
@@ -856,7 +861,7 @@ impl Blockchain {
         }
 
         // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
+        let accumulated_updates = if cfg!(feature = "experimental-devnet") {
             Some(all_updates.values().cloned().collect::<Vec<_>>())
         } else {
             None
@@ -1162,14 +1167,34 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        self.generate_witness_for_blocks_with_fee_configs(blocks, None)
-            .await
+        self.generate_witness_inner(blocks, None, None).await
     }
 
     pub async fn generate_witness_for_blocks_with_fee_configs(
         &self,
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
+    ) -> Result<ExecutionWitness, ChainError> {
+        self.generate_witness_inner(blocks, fee_configs, None).await
+    }
+
+    /// Generate a witness for the given blocks, applying optional pre-execution
+    /// storage writes before re-executing each block. Used by the native rollup
+    /// committer to inject L1Anchor values into the witness.
+    pub async fn generate_witness_for_blocks_with_pre_execution_writes(
+        &self,
+        blocks: &[Block],
+        pre_execution_writes: &[(Address, H256, U256)],
+    ) -> Result<ExecutionWitness, ChainError> {
+        self.generate_witness_inner(blocks, None, Some(pre_execution_writes))
+            .await
+    }
+
+    async fn generate_witness_inner(
+        &self,
+        blocks: &[Block],
+        fee_configs: Option<&[FeeConfig]>,
+        pre_execution_writes: Option<&[(Address, H256, U256)]>,
     ) -> Result<ExecutionWitness, ChainError> {
         let first_block_header = &blocks
             .first()
@@ -1246,6 +1271,25 @@ impl Blockchain {
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
             };
+
+            // Apply pre-execution storage writes (e.g. L1Anchor for native rollups).
+            // These are system-level writes that happen before block execution,
+            // mirroring what the EXECUTE precompile does on L1.
+            if let Some(writes) = pre_execution_writes {
+                for (address, key, value) in writes {
+                    let acc = vm.db.get_account_mut(*address).map_err(|e| {
+                        ChainError::WitnessGeneration(format!(
+                            "Failed to load account for pre-execution write: {e}"
+                        ))
+                    })?;
+                    acc.storage.insert(*key, *value);
+                    // Ensure the old value exists in initial_accounts_state so
+                    // get_state_transitions() can compute the storage diff.
+                    if let Some(initial) = vm.db.initial_accounts_state.get_mut(address) {
+                        initial.storage.entry(*key).or_insert(U256::zero());
+                    }
+                }
+            }
 
             // Re-execute block with logger
             let (execution_result, _bal) = vm.execute_block(block)?;
@@ -1835,7 +1879,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+        let (mut vm, logger) = if cfg!(feature = "experimental-devnet") && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
@@ -1846,7 +1890,7 @@ impl Blockchain {
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
+            let mut vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => {
                     Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
                 }
@@ -1858,6 +1902,14 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
+            // Inject StatelessValidator so the EXECUTE precompile works
+            // during block import (same as new_evm does for the non-logger path).
+            #[cfg(feature = "experimental-devnet")]
+            if matches!(self.options.r#type, BlockchainType::L1) {
+                vm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
+                    crypto: Arc::new(NativeCrypto),
+                }));
+            }
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -3055,7 +3107,7 @@ fn handle_subtrie(
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-    let evm = match blockchain_type {
+    let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
             let fee_config = *l2_config
@@ -3066,6 +3118,17 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
+
+    // For L1 EVMs, inject the StatelessValidator so the EXECUTE precompile
+    // can delegate to verify_stateless_new_payload when processing native
+    // rollup advance() calls.
+    #[cfg(feature = "experimental-devnet")]
+    if matches!(blockchain_type, BlockchainType::L1) {
+        evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
+            crypto: Arc::new(NativeCrypto),
+        }));
+    }
+
     Ok(evm)
 }
 

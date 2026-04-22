@@ -14,7 +14,7 @@ use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
-use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
+use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
 use serde::{Deserialize, Serialize};
 
@@ -195,13 +195,7 @@ impl RpcExecutionWitness {
         // instead of relying on the keys field which is being removed from the RPC spec.
         let mut storage_trie_roots = BTreeMap::new();
         if let Some(state_trie_root) = &state_trie_root {
-            let mut accounts = Vec::new();
-            collect_accounts_from_trie(
-                state_trie_root,
-                Nibbles::from_raw(&[], false),
-                &mut accounts,
-                &nodes,
-            );
+            let accounts = collect_accounts_from_trie(state_trie_root, &nodes, &NativeCrypto);
 
             for (hashed_address, storage_root_hash) in accounts {
                 if storage_root_hash == *EMPTY_TRIE_HASH {
@@ -228,71 +222,6 @@ impl RpcExecutionWitness {
             state_trie_root,
             storage_trie_roots,
         })
-    }
-}
-
-/// Recursively walks an embedded state trie node and collects
-/// `(hashed_address, storage_root)` pairs from leaf nodes.
-fn collect_accounts_from_trie(
-    node: &Node,
-    path: Nibbles,
-    accounts: &mut Vec<(H256, H256)>,
-    nodes: &BTreeMap<H256, Node>,
-) {
-    match node {
-        Node::Branch(branch) => {
-            for (i, child) in branch.choices.iter().enumerate() {
-                let child_node: Option<&Node> = match child {
-                    NodeRef::Node(n, _) => Some(n),
-                    NodeRef::Hash(hash) if hash.is_valid() => {
-                        nodes.get(&hash.finalize(&NativeCrypto))
-                    }
-                    _ => None,
-                };
-                if let Some(child_node) = child_node {
-                    collect_accounts_from_trie(
-                        child_node,
-                        path.append_new(i as u8),
-                        accounts,
-                        nodes,
-                    );
-                }
-            }
-        }
-        Node::Extension(ext) => {
-            let child_node: Option<&Node> = match &ext.child {
-                NodeRef::Node(n, _) => Some(n),
-                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
-                _ => None,
-            };
-            if let Some(child_node) = child_node {
-                collect_accounts_from_trie(child_node, path.concat(&ext.prefix), accounts, nodes);
-            }
-        }
-        Node::Leaf(leaf) => {
-            let full_path = path.concat(&leaf.partial);
-            let path_bytes = full_path.to_bytes();
-            if path_bytes.len() == 32 {
-                let hashed_address = H256::from_slice(&path_bytes);
-                match AccountState::decode(&leaf.value) {
-                    Ok(account_state) => {
-                        accounts.push((hashed_address, account_state.storage_root));
-                    }
-                    Err(e) => {
-                        tracing::debug!(
-                            ?hashed_address,
-                            error = %e,
-                            "Skipping leaf with un-decodable account state"
-                        );
-                    }
-                }
-            } else {
-                tracing::debug!(
-                    path_len = path_bytes.len(),
-                    "Skipping leaf with unexpected path length (expected 32)"
-                );
-            }
-        }
     }
 }
 
@@ -701,6 +630,76 @@ impl GuestProgramState {
             };
             self.verified_storage_roots.insert(hashed_address, true);
             Ok(Some(storage_trie))
+        }
+    }
+}
+
+/// Walk an embedded state trie and collect `(hashed_address, storage_root)` pairs
+/// from leaf nodes. Resolves `NodeRef::Hash` references using the flat `nodes` map.
+pub fn collect_accounts_from_trie(
+    root: &Node,
+    nodes: &BTreeMap<H256, Node>,
+    crypto: &dyn Crypto,
+) -> Vec<(H256, H256)> {
+    use ethrex_trie::Nibbles;
+    let mut accounts = Vec::new();
+    collect_accounts_from_node(root, Nibbles::default(), &mut accounts, nodes, crypto);
+    accounts
+}
+
+fn collect_accounts_from_node(
+    node: &Node,
+    path: ethrex_trie::Nibbles,
+    accounts: &mut Vec<(H256, H256)>,
+    nodes: &BTreeMap<H256, Node>,
+    crypto: &dyn Crypto,
+) {
+    use ethrex_trie::NodeRef;
+
+    match node {
+        Node::Branch(branch) => {
+            for (i, child) in branch.choices.iter().enumerate() {
+                let child_node: Option<&Node> = match child {
+                    NodeRef::Node(n, _) => Some(n),
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
+                    _ => None,
+                };
+                if let Some(child_node) = child_node {
+                    collect_accounts_from_node(
+                        child_node,
+                        path.append_new(i as u8),
+                        accounts,
+                        nodes,
+                        crypto,
+                    );
+                }
+            }
+        }
+        Node::Extension(ext) => {
+            let child_node: Option<&Node> = match &ext.child {
+                NodeRef::Node(n, _) => Some(n),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
+                _ => None,
+            };
+            if let Some(child_node) = child_node {
+                collect_accounts_from_node(
+                    child_node,
+                    path.concat(&ext.prefix),
+                    accounts,
+                    nodes,
+                    crypto,
+                );
+            }
+        }
+        Node::Leaf(leaf) => {
+            let full_path = path.concat(&leaf.partial);
+            let path_bytes = full_path.to_bytes();
+            if path_bytes.len() == 32 {
+                let hashed_address = H256::from_slice(&path_bytes);
+                if let Ok(account_state) = AccountState::decode(&leaf.value) {
+                    accounts.push((hashed_address, account_state.storage_root));
+                }
+            }
         }
     }
 }

@@ -867,6 +867,7 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
+ "bitvec",
  "bytes",
  "derive_more",
  "ethrex-common",

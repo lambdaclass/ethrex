@@ -5,7 +5,7 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
@@ -14,6 +14,8 @@ pub mod payload;
 pub mod prover;
 mod receipt;
 pub mod requests;
+#[cfg(feature = "experimental-devnet")]
+pub mod stateless_ssz;
 pub mod transaction;
 pub mod tx_fields;
 
