@@ -41,22 +41,22 @@ FROM chef AS builder
 ARG PROFILE="release"
 ARG BUILD_FLAGS=""
 
-# Install protoc only for L2 builds (crates/l2/build.rs compiles sidecar.proto via tonic_build)
-RUN if echo "$BUILD_FLAGS" | grep -q "l2"; then \
-    apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
-    && rm -rf /var/lib/apt/lists/*; fi
-
 COPY --from=planner /ethrex/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
 
 RUN  if [ "$(uname -m)" = aarch64 ]; \
     then \
     SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux-arm;\
+    PROTOC_URL=https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-aarch_64.zip;\
     else \
     SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux; \
+    PROTOC_URL=https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip;\
     fi \
     && curl -L -o /usr/bin/solc $SOLC_URL \
-    && chmod +x /usr/bin/solc
+    && chmod +x /usr/bin/solc \
+    && curl -L -o /tmp/protoc.zip $PROTOC_URL \
+    && unzip -o /tmp/protoc.zip -d /usr/local bin/protoc \
+    && rm /tmp/protoc.zip
 
 COPY benches ./benches
 COPY crates ./crates

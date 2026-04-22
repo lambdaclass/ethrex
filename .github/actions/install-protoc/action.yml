@@ -1,0 +1,27 @@
+name: Install protoc
+description: Install Protocol Buffers compiler
+
+inputs:
+  version:
+    description: "Protoc version"
+    required: false
+    default: "29.3"
+
+runs:
+  using: "composite"
+  steps:
+    - id: install
+      shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "X64" ]]; then
+          PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${VERSION}/protoc-${VERSION}-linux-x86_64.zip"
+        elif [[ "${{ runner.os }}" == "Linux" && "${{ runner.arch }}" == "ARM64" ]]; then
+          PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${VERSION}/protoc-${VERSION}-linux-aarch_64.zip"
+        elif [[ "${{ runner.os }}" == "macOS" ]]; then
+          PROTOC_URL="https://github.com/protocolbuffers/protobuf/releases/download/v${VERSION}/protoc-${VERSION}-osx-aarch_64.zip"
+        fi
+        curl -L -o /tmp/protoc.zip "$PROTOC_URL"
+        sudo unzip -o /tmp/protoc.zip -d /usr/local bin/protoc
+        rm /tmp/protoc.zip
+        protoc --version

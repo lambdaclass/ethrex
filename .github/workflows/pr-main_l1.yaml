@@ -347,9 +347,6 @@ jobs:
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
 
-      - name: Setup Rust Environment
-        uses: ./.github/actions/setup-rust
-
       # If this fails you should run `make update-cargo-lock`
       - name: Check Cargo.lock files are committed
         run: |
