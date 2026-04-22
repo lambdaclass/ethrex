@@ -50,7 +50,7 @@ pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 pub const STORAGE_BATCH_SIZE: usize = 1024;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 1024;
+pub const NODE_BATCH_SIZE: usize = 512;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
