@@ -146,6 +146,12 @@ impl RpcExecutionWitness {
         chain_config: ChainConfig,
         first_block_number: u64,
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
+        if first_block_number == 0 {
+            return Err(GuestProgramStateError::Custom(
+                "first_block_number must be > 0 (need parent header)".to_string(),
+            ));
+        }
+
         let mut initial_state_root = None;
 
         for h in &self.headers {

@@ -833,10 +833,35 @@ pub fn apply_plain_transaction(
     // EIP-8037 (Amsterdam+): track regular and state gas separately
     let tx_state_gas = report.state_gas_used;
     let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
-    context.block_regular_gas_used = context
+
+    // Compute new totals before committing them
+    let new_regular = context
         .block_regular_gas_used
         .saturating_add(tx_regular_gas);
-    context.block_state_gas_used = context.block_state_gas_used.saturating_add(tx_state_gas);
+    let new_state = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    // EIP-8037 (Amsterdam+): post-execution block gas overflow check
+    // Reject the transaction if adding it would cause max(regular, state) to exceed the gas limit
+    if context.is_amsterdam && new_regular.max(new_state) > context.payload.header.gas_limit {
+        // Rollback transaction state before returning error:
+        // 1. Undo DB mutations (nonce, balance, storage, etc.)
+        // 2. Revert cumulative gas counter inflation
+        // This ensures the next transaction executes against clean state.
+        context.vm.undo_last_tx()?;
+        context.cumulative_gas_spent -= report.gas_spent;
+
+        return Err(EvmError::Custom(format!(
+            "block gas limit exceeded (state gas overflow): \
+             max({new_regular}, {new_state}) = {} > gas_limit {}",
+            new_regular.max(new_state),
+            context.payload.header.gas_limit
+        ))
+        .into());
+    }
+
+    // Commit the new totals
+    context.block_regular_gas_used = new_regular;
+    context.block_state_gas_used = new_state;
 
     if context.is_amsterdam {
         debug!(
@@ -852,15 +877,14 @@ pub fn apply_plain_transaction(
     }
 
     // Update remaining_gas for block gas limit checks.
-    // EIP-8037 (Amsterdam+): per-tx check only validates regular gas against block limit.
-    // State gas is NOT checked per-tx; block-end validation enforces
-    // max(block_regular, block_state) <= gas_limit.
+    // EIP-8037 (Amsterdam+): remaining_gas reflects both regular and state gas dimensions.
+    // For pre-tx heuristic checks, this ensures we reject txs when either dimension is full.
     if context.is_amsterdam {
         context.remaining_gas = context
             .payload
             .header
             .gas_limit
-            .saturating_sub(context.block_regular_gas_used);
+            .saturating_sub(new_regular.max(new_state));
     } else {
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
     }
@@ -884,7 +908,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    pub tip: u64,
+    pub tip: U256,
 }
 
 impl std::ops::Deref for HeadTransaction {

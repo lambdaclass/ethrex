@@ -367,10 +367,8 @@ impl L1Watcher {
         max_block_step: U256,
     ) -> Result<(U256, Vec<RpcLog>), L1WatcherError> {
         info!("Getting privileged transactions");
-        let Some(latest_block_to_check) = client
-            .get_block_number()
-            .await?
-            .checked_sub(block_delay.into())
+        let Some(latest_block_to_check) =
+            U256::from(client.get_block_number().await?).checked_sub(block_delay.into())
         else {
             warn!("Too close to genesis to request privileged transactions");
             return Ok((last_block_fetched, vec![]));
@@ -423,7 +421,12 @@ impl L1Watcher {
             let privileged_transaction_data = PrivilegedTransactionData::from_log(log.log)
                 .map_err(L1WatcherError::FailedToDeserializeLog)?;
 
-            let chain_id = self.this_l2_client.get_chain_id().await?.as_u64();
+            let chain_id: u64 = self
+                .this_l2_client
+                .get_chain_id()
+                .await?
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("chain_id overflows u64".to_owned()))?;
 
             let gas_price = self.this_l2_client.get_gas_price().await?;
             // Avoid panicking when using as_u64()
@@ -493,14 +496,23 @@ impl L1Watcher {
             .map_err(|_| L1WatcherError::Custom("Failed at gas_price.try_into()".to_owned()))?;
 
         for (tx, source_chain_id) in l2_txs {
-            info!("Add mint tx with nonce: {}", tx.tx_id.as_u64());
+            let tx_nonce: u64 = tx
+                .tx_id
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("tx_id overflows u64".to_owned()))?;
+            let tx_gas_limit: u64 = tx
+                .gas_limit
+                .try_into()
+                .map_err(|_| L1WatcherError::Custom("gas_limit overflows u64".to_owned()))?;
+
+            info!("Add mint tx with nonce: {}", tx_nonce);
 
             let mint_transaction = PrivilegedL2Transaction {
                 chain_id: source_chain_id,
-                nonce: tx.tx_id.as_u64(),
+                nonce: tx_nonce,
                 max_priority_fee_per_gas: gas_price,
                 max_fee_per_gas: gas_price,
-                gas_limit: tx.gas_limit.as_u64(),
+                gas_limit: tx_gas_limit,
                 to: TxKind::Call(tx.to),
                 value: tx.value,
                 data: tx.data.clone(),
