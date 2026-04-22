@@ -1313,34 +1313,42 @@ async fn handle_incoming_message(
         }
         Message::NewBlockAnnouncement(announce) => {
             // BSC peers broadcast full blocks inline. Importing directly
-            // removes the header+body round-trips that would otherwise be
-            // needed, getting us to tip with near-zero lag.
-            // We only propagate the announced hash into the sync bridge
-            // (via `set_bsc_sync_head`) AFTER the block import has attempted
-            // to validate it — never trust raw peer data to pollute sync
-            // state. On `ParentNotFound` we are simply behind; the hash is
-            // still useful to wake the bridge so the normal sync cycle can
-            // catch up (BSC forward sync fetches by number, not hash).
+            // removes the header+body round-trips a sync cycle would need,
+            // getting us to tip with near-zero lag.
+            //
+            // Peer-claimed fields (`number`, `parent_hash`, etc.) are NOT
+            // trusted — real validation happens inside `add_block_pipeline`.
+            // The `number == latest + 1` gate is a performance heuristic only:
+            // it filters the two common "wasted CPU" cases cheaply:
+            //   - old blocks re-broadcast by slow peers
+            //   - far-future speculative claims
+            // A peer that lies about `number` just ends up at `add_block_pipeline`
+            // where full validation rejects the block (same as without the gate).
+            //
+            // Future blocks (number > latest + 1) are already handled by
+            // NewBlockHashes and BlockRangeUpdate triggering the sync cycle;
+            // no need to propagate an unverified hash from NewBlock here.
             let chain_id = state.storage.get_chain_config().chain_id;
             if chain_id == 56 || chain_id == 97 {
                 let block = announce.block;
-                let block_hash = block.hash();
-                let blockchain = state.blockchain.clone();
-                tokio::task::spawn_blocking(move || {
-                    use ethrex_blockchain::error::ChainError;
-                    match blockchain.add_block_pipeline(block, None) {
-                        Ok(()) => {
-                            // Imported; block validated. No sync needed.
-                        }
-                        Err(ChainError::ParentNotFound) => {
-                            // We're behind — wake the sync bridge to catch up.
-                            blockchain.set_bsc_sync_head(block_hash);
-                        }
-                        Err(_) => {
-                            // Invalid or duplicate — don't propagate.
-                        }
-                    }
-                });
+                let block_number = block.header.number;
+                let latest = state
+                    .storage
+                    .get_latest_block_number()
+                    .await
+                    .unwrap_or(0);
+                if block_number == latest.saturating_add(1) {
+                    let blockchain = state.blockchain.clone();
+                    tokio::task::spawn_blocking(move || {
+                        // All errors (InvalidBlock, ParentNotFound due to
+                        // race with other import path, duplicate) are
+                        // non-fatal; the sync cycle handles recovery.
+                        let _ = blockchain.add_block_pipeline(block, None);
+                    });
+                }
+                // Else: ignore. Other triggers (NewBlockHashes,
+                // BlockRangeUpdate) will drive the sync bridge if we're
+                // actually behind.
             }
         }
         Message::BlockRangeUpdate(update) => {
