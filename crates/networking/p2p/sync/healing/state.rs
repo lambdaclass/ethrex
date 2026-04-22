@@ -41,10 +41,10 @@ use super::types::{HealingQueueEntry, StateHealingQueue};
 /// `RequestMetadata` ordered by `path` depth, deepest first.
 ///
 /// Used inside a `BinaryHeap` (max-heap) so the dispatcher pops the deepest
-/// pending node available. Same rationale as storage healing: depth-first
-/// draining is what shrinks `healing_queue` fastest — committing a leaf
-/// cascades up through its ancestors via `commit_node`, freeing pending
-/// parents.
+/// pending node available. Depth-first draining is what shrinks `healing_queue`
+/// fastest: committing a leaf cascades up through its ancestors via
+/// `commit_node`, freeing pending parents. Shallow-first would instead keep
+/// expanding the frontier and grow the queue without bound.
 #[derive(Debug, Clone)]
 struct DepthOrderedMetadata(RequestMetadata);
 
@@ -138,7 +138,7 @@ async fn heal_state_trie(
     // Count of loop iterations where dispatch was skipped because
     // `healing_queue.len() >= HEALING_QUEUE_SOFT_LIMIT`. Reset every progress
     // interval — logged value is a per-interval rate, not a cumulative total.
-    let mut backpressure_stalls: u64 = 0;
+    let mut backpressure_stalls: usize = 0;
     let mut nodes_to_write: Vec<(Nibbles, Node)> = Vec::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
@@ -153,6 +153,11 @@ async fn heal_state_trie(
     let mut logged_no_free_peers_count = 0;
 
     loop {
+        // Unconditional yield: ensures we cooperate with the tokio runtime even
+        // when backpressure skips the dispatch branch (which holds the only
+        // other yield point) and the response channel is empty.
+        tokio::task::yield_now().await;
+
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
@@ -256,86 +261,79 @@ async fn heal_state_trie(
         // responses drain `healing_queue` via `commit_node` cascades. Without
         // it, reaching `inflight_tasks == 0 && healing_queue >= SOFT_LIMIT`
         // would spin with nothing in-flight to refill the channel.
-        let gate_open = healing_queue.len() < HEALING_QUEUE_SOFT_LIMIT || inflight_tasks == 0;
-        if !is_stale && gate_open {
-            let batch_size = paths.len().min(NODE_BATCH_SIZE);
-            let mut batch: Vec<RequestMetadata> = Vec::with_capacity(batch_size);
-            for _ in 0..batch_size {
-                match paths.pop() {
-                    Some(DepthOrderedMetadata(req)) => batch.push(req),
-                    None => break,
-                }
-            }
-            if !batch.is_empty() {
-                longest_path_seen = usize::max(
-                    batch
-                        .iter()
-                        .map(|request_metadata| request_metadata.path.len())
-                        .max()
-                        .unwrap_or_default(),
-                    longest_path_seen,
-                );
-                let Some((peer_id, connection)) = peers
-                    .peer_table
-                    .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
-                    .await
-                    .inspect_err(
-                        |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
-                    )
-                    .unwrap_or(None)
-                else {
-                    // If there are no peers available, re-add the batch to the paths vector, and continue
-                    paths.extend(batch.into_iter().map(DepthOrderedMetadata));
-
-                    // Log ~ once every 10 seconds
-                    if logged_no_free_peers_count == 0 {
-                        trace!("We are missing peers in heal_state_trie");
-                        logged_no_free_peers_count = 1000;
+        if !is_stale {
+            let gate_open = healing_queue.len() < HEALING_QUEUE_SOFT_LIMIT || inflight_tasks == 0;
+            if gate_open {
+                let batch_size = paths.len().min(NODE_BATCH_SIZE);
+                let mut batch: Vec<RequestMetadata> = Vec::with_capacity(batch_size);
+                for _ in 0..batch_size {
+                    match paths.pop() {
+                        Some(DepthOrderedMetadata(req)) => batch.push(req),
+                        None => break,
                     }
-                    logged_no_free_peers_count -= 1;
-
-                    // Sleep a bit to avoid busy polling
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                    continue;
-                };
-
-                let tx = task_sender.clone();
-                inflight_tasks += 1;
-
-                // We intentionally do not call `inc_requests` / `dec_requests`
-                // here. The heal loop's flow is naturally serial: paths only
-                // grow from responses, so spawn rate is bounded by the
-                // response rate. Tracking per-peer request counts just opens
-                // a leak window (if the main loop exits before draining
-                // in-flight responses, `dec_requests` never fires and peers
-                // end up permanently "busy" from the peer table's view).
-
-                let batch_len = batch.len();
-                let peer_table = peers.peer_table.clone();
-                tokio::spawn(async move {
-                    debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
-                    let response = request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
-                    debug!(
-                        "HEAL WORKER returned: peer={peer_id} ok={} err={:?}",
-                        response.is_ok(),
-                        response.as_ref().err(),
+                }
+                if !batch.is_empty() {
+                    longest_path_seen = usize::max(
+                        batch
+                            .iter()
+                            .map(|request_metadata| request_metadata.path.len())
+                            .max()
+                            .unwrap_or_default(),
+                        longest_path_seen,
                     );
-                    // TODO: add error handling
-                    tx.send((peer_id, response, batch)).await.inspect_err(
-                        |err| debug!(error=?err, "Failed to send state trie nodes response"),
-                    )
-                });
-                tokio::task::yield_now().await;
+                    let Some((peer_id, connection)) = peers
+                        .peer_table
+                        .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                        .await
+                        .inspect_err(|err| {
+                            debug!(err=?err, "Error requesting a peer to perform state healing")
+                        })
+                        .unwrap_or(None)
+                    else {
+                        // If there are no peers available, re-add the batch to the paths vector, and continue
+                        paths.extend(batch.into_iter().map(DepthOrderedMetadata));
+
+                        // Log ~ once every 10 seconds
+                        if logged_no_free_peers_count == 0 {
+                            trace!("We are missing peers in heal_state_trie");
+                            logged_no_free_peers_count = 1000;
+                        }
+                        logged_no_free_peers_count -= 1;
+
+                        // Sleep a bit to avoid busy polling
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        continue;
+                    };
+
+                    let tx = task_sender.clone();
+                    inflight_tasks += 1;
+
+                    let batch_len = batch.len();
+                    let peer_table = peers.peer_table.clone();
+                    tokio::spawn(async move {
+                        debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
+                        let response = request_state_trienodes(
+                            peer_id,
+                            connection,
+                            peer_table,
+                            state_root,
+                            batch.clone(),
+                        )
+                        .await;
+                        debug!(
+                            "HEAL WORKER returned: peer={peer_id} ok={} err={:?}",
+                            response.is_ok(),
+                            response.as_ref().err(),
+                        );
+                        // TODO: add error handling
+                        tx.send((peer_id, response, batch)).await.inspect_err(
+                            |err| debug!(error=?err, "Failed to send state trie nodes response"),
+                        )
+                    });
+                }
+            } else {
+                backpressure_stalls += 1;
             }
-        } else if !is_stale {
-            backpressure_stalls += 1;
         }
 
         // If there is at least one "batch" of nodes to heal, heal it
