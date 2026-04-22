@@ -763,40 +763,90 @@ where
     Fut: std::future::Future<Output = Result<Value, E>>,
     E: Into<RpcErrorMetadata>,
 {
-    let req: RpcRequest = match serde_json::from_str(body) {
-        Ok(r) => r,
-        Err(_) => {
-            // JSON-RPC 2.0 spec: parse error responses must have "id": null.
-            let resp = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": null,
-                "error": {
-                    "code": -32700,
-                    "message": "Parse error"
-                }
-            });
-            return Some(resp.to_string());
-        }
+    // Parse as raw JSON first so we can distinguish between:
+    //   -32700 Parse error (malformed JSON)
+    //   -32600 Invalid Request (valid JSON, but not a valid JSON-RPC request object)
+    let parsed: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Some(ws_error_response(None, -32700, "Parse error")),
     };
 
+    // Accept both a single request and a batch (array), matching HTTP behavior.
+    let wrapper: RpcRequestWrapper = match serde_json::from_value(parsed) {
+        Ok(w) => w,
+        Err(_) => return Some(ws_error_response(None, -32600, "Invalid Request")),
+    };
+
+    match wrapper {
+        RpcRequestWrapper::Single(req) => {
+            let resp =
+                process_ws_request(req, context, out_tx, subscription_ids, route_request).await?;
+            Some(resp.to_string())
+        }
+        RpcRequestWrapper::Multiple(reqs) => {
+            // Per JSON-RPC 2.0 spec, an empty batch is an invalid request.
+            if reqs.is_empty() {
+                return Some(ws_error_response(None, -32600, "Invalid Request"));
+            }
+            let mut responses = Vec::with_capacity(reqs.len());
+            for req in reqs {
+                if let Some(resp) =
+                    process_ws_request(req, context, out_tx, subscription_ids, route_request).await
+                {
+                    responses.push(resp);
+                }
+            }
+            if responses.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&responses).ok()
+            }
+        }
+    }
+}
+
+async fn process_ws_request<F, Fut, E>(
+    req: RpcRequest,
+    context: &RpcApiContext,
+    out_tx: &tokio::sync::mpsc::Sender<String>,
+    subscription_ids: &mut Vec<String>,
+    route_request: &F,
+) -> Option<Value>
+where
+    F: Fn(RpcRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, E>>,
+    E: Into<RpcErrorMetadata>,
+{
     match req.method.as_str() {
         "eth_subscribe" => {
             let result = handle_eth_subscribe(&req, context, out_tx, subscription_ids).await;
-            let resp = rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
+            rpc_response(req.id, result).ok()
         }
         "eth_unsubscribe" => {
             let result = handle_eth_unsubscribe(&req, context, subscription_ids).await;
-            let resp = rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
+            rpc_response(req.id, result).ok()
         }
         _ => {
             let id = req.id.clone();
             let res = route_request(req).await;
-            let resp = rpc_response(id, res).ok()?;
-            Some(resp.to_string())
+            rpc_response(id, res).ok()
         }
     }
+}
+
+/// Build a JSON-RPC 2.0 error response. Used for transport-level errors
+/// (parse error, invalid request) where the request ID is unknown.
+fn ws_error_response(id: Option<RpcRequestId>, code: i32, message: &str) -> String {
+    let id = match id {
+        Some(id) => serde_json::to_value(id).unwrap_or(Value::Null),
+        None => Value::Null,
+    };
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message },
+    })
+    .to_string()
 }
 
 /// Handle `eth_subscribe`.
