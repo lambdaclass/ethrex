@@ -133,10 +133,14 @@ pub async fn sync_cycle_snap(
         // converge. Give peers a short warm-up window to populate the
         // candidate set, then just pick the highest block we see.
         let mut best_pivot: Option<ethrex_common::types::BlockHeader> = None;
-        let warmup_deadline = std::time::Instant::now() + Duration::from_secs(10);
+        // Longer warmup + higher candidate count so we don't commit to a
+        // stale peer's head before real-tip peers connect. A bad initial
+        // pivot triggers a multi-million-block header catch-up download in
+        // `update_pivot_bsc` that stalls sync for hours.
+        let warmup_deadline = std::time::Instant::now() + Duration::from_secs(60);
         while std::time::Instant::now() < warmup_deadline {
             let candidates = blockchain.bsc_sync_head_candidates_snapshot();
-            if candidates.len() >= 5 {
+            if candidates.len() >= 30 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(500)).await;
