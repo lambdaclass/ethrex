@@ -596,7 +596,7 @@ pub async fn start_api(
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
     if let Some(ref ws_config) = ws {
-        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async {
+        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
             ws.on_upgrade(|mut socket| async move {
                 handle_websocket(&mut socket, &ctx, |req| {
                     let c = ctx.clone();
