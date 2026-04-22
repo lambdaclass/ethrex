@@ -1332,11 +1332,7 @@ async fn handle_incoming_message(
             if chain_id == 56 || chain_id == 97 {
                 let block = announce.block;
                 let block_number = block.header.number;
-                let latest = state
-                    .storage
-                    .get_latest_block_number()
-                    .await
-                    .unwrap_or(0);
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
                 if block_number == latest.saturating_add(1) {
                     let blockchain = state.blockchain.clone();
                     tokio::task::spawn_blocking(move || {

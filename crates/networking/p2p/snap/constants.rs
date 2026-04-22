@@ -51,9 +51,7 @@ pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 pub const STORAGE_BATCH_SIZE: usize = 300;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-/// Matches bsc-geth's maxTrieRequestCount = maxRequestSize / 512B (avg node size),
-/// sized to fill MAX_RESPONSE_BYTES (2 MiB) per round-trip.
-pub const NODE_BATCH_SIZE: usize = 4096;
+pub const NODE_BATCH_SIZE: usize = 512;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
@@ -66,7 +64,7 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Timeout for block header fetches. Headers are small (a few KB) and cheap
 /// to serve, so a slow reply signals an unresponsive peer. Keeping this short
