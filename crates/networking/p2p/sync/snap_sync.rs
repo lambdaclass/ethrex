@@ -128,62 +128,58 @@ pub async fn sync_cycle_snap(
         // chain. Strategy: take the highest-number peer-reported head and
         // probe forward by requesting headers at a higher block number,
         // walking up until peers stop responding (= we've found their tip).
+        // BSC block time is sub-second post-Fermi, so waiting for a stable
+        // pivot is futile — the chain always moves faster than we can
+        // converge. Give peers a short warm-up window to populate the
+        // candidate set, then just pick the highest block we see.
         let mut best_pivot: Option<ethrex_common::types::BlockHeader> = None;
-        let mut prev_best_number: u64 = 0;
-        for attempt in 0..15 {
-            if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(2)).await;
-            }
-            // Resolve all candidate hashes to their highest-number header.
-            let mut candidates = blockchain.bsc_sync_head_candidates_snapshot();
-            if candidates.is_empty() {
-                candidates.push(sync_head);
-            }
-            candidates.sort();
-            for hash in &candidates {
-                if let Ok(Some(headers)) = peers
-                    .request_block_headers_from_hash(
-                        *hash,
-                        crate::peer_handler::BlockRequestOrder::NewToOld,
-                    )
-                    .await
-                {
-                    if let Some(header) = headers.into_iter().next() {
-                        if best_pivot.as_ref().is_none_or(|h| header.number > h.number) {
-                            best_pivot = Some(header);
-                        }
-                    }
-                }
-            }
-            // Probe forward aggressively from best known head (exponential +
-            // binary search) to catch up to actual chain tip.
-            if let Some(seed) = best_pivot.clone() {
-                best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
-            }
-            let best_number = best_pivot.as_ref().map(|h| h.number).unwrap_or(0);
-            info!(
-                "BSC pivot: {} candidates seen, best so far: block {}",
-                candidates.len(),
-                best_number,
-            );
-            // Converged: if we already have a pivot and this iteration advanced
-            // it by fewer than 10 blocks, further attempts just chase chain
-            // progression, not a better peer view. Bail out — but only after
-            // we've seen enough candidates and iterations, otherwise a single
-            // peer advertising a stale/old head can trap us into picking it
-            // (and forcing a huge catch-up jump on the first pivot refresh).
-            if attempt >= 3
-                && candidates.len() >= 3
-                && best_number > 0
-                && best_number.saturating_sub(prev_best_number) < 10
-            {
+        let warmup_deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < warmup_deadline {
+            let candidates = blockchain.bsc_sync_head_candidates_snapshot();
+            if candidates.len() >= 5 {
                 break;
             }
-            prev_best_number = best_number;
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
+        // Resolve the most recent N candidates — the set grows unboundedly
+        // as peers advertise new heads, and resolving all of them stalls
+        // pivot selection.
+        const MAX_CANDIDATES_TO_RESOLVE: usize = 20;
+        let all_candidates = blockchain.bsc_sync_head_candidates_snapshot();
+        let mut candidates = if all_candidates.len() > MAX_CANDIDATES_TO_RESOLVE {
+            all_candidates[all_candidates.len() - MAX_CANDIDATES_TO_RESOLVE..].to_vec()
+        } else {
+            all_candidates
+        };
+        if candidates.is_empty() {
+            candidates.push(sync_head);
+        }
+        for hash in &candidates {
+            if let Ok(Some(headers)) = peers
+                .request_block_headers_from_hash(
+                    *hash,
+                    crate::peer_handler::BlockRequestOrder::NewToOld,
+                )
+                .await
+                && let Some(header) = headers.into_iter().next()
+                && best_pivot.as_ref().is_none_or(|h| header.number > h.number)
+            {
+                best_pivot = Some(header);
+            }
+        }
+        // Probe forward aggressively from best known head (exponential +
+        // binary search) to catch up to actual chain tip.
+        if let Some(seed) = best_pivot.clone() {
+            best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
+        }
+        info!(
+            "BSC pivot: {} candidates resolved, picked block {}",
+            candidates.len(),
+            best_pivot.as_ref().map(|h| h.number).unwrap_or(0),
+        );
 
         let Some(pivot_header) = best_pivot else {
-            warn!("BSC pivot: could not find pivot after 15 attempts, will retry on next cycle");
+            warn!("BSC pivot: could not find a pivot, will retry on next cycle");
             return Ok(());
         };
         info!(
@@ -492,13 +488,9 @@ pub async fn snap_sync(
                     .await?
                 };
             }
-            // heal_state_trie_wrap returns false if we ran out of time before
-            // fully healing the trie. On chains with short peer retention
-            // (BSC: ~57s), heal almost always stales out before completing;
-            // skipping storage ranges in that case starves it entirely. The
-            // storage_root map is updated by heal as it progresses, so even
-            // a partial heal leaves storage ranges with usable data.
-            let _heal_done = heal_state_trie_wrap(
+            // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
+            // We just need to update the pivot and start again
+            if !heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
@@ -507,7 +499,10 @@ pub async fn snap_sync(
                 &mut storage_accounts,
                 &mut code_hash_collector,
             )
-            .await?;
+            .await?
+            {
+                continue;
+            }
 
             info!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
