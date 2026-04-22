@@ -202,6 +202,37 @@ fn fee_token_lock_only_contract() -> Account {
     )
 }
 
+/// Standard non-privileged, non-fee-token L2 Environment on Prague.
+/// Derives tx fee bounds from `gas_price`/`base_fee_per_gas`. Remaining fields
+/// use `Default::default()` (zeros / None / empty) which is fine for these tests.
+fn non_privileged_l2_env(
+    sender: Address,
+    coinbase: Address,
+    gas_limit: u64,
+    base_fee_per_gas: u64,
+    gas_price: u64,
+) -> Environment {
+    let fork = Fork::Prague;
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    Environment {
+        origin: sender,
+        gas_limit,
+        config: EVMConfig::new(fork, blob_schedule),
+        block_number: 1,
+        coinbase,
+        timestamp: 1000,
+        prev_randao: Some(H256::zero()),
+        chain_id: U256::from(1),
+        base_fee_per_gas: U256::from(base_fee_per_gas),
+        base_blob_fee_per_gas: U256::from(1),
+        gas_price: U256::from(gas_price),
+        tx_max_priority_fee_per_gas: Some(U256::from(gas_price - base_fee_per_gas)),
+        tx_max_fee_per_gas: Some(U256::from(gas_price)),
+        block_gas_limit: gas_limit * 2,
+        ..Default::default()
+    }
+}
+
 // ==================== Tests ====================
 
 /// Regression test for PR #6045 / audit finding: fee token storage rollback.
@@ -357,34 +388,7 @@ fn finalize_mutation_failure_reverts_all_changes() {
     let test_db = TestDatabase::new();
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
 
-    let fork = Fork::Prague;
-    let blob_schedule = EVMConfig::canonical_values(fork);
-    let env = Environment {
-        origin: sender,
-        gas_limit,
-        config: EVMConfig::new(fork, blob_schedule),
-        block_number: 1,
-        coinbase,
-        timestamp: 1000,
-        prev_randao: Some(H256::zero()),
-        difficulty: U256::zero(),
-        slot_number: U256::zero(),
-        chain_id: U256::from(1),
-        base_fee_per_gas: U256::from(base_fee_per_gas),
-        base_blob_fee_per_gas: U256::from(1),
-        gas_price: U256::from(gas_price),
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
-        tx_max_priority_fee_per_gas: Some(U256::from(gas_price - base_fee_per_gas)),
-        tx_max_fee_per_gas: Some(U256::from(gas_price)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: gas_limit * 2,
-        is_privileged: false,
-        fee_token: None,
-        disable_balance_check: false,
-    };
+    let env = non_privileged_l2_env(sender, coinbase, gas_limit, base_fee_per_gas, gas_price);
 
     let fee_config = FeeConfig {
         base_fee_vault: None,
@@ -832,5 +836,134 @@ fn undo_last_transaction_restores_storage_slots() {
         "Storage slot 0 should be restored to {initial_value} after undo_last_transaction, \
          but was {slot_after_undo} (0xDEAD = {:#x} means storage backup was lost)",
         U256::from(0xDEAD)
+    );
+}
+
+/// Regression test: on Phase 2 finalize failure, execution-time storage writes
+/// must remain applied — `restore_cache_state` is scoped to Phase 2's backup only.
+///
+/// Complement to `finalize_mutation_failure_reverts_all_changes`: that test asserts
+/// Phase 2 mutations ARE rolled back; this one asserts execution mutations are NOT.
+/// Together they lock in the scoping invariant. A future refactor that merged the
+/// saved execution_backup into call_frame_backup before the error check would
+/// cause this test to fail (execution SSTORE would be reverted along with Phase 2).
+#[test]
+fn phase2_finalize_failure_preserves_execution_storage_writes() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let coinbase = Address::from_low_u64_be(COINBASE);
+    let operator_fee_vault = Address::from_low_u64_be(0xFEE);
+    let contract = Address::from_low_u64_be(0x3000);
+
+    let gas_limit: u64 = 100_000;
+    let base_fee_per_gas = 1000u64;
+    // gas_price > base_fee to leave room for operator_fee_per_gas in priority fee
+    let gas_price = 1002u64;
+    let operator_fee_per_gas = 1u64;
+
+    // Contract that writes 0xDEAD to storage slot 0, then returns.
+    #[rustfmt::skip]
+    let sstore_bytecode = vec![
+        0x61, 0xDE, 0xAD,  // PUSH2 0xDEAD
+        0x60, 0x00,         // PUSH1 0x00
+        0x55,               // SSTORE
+        0x60, 0x00,         // PUSH1 0x00
+        0x60, 0x00,         // PUSH1 0x00
+        0xf3,               // RETURN
+    ];
+
+    let initial_slot = H256::zero();
+    let initial_value = U256::from(42);
+    let contract_storage: FxHashMap<H256, U256> =
+        [(initial_slot, initial_value)].into_iter().collect();
+
+    let accounts: FxHashMap<Address, Account> = [
+        (sender, eoa(U256::from(gas_price) * U256::from(gas_limit))),
+        (coinbase, eoa(U256::zero())),
+        // U256::MAX balance makes pay_operator_fee overflow, triggering Phase 2 failure.
+        (operator_fee_vault, eoa(U256::MAX)),
+        (
+            contract,
+            Account::new(
+                U256::zero(),
+                Code::from_bytecode(Bytes::from(sstore_bytecode), &NativeCrypto),
+                1,
+                contract_storage,
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+
+    let test_db = TestDatabase::new();
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
+
+    let env = non_privileged_l2_env(sender, coinbase, gas_limit, base_fee_per_gas, gas_price);
+
+    let fee_config = FeeConfig {
+        base_fee_vault: None,
+        operator_fee_config: Some(OperatorFeeConfig {
+            operator_fee_vault,
+            operator_fee_per_gas,
+        }),
+        l1_fee_config: None,
+    };
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: gas_price - base_fee_per_gas,
+        max_fee_per_gas: gas_price,
+        gas_limit,
+        to: TxKind::Call(contract),
+        value: U256::zero(),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config),
+        &NativeCrypto,
+    )
+    .unwrap();
+
+    // Execution runs SSTORE 0xDEAD then succeeds; Phase 2 fails at pay_operator_fee
+    // because the vault holds U256::MAX.
+    let result = vm.execute();
+    assert!(
+        result.is_err(),
+        "Expected execute to fail due to operator fee vault overflow, got: {result:?}"
+    );
+
+    // The critical assertion: execution's SSTORE must survive Phase 2 rollback.
+    let slot_value = db
+        .get_account(contract)
+        .unwrap()
+        .storage
+        .get(&initial_slot)
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        slot_value,
+        U256::from(0xDEAD),
+        "Execution SSTORE must survive Phase 2 failure: slot should be 0xDEAD, was {slot_value}. \
+         If this is {initial_value}, restore_cache_state incorrectly reverted execution mutations."
+    );
+
+    // Sanity: Phase 2 mutations ARE rolled back (parity with finalize_mutation_failure_reverts_all_changes).
+    let coinbase_balance = db.get_account(coinbase).unwrap().info.balance;
+    assert_eq!(
+        coinbase_balance,
+        U256::zero(),
+        "Coinbase should be 0 — Phase 2 pay_coinbase must be reverted"
+    );
+    let vault_balance = db.get_account(operator_fee_vault).unwrap().info.balance;
+    assert_eq!(
+        vault_balance,
+        U256::MAX,
+        "Operator fee vault balance should be U256::MAX after rollback, but was {vault_balance}"
     );
 }
