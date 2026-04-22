@@ -1,3 +1,5 @@
+use crate::sequencer::credible_layer::CredibleLayerClient;
+use crate::sequencer::credible_layer::client::CredibleLayerProtocol;
 use crate::sequencer::errors::BlockProducerError;
 use ethrex_blockchain::{
     Blockchain,
@@ -20,6 +22,7 @@ use ethrex_metrics::{
 };
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
+use spawned_concurrency::tasks::ActorRef;
 use std::sync::Arc;
 use std::{collections::HashMap, ops::Div};
 use tokio::time::Instant;
@@ -35,6 +38,7 @@ pub async fn build_payload(
     privileged_nonces: &mut HashMap<u64, Option<u64>>,
     block_gas_limit: u64,
     registered_chains: Vec<U256>,
+    credible_layer: Option<ActorRef<CredibleLayerClient>>,
 ) -> Result<PayloadBuildResult, BlockProducerError> {
     let since = Instant::now();
     let gas_limit = payload.header.gas_limit;
@@ -49,6 +53,7 @@ pub async fn build_payload(
         privileged_nonces,
         block_gas_limit,
         registered_chains,
+        credible_layer,
     )
     .await?;
     blockchain.finalize_payload(&mut context)?;
@@ -100,6 +105,7 @@ pub async fn fill_transactions(
     privileged_nonces: &mut HashMap<u64, Option<u64>>,
     configured_block_gas_limit: u64,
     registered_chains: Vec<U256>,
+    credible_layer: Option<ActorRef<CredibleLayerClient>>,
 ) -> Result<(), BlockProducerError> {
     let mut privileged_tx_count = 0;
     let VMType::L2(fee_config) = context.vm.vm_type else {
@@ -209,6 +215,29 @@ pub async fn fill_transactions(
             continue;
         }
 
+        // Credible Layer: send transaction event to the sidecar before execution.
+        // TODO: Privileged transactions (L1->L2 deposits) currently bypass the Credible Layer
+        // check entirely. This should be revisited — the sidecar should be aware of all
+        // transactions for accurate state tracking, even if privileged txs are never dropped.
+        if let Some(ref cl) = credible_layer
+            && !head_tx.is_privileged()
+        {
+            let tx_index: u64 = context
+                .payload
+                .body
+                .transactions
+                .len()
+                .try_into()
+                .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
+            let _ = cl.send_transaction(
+                tx_hash,
+                context.block_number(),
+                tx_index,
+                head_tx.tx.sender(),
+                tx.clone(),
+            );
+        }
+
         // Set BAL index for this transaction (1-indexed per EIP-7928)
         #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
         let tx_index = (context.payload.body.transactions.len() + 1) as u16;
@@ -236,6 +265,34 @@ pub async fn fill_transactions(
                 continue;
             }
         };
+
+        // Credible Layer: poll for the sidecar's verdict after execution.
+        // If the sidecar rejected the transaction, undo execution and drop it.
+        if let Some(ref cl) = credible_layer
+            && !head_tx.is_privileged()
+        {
+            let check_tx_index: u64 = context
+                .payload
+                .body
+                .transactions
+                .len()
+                .try_into()
+                .map_err(|_| BlockProducerError::Custom("tx index overflow".into()))?;
+            let include = cl
+                .check_transaction(tx_hash, context.block_number(), check_tx_index)
+                .await
+                .unwrap_or(true);
+            if !include {
+                debug!("Credible layer rejected transaction: {tx_hash:#x}");
+                txs.pop();
+                context.vm.undo_last_tx()?;
+                context.remaining_gas = previous_remaining_gas;
+                context.block_value = previous_block_value;
+                context.cumulative_gas_spent = previous_cumulative_gas_spent;
+                blockchain.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+        }
 
         let l2_messages = get_block_l2_out_messages(std::slice::from_ref(&receipt), chain_id);
         let mut found_invalid_message = false;

@@ -38,6 +38,8 @@ use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 
 use std::str::FromStr;
 
+use super::credible_layer::CredibleLayerClient;
+use super::credible_layer::client::CredibleLayerProtocol;
 use super::errors::BlockProducerError;
 
 use ethrex_metrics::metrics;
@@ -64,6 +66,7 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
+    credible_layer: Option<ActorRef<CredibleLayerClient>>,
     /// Actor handle for sending new block headers to WS subscribers.
     subscription_manager: Option<ActorRef<SubscriptionManager>>,
 }
@@ -87,6 +90,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        credible_layer: Option<ActorRef<CredibleLayerClient>>,
         subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
@@ -126,6 +130,7 @@ impl BlockProducer {
             block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
+            credible_layer,
             subscription_manager,
         })
     }
@@ -162,6 +167,11 @@ impl BlockProducer {
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 
+        // Credible Layer: send NewIteration before building the block.
+        if let Some(ref cl) = self.credible_layer {
+            let _ = cl.new_iteration(payload.header.clone());
+        }
+
         let registered_chains = self.get_registered_l2_chain_ids().await?;
 
         // Blockchain builds the payload from mempool txs and executes them
@@ -172,6 +182,7 @@ impl BlockProducer {
             &mut self.privileged_nonces,
             self.block_gas_limit,
             registered_chains,
+            self.credible_layer.clone(),
         )
         .await?;
         info!(
@@ -204,6 +215,7 @@ impl BlockProducer {
             .ok_or(ChainError::ParentStateNotFound)?;
 
         let transactions_count = block.body.transactions.len();
+        let last_tx_hash = block.body.transactions.last().map(|tx| tx.hash());
         let block_number = block.header.number;
         let block_hash = block.hash();
         // Save the header for newHeads notifications before block is moved into store_block.
@@ -223,6 +235,20 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+
+        // Credible Layer: send CommitHead after block is stored
+        if let Some(ref cl) = self.credible_layer {
+            let tx_count: u64 = transactions_count
+                .try_into()
+                .map_err(|_| BlockProducerError::Custom("tx count overflow".into()))?;
+            let _ = cl.commit_head(
+                block_number,
+                block_hash,
+                block_header.timestamp,
+                tx_count,
+                last_tx_hash,
+            );
+        }
 
         // Notify all eth_subscribe("newHeads") subscribers.
         if let Some(ref manager) = self.subscription_manager {
@@ -312,6 +338,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        credible_layer: Option<ActorRef<CredibleLayerClient>>,
         subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
         let block_producer = Self::new(
@@ -323,6 +350,7 @@ impl BlockProducer {
             sequencer_state,
             router_address,
             l2_gas_limit,
+            credible_layer,
             subscription_manager,
         )?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);

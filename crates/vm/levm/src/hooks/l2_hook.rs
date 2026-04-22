@@ -146,9 +146,9 @@ fn finalize_non_privileged_execution(
     // EIP-7778: pre-refund gas for block accounting
     let total_gas_pre_refund = ctx_result.gas_used;
 
-    // Clear the backup so that Phase 2's rollback only undoes mutations
-    // from apply_finalize_mutations, not the gas-overuse revert above.
-    vm.current_call_frame.call_frame_backup.clear();
+    // Save the execution backup (contains storage slot backups from SSTORE, etc.)
+    // before clearing, so BackupHook can include it in the tx-level undo snapshot.
+    let execution_backup = std::mem::take(&mut vm.current_call_frame.call_frame_backup);
 
     // === Phase 1: Fallible computations (no state mutations) ===
     // Perform contract calls and conversions that can fail BEFORE any
@@ -176,6 +176,7 @@ fn finalize_non_privileged_execution(
     // Mutations record original values in call_frame_backup via
     // backup_account_info / backup_storage_slot. If any step fails,
     // we restore the cache to undo all partial mutations.
+    // The call_frame_backup is empty here so rollback only undoes Phase 2.
     let result = apply_finalize_mutations(
         vm,
         ctx_result,
@@ -198,6 +199,12 @@ fn finalize_non_privileged_execution(
         vm.restore_cache_state()?;
         return Err(e);
     }
+
+    // Merge the saved execution backup back so BackupHook can capture
+    // both execution-time and finalize-time state for tx-level undo.
+    vm.current_call_frame
+        .call_frame_backup
+        .extend(execution_backup);
 
     Ok(())
 }

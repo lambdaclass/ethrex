@@ -23,7 +23,7 @@ use reqwest::Url;
 use spawned_concurrency::tasks::ActorRef;
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use utils::get_needed_proof_types;
 
 mod admin_server;
@@ -39,6 +39,7 @@ pub use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 pub mod state_updater;
 
 pub mod configs;
+pub mod credible_layer;
 pub mod errors;
 pub mod setup;
 pub mod utils;
@@ -154,6 +155,22 @@ pub async fn start_l2(
     .inspect_err(|err| {
         error!("Error starting L1 Proof Sender: {err}");
     });
+    let credible_layer = if let Some(url) = cfg.credible_layer.sidecar_url.clone() {
+        match credible_layer::CredibleLayerClient::spawn(url).await {
+            Ok(actor_ref) => {
+                info!("Credible Layer sidecar client started");
+                Some(actor_ref)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to start Credible Layer client: {e}. Proceeding without credible layer."
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let block_producer = BlockProducer::spawn(
         store.clone(),
         rollup_store.clone(),
@@ -162,6 +179,7 @@ pub async fn start_l2(
         shared_state.clone(),
         cfg.l1_watcher.router_address,
         l2_gas_limit,
+        credible_layer,
         subscription_manager,
     )
     .await
