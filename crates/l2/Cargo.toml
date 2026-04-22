@@ -62,6 +62,7 @@ ethrex-guest-program = { path = "../guest-program", optional = true }
 [build-dependencies]
 vergen-git2 = { version = "1.0.7" }
 tonic-build = "0.12"
+protox = "0.7"
 
 [dev-dependencies]
 anyhow = "1.0.86"

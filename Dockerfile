@@ -47,16 +47,11 @@ RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
 RUN  if [ "$(uname -m)" = aarch64 ]; \
     then \
     SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux-arm;\
-    PROTOC_URL=https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-aarch_64.zip;\
     else \
     SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux; \
-    PROTOC_URL=https://github.com/protocolbuffers/protobuf/releases/download/v29.3/protoc-29.3-linux-x86_64.zip;\
     fi \
     && curl -L -o /usr/bin/solc $SOLC_URL \
-    && chmod +x /usr/bin/solc \
-    && curl -L -o /tmp/protoc.zip $PROTOC_URL \
-    && unzip -o /tmp/protoc.zip -d /usr/local bin/protoc \
-    && rm /tmp/protoc.zip
+    && chmod +x /usr/bin/solc
 
 COPY benches ./benches
 COPY crates ./crates

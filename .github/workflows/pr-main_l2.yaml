@@ -99,9 +99,6 @@ jobs:
           mkdir -p crates/guest-program/bin/sp1/out
           touch crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-elf
 
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
-
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
@@ -130,9 +127,6 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
 
       - name: Validate blobs match genesis
         run: |
@@ -218,9 +212,6 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -349,9 +340,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
 
       - name: Install solc
         uses: ./.github/actions/install-solc
@@ -517,9 +505,6 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
-
       - name: Install solc
         uses: ./.github/actions/install-solc
 
@@ -651,9 +636,6 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
-
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v4
         with:
@@ -720,9 +702,6 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
-
-      - name: Install Protoc
-        uses: ./.github/actions/install-protoc
 
       - name: Install solc
         uses: ./.github/actions/install-solc

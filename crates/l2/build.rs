@@ -14,10 +14,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         Emitter::default().add_instructions(&git2)?.emit()?;
     }
 
-    // Compile Credible Layer protobuf definitions (client only)
+    // Compile Credible Layer protobuf definitions (client only).
+    // Uses protox (pure-Rust protobuf compiler) so no system protoc binary is needed.
+    let fds = protox::compile(["proto/sidecar.proto"], ["proto/"])?;
     tonic_build::configure()
         .build_server(false)
-        .compile_protos(&["proto/sidecar.proto"], &["proto/"])?;
+        .compile_fds(fds)?;
 
     Ok(())
 }
