@@ -63,7 +63,7 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Number of retry attempts when selecting a peer for a request.
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
