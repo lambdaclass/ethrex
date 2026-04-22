@@ -100,14 +100,10 @@ impl SubscriptionManager {
             );
         }
 
-        // Serialize the header result once; each subscriber gets its own
-        // notification envelope with a different subscription ID.
-        let result_json = header_value.to_string();
-
         let mut dead_ids: Vec<String> = Vec::new();
 
         for (sub_id, sender) in &self.subscribers {
-            let notification = build_subscription_notification(sub_id, &result_json);
+            let notification = build_subscription_notification(sub_id, &header_value);
             match sender.try_send(notification) {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
@@ -148,12 +144,20 @@ impl SubscriptionManager {
 
 /// Build the standard Ethereum subscription notification envelope.
 ///
-/// Takes a pre-serialized `result_json` string to avoid re-serializing the
-/// header for every subscriber during fan-out.
-fn build_subscription_notification(sub_id: &str, result_json: &str) -> String {
-    format!(
-        r#"{{"jsonrpc":"2.0","method":"eth_subscription","params":{{"subscription":"{sub_id}","result":{result_json}}}}}"#
-    )
+/// `result` is cloned per subscriber — cheap relative to re-serializing the
+/// header. Using `serde_json::json!` avoids hand-rolled string interpolation,
+/// which would silently produce malformed JSON if `sub_id` or the result ever
+/// contained unescaped characters.
+fn build_subscription_notification(sub_id: &str, result: &Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_subscription",
+        "params": {
+            "subscription": sub_id,
+            "result": result,
+        },
+    })
+    .to_string()
 }
 
 /// Generate a random hex subscription ID (16 bytes / 128 bits).
