@@ -1315,20 +1315,32 @@ async fn handle_incoming_message(
             // BSC peers broadcast full blocks inline. Importing directly
             // removes the header+body round-trips that would otherwise be
             // needed, getting us to tip with near-zero lag.
-            // Fall back to set_bsc_sync_head so the sync bridge picks up
-            // blocks whose parent isn't our latest (i.e. we're more than
-            // one behind or we missed a block).
+            // We only propagate the announced hash into the sync bridge
+            // (via `set_bsc_sync_head`) AFTER the block import has attempted
+            // to validate it — never trust raw peer data to pollute sync
+            // state. On `ParentNotFound` we are simply behind; the hash is
+            // still useful to wake the bridge so the normal sync cycle can
+            // catch up (BSC forward sync fetches by number, not hash).
             let chain_id = state.storage.get_chain_config().chain_id;
             if chain_id == 56 || chain_id == 97 {
                 let block = announce.block;
                 let block_hash = block.hash();
                 let blockchain = state.blockchain.clone();
                 tokio::task::spawn_blocking(move || {
-                    // Duplicate / parent-not-found / validation errors are
-                    // resolved by the normal sync cycle triggered below.
-                    let _ = blockchain.add_block_pipeline(block, None);
+                    use ethrex_blockchain::error::ChainError;
+                    match blockchain.add_block_pipeline(block, None) {
+                        Ok(()) => {
+                            // Imported; block validated. No sync needed.
+                        }
+                        Err(ChainError::ParentNotFound) => {
+                            // We're behind — wake the sync bridge to catch up.
+                            blockchain.set_bsc_sync_head(block_hash);
+                        }
+                        Err(_) => {
+                            // Invalid or duplicate — don't propagate.
+                        }
+                    }
                 });
-                state.blockchain.set_bsc_sync_head(block_hash);
             }
         }
         Message::BlockRangeUpdate(update) => {
