@@ -109,7 +109,7 @@ impl L2Command {
             }
             #[cfg(not(feature = "experimental-devnet"))]
             return Err(eyre::eyre!(
-                "--eip-8025 requires the experimental-devnet feature flag"
+                "--eip-8079 requires the experimental-devnet feature flag"
             ));
         }
         l2::init_l2(l2_options, log_filter_handler).await?;
@@ -638,7 +638,7 @@ impl Command {
                     }
                     #[cfg(not(feature = "experimental-devnet"))]
                     return Err(eyre::eyre!(
-                        "--eip-8025 requires the experimental-devnet feature flag"
+                        "--eip-8079 requires the experimental-devnet feature flag"
                     ));
                 }
                 deploy_l1_contracts(options).await?;

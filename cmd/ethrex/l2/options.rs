@@ -124,7 +124,7 @@ pub struct SequencerOptions {
     pub no_monitor: bool,
     #[arg(
         id = "native_rollups",
-        long = "eip-8025",
+        long = "eip-8079",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_NATIVE_ROLLUPS",
@@ -142,7 +142,7 @@ pub struct SequencerOptions {
 #[derive(Parser, Debug)]
 pub struct NativeRollupOptions {
     #[arg(
-        long = "eip-8025.contract-address",
+        long = "eip-8079.contract-address",
         value_name = "ADDRESS",
         env = "ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS",
         help_heading = "Native rollups options",
@@ -150,7 +150,7 @@ pub struct NativeRollupOptions {
     )]
     pub contract_address: Option<Address>,
     #[arg(
-        long = "eip-8025.relayer-pk",
+        long = "eip-8079.relayer-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
@@ -160,7 +160,7 @@ pub struct NativeRollupOptions {
     )]
     pub relayer_private_key: SecretKey,
     #[arg(
-        long = "eip-8025.l1-pk",
+        long = "eip-8079.l1-pk",
         value_name = "PRIVATE_KEY",
         value_parser = utils::parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_L1_PK",
@@ -170,7 +170,7 @@ pub struct NativeRollupOptions {
     )]
     pub l1_private_key: SecretKey,
     #[arg(
-        long = "eip-8025.block-time",
+        long = "eip-8079.block-time",
         id = "native_rollups_block_time_ms",
         default_value = "10000",
         value_name = "UINT64",
@@ -180,7 +180,7 @@ pub struct NativeRollupOptions {
     )]
     pub block_time_ms: u64,
     #[arg(
-        long = "eip-8025.advance-interval",
+        long = "eip-8079.advance-interval",
         id = "native_rollups_advance_interval_ms",
         default_value = "3000",
         value_name = "UINT64",

@@ -5,35 +5,6 @@ This guide covers how to deploy a native rollup L2 using ethrex. Native rollups 
 > [!NOTE]
 > This is a proof-of-concept. The native rollup L2 runs against a local ethrex L1 with the EXECUTE precompile enabled. It is not yet intended for public testnets or production.
 
-## Components
-
-The native rollup L2 integration wires together the EXECUTE precompile (EVM-level block re-execution) and the L2 GenServer actors (block producer, L1 watcher, L1 advancer) into a working end-to-end system. The key components are:
-
-**Build system** (`cmd/ethrex/build_l2.rs`):
-- Compiles `NativeRollup.sol` (creation bytecode) and `L2Bridge.sol` (runtime bytecode) via solc during the build.
-
-**Deployer** (`cmd/ethrex/l2/deployer.rs`):
-- New `--eip-8025` deploy path that:
-  1. Generates the L2 genesis file dynamically with pre-deployed L2Bridge (`0x...fffd`), a funded relayer account, and test accounts. (L1Anchor predeploy removed — L1 messages Merkle root is now anchored via `parent_beacon_block_root` and the EIP-4788 BEACON_ROOTS system contract.)
-  2. Computes the L2 genesis state root and block hash from the generated genesis.
-  3. Deploys `NativeRollup.sol` to L1 with the genesis state root, block hash, gas limit, and chain ID.
-  4. Funds the contract with 100 ETH (matching the relayer's L2 prefund; the contract needs ETH to pay withdrawal claims).
-  5. Writes the contract address to `cmd/.env`.
-
-The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX / 2`) so it can cover any number of L1-to-L2 deposits without running out.
-
-**CLI options** (`cmd/ethrex/l2/options.rs`):
-- `NativeRollupOptions` struct with flags: `--eip-8025`, `--eip-8025.contract-address`, `--eip-8025.relayer-pk`, `--eip-8025.l1-pk`, `--eip-8025.block-time`, `--eip-8025.advance-interval`.
-
-**L2 initializer** (`cmd/ethrex/l2/initializers.rs`):
-- `init_native_rollup_l2()` boots the L2 node with `BlockchainType::L1`. This is intentional: native rollups run L2 blocks through an unmodified L1 execution environment (the EXECUTE precompile re-executes them on L1). The L2 must produce blocks compatible with L1's precompile set and execution rules, so it uses the same `BlockchainType` as L1.
-
-**Command routing** (`cmd/ethrex/l2/command.rs`):
-- Routes to the native rollup deploy/init paths when `--eip-8025` is set.
-
-**Makefile** (`crates/l2/Makefile`):
-- Conditional `deploy-l1` and `init-l2` targets activated by `NATIVE_ROLLUPS=1`.
-
 ## Architecture overview
 
 ```
@@ -110,7 +81,7 @@ All commands are run from the repository root.
 
 ### Setup
 
-Build the binary first (this compiles the Solidity contracts and embeds them). All subsequent steps use the pre-built binary directly to avoid recompilation:
+Build the binary first (this compiles the Solidity contracts and embeds them):
 
 ```shell
 COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,experimental-devnet
@@ -143,8 +114,8 @@ Deploy `NativeRollup.sol` to L1 and generate the L2 genesis:
 ./target/release/ethrex l2 deploy \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --eip-8025 \
-  --eip-8025.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --eip-8079 \
+  --eip-8079.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
   --genesis-l2-path fixtures/genesis/native_l2.json
 ```
 
@@ -161,10 +132,10 @@ Load the contract address and start the L2 node:
 source cmd/.env
 
 ./target/release/ethrex l2 \
-  --eip-8025 \
-  --eip-8025.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
-  --eip-8025.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-  --eip-8025.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --eip-8079 \
+  --eip-8079.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --eip-8079.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --eip-8079.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --network fixtures/genesis/native_l2.json \
   --http.port 1729 --http.addr 0.0.0.0 \
   --datadir /tmp/ethrex_l2 \
@@ -226,7 +197,6 @@ DEPOSIT_TO=0x6f4c950442e1af093bcff730381e63ae9171b87a
 rex balance $DEPOSIT_TO --rpc-url http://localhost:1729
 
 # Deposit 1 ETH via sendL1Message(to, gasLimit, data)
-# Uses a separate L1 key (NOT the deployer/advancer key, which is busy sending advance() txs)
 # Note: --value is in wei (1 ETH = 1000000000000000000)
 rex send $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
   "sendL1Message(address,uint256,bytes)" \

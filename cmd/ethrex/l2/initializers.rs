@@ -444,7 +444,7 @@ pub async fn init_native_rollup_l2(
     let native_opts = &opts.sequencer_opts.native_rollup_opts;
     let contract_address = native_opts
         .contract_address
-        .ok_or_else(|| eyre::eyre!("--eip-8025.contract-address is required"))?;
+        .ok_or_else(|| eyre::eyre!("--eip-8079.contract-address is required"))?;
 
     let l1_rpc_url = opts
         .sequencer_opts

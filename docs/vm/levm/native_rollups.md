@@ -1,10 +1,10 @@
-# Native Rollups: Stateless Validation (EIP-8079 + EIP-8025)
+# Native Rollups
 
 ## Overview
 
-[EIP-8079](https://github.com/ethereum/EIPs/pull/9608) proposes "native rollups" — a mechanism where L1 verifies L2 state transitions by re-executing them inside the EVM via an `EXECUTE` precompile. This replaces complex proof systems (zkVM/fraud proofs) with direct execution, leveraging the fact that L1 already has an EVM capable of running the same transactions.
+[EIP-8079](https://eips.ethereum.org/EIPS/eip-8079) proposes "native rollups" — a mechanism where L1 verifies L2 state transitions by re-executing them inside the EVM via an `EXECUTE` precompile. This replaces complex proof systems (zkVM/fraud proofs) with direct execution, leveraging the fact that L1 already has an EVM capable of running the same transactions.
 
-The spec defines the EXECUTE precompile as a thin wrapper around `verify_stateless_new_payload` — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (Execution Layer Triggerable Proofs, #6427) and gates everything behind a single `experimental-devnet` cargo feature flag. The flag is named after the devnet rather than any single EIP because it will bundle additional forward-looking EIPs (e.g. EIP-8142 Block-in-Blobs) as they land.
+The spec defines the EXECUTE precompile as a thin wrapper around `verify_stateless_new_payload` — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (#6427) and gates everything behind a single `experimental-devnet` cargo feature flag.
 
 ```
 SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
@@ -30,8 +30,6 @@ SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
 ```
 
 ## EXECUTE Precompile
-
-The [L2Beat native rollups book](https://native-rollup.l2beat.com/) defines two variants: `apply_body` (individual fields, skips header validation) and `state_transition` (full headers, complete STF). We implement `apply_body` — it receives the full block as part of an SSZ-encoded `NewPayloadRequest`, skips full header validation, and re-executes transactions to verify the resulting state root.
 
 The core logic lives in `execute_precompile.rs`. It parses SSZ-encoded `StatelessInput`, charges gas proportional to the L2 block's `gas_used`, validates L2-specific constraints, and delegates to `verify_stateless_new_payload` via the `StatelessValidator` trait.
 
@@ -86,8 +84,6 @@ Gas is charged proportional to the L2 block's `gas_used` field from the `Executi
 
 L1 messages are anchored via **`parent_beacon_block_root`** in the block header. The NativeBlockProducer on L2 sets this field to the Merkle root of consumed L1 messages. During L2 block processing, the EIP-4788 BEACON_ROOTS system contract stores this root at `0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02`, making it available to L2 contracts.
 
-> **Note:** The old L1Anchor predeploy at `0x00...fffe` has been removed. The BEACON_ROOTS approach is more spec-aligned — it uses standard Ethereum infrastructure (EIP-4788) instead of a custom predeploy.
-
 ## L1 to L2 Messaging
 
 The L1→L2 message flow uses a relayer, a prefunded L2 bridge contract, and Merkle proof verification against the anchored L1 messages root:
@@ -136,7 +132,7 @@ The L2Bridge predeploy at `0x00...fffd` is deployed in genesis with a large prem
 
 ## Fee Market
 
-EIP-1559 base fee is computed by the L2 node from the parent block's header fields. The coinbase is the relayer address. The NativeRollup contract on L1 does not track fee market parameters — this is handled entirely by the L2 node's standard block production logic, and the EXECUTE precompile re-derives the base fee from the block header in the `NewPayloadRequest`.
+EIP-1559 base fee is computed by the L2 node from the parent block's header fields. The NativeRollup contract on L1 does not track fee market parameters — this is handled entirely by the L2 node's standard block production logic, and the EXECUTE precompile re-derives the base fee from the block header in the `NewPayloadRequest`. In this PoC, the demo wires the coinbase to the relayer address; a production deployment would choose its own coinbase policy.
 
 ## Statelessness
 
@@ -243,7 +239,6 @@ experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-rpc/expe
 | Contract state | blockHash, stateRoot, blockNumber, gasLimit, chainId | Implemented | **Aligned** |
 | StatelessValidator trait | Implied (precompile wraps standard function) | Implemented in LEVM | **Aligned** |
 | Cycle-free architecture | Implied | Trait injection pattern | **Aligned** |
-| EIP-8025 integration | Separate concern | Unified under `experimental-devnet` feature | **Ahead** |
 | ZK variant | Specified (proof-carrying tx + PROOFROOT) | Not implemented (re-execution only) | **Gap (by design)** |
 | Forced transactions | WIP (FOCIL) | Not implemented | **Gap** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |
