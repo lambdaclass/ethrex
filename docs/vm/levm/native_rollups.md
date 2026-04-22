@@ -4,7 +4,7 @@
 
 [EIP-8079](https://github.com/ethereum/EIPs/pull/9608) proposes "native rollups" — a mechanism where L1 verifies L2 state transitions by re-executing them inside the EVM via an `EXECUTE` precompile. This replaces complex proof systems (zkVM/fraud proofs) with direct execution, leveraging the fact that L1 already has an EVM capable of running the same transactions.
 
-The spec defines the EXECUTE precompile as a thin wrapper around `verify_stateless_new_payload` — the same function the L1 ZK-EVM effort uses. Our implementation unifies this with EIP-8025 (Execution Layer Triggerable Proofs) under a single `stateless-validation` feature flag.
+The spec defines the EXECUTE precompile as a thin wrapper around `verify_stateless_new_payload` — the same function the L1 ZK-EVM effort uses. Our implementation reuses the stateless-validation infrastructure landed with EIP-8025 (Execution Layer Triggerable Proofs, #6427) and gates everything behind a single `experimental-devnet` cargo feature flag. The flag is named after the devnet rather than any single EIP because it will bundle additional forward-looking EIPs (e.g. EIP-8142 Block-in-Blobs) as they land.
 
 ```
 SSZ-encoded StatelessInput (NewPayloadRequest + ExecutionWitness + ChainConfig)
@@ -206,22 +206,22 @@ Solidity library for MPT proof verification: trie traversal, RLP decoding, accou
 
 ## Feature Flag
 
-All native rollups and EIP-8025 code is gated behind the unified `stateless-validation` feature flag:
+All native rollups and EIP-8025 code is gated behind the unified `experimental-devnet` feature flag:
 
 ```toml
 # crates/common/Cargo.toml
-stateless-validation = ["dep:ssz", "dep:ssz-types", "dep:ssz-merkle", "dep:ssz-derive"]
+experimental-devnet = ["dep:ssz", "dep:ssz-types", "dep:ssz-merkle", "dep:ssz-derive"]
 
 # crates/blockchain/Cargo.toml
-stateless-validation = [
-    "ethrex-common/stateless-validation", "ethrex-vm/stateless-validation",
-    "ethrex-guest-program/stateless-validation",
-    "dep:ethrex-prover", "ethrex-prover?/stateless-validation",
+experimental-devnet = [
+    "ethrex-common/experimental-devnet", "ethrex-vm/experimental-devnet",
+    "ethrex-guest-program/experimental-devnet",
+    "dep:ethrex-prover", "ethrex-prover?/experimental-devnet",
     ...
 ]
 
 # cmd/ethrex/Cargo.toml
-stateless-validation = ["ethrex-blockchain/stateless-validation", "ethrex-rpc/stateless-validation", ...]
+experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-rpc/experimental-devnet", ...]
 ```
 
 ## Summary Table (vs March 2026 spec rewrite)
@@ -243,7 +243,7 @@ stateless-validation = ["ethrex-blockchain/stateless-validation", "ethrex-rpc/st
 | Contract state | blockHash, stateRoot, blockNumber, gasLimit, chainId | Implemented | **Aligned** |
 | StatelessValidator trait | Implied (precompile wraps standard function) | Implemented in LEVM | **Aligned** |
 | Cycle-free architecture | Implied | Trait injection pattern | **Aligned** |
-| EIP-8025 integration | Separate concern | Unified under `stateless-validation` feature | **Ahead** |
+| EIP-8025 integration | Separate concern | Unified under `experimental-devnet` feature | **Ahead** |
 | ZK variant | Specified (proof-carrying tx + PROOFROOT) | Not implemented (re-execution only) | **Gap (by design)** |
 | Forced transactions | WIP (FOCIL) | Not implemented | **Gap** |
 | DA cost pricing | WIP | Not implemented | **Both WIP** |

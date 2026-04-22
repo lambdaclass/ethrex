@@ -13,7 +13,7 @@ The native rollup L2 integration wires together the EXECUTE precompile (EVM-leve
 - Compiles `NativeRollup.sol` (creation bytecode) and `L2Bridge.sol` (runtime bytecode) via solc during the build.
 
 **Deployer** (`cmd/ethrex/l2/deployer.rs`):
-- New `--stateless-validation` deploy path that:
+- New `--eip-8025` deploy path that:
   1. Generates the L2 genesis file dynamically with pre-deployed L2Bridge (`0x...fffd`), a funded relayer account, and test accounts. (L1Anchor predeploy removed — L1 messages Merkle root is now anchored via `parent_beacon_block_root` and the EIP-4788 BEACON_ROOTS system contract.)
   2. Computes the L2 genesis state root and block hash from the generated genesis.
   3. Deploys `NativeRollup.sol` to L1 with the genesis state root, block hash, gas limit, and chain ID.
@@ -23,13 +23,13 @@ The native rollup L2 integration wires together the EXECUTE precompile (EVM-leve
 The L2Bridge is preminted with an effectively infinite ETH balance (`U256::MAX / 2`) so it can cover any number of L1-to-L2 deposits without running out.
 
 **CLI options** (`cmd/ethrex/l2/options.rs`):
-- `NativeRollupOptions` struct with flags: `--stateless-validation`, `--stateless-validation.contract-address`, `--stateless-validation.relayer-pk`, `--stateless-validation.l1-pk`, `--stateless-validation.block-time`, `--stateless-validation.advance-interval`.
+- `NativeRollupOptions` struct with flags: `--eip-8025`, `--eip-8025.contract-address`, `--eip-8025.relayer-pk`, `--eip-8025.l1-pk`, `--eip-8025.block-time`, `--eip-8025.advance-interval`.
 
 **L2 initializer** (`cmd/ethrex/l2/initializers.rs`):
 - `init_native_rollup_l2()` boots the L2 node with `BlockchainType::L1`. This is intentional: native rollups run L2 blocks through an unmodified L1 execution environment (the EXECUTE precompile re-executes them on L1). The L2 must produce blocks compatible with L1's precompile set and execution rules, so it uses the same `BlockchainType` as L1.
 
 **Command routing** (`cmd/ethrex/l2/command.rs`):
-- Routes to the native rollup deploy/init paths when `--stateless-validation` is set.
+- Routes to the native rollup deploy/init paths when `--eip-8025` is set.
 
 **Makefile** (`crates/l2/Makefile`):
 - Conditional `deploy-l1` and `init-l2` targets activated by `NATIVE_ROLLUPS=1`.
@@ -113,7 +113,7 @@ All commands are run from the repository root.
 Build the binary first (this compiles the Solidity contracts and embeds them). All subsequent steps use the pre-built binary directly to avoid recompilation:
 
 ```shell
-COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,stateless-validation
+COMPILE_CONTRACTS=true cargo build --release --features l2,l2-sql,experimental-devnet
 ```
 
 Clean up any previous state:
@@ -143,8 +143,8 @@ Deploy `NativeRollup.sol` to L1 and generate the L2 genesis:
 ./target/release/ethrex l2 deploy \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --stateless-validation \
-  --stateless-validation.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --eip-8025 \
+  --eip-8025.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
   --genesis-l2-path fixtures/genesis/native_l2.json
 ```
 
@@ -161,10 +161,10 @@ Load the contract address and start the L2 node:
 source cmd/.env
 
 ./target/release/ethrex l2 \
-  --stateless-validation \
-  --stateless-validation.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
-  --stateless-validation.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-  --stateless-validation.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --eip-8025 \
+  --eip-8025.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --eip-8025.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --eip-8025.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --network fixtures/genesis/native_l2.json \
   --http.port 1729 --http.addr 0.0.0.0 \
   --datadir /tmp/ethrex_l2 \
@@ -314,7 +314,7 @@ rex balance $L1_RECEIVER --rpc-url http://localhost:8545
 > [!TIP]
 > The integration test at `test/tests/l2/native_rollup.rs` automates the full deposit/withdraw/counter roundtrip including proof fetching and claim submission. Run it with:
 > ```shell
-> cargo test -p ethrex-test --features stateless-validation -- l2::native_rollup --nocapture
+> cargo test -p ethrex-test --features experimental-devnet -- l2::native_rollup --nocapture
 > ```
 
 ### Step 6: Verify precompile usage with Blockscout
