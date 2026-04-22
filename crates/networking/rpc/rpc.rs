@@ -450,13 +450,15 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 
 /// Starts the JSON-RPC API servers.
 ///
-/// This function initializes and runs three server endpoints:
+/// This function initializes and runs up to three server endpoints:
 ///
 /// 1. **HTTP Server** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum
 ///    methods (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
 ///
-/// 2. **WebSocket Server** (`ws_addr`): Optional WebSocket endpoint for the same
-///    methods as HTTP, enabling persistent connections.
+/// 2. **WebSocket Server** (`ws`): Optional endpoint that serves the same methods as
+///    HTTP plus the subscription methods `eth_subscribe` / `eth_unsubscribe` (currently
+///    only `"newHeads"` is supported). Enabled by passing a [`WebSocketConfig`]
+///    containing the listen address and the [`SubscriptionManager`] actor handle.
 ///
 /// 3. **Auth RPC Server** (`authrpc_addr`): JWT-authenticated endpoint for Engine API
 ///    methods (`engine_*`) used by consensus clients.
@@ -464,7 +466,8 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// # Arguments
 ///
 /// * `http_addr` - Socket address for the HTTP server (e.g., `127.0.0.1:8545`)
-/// * `ws_addr` - Optional socket address for WebSocket server
+/// * `ws` - Optional [`WebSocketConfig`] with the WS listen address and the
+///   [`SubscriptionManager`] actor handle. `None` disables the WebSocket server.
 /// * `authrpc_addr` - Socket address for authenticated Engine API (e.g., `127.0.0.1:8551`)
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
