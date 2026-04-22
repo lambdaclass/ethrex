@@ -138,8 +138,10 @@ async fn heal_state_trie(
             METRICS
                 .healing_empty_try_recv
                 .store(empty_try_recv, Ordering::Relaxed);
+            let now = current_unix_time();
             debug!(
                 status = if is_stale { "stopping" } else { "in progress" },
+                ?state_root,
                 snap_peers = num_peers,
                 inflight_tasks,
                 longest_path_seen,
@@ -149,6 +151,9 @@ async fn heal_state_trie(
                 paths_to_go = paths.len(),
                 pending_nodes = healing_queue.len(),
                 heals_per_cycle,
+                staleness_timestamp,
+                now,
+                stale_in_secs = staleness_timestamp.saturating_sub(now),
                 "State Healing",
             );
             downloads_success = 0;
