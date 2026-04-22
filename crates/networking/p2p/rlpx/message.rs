@@ -7,7 +7,7 @@ use crate::rlpx::snap::{
     StorageRanges, TrieNodes,
 };
 
-use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
+use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, NewBlockHashes};
 use super::eth::bsc::UpgradeStatusMsg;
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
@@ -144,6 +144,10 @@ pub enum Message {
     // We don't implement the bsc sub-protocol beyond accepting the connection; all
     // messages are silently consumed to avoid a MalformedData disconnect.
     BscIgnored,
+    // NewBlockHashes (0x01) — deprecated in eth/68 but BSC peers still send it.
+    // We decode to extract the freshest hash so the BSC sync bridge can trigger
+    // immediately instead of waiting for the next periodic BlockRangeUpdate.
+    NewBlockHashes(NewBlockHashes),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -228,6 +232,8 @@ impl Message {
 
             // bsc sub-protocol — we never send this; code is only here for exhaustiveness.
             Message::BscIgnored => eth_version.bsc_capability_offset(),
+            // NewBlockHashes is receive-only for us.
+            Message::NewBlockHashes(_) => eth_version.eth_capability_offset() + NewBlockHashes::CODE,
         }
     }
     pub fn decode(
@@ -310,12 +316,16 @@ impl Message {
                 UpgradeStatusMsg::CODE => {
                     Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
                 }
-                // NewBlockHashes (0x01) — deprecated in eth/68 but still sent by BSC peers.
-                // Silently consume to avoid MalformedData errors that cause peer disconnects.
+                // NewBlockHashes (0x01) — deprecated in eth/68 but BSC peers still send it.
+                // Decode to extract the freshest announced hash so the BSC sync bridge
+                // can trigger on each block broadcast instead of waiting for periodic
+                // BlockRangeUpdate messages.
                 0x01 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
-                    Ok(Message::BscIgnored)
+                    NewBlockHashes::decode(data).map(Message::NewBlockHashes)
                 }
                 // NewBlock (0x07) — deprecated in eth/68 but some BSC peers still send it.
+                // Still ignored: decoding the full block requires a Block struct decode
+                // and we already get hashes via NewBlockHashes / BlockRangeUpdate.
                 0x07 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
                     Ok(Message::BscIgnored)
                 }
@@ -392,6 +402,8 @@ impl Message {
             Message::UpgradeStatus(msg) => msg.encode(buf),
             // We never send BscIgnored; this arm is only here for exhaustiveness.
             Message::BscIgnored => Ok(()),
+            // We never send NewBlockHashes; receive-only.
+            Message::NewBlockHashes(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -442,7 +454,8 @@ impl Message {
             | Message::NewPooledTransactionHashes(_)
             | Message::BlockRangeUpdate(_)
             | Message::UpgradeStatus(_)
-            | Message::BscIgnored => None,
+            | Message::BscIgnored
+            | Message::NewBlockHashes(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
         }
@@ -477,6 +490,7 @@ impl Message {
             Message::BlockRangeUpdate(_) => "BlockRangeUpdate",
             Message::UpgradeStatus(_) => "UpgradeStatus",
             Message::BscIgnored => "BscIgnored",
+            Message::NewBlockHashes(_) => "NewBlockHashes",
             Message::GetAccountRange(_) => "GetAccountRange",
             Message::AccountRange(_) => "AccountRange",
             Message::GetStorageRanges(_) => "GetStorageRanges",
@@ -521,6 +535,7 @@ impl Display for Message {
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
             Message::UpgradeStatus(_) => "bsc:UpgradeStatus".fmt(f),
             Message::BscIgnored => "bsc:Ignored".fmt(f),
+            Message::NewBlockHashes(_) => "eth:NewBlockHashes".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),

@@ -68,6 +68,31 @@ impl RLPDecode for HashOrNumber {
     }
 }
 
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblockhashes-0x01
+// Deprecated in eth/68 but BSC peers still broadcast it to announce new tips.
+#[derive(Debug, Clone)]
+pub struct NewBlockHashes {
+    pub hashes_and_numbers: Vec<(BlockHash, BlockNumber)>,
+}
+
+impl RLPxMessage for NewBlockHashes {
+    const CODE: u8 = 0x01;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        self.hashes_and_numbers.encode(&mut encoded_data);
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let (hashes_and_numbers, _): (Vec<(BlockHash, BlockNumber)>, _) =
+            <Vec<(BlockHash, BlockNumber)> as RLPDecode>::decode_unfinished(&decompressed_data)?;
+        Ok(Self { hashes_and_numbers })
+    }
+}
+
 // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#getblockheaders-0x03
 #[derive(Debug, Clone)]
 pub struct GetBlockHeaders {

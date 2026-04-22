@@ -1297,6 +1297,23 @@ async fn handle_incoming_message(
                 Message::Receipts70(Receipts70::new(id, last_block_incomplete, all_receipts));
             send(state, response).await?;
         }
+        Message::NewBlockHashes(announce) => {
+            // BSC peers broadcast NewBlockHashes on every new tip (every ~3s).
+            // Forward the highest-numbered hash to the BSC sync bridge so it
+            // triggers immediately instead of waiting for the periodic
+            // BlockRangeUpdate (much sparser), closing the gap to chain tip.
+            let chain_id = state.storage.get_chain_config().chain_id;
+            if chain_id == 56 || chain_id == 97 {
+                if let Some((hash, _)) = announce
+                    .hashes_and_numbers
+                    .iter()
+                    .max_by_key(|(_, n)| *n)
+                    && !hash.is_zero()
+                {
+                    state.blockchain.set_bsc_sync_head(*hash);
+                }
+            }
+        }
         Message::BlockRangeUpdate(update) => {
             trace!(
                 peer=%state.node,
