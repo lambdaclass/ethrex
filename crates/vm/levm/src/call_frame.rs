@@ -326,14 +326,8 @@ impl CallFrameBackup {
     }
 
     pub fn extend(&mut self, other: CallFrameBackup) {
-        // Per-slot merge: plain HashMap::extend would let `other`'s inner slot map
-        // replace `self`'s, dropping any slots `self` had for the same address.
-        for (address, other_storage) in other.original_account_storage_slots {
-            self.original_account_storage_slots
-                .entry(address)
-                .or_default()
-                .extend(other_storage);
-        }
+        self.original_account_storage_slots
+            .extend(other.original_account_storage_slots);
         self.original_accounts_info
             .extend(other.original_accounts_info);
         // Don't extend bal_checkpoint - it's specific to each call frame
