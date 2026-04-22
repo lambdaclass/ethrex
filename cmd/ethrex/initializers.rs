@@ -584,6 +584,7 @@ pub async fn init_l1(
                 }
             }
 
+            let notify = blockchain_bridge.bsc_sync_notify.clone();
             loop {
                 // Check for a new head signalled by P2P (status exchange).
                 if let Some(new_head) = blockchain_bridge.take_bsc_sync_head() {
@@ -601,7 +602,14 @@ pub async fn init_l1(
                     }
                 }
 
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                // Event-driven: wake immediately on set_bsc_sync_head, with a
+                // timer fallback in case we missed a notification or need to
+                // re-check a pending-but-syncer-busy head.
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    notify.notified(),
+                )
+                .await;
             }
         });
     }

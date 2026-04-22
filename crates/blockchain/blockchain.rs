@@ -220,6 +220,10 @@ pub struct Blockchain {
     /// BSC has no Engine API so the sync bridge polls this field instead
     /// of waiting for a forkchoiceUpdated call.
     pub bsc_sync_head: std::sync::Mutex<Option<H256>>,
+    /// Notify-based wakeup for the BSC sync bridge. `set_bsc_sync_head` fires
+    /// it so the bridge reacts to each NewBlockHashes / BlockRangeUpdate
+    /// immediately instead of polling on a fixed interval.
+    pub bsc_sync_notify: Arc<tokio::sync::Notify>,
     /// Set of all peer-head hashes we've seen. Used to select the highest pivot.
     pub bsc_sync_head_candidates: std::sync::Mutex<std::collections::HashSet<H256>>,
     bsc_pivot_header: std::sync::Mutex<Option<ethrex_common::types::BlockHeader>>,
@@ -341,6 +345,7 @@ impl Blockchain {
             options: blockchain_opts,
             parlia_engine: None,
             bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_sync_notify: Arc::new(tokio::sync::Notify::new()),
             bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
         }
@@ -355,6 +360,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             parlia_engine: None,
             bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_sync_notify: Arc::new(tokio::sync::Notify::new()),
             bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
         }
@@ -2573,6 +2579,9 @@ impl Blockchain {
                 );
             }
         }
+        // Wake the sync bridge loop so it picks up the new head immediately
+        // instead of waiting out its timeout.
+        self.bsc_sync_notify.notify_one();
     }
 
     /// Returns a snapshot of all known peer-head candidates. Does not clear the set.
