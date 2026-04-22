@@ -77,12 +77,12 @@ down-l1-docker: ## 🛑 Shuts down the L1 Lambda ethrex Client
 restart-l1-docker: down-l1-docker init-l1-docker ## 🔄 Restarts the L1 Lambda ethrex Client
 
 ifdef NATIVE_ROLLUPS
-  NATIVE_ROLLUPS? := eip-8025
+  NATIVE_ROLLUPS? := experimental-devnet
 else
   NATIVE_ROLLUPS? :=
 endif
 
-init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable eip-8025)
+init-l1: ## 🚀 Initializes an L1 Lambda ethrex Client (set NATIVE_ROLLUPS=1 to enable experimental-devnet)
 	cargo run --release --manifest-path ../../Cargo.toml --bin ethrex --features "$(NATIVE_ROLLUPS?)" -- \
 	--network ${L1_GENESIS_FILE_PATH} \
 	--http.port ${L1_PORT} \
@@ -97,7 +97,7 @@ rm-db-l1: ## 🛑 Removes the DB used by the L1
 ifdef NATIVE_ROLLUPS
 deploy-l1: ## 📜 Deploys NativeRollup.sol to L1 (native rollups mode)
 	COMPILE_CONTRACTS=true \
-	cargo run --release --features l2,l2-sql,eip-8025 --manifest-path ../../Cargo.toml -- l2 deploy \
+	cargo run --release --features l2,l2-sql,experimental-devnet --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
 	--eip-8025 \
@@ -153,7 +153,7 @@ ifdef NATIVE_ROLLUPS
 init-l2: ## 🚀 Initializes a native rollup L2 client
 	export $(shell cat ../../cmd/.env | xargs); \
 	ETHREX_NO_MONITOR=true \
-	cargo run --release --features l2,l2-sql,eip-8025 --manifest-path ../../Cargo.toml -- \
+	cargo run --release --features l2,l2-sql,experimental-devnet --manifest-path ../../Cargo.toml -- \
 	l2 \
 	--eip-8025 \
 	--eip-8025.block-time 10000 \

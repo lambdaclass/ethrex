@@ -36,7 +36,7 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
 ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
-eip-8025 = ["ethrex-common/eip-8025", "dep:libssz"]
+experimental-devnet = ["ethrex-common/experimental-devnet", "dep:libssz"]
 perf_opcode_timings = []
 # zkVM feature stubs — implementations have moved to ethrex-crypto's NativeCrypto/ZkVMCrypto
 sp1 = []

@@ -92,16 +92,16 @@ metrics = ["ethrex-blockchain/metrics"]
 
 l2 = []
 
-eip-8025 = [
-    "ethrex-vm/eip-8025",
-    "ethrex-common/eip-8025",
-    "ethrex-blockchain/eip-8025",
-    "ethrex-l2-rpc/eip-8025",
+experimental-devnet = [
+    "ethrex-vm/experimental-devnet",
+    "ethrex-common/experimental-devnet",
+    "ethrex-blockchain/experimental-devnet",
+    "ethrex-l2-rpc/experimental-devnet",
     "dep:k256",
     "dep:ethrex-crypto",
     "dep:rustc-hash",
     "dep:libssz",
     "dep:libssz-types",
     "dep:ethrex-guest-program",
-    "ethrex-guest-program/eip-8025",
+    "ethrex-guest-program/experimental-devnet",
 ]

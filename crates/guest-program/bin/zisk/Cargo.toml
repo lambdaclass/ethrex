@@ -26,4 +26,4 @@ ethrex-common = { path = "../../../common", default-features = false, features =
 
 [features]
 l2 = ["ethrex-guest-program/l2"]
-eip-8025 = ["ethrex-guest-program/eip-8025"]
+experimental-devnet = ["ethrex-guest-program/experimental-devnet"]

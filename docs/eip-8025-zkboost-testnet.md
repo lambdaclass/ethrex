@@ -45,7 +45,7 @@ cd lighthouse && git checkout feat/eip8025
 ```bash
 # ethrex
 cd ethrex
-cargo build --release --features eip-8025 --bin ethrex
+cargo build --release --features experimental-devnet --bin ethrex
 
 # zkboost
 cd zkboost

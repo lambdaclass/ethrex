@@ -47,7 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 pub mod stateless;
 pub mod tracing;
 pub mod vm;
@@ -861,7 +861,7 @@ impl Blockchain {
         }
 
         // Extract witness accumulator before consuming updates
-        let accumulated_updates = if cfg!(feature = "eip-8025") {
+        let accumulated_updates = if cfg!(feature = "experimental-devnet") {
             Some(all_updates.values().cloned().collect::<Vec<_>>())
         } else {
             None
@@ -1879,7 +1879,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if cfg!(feature = "eip-8025") && self.is_synced() {
+        let (mut vm, logger) = if cfg!(feature = "experimental-devnet") && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
@@ -1904,7 +1904,7 @@ impl Blockchain {
             };
             // Inject StatelessValidator so the EXECUTE precompile works
             // during block import (same as new_evm does for the non-logger path).
-            #[cfg(feature = "eip-8025")]
+            #[cfg(feature = "experimental-devnet")]
             if matches!(self.options.r#type, BlockchainType::L1) {
                 vm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
                     crypto: Arc::new(NativeCrypto),
@@ -3122,7 +3122,7 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
     // For L1 EVMs, inject the StatelessValidator so the EXECUTE precompile
     // can delegate to verify_stateless_new_payload when processing native
     // rollup advance() calls.
-    #[cfg(feature = "eip-8025")]
+    #[cfg(feature = "experimental-devnet")]
     if matches!(blockchain_type, BlockchainType::L1) {
         evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
             crypto: Arc::new(NativeCrypto),

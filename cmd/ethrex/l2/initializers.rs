@@ -384,7 +384,7 @@ pub async fn init_l2(
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 pub async fn init_native_rollup_l2(
     opts: L2Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,

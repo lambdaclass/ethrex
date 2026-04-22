@@ -228,8 +228,8 @@ pub const P256VERIFY: Precompile = Precompile {
 };
 
 /// EXECUTE precompile address (0x0101) for Native Rollups (EIP-8079 PoC).
-/// Only available when the `eip-8025` feature is enabled.
-#[cfg(feature = "eip-8025")]
+/// Only available when the `experimental-devnet` feature is enabled.
+#[cfg(feature = "experimental-devnet")]
 pub const EXECUTE: Precompile = Precompile {
     address: H160([
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -267,7 +267,7 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
-    #[cfg(feature = "eip-8025")]
+    #[cfg(feature = "experimental-devnet")]
     if *address == EXECUTE.address {
         return true;
     }
@@ -354,7 +354,7 @@ pub fn execute_precompile(
     };
 
     // EXECUTE precompile is dispatched before the const table (feature-gated)
-    #[cfg(feature = "eip-8025")]
+    #[cfg(feature = "experimental-devnet")]
     if address == EXECUTE.address {
         return crate::execute_precompile::execute_precompile(
             calldata,

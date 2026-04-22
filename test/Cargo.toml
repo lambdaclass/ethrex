@@ -11,10 +11,10 @@ path = "src/lib.rs"
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
-eip-8025 = [
-    "ethrex-levm/eip-8025",
-    "ethrex-common/eip-8025",
-    "ethrex-l2/eip-8025",
+experimental-devnet = [
+    "ethrex-levm/experimental-devnet",
+    "ethrex-common/experimental-devnet",
+    "ethrex-l2/experimental-devnet",
 ]
 
 [dependencies]
