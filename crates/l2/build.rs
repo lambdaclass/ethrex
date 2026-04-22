@@ -15,7 +15,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 
     // Compile Credible Layer protobuf definitions (client only).
-    // Uses protox (pure-Rust protobuf compiler) so no system protoc binary is needed.
     let fds = protox::compile(["proto/sidecar.proto"], ["proto/"])?;
     tonic_build::configure()
         .build_server(false)
