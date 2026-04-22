@@ -7,7 +7,10 @@ use crate::rlpx::snap::{
     StorageRanges, TrieNodes,
 };
 
-use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, NewBlockHashes};
+use super::eth::blocks::{
+    BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, NewBlockAnnouncement,
+    NewBlockHashes,
+};
 use super::eth::bsc::UpgradeStatusMsg;
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
@@ -148,6 +151,10 @@ pub enum Message {
     // We decode to extract the freshest hash so the BSC sync bridge can trigger
     // immediately instead of waiting for the next periodic BlockRangeUpdate.
     NewBlockHashes(NewBlockHashes),
+    // NewBlock (0x07) — carries a full block inline. Importing directly bypasses
+    // the header+body round-trips that a NewBlockHashes announcement would
+    // otherwise need.
+    NewBlockAnnouncement(NewBlockAnnouncement),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -233,7 +240,13 @@ impl Message {
             // bsc sub-protocol — we never send this; code is only here for exhaustiveness.
             Message::BscIgnored => eth_version.bsc_capability_offset(),
             // NewBlockHashes is receive-only for us.
-            Message::NewBlockHashes(_) => eth_version.eth_capability_offset() + NewBlockHashes::CODE,
+            Message::NewBlockHashes(_) => {
+                eth_version.eth_capability_offset() + NewBlockHashes::CODE
+            }
+            // NewBlock is receive-only for us.
+            Message::NewBlockAnnouncement(_) => {
+                eth_version.eth_capability_offset() + NewBlockAnnouncement::CODE
+            }
         }
     }
     pub fn decode(
@@ -323,11 +336,11 @@ impl Message {
                 0x01 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
                     NewBlockHashes::decode(data).map(Message::NewBlockHashes)
                 }
-                // NewBlock (0x07) — deprecated in eth/68 but some BSC peers still send it.
-                // Still ignored: decoding the full block requires a Block struct decode
-                // and we already get hashes via NewBlockHashes / BlockRangeUpdate.
+                // NewBlock (0x07) — deprecated in eth/68 but BSC peers still send it,
+                // carrying the full block inline. Decode so the handler can
+                // add_block_pipeline directly (zero extra round-trips).
                 0x07 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
-                    Ok(Message::BscIgnored)
+                    NewBlockAnnouncement::decode(data).map(Message::NewBlockAnnouncement)
                 }
                 _ => Err(RLPDecodeError::MalformedData),
             }
@@ -404,6 +417,8 @@ impl Message {
             Message::BscIgnored => Ok(()),
             // We never send NewBlockHashes; receive-only.
             Message::NewBlockHashes(msg) => msg.encode(buf),
+            // We never send NewBlock; receive-only.
+            Message::NewBlockAnnouncement(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -455,7 +470,8 @@ impl Message {
             | Message::BlockRangeUpdate(_)
             | Message::UpgradeStatus(_)
             | Message::BscIgnored
-            | Message::NewBlockHashes(_) => None,
+            | Message::NewBlockHashes(_)
+            | Message::NewBlockAnnouncement(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
         }
@@ -491,6 +507,7 @@ impl Message {
             Message::UpgradeStatus(_) => "UpgradeStatus",
             Message::BscIgnored => "BscIgnored",
             Message::NewBlockHashes(_) => "NewBlockHashes",
+            Message::NewBlockAnnouncement(_) => "NewBlock",
             Message::GetAccountRange(_) => "GetAccountRange",
             Message::AccountRange(_) => "AccountRange",
             Message::GetStorageRanges(_) => "GetStorageRanges",
@@ -536,6 +553,7 @@ impl Display for Message {
             Message::UpgradeStatus(_) => "bsc:UpgradeStatus".fmt(f),
             Message::BscIgnored => "bsc:Ignored".fmt(f),
             Message::NewBlockHashes(_) => "eth:NewBlockHashes".fmt(f),
+            Message::NewBlockAnnouncement(_) => "eth:NewBlock".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),

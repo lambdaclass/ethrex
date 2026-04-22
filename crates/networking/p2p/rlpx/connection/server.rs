@@ -1311,6 +1311,26 @@ async fn handle_incoming_message(
                 }
             }
         }
+        Message::NewBlockAnnouncement(announce) => {
+            // BSC peers broadcast full blocks inline. Importing directly
+            // removes the header+body round-trips that would otherwise be
+            // needed, getting us to tip with near-zero lag.
+            // Fall back to set_bsc_sync_head so the sync bridge picks up
+            // blocks whose parent isn't our latest (i.e. we're more than
+            // one behind or we missed a block).
+            let chain_id = state.storage.get_chain_config().chain_id;
+            if chain_id == 56 || chain_id == 97 {
+                let block = announce.block;
+                let block_hash = block.hash();
+                let blockchain = state.blockchain.clone();
+                tokio::task::spawn_blocking(move || {
+                    // Duplicate / parent-not-found / validation errors are
+                    // resolved by the normal sync cycle triggered below.
+                    let _ = blockchain.add_block_pipeline(block, None);
+                });
+                state.blockchain.set_bsc_sync_head(block_hash);
+            }
+        }
         Message::BlockRangeUpdate(update) => {
             trace!(
                 peer=%state.node,
