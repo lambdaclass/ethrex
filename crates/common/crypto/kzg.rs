@@ -85,9 +85,11 @@ pub fn verify_cell_kzg_proof_batch(
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
         let mut cells = Vec::new();
         for blob in blobs {
-            let blob: c_kzg::Blob = (*blob).into();
+            // SAFETY: same layout guarantee as in blob_to_kzg_commitment_and_proof.
+            #[expect(unsafe_code)]
+            let c_blob: &c_kzg::Blob = unsafe { &*(blob as *const Blob as *const c_kzg::Blob) };
             let cells_blob = c_kzg_settings
-                .compute_cells(&blob)
+                .compute_cells(c_blob)
                 .map_err(KzgError::CKzg)?;
             cells.extend(*cells_blob);
         }
@@ -171,12 +173,16 @@ pub fn verify_kzg_proof_batch(
     cell_proof: &[Proof],
 ) -> Result<bool, KzgError> {
     {
-        // perf note: c_kzg::Blob is repr C maybe a unsafe transmute improves perf if the collect were deemed costly
-        let blobs: Vec<_> = blobs.iter().map(|x| c_kzg::Blob::new(*x)).collect();
         let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+        // SAFETY: c_kzg::Blob is #[repr(C)] containing exactly [u8; BYTES_PER_BLOB],
+        // same layout as our Blob alias.  Reinterpreting avoids copying every blob.
+        #[expect(unsafe_code)]
+        let c_blobs: &[c_kzg::Blob] = unsafe {
+            std::slice::from_raw_parts(blobs.as_ptr() as *const c_kzg::Blob, blobs.len())
+        };
         c_kzg_settings
             .verify_blob_kzg_proof_batch(
-                &blobs,
+                c_blobs,
                 &commitments
                     .iter()
                     .map(|x| c_kzg::Bytes48::new(*x))
@@ -257,14 +263,19 @@ pub fn verify_kzg_proof(
 
 #[cfg(feature = "c-kzg")]
 pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proof), KzgError> {
-    let blob: c_kzg::Blob = (*blob).into();
+    // SAFETY: c_kzg::Blob is #[repr(C)] containing exactly one field
+    // `bytes: [u8; BYTES_PER_BLOB]`, which is the same memory layout as
+    // our `Blob = [u8; BYTES_PER_BLOB]`.  Transmuting the reference avoids
+    // copying 131 072 bytes on every call.
+    #[expect(unsafe_code)]
+    let c_blob: &c_kzg::Blob = unsafe { &*(blob as *const Blob as *const c_kzg::Blob) };
 
     let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
 
-    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, &blob)?;
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, c_blob)?;
 
     let commitment_bytes = commitment.to_bytes();
-    let proof = c_kzg_settings.compute_blob_kzg_proof(&blob, &commitment_bytes)?;
+    let proof = c_kzg_settings.compute_blob_kzg_proof(c_blob, &commitment_bytes)?;
 
     let proof_bytes = proof.to_bytes();
 
@@ -277,14 +288,16 @@ pub fn blob_to_commitment_and_cell_proofs(
 ) -> Result<(Commitment, Vec<Proof>), KzgError> {
     let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
 
-    let blob: c_kzg::Blob = (*blob).into();
+    // SAFETY: same layout guarantee as in blob_to_kzg_commitment_and_proof.
+    #[expect(unsafe_code)]
+    let c_blob: &c_kzg::Blob = unsafe { &*(blob as *const Blob as *const c_kzg::Blob) };
 
-    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, &blob)?;
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, c_blob)?;
 
     let commitment_bytes = commitment.to_bytes();
 
     let (_cells, cell_proofs) = c_kzg_settings
-        .compute_cells_and_kzg_proofs(&blob)
+        .compute_cells_and_kzg_proofs(c_blob)
         .map_err(KzgError::CKzg)?;
 
     let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
