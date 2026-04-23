@@ -152,8 +152,7 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
             (last_header.number + 1, last_header.state_root)
         };
 
-        // Convert SszExecutionWitness → internal ExecutionWitness
-        let execution_witness = ssz_witness_to_internal(
+        let execution_witness = ExecutionWitness::from_ssz(
             &stateless_input.witness,
             &stateless_input.chain_config,
             first_block_number,
@@ -176,103 +175,3 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
     }
 }
 
-/// Convert SSZ execution witness to internal format.
-///
-/// The SSZ `state` field contains raw trie-node preimages (same format as
-/// `RpcExecutionWitness.state`). We reconstruct embedded trie structures
-/// from these flat node bytes.
-fn ssz_witness_to_internal(
-    ssz_witness: &ethrex_common::types::stateless_ssz::SszExecutionWitness,
-    chain_config: &SszChainConfig,
-    first_block_number: u64,
-    initial_state_root: ethrex_common::H256,
-) -> Result<ExecutionWitness, String> {
-    use ethrex_common::H256;
-    use ethrex_common::types::ChainConfig;
-    use ethrex_common::utils::keccak;
-    use ethrex_rlp::decode::RLPDecode;
-    use ethrex_trie::{EMPTY_TRIE_HASH, Node, NodeRef, Trie};
-    use std::collections::BTreeMap;
-
-    let codes = ssz_witness.codes_as_vecs();
-    let block_headers_bytes = ssz_witness.headers_as_vecs();
-    let state_bytes = ssz_witness.state_as_vecs();
-
-    // Build node map: hash → decoded Node
-    let nodes: BTreeMap<H256, Node> = state_bytes
-        .into_iter()
-        .filter_map(|b| {
-            if b == [0x80] {
-                return None; // skip null nodes
-            }
-            let hash = keccak(&b);
-            Some(Node::decode(&b).map(|node| (hash, node)))
-        })
-        .collect::<Result<_, _>>()
-        .map_err(|e| format!("node decode: {e}"))?;
-
-    // Get state trie root and embed subtrie
-    let state_trie_root = if let NodeRef::Node(root, _) =
-        Trie::get_embedded_root(&nodes, initial_state_root)
-            .map_err(|e| format!("state trie root: {e}"))?
-    {
-        Some((*root).clone())
-    } else {
-        None
-    };
-
-    // Walk state trie to find account storage roots
-    let mut storage_trie_roots = BTreeMap::new();
-    if let Some(ref root_node) = state_trie_root {
-        // Collect all account leaf nodes from the state trie
-        let accounts = collect_account_storage_roots(root_node, &nodes);
-        for (hashed_address, storage_root_hash) in accounts {
-            if storage_root_hash == *EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
-                continue;
-            }
-            if let Ok(NodeRef::Node(node, _)) = Trie::get_embedded_root(&nodes, storage_root_hash) {
-                storage_trie_roots.insert(hashed_address, (*node).clone());
-            }
-        }
-    }
-
-    Ok(ExecutionWitness {
-        codes,
-        block_headers_bytes,
-        first_block_number,
-        // The spec's ChainConfig only carries chain_id; fork rules are
-        // implicit.  Stateless validation always runs at the latest fork
-        // (Amsterdam), so activate all prior forks at timestamp/block 0.
-        chain_config: ChainConfig {
-            chain_id: chain_config.chain_id,
-            homestead_block: Some(0),
-            eip150_block: Some(0),
-            eip155_block: Some(0),
-            eip158_block: Some(0),
-            byzantium_block: Some(0),
-            constantinople_block: Some(0),
-            petersburg_block: Some(0),
-            istanbul_block: Some(0),
-            berlin_block: Some(0),
-            london_block: Some(0),
-            terminal_total_difficulty: Some(0),
-            terminal_total_difficulty_passed: true,
-            shanghai_time: Some(0),
-            cancun_time: Some(0),
-            prague_time: Some(0),
-            ..Default::default()
-        },
-        state_trie_root,
-        storage_trie_roots,
-    })
-}
-
-/// Walk the state trie and collect (hashed_address, storage_root) pairs from leaf nodes.
-fn collect_account_storage_roots(
-    root: &ethrex_trie::Node,
-    nodes: &std::collections::BTreeMap<ethrex_common::H256, ethrex_trie::Node>,
-) -> Vec<(ethrex_common::H256, ethrex_common::H256)> {
-    use ethrex_common::types::block_execution_witness::collect_accounts_from_trie;
-    use ethrex_crypto::NativeCrypto;
-    collect_accounts_from_trie(root, nodes, &NativeCrypto)
-}
