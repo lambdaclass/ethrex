@@ -7,10 +7,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
-        TX_ACCESS_LIST_ADDRESS_DATA_GAS_AMSTERDAM, TX_ACCESS_LIST_ADDRESS_GAS,
-        TX_ACCESS_LIST_STORAGE_KEY_DATA_GAS_AMSTERDAM, TX_ACCESS_LIST_STORAGE_KEY_GAS,
-        TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028,
-        TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
+        TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
+        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
+        TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
 };
@@ -22,6 +21,7 @@ use ethrex_common::{
     },
 };
 use ethrex_storage::error::StoreError;
+use ethrex_vm::intrinsic_gas_dimensions;
 use tracing::warn;
 
 #[derive(Debug, Default)]
@@ -513,6 +513,20 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
+    // Amsterdam (EIP-8037): the VM splits intrinsic into (regular, state) and uses
+    // `REGULAR_GAS_CREATE = 9000` + `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for CREATE
+    // instead of the legacy `TX_CREATE_GAS_COST = 53000`. Mempool admission must
+    // match VM charge or we spuriously reject (or admit) transactions.
+    // EIP-7981 access-list data bytes + EIP-7976 floor are also handled there.
+    if config.is_amsterdam_activated(header.timestamp) {
+        let fork = config.fork(header.timestamp);
+        let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
+            .map_err(|_| MempoolError::TxGasOverflowError)?;
+        return regular
+            .checked_add(state)
+            .ok_or(MempoolError::TxGasOverflowError);
+    }
+
     let is_contract_creation = tx.is_contract_creation();
 
     let mut gas = if is_contract_creation {
@@ -565,17 +579,6 @@ pub fn transaction_intrinsic_gas(
     gas = gas
         .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_GAS)
         .ok_or(MempoolError::TxGasOverflowError)?;
-
-    // EIP-7981 (Amsterdam+): access-list data bytes also contribute to regular intrinsic gas.
-    // Each address adds 1280 gas (20 bytes * 4 * 16) and each storage key adds 2048 gas (32 bytes * 4 * 16).
-    if config.is_amsterdam_activated(header.timestamp) {
-        gas = gas
-            .checked_add(tx.access_list().len() as u64 * TX_ACCESS_LIST_ADDRESS_DATA_GAS_AMSTERDAM)
-            .ok_or(MempoolError::TxGasOverflowError)?;
-        gas = gas
-            .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_DATA_GAS_AMSTERDAM)
-            .ok_or(MempoolError::TxGasOverflowError)?;
-    }
 
     Ok(gas)
 }

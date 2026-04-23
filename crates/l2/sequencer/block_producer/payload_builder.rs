@@ -214,6 +214,17 @@ pub async fn fill_transactions(
             u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
         context.vm.set_bal_index(tx_index);
 
+        // EIP-7928: tx-level BAL checkpoint before any touches. Taken AFTER
+        // set_bal_index (which flushes the previous committed tx's net-zero
+        // filter) but BEFORE this tx's sender/recipient touches, so a rejected
+        // tx leaves no trace in the BAL. Matches the L1 builder pattern.
+        let bal_checkpoint = context
+            .vm
+            .db
+            .bal_recorder
+            .as_ref()
+            .map(|r| r.tx_checkpoint());
+
         // Record tx sender and recipient for BAL
         if let Some(recorder) = context.vm.db.bal_recorder_mut() {
             recorder.record_touched_address(head_tx.tx.sender());
@@ -231,6 +242,13 @@ pub async fn fill_transactions(
             Err(e) => {
                 debug!("Failed to execute transaction: {}, {e}", tx_hash);
                 metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                // Restore BAL recorder so the rejected tx contributes nothing
+                // to the block access list.
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
                 // Ignore following txs from sender
                 txs.pop();
                 continue;
@@ -246,6 +264,12 @@ pub async fn fill_transactions(
                 context.remaining_gas = previous_remaining_gas;
                 context.block_value = previous_block_value;
                 context.cumulative_gas_spent = previous_cumulative_gas_spent;
+                // Roll back BAL touches from the aborted tx.
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
                 found_invalid_message = true;
                 break;
             }
