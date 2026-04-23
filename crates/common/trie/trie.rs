@@ -395,11 +395,34 @@ impl Trie {
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
-            // Unwraping here won't panic as our in_memory trie DB won't fail
-            trie.insert(path, value).unwrap();
+            // Unwrapping here won't panic as our in_memory trie DB won't fail
+            trie.insert_no_dirty(path, value).unwrap();
         }
 
         trie.hash_no_commit(crypto)
+    }
+
+    /// Insert an RLP-encoded value into the trie without tracking dirty paths.
+    /// Only for use in stateless tries (e.g. `compute_hash_from_unsorted_iter`)
+    /// where `commit` is never called, so dirty tracking is unnecessary overhead.
+    fn insert_no_dirty(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(&path);
+
+        if self.root.is_valid() {
+            self.root
+                .get_node_mut(self.db.as_ref(), Nibbles::default())?
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(
+                        InconsistentTreeError::RootNotFoundNoHash,
+                    ))
+                })?
+                .insert(self.db.as_ref(), path, value)?
+        } else {
+            self.root = Node::from(LeafNode::new(path, value)).into()
+        };
+        self.root.clear_hash();
+
+        Ok(())
     }
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
