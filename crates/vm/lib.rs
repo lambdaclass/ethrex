@@ -16,6 +16,9 @@ pub use ethrex_levm::precompiles::{PrecompileCache, precompiles_for_fork};
 /// EIP-8037 intrinsic gas split `(regular, state)` for a transaction.
 /// Re-exported for mempool / payload-builder use.
 pub use ethrex_levm::utils::intrinsic_gas_dimensions;
+/// EIP-7623/7976/7981 floor gas for a transaction. Re-exported so the mempool
+/// can match the VM's `validate_min_gas_limit` check at admission time.
+pub use ethrex_levm::utils::intrinsic_gas_floor;
 pub use execution_result::ExecutionResult;
 pub use witness_db::GuestProgramStateWrapper;
 pub mod system_contracts;

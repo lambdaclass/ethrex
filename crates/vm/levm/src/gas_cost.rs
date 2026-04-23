@@ -662,7 +662,8 @@ pub fn access_list_bytes(access_list: &AccessList) -> u64 {
     let mut bytes: u64 = 0;
     for (_addr, keys) in access_list {
         bytes = bytes.saturating_add(20);
-        bytes = bytes.saturating_add(32_u64.saturating_mul(keys.len() as u64));
+        let keys_len = u64::try_from(keys.len()).unwrap_or(u64::MAX);
+        bytes = bytes.saturating_add(32_u64.saturating_mul(keys_len));
     }
     bytes
 }
