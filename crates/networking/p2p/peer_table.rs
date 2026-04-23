@@ -353,14 +353,15 @@ pub trait PeerTableServerProtocol: Send + Sync {
         capabilities: Vec<Capability>,
         excluded: Vec<H256>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
+    fn get_best_n_peers(
+        &self,
+        capabilities: Vec<Capability>,
+        n: usize,
+    ) -> Response<Vec<(H256, PeerConnection, RequestPermit)>>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
     -> Response<Vec<(H256, PeerConnection, Vec<Capability>)>>;
-    fn get_peer_connections(
-        &self,
-        capabilities: Vec<Capability>,
-    ) -> Response<Vec<(H256, PeerConnection)>>;
     fn insert_if_new(&self, node: Node, protocol: DiscoveryProtocol) -> Response<bool>;
     fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> Response<ContactValidation>;
     fn get_closest_nodes(&self, node_id: H256) -> Response<Vec<Node>>;
@@ -795,6 +796,24 @@ impl PeerTableServer {
     }
 
     #[request_handler]
+    async fn handle_get_best_n_peers(
+        &mut self,
+        msg: peer_table_server_protocol::GetBestNPeers,
+        ctx: &Context<Self>,
+    ) -> Vec<(H256, PeerConnection, RequestPermit)> {
+        let picks = self.do_get_best_n_peers(&msg.capabilities, msg.n);
+        let mut out = Vec::with_capacity(picks.len());
+        for (peer_id, conn) in picks {
+            self.peers
+                .get_mut(&peer_id)
+                .expect("peer returned by do_get_best_n_peers must be present in self.peers")
+                .requests += 1;
+            out.push((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)));
+        }
+        out
+    }
+
+    #[request_handler]
     async fn handle_get_score(
         &mut self,
         msg: peer_table_server_protocol::GetScore,
@@ -836,15 +855,6 @@ impl PeerTableServer {
                 })
             })
             .collect()
-    }
-
-    #[request_handler]
-    async fn handle_get_peer_connections(
-        &mut self,
-        msg: peer_table_server_protocol::GetPeerConnections,
-        _ctx: &Context<Self>,
-    ) -> Vec<(H256, PeerConnection)> {
-        self.do_get_peer_connections(msg.capabilities)
     }
 
     #[request_handler]
@@ -999,6 +1009,39 @@ impl PeerTableServer {
             })
             .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
             .map(|(k, _, _, v)| (k, v))
+    }
+
+    /// Returns up to `n` best peers with capability overlap, sorted by weight
+    /// descending. Excludes peers at capacity. Does NOT mutate state — caller
+    /// is responsible for incrementing `requests` on each returned peer.
+    fn do_get_best_n_peers(
+        &self,
+        capabilities: &[Capability],
+        n: usize,
+    ) -> Vec<(H256, PeerConnection)> {
+        let mut candidates: Vec<(H256, i64, i64, PeerConnection)> = self
+            .peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    let connection = peer_data.connection.clone()?;
+                    Some((*id, peer_data.score, peer_data.requests, connection))
+                }
+            })
+            .collect();
+
+        candidates.sort_by_key(|(_, score, reqs, _)| -self.weight_peer(score, reqs));
+        candidates
+            .into_iter()
+            .take(n)
+            .map(|(id, _, _, conn)| (id, conn))
+            .collect()
     }
 
     fn prune(&mut self) {
@@ -1247,27 +1290,6 @@ impl PeerTableServer {
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
             })
             .count()
-    }
-
-    fn do_get_peer_connections(
-        &self,
-        capabilities: Vec<Capability>,
-    ) -> Vec<(H256, PeerConnection)> {
-        self.peers
-            .iter()
-            .filter_map(|(peer_id, peer_data)| {
-                if !capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    return None;
-                }
-                peer_data
-                    .connection
-                    .clone()
-                    .map(|connection| (*peer_id, connection))
-            })
-            .collect()
     }
 
     fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {

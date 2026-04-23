@@ -152,22 +152,19 @@ impl PeerHandler {
                 // sync_head is unknown to our peers
                 return Ok(None);
             }
-            let peer_connection = self
+            let peers = self
                 .peer_table
-                .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .get_best_n_peers(SUPPORTED_ETH_CAPABILITIES.to_vec(), MAX_PEERS_TO_ASK)
                 .await?;
 
-            let selected_peers: Vec<_> = peer_connection
-                .iter()
-                .take(MAX_PEERS_TO_ASK)
-                .map(|(id, _)| *id)
-                .collect();
+            let selected_peers: Vec<_> = peers.iter().map(|(id, _, _)| *id).collect();
             debug!(
                 retry = retries,
                 peers_selected = ?selected_peers,
                 "request_block_headers: resolving sync head with peers"
             );
-            for (peer_id, mut connection) in peer_connection.into_iter().take(MAX_PEERS_TO_ASK) {
+            for (peer_id, mut connection, _permit) in peers {
+                // _permit holds the slot for the duration of this iteration.
                 match ask_peer_head_number(peer_id, &mut connection, sync_head, retries).await {
                     Ok(number) => {
                         sync_head_number = number;
