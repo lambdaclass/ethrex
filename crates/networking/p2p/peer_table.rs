@@ -243,8 +243,9 @@ pub enum ContactValidation {
 /// fire-and-forget `DecRequests` message releases the slot.
 ///
 /// The permit is the output of `get_best_peer`, `get_best_peer_excluding`,
-/// and `get_random_peer`. Those handlers bump the counter atomically with
-/// peer selection (same handler call, under the actor's `&mut self`).
+/// `get_best_n_peers`, and `get_random_peer`. Those handlers bump the
+/// counter atomically with peer selection (same handler call, under the
+/// actor's `&mut self`).
 ///
 /// The permit MUST travel with whatever code owns the outstanding request —
 /// move it into spawned tasks, send it through channels alongside results,
@@ -262,10 +263,6 @@ impl RequestPermit {
             peer_table,
             peer_id,
         }
-    }
-
-    pub fn peer_id(&self) -> H256 {
-        self.peer_id
     }
 }
 
@@ -358,6 +355,9 @@ pub trait PeerTableServerProtocol: Send + Sync {
         capabilities: Vec<Capability>,
         n: usize,
     ) -> Response<Vec<(H256, PeerConnection, RequestPermit)>>;
+    /// Read-only predicate: is there any eligible peer matching `capabilities`?
+    /// Does not reserve a slot; use for capacity/rotation probes only.
+    fn has_eligible_peer(&self, capabilities: Vec<Capability>) -> Response<bool>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
@@ -811,6 +811,15 @@ impl PeerTableServer {
             out.push((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)));
         }
         out
+    }
+
+    #[request_handler]
+    async fn handle_has_eligible_peer(
+        &mut self,
+        msg: peer_table_server_protocol::HasEligiblePeer,
+        _ctx: &Context<Self>,
+    ) -> bool {
+        self.do_get_best_peer(&msg.capabilities).is_some()
     }
 
     #[request_handler]

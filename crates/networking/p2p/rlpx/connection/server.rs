@@ -204,7 +204,7 @@ impl PeerConnection {
 /// attempted. The `ActorRef` returned by `start()` is still a valid handle
 /// and is all tests need to populate `PeerData.connection`.
 #[cfg(test)]
-pub fn detached_peer_connection_handle() -> ActorRef<PeerConnectionServer> {
+pub(crate) fn detached_peer_connection_handle() -> ActorRef<PeerConnectionServer> {
     let server = PeerConnectionServer {
         state: ConnectionState::HandshakeFailed,
     };

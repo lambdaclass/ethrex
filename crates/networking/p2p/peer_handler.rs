@@ -53,6 +53,7 @@ pub enum BlockRequestOrder {
 async fn ask_peer_head_number(
     peer_id: H256,
     connection: &mut PeerConnection,
+    _permit: RequestPermit,
     sync_head: H256,
     retries: i32,
 ) -> Result<u64, PeerHandlerError> {
@@ -69,6 +70,7 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
+    // `_permit` drops at the end of this function, releasing the peer's slot.
     match connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await
@@ -163,9 +165,10 @@ impl PeerHandler {
                 peers_selected = ?selected_peers,
                 "request_block_headers: resolving sync head with peers"
             );
-            for (peer_id, mut connection, _permit) in peers {
-                // _permit holds the slot for the duration of this iteration.
-                match ask_peer_head_number(peer_id, &mut connection, sync_head, retries).await {
+            for (peer_id, mut connection, permit) in peers {
+                match ask_peer_head_number(peer_id, &mut connection, permit, sync_head, retries)
+                    .await
+                {
                     Ok(number) => {
                         sync_head_number = number;
                         if number != 0 {
@@ -225,14 +228,8 @@ impl PeerHandler {
         let mut downloaded_count = 0_u64;
 
         // channel to send the tasks to the peers
-        let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
-            Vec<BlockHeader>,
-            H256,
-            PeerConnection,
-            u64,
-            u64,
-            RequestPermit,
-        )>(1000);
+        let (task_sender, mut task_receiver) =
+            tokio::sync::mpsc::channel::<(Vec<BlockHeader>, H256, PeerConnection, u64, u64)>(1000);
 
         let mut current_show = 0;
 
@@ -245,10 +242,11 @@ impl PeerHandler {
         let mut logged_no_free_peers_count = 0;
 
         loop {
-            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit, _permit)) =
+            if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
-                // _permit drops here, releasing the reservation.
+                // The worker already dropped its permit when the wire request
+                // returned, so the peer's slot is already free here.
 
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
@@ -325,12 +323,16 @@ impl PeerHandler {
                     current_show += 1;
                 }
 
+                // Queue drained but in-flight tasks haven't returned yet.
+                // Drop the permit we just acquired (end of scope) and yield
+                // so the result receive path gets a chance to run.
+                tokio::task::yield_now().await;
                 continue;
             };
             let tx = task_sender.clone();
-            // Selection atomically reserved a request slot; the permit rides
-            // through the channel and drops in the completion handler (or
-            // with the task if it's dropped before sending).
+            // `download_chunk_from_peer` consumes the permit and drops it
+            // when the wire request returns, so the peer's slot is freed
+            // before the result is sent back through the channel.
             debug!("Downloader {peer_id} is now busy");
 
             tokio::spawn(async move {
@@ -340,6 +342,7 @@ impl PeerHandler {
                 let headers = Self::download_chunk_from_peer(
                     peer_id,
                     &mut connection,
+                    permit,
                     startblock,
                     chunk_limit,
                 )
@@ -347,18 +350,11 @@ impl PeerHandler {
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
                 .unwrap_or_default();
 
-                tx.send((
-                    headers,
-                    peer_id,
-                    connection,
-                    startblock,
-                    chunk_limit,
-                    permit,
-                ))
-                .await
-                .inspect_err(|err| {
-                    error!("Failed to send headers result through channel. Error: {err}")
-                })
+                tx.send((headers, peer_id, connection, startblock, chunk_limit))
+                    .await
+                    .inspect_err(|err| {
+                        error!("Failed to send headers result through channel. Error: {err}")
+                    })
             });
         }
 
@@ -419,14 +415,16 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
-            Some((peer_id, mut connection, _permit)) => {
-                // _permit drops at end of this arm, releasing the slot.
+            Some((peer_id, mut connection, permit)) => {
+                // Release the peer's slot as soon as the wire response is in.
+                let response = connection
+                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                    .await;
+                drop(permit);
                 if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                     id: _,
                     block_headers,
-                })) = connection
-                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
-                    .await
+                })) = response
                 {
                     if block_headers.is_empty() {
                         // Empty response is valid per eth spec (peer may not have these blocks)
@@ -457,11 +455,12 @@ impl PeerHandler {
     }
 
     /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer.
-    /// The caller owns the `RequestPermit` for this peer, so this just
-    /// forwards to `connection.outgoing_request` — the permit handles lifecycle.
+    /// Consumes a `RequestPermit` that was reserved at peer selection time;
+    /// the permit drops when this function returns, releasing the peer's slot.
     async fn download_chunk_from_peer(
         peer_id: H256,
         connection: &mut PeerConnection,
+        _permit: RequestPermit,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -508,14 +507,16 @@ impl PeerHandler {
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
-            Some((peer_id, mut connection, _permit)) => {
-                // _permit drops at end of this arm, releasing the slot.
+            Some((peer_id, mut connection, permit)) => {
+                // Release the peer's slot as soon as the wire response is in.
+                let response = connection
+                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                    .await;
+                drop(permit);
                 if let Ok(RLPxMessage::BlockBodies(BlockBodies {
                     id: _,
                     block_bodies,
-                })) = connection
-                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
-                    .await
+                })) = response
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
@@ -594,6 +595,7 @@ impl PeerHandler {
         &mut self,
         _peer_id: H256,
         connection: &mut PeerConnection,
+        _permit: RequestPermit,
         block_number: u64,
     ) -> Result<Option<BlockHeader>, PeerHandlerError> {
         let request_id = rand::random();

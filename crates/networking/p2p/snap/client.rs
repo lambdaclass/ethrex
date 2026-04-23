@@ -69,7 +69,6 @@ struct StorageTaskResult {
     remaining_start: usize,
     remaining_end: usize,
     remaining_hash_range: (H256, Option<H256>),
-    permit: RequestPermit,
 }
 
 #[derive(Debug)]
@@ -137,12 +136,8 @@ pub async fn request_account_range(
     let mut all_accounts_state = Vec::new();
 
     // channel to send the tasks to the peers
-    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
-        Vec<AccountRangeUnit>,
-        H256,
-        Option<(H256, H256)>,
-        RequestPermit,
-    )>(1000);
+    let (task_sender, mut task_receiver) =
+        tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
     info!("Starting to download account ranges from peers");
 
@@ -197,8 +192,8 @@ pub async fn request_account_range(
             last_update = SystemTime::now();
         }
 
-        if let Ok((accounts, peer_id, chunk_start_end, _permit)) = task_receiver.try_recv() {
-            // _permit drops here, releasing the reservation.
+        if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+            // The worker already dropped its permit; peer slot is free here.
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -377,7 +372,6 @@ pub async fn request_bytecodes(
         peer_id: H256,
         remaining_start: usize,
         remaining_end: usize,
-        permit: RequestPermit,
     }
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
 
@@ -399,9 +393,8 @@ pub async fn request_bytecodes(
                 peer_id,
                 remaining_start,
                 remaining_end,
-                permit: _permit,
             } = result;
-            // _permit drops here, releasing the reservation.
+            // The worker already dropped its permit; peer slot is free here.
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -461,9 +454,8 @@ pub async fn request_bytecodes(
             .copied()
             .collect();
 
-        // Selection already reserved the slot; permit rides through the
-        // channel and drops in the receiver (or with the task if dropped
-        // before sending).
+        // The spawned task drops its permit as soon as the wire response is
+        // in, so the peer's slot is freed before we send the result back.
 
         tokio::spawn(async move {
             debug!(
@@ -476,12 +468,12 @@ pub async fn request_bytecodes(
                 bytes: MAX_RESPONSE_BYTES,
             });
 
-            // Collect into a single (bytecodes, remaining_start) pair so the
-            // task has a single `tx.send` site — `RequestPermit` is not `Clone`.
-            let (bytecodes, remaining_start) = match connection
+            let response = connection
                 .outgoing_request(request, PEER_REPLY_TIMEOUT)
-                .await
-            {
+                .await;
+            drop(permit);
+
+            let (bytecodes, remaining_start) = match response {
                 Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) if !codes.is_empty() => {
                     // Validate response by hashing bytecodes
                     let validated_codes: Vec<Bytes> = codes
@@ -509,7 +501,6 @@ pub async fn request_bytecodes(
                 peer_id,
                 remaining_start,
                 remaining_end: chunk_end,
-                permit,
             };
             tx.send(result).await.ok();
         });
@@ -662,9 +653,8 @@ pub async fn request_storage_ranges(
                 remaining_start,
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
-                permit: _permit,
             } = result;
-            // _permit drops here, releasing the reservation.
+            // The worker already dropped its permit; peer slot is free here.
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -1155,12 +1145,7 @@ async fn request_account_range_worker(
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<(
-        Vec<AccountRangeUnit>,
-        H256,
-        Option<(H256, H256)>,
-        RequestPermit,
-    )>,
+    tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
     permit: RequestPermit,
 ) -> Result<(), SnapError> {
     debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
@@ -1173,8 +1158,13 @@ async fn request_account_range_worker(
         response_bytes: MAX_RESPONSE_BYTES,
     });
 
-    // Collect the result into (accounts, chunk_left) so the function has a
-    // single `tx.send` site — `RequestPermit` is not `Clone`.
+    // Perform the wire request and release the peer slot as soon as the
+    // response (or error) is in — processing below is pure computation.
+    let response = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await;
+    drop(permit);
+
     let retry = || {
         (
             Vec::<AccountRangeUnit>::new(),
@@ -1185,26 +1175,17 @@ async fn request_account_range_worker(
         id: _,
         accounts,
         proof,
-        // The caller already holds a request reservation for this peer,
-        // so call outgoing_request directly to avoid a double increment.
-    })) = connection
-        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
+    })) = response
     {
         if accounts.is_empty() {
             retry()
         } else {
-            // Unzip & validate response
+            // Validate response — build the verification inputs by borrowing
+            // `accounts` so we can still consume it for the filtered output.
             let proof = encodable_to_proof(&proof);
-            let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-                .clone()
-                .into_iter()
-                .map(|unit| (unit.hash, unit.account))
-                .unzip();
-            let encoded_accounts = account_states
-                .iter()
-                .map(|acc| acc.encode_to_vec())
-                .collect::<Vec<_>>();
+            let account_hashes: Vec<H256> = accounts.iter().map(|u| u.hash).collect();
+            let encoded_accounts: Vec<_> =
+                accounts.iter().map(|u| u.account.encode_to_vec()).collect();
 
             match verify_range(
                 state_root,
@@ -1248,9 +1229,7 @@ async fn request_account_range_worker(
         retry()
     };
 
-    tx.send((accounts_out, peer_id, chunk_left, permit))
-        .await
-        .ok();
+    tx.send((accounts_out, peer_id, chunk_left)).await.ok();
     Ok::<(), SnapError>(())
 }
 
@@ -1270,8 +1249,7 @@ async fn request_storage_ranges_worker(
     let start_hash = task.start_hash;
 
     // Defaults for the "retry this same range" outcome used by every failure
-    // branch below. Collapsing to a single `tx.send` at the bottom — permit
-    // is not `Clone`.
+    // branch below.
     let retry_outcome = || {
         (
             Vec::<Vec<(H256, U256)>>::new(),
@@ -1292,16 +1270,19 @@ async fn request_storage_ranges_worker(
     });
     tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", "Sending storage range request");
 
-    // The caller already holds a request reservation for this peer,
-    // so call outgoing_request directly to avoid a double increment.
+    // Perform the wire request and release the peer slot as soon as the
+    // response (or error) is in — validation below is pure computation.
+    let response = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await;
+    drop(permit);
+
     let (account_storages, remaining_start, remaining_end, remaining_hash_range) = 'outcome: {
         let Ok(RLPxMessage::StorageRanges(StorageRanges {
             id: _,
             slots,
             proof,
-        })) = connection
-            .outgoing_request(request, PEER_REPLY_TIMEOUT)
-            .await
+        })) = response
         else {
             #[cfg(feature = "metrics")]
             ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
@@ -1432,7 +1413,6 @@ async fn request_storage_ranges_worker(
         remaining_start,
         remaining_end,
         remaining_hash_range,
-        permit,
     };
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
