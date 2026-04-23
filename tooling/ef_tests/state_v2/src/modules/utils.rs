@@ -5,7 +5,8 @@ use ethrex_common::{
     types::{Fork, Genesis},
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-use ethrex_storage::{EngineType, Store};
+use ethrex_state_backend::BackendKind;
+use ethrex_storage::{EngineType, StateBackend, Store};
 use ethrex_vm::DynVmDatabase;
 
 use std::sync::Arc;
@@ -40,13 +41,15 @@ pub async fn load_initial_state(
     fork: &Fork,
 ) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = genesis_from_test_and_fork(test, fork);
-    let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let mut storage =
+        Store::new_mpt("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     storage.add_initial_state(genesis.clone()).await.unwrap();
 
-    let block_hash = genesis.get_block().hash();
+    let genesis_block = StateBackend::compute_genesis_block(BackendKind::Mpt, &genesis);
+    let block_hash = genesis_block.hash();
     let store: DynVmDatabase =
-        Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
+        Box::new(StoreVmDatabase::new(storage.clone(), genesis_block.header).unwrap());
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (

@@ -249,17 +249,17 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )))
         })?;
         ensure_pre_state_condition(
-            account_info.nonce == pre_value.nonce,
+            account_info.info.nonce == pre_value.nonce,
             format!(
                 "Nonce mismatch for account {address:#x}: expected {}, got {}",
-                pre_value.nonce, account_info.nonce
+                pre_value.nonce, account_info.info.nonce
             ),
         )?;
         ensure_pre_state_condition(
-            account_info.balance == pre_value.balance,
+            account_info.info.balance == pre_value.balance,
             format!(
                 "Balance mismatch for account {address:#x}: expected {}, got {}",
-                pre_value.balance, account_info.balance
+                pre_value.balance, account_info.info.balance
             ),
         )?;
         for (k, v) in &pre_value.storage {
@@ -274,11 +274,11 @@ pub fn ensure_pre_state(evm: &VM, test: &EFTest) -> Result<(), EFTestRunnerError
             )?;
         }
         ensure_pre_state_condition(
-            account_info.code_hash == keccak(pre_value.code.as_ref()),
+            account_info.info.code_hash == keccak(pre_value.code.as_ref()),
             format!(
                 "Code hash mismatch for account {address:#x}: expected {}, got {}",
                 keccak(pre_value.code.as_ref()),
-                account_info.code_hash
+                account_info.info.code_hash
             ),
         )?;
     }
@@ -487,9 +487,9 @@ pub async fn ensure_post_state(
 
 pub async fn post_state_root(account_updates: &[AccountUpdate], test: &EFTest) -> H256 {
     let (_initial_state, block_hash, store) = utils::load_initial_state_revm(test).await;
-    let ret_account_updates_batch = store
+    let merkle_output = store
         .apply_account_updates_batch(block_hash, account_updates)
         .unwrap()
         .unwrap();
-    ret_account_updates_batch.state_trie_hash
+    merkle_output.root
 }

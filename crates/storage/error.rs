@@ -1,4 +1,5 @@
 use ethrex_rlp::error::RLPDecodeError;
+use ethrex_state_backend::StateError;
 use ethrex_trie::TrieError;
 use thiserror::Error;
 
@@ -44,6 +45,8 @@ pub enum StoreError {
     IoError(#[from] std::io::Error),
     #[error("Error serializing metadata: {0}")]
     DbMetadataError(#[from] serde_json::Error),
+    #[error("State backend error: {0}")]
+    StateBackend(#[from] StateError),
     #[error("Incompatible DB Version: not found, expected v{expected}")]
     NotFoundDBVersion { expected: u64 },
     #[error("Incompatible DB Version: found v{found}, expected v{expected}")]

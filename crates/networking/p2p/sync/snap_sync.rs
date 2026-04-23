@@ -1005,7 +1005,7 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
 // ============================================================================
 
 #[cfg(not(feature = "rocksdb"))]
-type StorageRoots = (H256, Vec<(ethrex_trie::Nibbles, Vec<u8>)>);
+type StorageRoots = (H256, Vec<(Vec<u8>, Vec<u8>)>);
 
 #[cfg(not(feature = "rocksdb"))]
 fn compute_storage_roots(
@@ -1034,6 +1034,10 @@ fn compute_storage_roots(
     }
 
     let (_, changes) = storage_trie.collect_changes_since_last_hash(&ethrex_crypto::NativeCrypto);
+    let changes = changes
+        .into_iter()
+        .map(|(nib, data)| (nib.into_vec(), data))
+        .collect();
 
     Ok((account_hash, changes))
 }

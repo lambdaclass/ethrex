@@ -959,7 +959,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let mut storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+            Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
             .await
@@ -1057,7 +1057,7 @@ mod tests {
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         // Setup initial storage
         let mut storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+            Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let genesis = read_execution_api_genesis_file();
         storage
             .add_initial_state(genesis)
@@ -1110,7 +1110,7 @@ mod tests {
         let body = r#"{"jsonrpc":"2.0", "method":"admin_nodeInfo", "params":[], "id":1}"#;
         let request: RpcRequest = serde_json::from_str(body).unwrap();
         let mut storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+            Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         let mut config = example_chain_config();
         config.terminal_total_difficulty = Some(mainnet_ttd);
         storage.set_chain_config(&config).await.unwrap();
@@ -1136,7 +1136,7 @@ mod tests {
         let request: RpcRequest = serde_json::from_str(body).expect("serde serialization failed");
         // Setup initial storage
         let mut storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+            Store::new_mpt("temp.db", EngineType::InMemory).expect("Failed to create test DB");
         storage
             .set_chain_config(&example_chain_config())
             .await

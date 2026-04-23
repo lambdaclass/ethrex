@@ -23,6 +23,7 @@ use ethrex_p2p::{
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
+use ethrex_state_backend::BackendKind;
 use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -159,13 +160,13 @@ pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
 /// Opens a pre-existing Store or creates a new one
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+        Store::new(datadir, EngineType::InMemory, BackendKind::Mpt)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        Store::new(datadir, engine_type, BackendKind::Mpt)
     }
 }
 

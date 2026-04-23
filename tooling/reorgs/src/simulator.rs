@@ -27,6 +27,7 @@ use ethrex_rpc::{
         payload::{ExecutionPayload, PayloadValidationStatus},
     },
 };
+use ethrex_trie::genesis_block;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use sha2::{Digest, Sha256};
@@ -494,7 +495,7 @@ pub struct Chain {
 
 impl Chain {
     fn new(genesis: Genesis) -> Self {
-        let genesis_block = genesis.get_block();
+        let genesis_block = genesis_block(&genesis);
         Self {
             block_hashes: vec![genesis_block.hash()],
             blocks: vec![genesis_block],

@@ -233,8 +233,8 @@ mod tests {
     }
 
     async fn context_with_chain_config(osaka_active: bool) -> RpcApiContext {
-        let mut storage =
-            Store::new("test-blobs", EngineType::InMemory).expect("Failed to create test store");
+        let mut storage = Store::new_mpt("test-blobs", EngineType::InMemory)
+            .expect("Failed to create test store");
         storage
             .set_chain_config(&chain_config(osaka_active))
             .await

@@ -23,7 +23,7 @@ async fn test_server(peer_table: Option<PeerTable>) -> DiscoveryServer {
     let peer_table = peer_table.unwrap_or_else(|| {
         PeerTableServer::spawn(
             10,
-            Store::new("", EngineType::InMemory).expect("Failed to create store"),
+            Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
         )
     });
     DiscoveryServer::new_for_test(
@@ -156,7 +156,7 @@ async fn test_enr_update_request_on_pong() {
 
     let peer_table = PeerTableServer::spawn(
         10,
-        Store::new("", EngineType::InMemory).expect("Failed to create store"),
+        Store::new_mpt("", EngineType::InMemory).expect("Failed to create store"),
     );
 
     peer_table

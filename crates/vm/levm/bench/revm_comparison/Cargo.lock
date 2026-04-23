@@ -997,6 +997,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-metrics",
  "ethrex-rlp",
+ "ethrex-state-backend",
  "ethrex-storage",
  "ethrex-trie",
  "ethrex-vm",
@@ -1017,7 +1018,6 @@ dependencies = [
  "ethereum-types",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-trie",
  "hex",
  "hex-literal",
  "hex-simd",
@@ -1098,6 +1098,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-state-backend"
+version = "9.0.0"
+dependencies = [
+ "ethereum-types",
+ "ethrex-common",
+ "thiserror",
+]
+
+[[package]]
 name = "ethrex-storage"
 version = "9.0.0"
 dependencies = [
@@ -1106,6 +1115,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "ethrex-state-backend",
  "ethrex-trie",
  "fastbloom",
  "lru",
@@ -1126,14 +1136,18 @@ dependencies = [
  "bytes",
  "crossbeam",
  "ethereum-types",
+ "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "ethrex-state-backend",
+ "hex",
  "lazy_static",
  "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]
@@ -1147,6 +1161,9 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
+ "ethrex-state-backend",
+ "ethrex-trie",
+ "hex",
  "rayon",
  "rustc-hash",
  "serde",

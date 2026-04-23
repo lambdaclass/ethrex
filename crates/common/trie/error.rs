@@ -1,5 +1,6 @@
 use ethereum_types::H256;
 use ethrex_rlp::error::RLPDecodeError;
+use ethrex_state_backend::StateError;
 use thiserror::Error;
 
 use crate::Nibbles;
@@ -19,6 +20,12 @@ pub enum TrieError {
     DbError(anyhow::Error),
     #[error("Invalid trie input")]
     InvalidInput,
+}
+
+impl From<StateError> for TrieError {
+    fn from(e: StateError) -> Self {
+        TrieError::DbError(anyhow::Error::msg(e.to_string()))
+    }
 }
 
 #[derive(Debug, Error)]

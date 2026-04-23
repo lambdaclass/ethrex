@@ -38,7 +38,7 @@
 //! use ethrex_storage::{Store, EngineType};
 //!
 //! // Create a new store with RocksDB backend
-//! let store = Store::new("./data", EngineType::RocksDB)?;
+//! let store = Store::new_mpt("./data", EngineType::RocksDB)?;
 //!
 //! // Or from a genesis file
 //! let store = Store::new_from_genesis(
@@ -68,16 +68,17 @@ pub mod api;
 pub mod backend;
 pub mod error;
 mod layering;
+pub mod merkleizer;
+pub(crate) mod mpt_wiring;
 pub mod rlp;
+pub mod state_backend;
 pub mod store;
 pub mod trie;
 pub mod utils;
 
-pub use layering::apply_prefix;
-pub use store::{
-    AccountUpdatesList, EngineType, Store, UpdateBatch, has_valid_db, hash_address, hash_key,
-    read_chain_id_from_db,
-};
+pub use merkleizer::Merkleizer;
+pub use state_backend::{StateBackend, WitnessAccessInfo};
+pub use store::{EngineType, Store, UpdateBatch, has_valid_db, read_chain_id_from_db};
 
 /// Store Schema Version, must be updated on any breaking change.
 ///

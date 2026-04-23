@@ -21,7 +21,7 @@ use ethrex_storage::{EngineType, Store};
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
 async fn setup_storage(config: ChainConfig, header: BlockHeader) -> Result<Store, StoreError> {
-    let mut store = Store::new("test", EngineType::InMemory)?;
+    let mut store = Store::new_mpt("test", EngineType::InMemory)?;
     let block_number = header.number;
     let block_hash = header.hash();
     store.add_block_header(block_hash, header).await?;

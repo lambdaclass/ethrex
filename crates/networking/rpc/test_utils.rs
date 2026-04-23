@@ -152,8 +152,8 @@ fn eip1559_tx_for_test(nonce: u64) -> Transaction {
 pub async fn setup_store() -> Store {
     let genesis: &str = include_str!("../../../fixtures/genesis/l1.json");
     let genesis: Genesis = serde_json::from_str(genesis).expect("Fatal: test config is invalid");
-    let mut store =
-        Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db test");
+    let mut store = Store::new_mpt("test-store", EngineType::InMemory)
+        .expect("Fail to create in-memory db test");
     store.add_initial_state(genesis).await.unwrap();
     store
 }
@@ -227,7 +227,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
     let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
     let mut storage =
-        Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
+        Store::new_mpt("", EngineType::InMemory).expect("Failed to create in-memory storage");
     storage
         .add_initial_state(serde_json::from_str(TEST_GENESIS).unwrap())
         .await
@@ -299,14 +299,14 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 /// Creates a dummy SyncManager for tests where syncing is not needed
 /// This should only be used in tests as it won't be able to connect to the p2p network
 pub async fn dummy_sync_manager() -> SyncManager {
-    let store = Store::new("", EngineType::InMemory).expect("Failed to start Store Engine");
+    let store = Store::new_mpt("", EngineType::InMemory).expect("Failed to start Store Engine");
     let blockchain = Arc::new(Blockchain::default_with_store(store.clone()));
     SyncManager::new(
         dummy_peer_handler(store).await,
         &SyncMode::Full,
         CancellationToken::new(),
         blockchain,
-        Store::new("temp.db", ethrex_storage::EngineType::InMemory)
+        Store::new_mpt("temp.db", ethrex_storage::EngineType::InMemory)
             .expect("Failed to start Storage Engine"),
         ".".into(),
     )
@@ -333,7 +333,7 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         "enode://d860a01f9722d78051619d1e2351aba3f43f943f6f00718d1b9baa4101932a1f5011f16bb2b1bb35db20d6fe28fa0bf09636d26a87d31de9ec6203eeedb1f666@18.138.108.67:30303",
     ).expect("Bad enode url");
     let network_config = NetworkConfig::from_node(&local_node);
-    let storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
+    let storage = Store::new_mpt("./temp", EngineType::InMemory).expect("Failed to create Store");
 
     P2PContext::new(
         local_node,
