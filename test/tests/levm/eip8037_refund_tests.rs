@@ -148,6 +148,21 @@ fn call_bytecode(target: Address) -> Vec<u8> {
     b
 }
 
+/// CALL to `target` transferring `value` wei. No args, no return capture.
+/// When `target` doesn't exist in pre-state and `value > 0`, Amsterdam charges
+/// `state_gas_new_account` in the caller's frame.
+fn call_with_value_bytecode(target: Address, value: u8) -> Vec<u8> {
+    // retLen retOffset argsLen argsOffset value target GAS CALL POP
+    let mut b = vec![0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]; // 4x PUSH1 0
+    b.extend_from_slice(&[0x60, value]); // PUSH1 <value>
+    b.push(0x73); // PUSH20
+    b.extend_from_slice(target.as_bytes());
+    b.push(0x5a); // GAS
+    b.push(0xf1); // CALL
+    b.push(0x50); // POP
+    b
+}
+
 // ==================== Test runner ====================
 
 struct TestRunner {
@@ -553,6 +568,58 @@ fn test_ancestor_absorbed_refund_refills_reservoir() {
 ///   parent.state_gas_left += child.state_gas_used - child.state_gas_refund
 /// Tx succeeds at top level (parent returns from CALL with FAIL and STOPs). The
 /// parent must reclaim B's state-gas consumption so it's not burned.
+/// EIP-8037 CALL-to-empty-account with value transfer charges
+/// `state_gas_new_account` in the CALLER's frame (parent). When the parent
+/// continues and the transaction succeeds, that state gas is retained in net
+/// `state_gas_used`. The child frame has no code and returns success
+/// immediately, so no child revert is involved — this test guards the
+/// "parent charged, parent succeeds" path against regressions that would
+/// incorrectly refund new-account state gas on child return.
+#[test]
+fn test_call_to_empty_account_with_value_retains_parent_state_gas() {
+    use ethrex_levm::gas_cost::{STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte};
+
+    let addr_a = Address::from_low_u64_be(CONTRACT_A);
+    let empty_target = Address::from_low_u64_be(0xDEAD); // not in pre-state
+
+    // A: CALL(value=1, target=empty_addr) then STOP.
+    let mut code_a = call_with_value_bytecode(empty_target, 1);
+    code_a.extend(stop());
+
+    let report = TestRunner::new(addr_a)
+        .with_account(
+            Address::from_low_u64_be(SENDER),
+            eoa(U256::from(10u64).pow(18.into())),
+        )
+        // A must have balance to transfer.
+        .with_account(
+            addr_a,
+            Account::new(
+                U256::from(10u64).pow(18.into()),
+                Code::from_bytecode(Bytes::from(code_a), &NativeCrypto),
+                1,
+                FxHashMap::default(),
+            ),
+        )
+        .run();
+
+    assert!(
+        report.is_success(),
+        "top-level tx must succeed: {:?}",
+        report.result
+    );
+
+    let cpsb = cost_per_state_byte(GAS_LIMIT * 2);
+    let expected_state_gas = STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+
+    assert_eq!(
+        report.state_gas_used, expected_state_gas,
+        "parent frame must retain state_gas_new_account after CALL-to-empty + success \
+         (got {}, expected {})",
+        report.state_gas_used, expected_state_gas
+    );
+}
+
 #[test]
 fn test_child_charge_then_revert_returns_state_gas_to_parent() {
     use ethrex_levm::gas_cost::{STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte};
