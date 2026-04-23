@@ -1484,11 +1484,7 @@ impl Store {
                     // Open backend, run migrations, then proceed with the same Arc
                     let backend: Arc<dyn crate::api::StorageBackend> =
                         Arc::new(RocksDBBackend::open(&path)?);
-                    crate::migrations::run_pending_migrations(
-                        backend.as_ref(),
-                        &db_path,
-                        v,
-                    )?;
+                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
                     return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
                 }
                 #[cfg(not(feature = "rocksdb"))]
