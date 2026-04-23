@@ -15,7 +15,7 @@ use ethrex_common::{
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -26,7 +26,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -650,6 +650,26 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
+            // running block totals. Run BEFORE we touch the BAL recorder so a
+            // rejected tx doesn't even produce a sender/recipient touch. Matches
+            // the validator's check in `execute_block_parallel`; if we skipped
+            // this the builder could include txs the validator would reject,
+            // causing a miss-slot.
+            if context.is_amsterdam
+                && let Err(e) = check_2d_gas_allowance(
+                    &head_tx.tx,
+                    Fork::Amsterdam,
+                    context.block_regular_gas_used,
+                    context.block_state_gas_used,
+                    context.payload.header.gas_limit,
+                )
+            {
+                debug!("Skipping tx {tx_hash:x}: fails 2D inclusion check: {e}");
+                txs.pop();
+                continue;
+            }
+
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
             // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
@@ -848,7 +868,18 @@ pub fn apply_plain_transaction(
         // 2. Revert cumulative gas counter inflation
         // This ensures the next transaction executes against clean state.
         context.vm.undo_last_tx()?;
-        context.cumulative_gas_spent -= report.gas_spent;
+        // `cumulative_gas_spent` was bumped inside `execute_tx` above; revert it
+        // now that the tx is being rejected. Use `saturating_sub` as a defensive
+        // guard — cumulative must always dominate this tx's contribution unless
+        // some upstream bug leaks a stale value, in which case we'd rather clamp
+        // to 0 than underflow the counter.
+        debug_assert!(
+            context.cumulative_gas_spent >= report.gas_spent,
+            "cumulative_gas_spent underflow on tx rollback"
+        );
+        context.cumulative_gas_spent = context
+            .cumulative_gas_spent
+            .saturating_sub(report.gas_spent);
 
         return Err(EvmError::Custom(format!(
             "block gas limit exceeded (state gas overflow): \
