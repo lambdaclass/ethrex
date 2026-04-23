@@ -18,6 +18,18 @@ const SKIPPED_BASE: &[&str] = &[
     "ValueOverflowParis",
     // Skip because it's a "Create" Blob Transaction, which doesn't actually exist. It never reaches the EVM because we can't even parse it as an actual Transaction.
     "createBlobhashTx",
+    // EIP-8025 optional-proofs fixtures filled against bal@v5.6.1 (devnets/bal/3),
+    // which predates EELS PR #2711 "immutable intrinsic_state_gas for EIP-7702".
+    // Expected gas assumes the auth refund still deducts from block-accounted state
+    // gas; our devnet-4 (bal@v5.7.0) impl correctly keeps intrinsic_state_gas
+    // immutable and routes the refund to the reservoir only. Re-enable once the
+    // zkevm@v0.4.x release ships fixtures regenerated against devnet-4.
+    "witness_codes_redelegation_old_marker_included_new_marker_excluded",
+    "witness_codes_reset_delegation",
+    "witness_codes_reverted_transaction",
+    "witness_codes_failed_create_includes_factory",
+    "witness_codes_reverted_create_same_hash_then_read",
+    "witness_codes_create_then_selfdestruct_same_tx",
 ];
 
 // Extra skips added only for prover backends.

@@ -138,6 +138,7 @@ struct TestBuilder {
     sender: Address,
     to: Address,
     value: U256,
+    priority_fee_per_gas: u64,
 }
 
 impl TestBuilder {
@@ -148,6 +149,8 @@ impl TestBuilder {
             sender: Address::from_low_u64_be(SENDER),
             to: Address::from_low_u64_be(RECIPIENT),
             value: U256::zero(),
+            // Default: gas_price == base_fee_per_gas (1000), so priority fee = 0.
+            priority_fee_per_gas: 0,
         }
     }
 
@@ -171,10 +174,21 @@ impl TestBuilder {
         self
     }
 
+    /// Set a nonzero priority fee per gas. The effective gas_price becomes
+    /// base_fee_per_gas (1000) + priority_fee_per_gas. The coinbase receives
+    /// gas_used × priority_fee_per_gas as a fee payment.
+    fn priority_fee(mut self, fee: u64) -> Self {
+        self.priority_fee_per_gas = fee;
+        self
+    }
+
     fn execute(self) -> ExecutionReport {
         let test_db = TestDatabase::new();
         let accounts_map: FxHashMap<Address, Account> = self.accounts.into_iter().collect();
         let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts_map);
+
+        let base_fee: u64 = 1000;
+        let gas_price = base_fee + self.priority_fee_per_gas;
 
         let blob_schedule = EVMConfig::canonical_values(self.fork);
         let env = Environment {
@@ -188,20 +202,21 @@ impl TestBuilder {
             difficulty: U256::zero(),
             slot_number: U256::zero(),
             chain_id: U256::from(1),
-            base_fee_per_gas: U256::from(1000),
+            base_fee_per_gas: U256::from(base_fee),
             base_blob_fee_per_gas: U256::from(1),
-            gas_price: U256::from(1000),
+            gas_price: U256::from(gas_price),
             block_excess_blob_gas: None,
             block_blob_gas_used: None,
             tx_blob_hashes: vec![],
             tx_max_priority_fee_per_gas: None,
-            tx_max_fee_per_gas: Some(U256::from(1000)),
+            tx_max_fee_per_gas: Some(U256::from(gas_price)),
             tx_max_fee_per_blob_gas: None,
             tx_nonce: 0,
             block_gas_limit: GAS_LIMIT * 2,
             is_privileged: false,
             fee_token: None,
             disable_balance_check: false,
+            is_system_call: false,
         };
 
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
@@ -209,8 +224,8 @@ impl TestBuilder {
             value: self.value,
             data: Bytes::new(),
             gas_limit: GAS_LIMIT,
-            max_fee_per_gas: 1000,
-            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: gas_price,
+            max_priority_fee_per_gas: self.priority_fee_per_gas,
             ..Default::default()
         });
 
@@ -1249,4 +1264,296 @@ fn test_closure_logs_lexicographical_order() {
         addr8, higher_addr,
         "Second closure log should be for lexicographically higher address"
     );
+}
+
+// ==================== PR #2717 Invariant Tests ====================
+
+/// (a) Multiple Burn logs at tx finalization are emitted in strict lexicographic ascending
+/// address order, not insertion order.
+///
+/// This extends the 2-child test to 3 children and asserts that all three closure Burn
+/// logs appear in sorted address order regardless of creation order.
+#[test]
+fn test_burn_logs_emitted_in_lex_ascending_order_three_accounts() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let factory = Address::from_low_u64_be(CONTRACT);
+    let beneficiary = Address::from_low_u64_be(BENEFICIARY);
+
+    // Three children, each selfdestructs to beneficiary (different address) then receives ETH.
+    let child1 = ethrex_common::evm::calculate_create_address(factory, 1);
+    let child2 = ethrex_common::evm::calculate_create_address(factory, 2);
+    let child3 = ethrex_common::evm::calculate_create_address(factory, 3);
+
+    // Sort them to know expected order
+    let mut sorted = [child1, child2, child3];
+    sorted.sort();
+
+    let init_code = selfdestruct_init_code(beneficiary);
+    let create_value = U256::from(100);
+    let call_value = U256::from(50);
+
+    // Build factory bytecode:
+    // 1. Store init_code in memory
+    // 2. CREATE child1, store at mem[100]; CREATE child2, store at mem[132]; CREATE child3, store at mem[164]
+    // 3. CALL each child with call_value
+    let mut factory_code: Vec<u8> = Vec::new();
+
+    // Store init_code
+    for (i, byte) in init_code.iter().enumerate() {
+        factory_code.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]);
+    }
+
+    // CREATE child1
+    factory_code.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&create_value.to_big_endian());
+    factory_code.push(0xf0);
+    factory_code.extend_from_slice(&[0x60, 100, 0x52]);
+
+    // Restore init_code (MSTORE overwrites mem[100..132])
+    for (i, byte) in init_code.iter().enumerate() {
+        factory_code.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]);
+    }
+
+    // CREATE child2
+    factory_code.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&create_value.to_big_endian());
+    factory_code.push(0xf0);
+    factory_code.extend_from_slice(&[0x60, 132, 0x52]);
+
+    // Restore init_code
+    for (i, byte) in init_code.iter().enumerate() {
+        factory_code.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]);
+    }
+
+    // CREATE child3
+    factory_code.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&create_value.to_big_endian());
+    factory_code.push(0xf0);
+    factory_code.extend_from_slice(&[0x60, 164, 0x52]);
+
+    // CALL child1 with call_value
+    factory_code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 100, 0x51]);
+    factory_code.push(0x5a);
+    factory_code.push(0xf1);
+    factory_code.push(0x50);
+
+    // CALL child2 with call_value
+    factory_code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 132, 0x51]);
+    factory_code.push(0x5a);
+    factory_code.push(0xf1);
+    factory_code.push(0x50);
+
+    // CALL child3 with call_value
+    factory_code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 164, 0x51]);
+    factory_code.push(0x5a);
+    factory_code.push(0xf1);
+    factory_code.push(0x50);
+
+    factory_code.push(0x00); // STOP
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            factory,
+            contract_funded(U256::from(200_000), Bytes::from(factory_code), 1),
+        )
+        .account(beneficiary, eoa(U256::zero()))
+        .to(factory)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Collect all Burn logs
+    let burn_logs: Vec<&ethrex_common::types::Log> = report
+        .logs
+        .iter()
+        .filter(|l| l.topics[0] == BURN_EVENT_TOPIC)
+        .collect();
+
+    assert_eq!(
+        burn_logs.len(),
+        3,
+        "Should have exactly 3 Burn logs (one per child)"
+    );
+
+    // Extract addresses from Burn logs and verify lex-ascending order
+    let burn_addrs: Vec<Address> = burn_logs
+        .iter()
+        .map(|l| Address::from_slice(&l.topics[1].as_bytes()[12..]))
+        .collect();
+
+    assert_eq!(
+        burn_addrs[0], sorted[0],
+        "First Burn log should be for lex-lowest address"
+    );
+    assert_eq!(
+        burn_addrs[1], sorted[1],
+        "Second Burn log should be for lex-middle address"
+    );
+    assert_eq!(
+        burn_addrs[2], sorted[2],
+        "Third Burn log should be for lex-highest address"
+    );
+}
+
+/// (b) Coinbase priority-fee no-log: no Transfer log is emitted for the priority fee
+/// payment to coinbase. Even if the tx body CALLs coinbase with a non-zero value, only
+/// ONE Transfer log appears (for the CALL), not for the fee.
+///
+/// This test uses a nonzero priority_fee_per_gas (100) so that pay_coinbase actually
+/// calls increase_account_balance (coinbase_fee > 0). Without a nonzero priority fee,
+/// pay_coinbase skips the balance increase entirely and the "no Transfer log for fee"
+/// behaviour is trivially satisfied.
+///
+/// gas_price = base_fee(1000) + priority_fee(100) = 1100
+/// coinbase_fee = gas_used × priority_fee = (>21000) × 100 > 0  ← confirmed nonzero
+#[test]
+fn test_coinbase_priority_fee_does_not_emit_transfer_log() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let coinbase = Address::from_low_u64_be(0xCCC);
+    let call_value = U256::from(100);
+    let priority_fee: u64 = 100;
+
+    // Contract that CALLs coinbase with call_value — this DOES emit a Transfer log.
+    let call_code = call_with_value_bytecode(coinbase, call_value);
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            Address::from_low_u64_be(CONTRACT),
+            contract_funded(U256::from(10_000), call_code, 0),
+        )
+        .to(Address::from_low_u64_be(CONTRACT))
+        .priority_fee(priority_fee)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Confirm coinbase_fee > 0: gas_used * priority_fee > 0.
+    // gas_used >= TX_BASE(21_000); coinbase_fee = gas_used * 100 >= 2_100_000 > 0.
+    // (No direct access to gas_used here, but it's nonzero for any tx that reaches execute().)
+
+    // There must be exactly ONE Transfer log: for the CALL to coinbase, not for the fee.
+    let transfer_logs: Vec<&ethrex_common::types::Log> = report
+        .logs
+        .iter()
+        .filter(|l| l.topics[0] == TRANSFER_EVENT_TOPIC)
+        .collect();
+
+    assert_eq!(
+        transfer_logs.len(),
+        1,
+        "Should have exactly one Transfer log (for the CALL), not for the priority fee payment"
+    );
+
+    // Verify the single Transfer log is for the CALL (from the contract to coinbase)
+    let contract_addr = Address::from_low_u64_be(CONTRACT);
+    assert_transfer_log(transfer_logs[0], contract_addr, coinbase, call_value);
+}
+
+/// (c) Multi-SELFDESTRUCT → single Burn log: if two separate post-SELFDESTRUCT transfers
+/// go to the same destroyed account, a single Burn log with the combined balance is emitted.
+///
+/// Setup: child selfdestructs to beneficiary, then the factory sends ETH to child twice.
+/// The child is in the selfdestruct set, so at finalization it gets ONE Burn log with
+/// the combined balance of both transfers.
+#[test]
+fn test_multi_selfdestruct_dest_emits_single_burn_log_with_combined_balance() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let factory = Address::from_low_u64_be(CONTRACT);
+    let beneficiary = Address::from_low_u64_be(BENEFICIARY);
+
+    let child = ethrex_common::evm::calculate_create_address(factory, 1);
+
+    // Init code: selfdestruct to beneficiary
+    let init_code = selfdestruct_init_code(beneficiary);
+    let create_value = U256::from(1000);
+    let call_value1 = U256::from(200);
+    let call_value2 = U256::from(300);
+
+    // Factory bytecode:
+    // 1. CREATE child with 1000 wei (child immediately selfdestructs to beneficiary)
+    // 2. CALL child with 200 wei (child now has 200 wei even though selfdestructed)
+    // 3. CALL child with 300 wei (child now has 500 wei combined)
+    // At end of tx, child (in selfdestruct set) has 500 wei — ONE Burn log with 500.
+    let mut factory_code: Vec<u8> = Vec::new();
+
+    // Store init_code
+    for (i, byte) in init_code.iter().enumerate() {
+        factory_code.extend_from_slice(&[0x60, *byte, 0x60, i as u8, 0x53]);
+    }
+
+    // CREATE child
+    factory_code.extend_from_slice(&[0x60, init_code.len() as u8, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&create_value.to_big_endian());
+    factory_code.push(0xf0);
+    // Store child address at mem[100]
+    factory_code.extend_from_slice(&[0x60, 100, 0x52]);
+
+    // CALL child with call_value1
+    factory_code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value1.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 100, 0x51]);
+    factory_code.push(0x5a);
+    factory_code.push(0xf1);
+    factory_code.push(0x50);
+
+    // CALL child with call_value2
+    factory_code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+    factory_code.push(0x7f);
+    factory_code.extend_from_slice(&call_value2.to_big_endian());
+    factory_code.extend_from_slice(&[0x60, 100, 0x51]);
+    factory_code.push(0x5a);
+    factory_code.push(0xf1);
+    factory_code.push(0x50);
+
+    factory_code.push(0x00); // STOP
+
+    let report = TestBuilder::new()
+        .account(sender, eoa(U256::from(DEFAULT_BALANCE)))
+        .account(
+            factory,
+            contract_funded(U256::from(200_000), Bytes::from(factory_code), 1),
+        )
+        .account(beneficiary, eoa(U256::zero()))
+        .to(factory)
+        .execute();
+
+    assert!(report.is_success(), "Transaction should succeed");
+
+    // Collect Burn logs
+    let burn_logs: Vec<&ethrex_common::types::Log> = report
+        .logs
+        .iter()
+        .filter(|l| l.topics[0] == BURN_EVENT_TOPIC)
+        .collect();
+
+    // Must be exactly ONE Burn log (not two)
+    assert_eq!(
+        burn_logs.len(),
+        1,
+        "Should have exactly ONE Burn log for child (combined balance, not two separate logs)"
+    );
+
+    // Verify the Burn log is for the child address
+    let burn_addr = Address::from_slice(&burn_logs[0].topics[1].as_bytes()[12..]);
+    assert_eq!(burn_addr, child, "Burn log should be for the child address");
+
+    // Verify the combined balance = call_value1 + call_value2 = 500
+    let combined = call_value1.checked_add(call_value2).unwrap();
+    assert_burn_log(burn_logs[0], child, combined);
 }
