@@ -1364,15 +1364,30 @@ mod permit_tests {
         PeerTableServer::spawn(10, store)
     }
 
-    // NOTE: `PeerConnection` has a private field (`handle: ActorRef<...>`) and
-    // can only be constructed via `spawn_as_initiator` / `spawn_as_receiver`,
-    // both of which require a full `P2PContext`. That's too heavy to set up
-    // from a unit test. Therefore the happy-path test inserts a peer with
-    // `connection: None` and exercises the counter bookkeeping directly.
+    // `PeerConnection` has a private field and its production constructors
+    // require a full `P2PContext`. For tests we use `PeerConnection::for_test`
+    // together with `detached_peer_connection_handle` to mint a handle without
+    // running a real handshake.
     fn fake_peer_data() -> (H256, PeerData) {
         let node = Node::new("127.0.0.1".parse().expect("ip"), 30303, 30303, H512::zero());
         let peer_id = H256::from_low_u64_be(1);
         let peer = PeerData::new(node, None, None, SUPPORTED_ETH_CAPABILITIES.to_vec());
+        (peer_id, peer)
+    }
+
+    /// Build a `PeerData` with a fake-but-valid `PeerConnection` so that
+    /// `do_get_best_peer_excluding`'s `connection.is_some()` filter accepts it.
+    fn fake_connected_peer(peer_id_byte: u64) -> (H256, PeerData) {
+        use crate::rlpx::connection::server::{PeerConnection, detached_peer_connection_handle};
+        let node = Node::new("127.0.0.1".parse().expect("ip"), 30303, 30303, H512::zero());
+        let peer_id = H256::from_low_u64_be(peer_id_byte);
+        let connection = PeerConnection::for_test(detached_peer_connection_handle());
+        let peer = PeerData::new(
+            node,
+            None,
+            Some(connection),
+            SUPPORTED_ETH_CAPABILITIES.to_vec(),
+        );
         (peer_id, peer)
     }
 
@@ -1427,5 +1442,108 @@ mod permit_tests {
             diag_after.inflight_requests, 0,
             "permit drop should release the slot"
         );
+    }
+
+    #[tokio::test]
+    async fn get_best_peer_bumps_counter_and_drop_releases() {
+        // End-to-end happy path: `get_best_peer` must atomically reserve a
+        // slot (bumping `requests` to 1) and return a permit whose drop
+        // decrements back to 0.
+        let table = fresh_peer_table().await;
+        let (peer_id, peer) = fake_connected_peer(1);
+
+        table
+            ._test_insert_peer(peer_id, peer)
+            .expect("insert fake peer");
+
+        let selected = table
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await
+            .expect("actor alive");
+        let (got_id, _conn, permit) = selected.expect("peer should be selected");
+        assert_eq!(got_id, peer_id);
+
+        let diag = table
+            .get_peer_diagnostics()
+            .await
+            .expect("diagnostics")
+            .into_iter()
+            .find(|p| p.peer_id == peer_id)
+            .expect("peer present");
+        assert_eq!(
+            diag.inflight_requests, 1,
+            "selection should atomically bump the in-flight counter"
+        );
+
+        drop(permit);
+        // `get_peer_diagnostics` is a request handler. Awaiting its response
+        // ensures the preceding fire-and-forget `dec_requests` send from the
+        // permit's Drop has been processed (FIFO mailbox).
+        let diag_after = table
+            .get_peer_diagnostics()
+            .await
+            .expect("diagnostics")
+            .into_iter()
+            .find(|p| p.peer_id == peer_id)
+            .expect("peer present");
+        assert_eq!(
+            diag_after.inflight_requests, 0,
+            "dropping the permit should release the slot"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_best_n_peers_bumps_all_and_releases_all_on_drop() {
+        // Batched reservation path: `get_best_n_peers` returns a vector of
+        // (id, conn, permit) triples and must have bumped each selected
+        // peer's counter before returning. Dropping all three permits must
+        // decrement all three counters back to 0.
+        let table = fresh_peer_table().await;
+        let (id_a, peer_a) = fake_connected_peer(1);
+        let (id_b, peer_b) = fake_connected_peer(2);
+        let (id_c, peer_c) = fake_connected_peer(3);
+
+        table
+            ._test_insert_peer(id_a, peer_a)
+            .expect("insert peer A");
+        table
+            ._test_insert_peer(id_b, peer_b)
+            .expect("insert peer B");
+        table
+            ._test_insert_peer(id_c, peer_c)
+            .expect("insert peer C");
+
+        let selected = table
+            .get_best_n_peers(SUPPORTED_ETH_CAPABILITIES.to_vec(), 3)
+            .await
+            .expect("actor alive");
+        assert_eq!(selected.len(), 3, "should return all three peers");
+
+        let diags = table.get_peer_diagnostics().await.expect("diagnostics");
+        for id in [id_a, id_b, id_c] {
+            let diag = diags
+                .iter()
+                .find(|p| p.peer_id == id)
+                .expect("peer present");
+            assert_eq!(
+                diag.inflight_requests, 1,
+                "peer {id:?} should have its counter bumped",
+            );
+        }
+
+        // Drop all permits (consumes the vector, dropping the triples).
+        drop(selected);
+
+        let diags_after = table.get_peer_diagnostics().await.expect("diagnostics");
+        for id in [id_a, id_b, id_c] {
+            let diag = diags_after
+                .iter()
+                .find(|p| p.peer_id == id)
+                .expect("peer present");
+            assert_eq!(
+                diag.inflight_requests, 0,
+                "peer {id:?} should have its counter released",
+            );
+        }
     }
 }
