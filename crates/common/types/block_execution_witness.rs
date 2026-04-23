@@ -696,9 +696,23 @@ fn collect_accounts_from_node(
             let path_bytes = full_path.to_bytes();
             if path_bytes.len() == 32 {
                 let hashed_address = H256::from_slice(&path_bytes);
-                if let Ok(account_state) = AccountState::decode(&leaf.value) {
-                    accounts.push((hashed_address, account_state.storage_root));
+                match AccountState::decode(&leaf.value) {
+                    Ok(account_state) => {
+                        accounts.push((hashed_address, account_state.storage_root));
+                    }
+                    Err(e) => {
+                        tracing::debug!(
+                            ?hashed_address,
+                            error = %e,
+                            "Skipping leaf with un-decodable account state"
+                        );
+                    }
                 }
+            } else {
+                tracing::debug!(
+                    path_len = path_bytes.len(),
+                    "Skipping leaf with unexpected path length (expected 32)"
+                );
             }
         }
     }
