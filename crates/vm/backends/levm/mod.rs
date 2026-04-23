@@ -443,9 +443,11 @@ impl LEVM {
             // not from db — no need to call send_state_transitions_tx here.
 
             // Validate BAL entries at the withdrawal index against actual
-            // post-withdrawal/request state.
+            // post-withdrawal/request state. `saturating_add(1)` prevents a
+            // release-build wrap if `n == u32::MAX` (debug_assert on tx count
+            // catches this upstream, but belt-and-braces).
             let withdrawal_idx = u32::try_from(block.body.transactions.len())
-                .map(|n| n + 1)
+                .map(|n| n.saturating_add(1))
                 .unwrap_or(u32::MAX);
             Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx, &validation_index)?;
 
