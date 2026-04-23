@@ -676,17 +676,14 @@ def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
     """Save logs for all containers (ethrex + consensus)."""
     print(f"\n📁 Saving logs for run {run_id}...")
 
-    try:
-        for inst in instances:
-            # Save ethrex logs
-            save_container_logs(inst.container, run_id)
-            # Save consensus logs (convention: consensus-{network})
-            consensus_container = inst.container.replace("ethrex-", "consensus-")
-            save_container_logs(consensus_container, run_id)
+    for inst in instances:
+        # Save ethrex logs
+        save_container_logs(inst.container, run_id)
+        # Save consensus logs (convention: consensus-{network})
+        consensus_container = inst.container.replace("ethrex-", "consensus-")
+        save_container_logs(consensus_container, run_id)
 
-        print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
-    except OSError as e:
-        print(f"⚠️ Failed to save some logs (disk full?): {e}", flush=True)
+    print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
 
 def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str, build_profile: str = "", diagnostics_tracker: Optional['DiagnosticsTracker'] = None):
