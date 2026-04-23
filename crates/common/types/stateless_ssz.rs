@@ -1,4 +1,4 @@
-//! SSZ containers for EIP-8025 (Execution Layer Triggerable Proofs) and the
+//! SSZ containers for EIP-8025 (Optional Execution Proofs) and the
 //! stateless validation flow used by native rollups.
 //!
 //! The first section mirrors the CL-side SSZ definitions used for
@@ -289,7 +289,12 @@ impl NewPayloadRequest {
 // Stateless validation containers (native rollups / EXECUTE precompile)
 // ============================================================================
 
-// ── Stateless validation limits (execution-specs projects/zkevm) ─
+// ── Stateless validation limits ──────────────────────────────────
+//
+// Only `MAX_WITNESS_HEADERS` has spec backing (stateless.py asserts
+// `len(encoded_headers) <= 256`). The rest are ethrex-chosen bounds
+// required to type the SSZ lists; the reference stateless.py uses
+// untyped Python lists with no size limits.
 
 /// MAX_WITNESS_NODES — max trie-node preimages in an execution witness.
 const MAX_WITNESS_NODES: usize = 1_048_576; // 2^20
@@ -310,19 +315,16 @@ const MAX_BYTES_PER_PUBLIC_KEY: usize = 48;
 
 // ── Stateless validation types ───────────────────────────────────
 //
-// These match the execution-specs `projects/zkevm` branch definitions:
-// - StatelessInput (stateless.py)
-// - StatelessValidationResult (stateless.py)
-// - ExecutionWitness (stateless.py)
-// - ChainConfig (stateless.py)
+// Mirror the definitions in execution-specs (projects/zkevm branch):
+// https://github.com/ethereum/execution-specs/blob/fd53de118b211936761cd6ce04735d4437b3dbdb/src/ethereum/forks/amsterdam/stateless.py
 
-/// SSZ `ChainConfig` container — matches the execution-specs definition
-/// (`projects/zkevm` branch, `stateless.py`).
+/// SSZ `ChainConfig` container.
 ///
 /// Only carries `chain_id`. Fork rules are implicit: the EXECUTE precompile
 /// and stateless validator always run at the latest fork (Amsterdam), so all
-/// prior forks are activated at timestamp 0 during conversion to the internal
-/// `ChainConfig`.
+/// prior forks are activated at timestamp 0 when this is converted to the
+/// internal `ChainConfig` in `ssz_witness_to_internal` (see
+/// `crates/blockchain/stateless.rs`).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct SszChainConfig {
     pub chain_id: u64,
