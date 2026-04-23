@@ -50,6 +50,8 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
+/// Asks a single already-selected peer for the block number at `sync_head`.
+/// Consumes a `RequestPermit`; the permit drops on return, releasing the slot.
 async fn ask_peer_head_number(
     peer_id: H256,
     connection: &mut PeerConnection,
@@ -70,7 +72,6 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    // `_permit` drops at the end of this function, releasing the peer's slot.
     match connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await
@@ -245,9 +246,6 @@ impl PeerHandler {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit)) =
                 task_receiver.try_recv()
             {
-                // The worker already dropped its permit when the wire request
-                // returned, so the peer's slot is already free here.
-
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
                     self.peer_table.record_failure(peer_id)?;
@@ -330,9 +328,6 @@ impl PeerHandler {
                 continue;
             };
             let tx = task_sender.clone();
-            // `download_chunk_from_peer` consumes the permit and drops it
-            // when the wire request returns, so the peer's slot is freed
-            // before the result is sent back through the channel.
             debug!("Downloader {peer_id} is now busy");
 
             tokio::spawn(async move {
@@ -591,6 +586,9 @@ impl PeerHandler {
         Ok(self.peer_table.peer_count().await?)
     }
 
+    /// Requests a single block header by number from an already-selected peer.
+    /// Consumes a `RequestPermit` reserved by the caller at peer selection
+    /// time; the permit drops when this function returns, releasing the slot.
     pub async fn get_block_header(
         &mut self,
         _peer_id: H256,

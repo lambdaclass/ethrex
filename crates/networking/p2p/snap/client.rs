@@ -193,7 +193,6 @@ pub async fn request_account_range(
         }
 
         if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-            // The worker already dropped its permit; peer slot is free here.
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -261,10 +260,6 @@ pub async fn request_account_range(
             .await
             .expect("Should be able to update pivot")
         }
-
-        // Selection already reserved the slot; permit rides through the
-        // channel and drops in the receiver (or with the task if dropped
-        // before sending).
 
         tokio::spawn(request_account_range_worker(
             peer_id,
@@ -394,7 +389,6 @@ pub async fn request_bytecodes(
                 remaining_start,
                 remaining_end,
             } = result;
-            // The worker already dropped its permit; peer slot is free here.
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -454,9 +448,6 @@ pub async fn request_bytecodes(
             .copied()
             .collect();
 
-        // The spawned task drops its permit as soon as the wire response is
-        // in, so the peer's slot is freed before we send the result back.
-
         tokio::spawn(async move {
             debug!(
                 "Requesting bytecode from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
@@ -475,7 +466,6 @@ pub async fn request_bytecodes(
 
             let (bytecodes, remaining_start) = match response {
                 Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) if !codes.is_empty() => {
-                    // Validate response by hashing bytecodes
                     let validated_codes: Vec<Bytes> = codes
                         .into_iter()
                         .zip(hashes_to_request)
@@ -654,7 +644,6 @@ pub async fn request_storage_ranges(
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
             } = result;
-            // The worker already dropped its permit; peer slot is free here.
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -992,9 +981,6 @@ pub async fn request_storage_ranges(
                 chunk_storage_roots.first().unwrap_or(&H256::zero()),
             );
         }
-        // Selection already reserved the slot; permit rides through the
-        // channel and drops in the receiver (or with the task if dropped
-        // before sending).
         tokio::spawn(request_storage_ranges_worker(
             task,
             peer_id,
@@ -1049,6 +1035,12 @@ pub async fn request_storage_ranges(
     Ok(chunk_index + 1)
 }
 
+/// Requests state trie nodes at the given paths from an already-selected peer.
+/// Consumes a `RequestPermit` reserved by the caller at peer selection time;
+/// the permit drops when this function returns, releasing the slot.
+/// Returns `SnapError::InvalidHash` if any returned node's hash does not match
+/// the requested path, and `SnapError::InvalidData` on an empty or oversized
+/// response.
 pub async fn request_state_trienodes(
     mut connection: PeerConnection,
     _permit: RequestPermit,
@@ -1056,9 +1048,6 @@ pub async fn request_state_trienodes(
     paths: Vec<RequestMetadata>,
 ) -> Result<Vec<Node>, SnapError> {
     let expected_nodes = paths.len();
-    // The caller already holds a request reservation for this peer,
-    // so call outgoing_request directly to avoid a double increment.
-    // _permit drops at the end of this function's scope.
 
     let request_id = rand::random();
     let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
@@ -1104,19 +1093,18 @@ pub async fn request_state_trienodes(
     Ok(nodes)
 }
 
-/// Requests storage trie nodes given the root of the state trie where they are contained and
-/// a hashmap mapping the path to the account in the state trie (aka hashed address) to the paths to the nodes in its storage trie (can be full or partial)
-/// Returns the nodes or None if:
-/// - There are no available peers (the node just started up or was rejected by all other nodes)
-/// - No peer returned a valid response in the given time and retry limits
+/// Requests storage trie nodes from an already-selected peer. The `GetTrieNodes`
+/// payload carries the state root and the per-account paths (hashed address
+/// prefix followed by storage-trie paths, which may be full or partial).
+/// Consumes a `RequestPermit` reserved by the caller at peer selection time;
+/// the permit drops when this function returns, releasing the slot.
+/// Errors are returned as `RequestStorageTrieNodesError` carrying the
+/// request ID so the caller can reconcile it with its in-flight map.
 pub async fn request_storage_trienodes(
     mut connection: PeerConnection,
     _permit: RequestPermit,
     get_trie_nodes: GetTrieNodes,
 ) -> Result<TrieNodes, RequestStorageTrieNodesError> {
-    // The caller already holds a request reservation for this peer,
-    // so call outgoing_request directly to avoid a double increment.
-    // _permit drops at the end of this function's scope.
     let request_id = get_trie_nodes.id;
     let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
     match connection
@@ -1195,7 +1183,6 @@ async fn request_account_range_worker(
                 &proof,
             ) {
                 Ok(should_continue) => {
-                    // If the range has more accounts to fetch, we send the new chunk
                     let chunk_left = if should_continue {
                         match account_hashes.last() {
                             Some(last_hash) => {
@@ -1297,22 +1284,17 @@ async fn request_storage_ranges_worker(
             tracing::debug!("Received empty storage range");
             break 'outcome retry_outcome();
         }
-        // Check we got some data and no more than the requested amount
         if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
             break 'outcome retry_outcome();
         }
-        // Unzip & validate response
         let proof = encodable_to_proof(&proof);
         let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
         let mut should_continue = false;
         let mut validation_failed = false;
-        // Validate each storage range
         let mut storage_roots = chunk_storage_roots.into_iter();
         let last_slot_index = slots.len() - 1;
         for (i, next_account_slots) in slots.into_iter().enumerate() {
-            // We won't accept empty storage ranges
             if next_account_slots.is_empty() {
-                // This shouldn't happen
                 error!("Received empty storage range, skipping");
                 validation_failed = true;
                 break;
@@ -1327,10 +1309,6 @@ async fn request_storage_ranges_worker(
                 Some(root) => root,
                 None => {
                     error!("No storage root for account {i}");
-                    // Preserve the original error-log behavior; return the
-                    // retry outcome so the caller can retry (the original
-                    // code also sent empty_task_result here before
-                    // returning Err).
                     break 'outcome retry_outcome();
                 }
             };

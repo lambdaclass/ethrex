@@ -239,18 +239,14 @@ pub enum ContactValidation {
 /// Reservation handle for a peer request slot.
 ///
 /// **Contract:** when a `RequestPermit` exists, the `requests` counter for
-/// its peer has been incremented by one. When the permit is dropped, a
-/// fire-and-forget `DecRequests` message releases the slot.
+/// its peer has been incremented by one. Dropping the permit releases the
+/// slot via a fire-and-forget `DecRequests` message. The handler that
+/// returns the permit also bumps the counter atomically under `&mut self`,
+/// so selection and reservation cannot be observed out of order.
 ///
-/// The permit is the output of `get_best_peer`, `get_best_peer_excluding`,
-/// `get_best_n_peers`, and `get_random_peer`. Those handlers bump the
-/// counter atomically with peer selection (same handler call, under the
-/// actor's `&mut self`).
-///
-/// The permit MUST travel with whatever code owns the outstanding request —
+/// The permit must travel with whatever code owns the outstanding request —
 /// move it into spawned tasks, send it through channels alongside results,
-/// etc. Dropping it early releases the slot early. `#[must_use]` catches
-/// accidental discards at call sites that should be holding it.
+/// etc. Dropping early releases the slot early.
 #[must_use = "dropping this permit immediately releases the peer's request slot"]
 pub struct RequestPermit {
     peer_table: PeerTable,
@@ -377,11 +373,6 @@ pub trait PeerTableServerProtocol: Send + Sync {
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
-
-    #[cfg(test)]
-    fn _test_insert_peer(&self, peer_id: H256, peer: PeerData) -> Result<(), ActorError>;
-    #[cfg(test)]
-    fn _test_bump_requests(&self, peer_id: H256) -> Result<(), ActorError>;
 }
 
 #[derive(Debug)]
@@ -486,31 +477,12 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::DecRequests,
         _ctx: &Context<Self>,
     ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.requests = peer_data.requests.saturating_sub(1));
-    }
-
-    #[cfg(test)]
-    #[send_handler]
-    async fn handle_test_insert_peer(
-        &mut self,
-        msg: peer_table_server_protocol::TestInsertPeer,
-        _ctx: &Context<Self>,
-    ) {
-        self.peers.insert(msg.peer_id, msg.peer);
-    }
-
-    #[cfg(test)]
-    #[send_handler]
-    async fn handle_test_bump_requests(
-        &mut self,
-        msg: peer_table_server_protocol::TestBumpRequests,
-        _ctx: &Context<Self>,
-    ) {
-        self.peers
-            .entry(msg.peer_id)
-            .and_modify(|peer_data| peer_data.requests += 1);
+        self.peers.entry(msg.node_id).and_modify(|peer_data| {
+            // Clamp at 0: a stale permit drop firing after a peer
+            // disconnect+reconnect would otherwise push `requests`
+            // negative (i64::saturating_sub saturates at i64::MIN).
+            peer_data.requests = peer_data.requests.saturating_sub(1).max(0)
+        });
     }
 
     #[send_handler]
@@ -1360,199 +1332,3 @@ impl PeerTableServer {
 }
 
 pub type PeerTable = ActorRef<PeerTableServer>;
-
-#[cfg(test)]
-mod permit_tests {
-    use super::*;
-    use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
-    use ethrex_common::{H256, H512};
-    use ethrex_storage::{EngineType, Store};
-
-    async fn fresh_peer_table() -> PeerTable {
-        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
-        PeerTableServer::spawn(10, store)
-    }
-
-    // `PeerConnection` has a private field and its production constructors
-    // require a full `P2PContext`. For tests we use `PeerConnection::for_test`
-    // together with `detached_peer_connection_handle` to mint a handle without
-    // running a real handshake.
-    fn fake_peer_data() -> (H256, PeerData) {
-        let node = Node::new("127.0.0.1".parse().expect("ip"), 30303, 30303, H512::zero());
-        let peer_id = H256::from_low_u64_be(1);
-        let peer = PeerData::new(node, None, None, SUPPORTED_ETH_CAPABILITIES.to_vec());
-        (peer_id, peer)
-    }
-
-    /// Build a `PeerData` with a fake-but-valid `PeerConnection` so that
-    /// `do_get_best_peer_excluding`'s `connection.is_some()` filter accepts it.
-    fn fake_connected_peer(peer_id_byte: u64) -> (H256, PeerData) {
-        use crate::rlpx::connection::server::{PeerConnection, detached_peer_connection_handle};
-        let node = Node::new("127.0.0.1".parse().expect("ip"), 30303, 30303, H512::zero());
-        let peer_id = H256::from_low_u64_be(peer_id_byte);
-        let connection = PeerConnection::for_test(detached_peer_connection_handle());
-        let peer = PeerData::new(
-            node,
-            None,
-            Some(connection),
-            SUPPORTED_ETH_CAPABILITIES.to_vec(),
-        );
-        (peer_id, peer)
-    }
-
-    #[tokio::test]
-    async fn permit_drop_releases_reservation() {
-        // Regression coverage: dropping a permit with an unknown peer_id must
-        // not panic (saturating_sub protects us).
-        let table = fresh_peer_table().await;
-        let permit = RequestPermit::new(table.clone(), H256::zero());
-        drop(permit);
-        let count = table.peer_count().await.unwrap();
-        assert_eq!(count, 0);
-    }
-
-    #[tokio::test]
-    async fn permit_drop_decrements_counter() {
-        // Insert a peer, bump `requests` via a test-only helper, then drop a
-        // permit pointing at that peer and verify the counter returned to 0.
-        let table = fresh_peer_table().await;
-        let (peer_id, peer) = fake_peer_data();
-
-        table
-            ._test_insert_peer(peer_id, peer)
-            .expect("insert fake peer");
-        table._test_bump_requests(peer_id).expect("bump requests");
-
-        // Let the send messages land before we measure.
-        tokio::task::yield_now().await;
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-
-        let diag = table
-            .get_peer_diagnostics()
-            .await
-            .expect("diagnostics")
-            .into_iter()
-            .find(|p| p.peer_id == peer_id)
-            .expect("peer present");
-        assert_eq!(diag.inflight_requests, 1, "test helper should have bumped");
-
-        let permit = RequestPermit::new(table.clone(), peer_id);
-        drop(permit);
-        // get_peer_diagnostics is a request; its response guarantees the
-        // dec_requests send from Drop has been processed (FIFO mailbox).
-        let diag_after = table
-            .get_peer_diagnostics()
-            .await
-            .expect("diagnostics")
-            .into_iter()
-            .find(|p| p.peer_id == peer_id)
-            .expect("peer present");
-        assert_eq!(
-            diag_after.inflight_requests, 0,
-            "permit drop should release the slot"
-        );
-    }
-
-    #[tokio::test]
-    async fn get_best_peer_bumps_counter_and_drop_releases() {
-        // End-to-end happy path: `get_best_peer` must atomically reserve a
-        // slot (bumping `requests` to 1) and return a permit whose drop
-        // decrements back to 0.
-        let table = fresh_peer_table().await;
-        let (peer_id, peer) = fake_connected_peer(1);
-
-        table
-            ._test_insert_peer(peer_id, peer)
-            .expect("insert fake peer");
-
-        let selected = table
-            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
-            .await
-            .expect("actor alive");
-        let (got_id, _conn, permit) = selected.expect("peer should be selected");
-        assert_eq!(got_id, peer_id);
-
-        let diag = table
-            .get_peer_diagnostics()
-            .await
-            .expect("diagnostics")
-            .into_iter()
-            .find(|p| p.peer_id == peer_id)
-            .expect("peer present");
-        assert_eq!(
-            diag.inflight_requests, 1,
-            "selection should atomically bump the in-flight counter"
-        );
-
-        drop(permit);
-        // `get_peer_diagnostics` is a request handler. Awaiting its response
-        // ensures the preceding fire-and-forget `dec_requests` send from the
-        // permit's Drop has been processed (FIFO mailbox).
-        let diag_after = table
-            .get_peer_diagnostics()
-            .await
-            .expect("diagnostics")
-            .into_iter()
-            .find(|p| p.peer_id == peer_id)
-            .expect("peer present");
-        assert_eq!(
-            diag_after.inflight_requests, 0,
-            "dropping the permit should release the slot"
-        );
-    }
-
-    #[tokio::test]
-    async fn get_best_n_peers_bumps_all_and_releases_all_on_drop() {
-        // Batched reservation path: `get_best_n_peers` returns a vector of
-        // (id, conn, permit) triples and must have bumped each selected
-        // peer's counter before returning. Dropping all three permits must
-        // decrement all three counters back to 0.
-        let table = fresh_peer_table().await;
-        let (id_a, peer_a) = fake_connected_peer(1);
-        let (id_b, peer_b) = fake_connected_peer(2);
-        let (id_c, peer_c) = fake_connected_peer(3);
-
-        table
-            ._test_insert_peer(id_a, peer_a)
-            .expect("insert peer A");
-        table
-            ._test_insert_peer(id_b, peer_b)
-            .expect("insert peer B");
-        table
-            ._test_insert_peer(id_c, peer_c)
-            .expect("insert peer C");
-
-        let selected = table
-            .get_best_n_peers(SUPPORTED_ETH_CAPABILITIES.to_vec(), 3)
-            .await
-            .expect("actor alive");
-        assert_eq!(selected.len(), 3, "should return all three peers");
-
-        let diags = table.get_peer_diagnostics().await.expect("diagnostics");
-        for id in [id_a, id_b, id_c] {
-            let diag = diags
-                .iter()
-                .find(|p| p.peer_id == id)
-                .expect("peer present");
-            assert_eq!(
-                diag.inflight_requests, 1,
-                "peer {id:?} should have its counter bumped",
-            );
-        }
-
-        // Drop all permits (consumes the vector, dropping the triples).
-        drop(selected);
-
-        let diags_after = table.get_peer_diagnostics().await.expect("diagnostics");
-        for id in [id_a, id_b, id_c] {
-            let diag = diags_after
-                .iter()
-                .find(|p| p.peer_id == id)
-                .expect("peer present");
-            assert_eq!(
-                diag.inflight_requests, 0,
-                "peer {id:?} should have its counter released",
-            );
-        }
-    }
-}

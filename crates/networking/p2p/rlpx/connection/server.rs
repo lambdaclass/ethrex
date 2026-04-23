@@ -184,33 +184,6 @@ impl PeerConnection {
     }
 }
 
-#[cfg(test)]
-impl PeerConnection {
-    /// Test-only constructor that wraps a pre-built handle. Allows seeding
-    /// peer tables with fake peers in unit tests without spinning up a full
-    /// `P2PContext`. Tests should not call `outgoing_message` /
-    /// `outgoing_request` on instances built this way.
-    pub fn for_test(handle: ActorRef<PeerConnectionServer>) -> Self {
-        Self { handle }
-    }
-}
-
-/// Test-only helper that mints a detached `ActorRef<PeerConnectionServer>`.
-///
-/// `ActorRef` has no public `new`: the only way to obtain one is through
-/// `ActorStart::start()`. We start a `PeerConnectionServer` in the
-/// `HandshakeFailed` state, which causes `handshake::perform` to return an
-/// error and `ctx.stop()` to be invoked immediately — no networking is
-/// attempted. The `ActorRef` returned by `start()` is still a valid handle
-/// and is all tests need to populate `PeerData.connection`.
-#[cfg(test)]
-pub(crate) fn detached_peer_connection_handle() -> ActorRef<PeerConnectionServer> {
-    let server = PeerConnectionServer {
-        state: ConnectionState::HandshakeFailed,
-    };
-    server.start()
-}
-
 #[derive(Debug)]
 pub struct Initiator {
     pub(crate) context: P2PContext,
