@@ -17,13 +17,6 @@ use ethrex_guest_program::l1::new_payload_request_to_block;
 use libssz::SszEncode;
 use libssz_merkle::{HashTreeRoot, Sha2Hasher};
 
-/// Result of `verify_stateless_new_payload`.
-pub struct StatelessValidationResult {
-    pub new_payload_request_root: [u8; 32],
-    pub successful_validation: bool,
-    pub chain_config: SszChainConfig,
-}
-
 /// Core stateless validation function matching the execution-specs definition.
 ///
 /// Takes a `NewPayloadRequest`, `ExecutionWitness`, and `ChainConfig`, and:
@@ -31,15 +24,12 @@ pub struct StatelessValidationResult {
 /// 2. Converts the payload to a `Block`
 /// 3. Executes the block statelessly
 /// 4. Returns the validation result
-///
-/// This is the function that all entry points (EXECUTE precompile, EIP-8025,
-/// zkVM guest) should call.
 pub fn verify_stateless_new_payload(
     new_payload_request: &NewPayloadRequest,
     execution_witness: ExecutionWitness,
     chain_config: &SszChainConfig,
     crypto: Arc<dyn Crypto>,
-) -> StatelessValidationResult {
+) -> SszStatelessValidationResult {
     let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
 
     let successful = match verify_inner(new_payload_request, execution_witness, crypto) {
@@ -50,7 +40,7 @@ pub fn verify_stateless_new_payload(
         }
     };
 
-    StatelessValidationResult {
+    SszStatelessValidationResult {
         new_payload_request_root: request_root,
         successful_validation: successful,
         chain_config: chain_config.clone(),
@@ -180,14 +170,8 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
             self.crypto.clone(),
         );
 
-        // Serialize result to SSZ
-        let ssz_result = SszStatelessValidationResult {
-            new_payload_request_root: result.new_payload_request_root,
-            successful_validation: result.successful_validation,
-            chain_config: result.chain_config,
-        };
         let mut buf = Vec::new();
-        ssz_result.ssz_append(&mut buf);
+        result.ssz_append(&mut buf);
         Ok(buf)
     }
 }
