@@ -1487,15 +1487,11 @@ impl Store {
                     crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
                     return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
                 }
-                #[cfg(not(feature = "rocksdb"))]
-                Some(v) if v < STORE_SCHEMA_VERSION => {
-                    return Err(StoreError::IncompatibleDBVersion {
-                        found: v,
-                        expected: STORE_SCHEMA_VERSION,
-                    });
-                }
                 Some(_) => {
-                    // version == STORE_SCHEMA_VERSION, proceed normally
+                    // version == STORE_SCHEMA_VERSION, proceed normally.
+                    // Without the `rocksdb` feature this also covers v < target,
+                    // but that path is unreachable since InMemory is the only
+                    // engine type and the outer guard excludes it.
                 }
             }
         }

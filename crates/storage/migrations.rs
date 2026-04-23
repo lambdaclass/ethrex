@@ -71,15 +71,19 @@ pub fn run_pending_migrations(
     Ok(())
 }
 
-/// Atomically writes the schema version to metadata.json with fsync for crash safety.
+/// Writes the schema version to metadata.json using write-to-temp-then-rename
+/// for crash safety. On POSIX filesystems `rename` is atomic, so the metadata
+/// file is never left in a partial/truncated state.
 fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError> {
     let metadata_path = db_path.join(STORE_METADATA_FILENAME);
+    let tmp_path = db_path.join(format!("{}.tmp", STORE_METADATA_FILENAME));
     let metadata = StoreMetadata::new(version);
     let serialized = serde_json::to_string_pretty(&metadata)?;
 
-    let mut file = std::fs::File::create(&metadata_path)?;
+    let mut file = std::fs::File::create(&tmp_path)?;
     file.write_all(serialized.as_bytes())?;
     file.sync_all()?;
+    std::fs::rename(&tmp_path, &metadata_path)?;
 
     Ok(())
 }
@@ -102,32 +106,24 @@ mod tests {
         // When current_version == STORE_SCHEMA_VERSION, nothing should happen.
         // We use a dummy in-memory backend since no migrations will actually run.
         let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
-        let temp_dir = std::env::temp_dir().join("ethrex_migration_test_noop");
-        std::fs::create_dir_all(&temp_dir).ok();
+        let temp_dir = tempfile::tempdir().unwrap();
 
         // Write initial metadata
-        write_metadata_version(&temp_dir, STORE_SCHEMA_VERSION).unwrap();
+        write_metadata_version(temp_dir.path(), STORE_SCHEMA_VERSION).unwrap();
 
-        let result = run_pending_migrations(&backend, &temp_dir, STORE_SCHEMA_VERSION);
+        let result = run_pending_migrations(&backend, temp_dir.path(), STORE_SCHEMA_VERSION);
         assert!(result.is_ok());
-
-        // Clean up
-        std::fs::remove_dir_all(&temp_dir).ok();
     }
 
     #[test]
     fn fresh_store_creates_correct_metadata() {
-        let temp_dir = std::env::temp_dir().join("ethrex_migration_test_fresh");
-        std::fs::create_dir_all(&temp_dir).ok();
+        let temp_dir = tempfile::tempdir().unwrap();
 
-        write_metadata_version(&temp_dir, STORE_SCHEMA_VERSION).unwrap();
+        write_metadata_version(temp_dir.path(), STORE_SCHEMA_VERSION).unwrap();
 
-        let metadata_path = temp_dir.join(STORE_METADATA_FILENAME);
+        let metadata_path = temp_dir.path().join(STORE_METADATA_FILENAME);
         let contents = std::fs::read_to_string(&metadata_path).unwrap();
         let metadata: StoreMetadata = serde_json::from_str(&contents).unwrap();
         assert_eq!(metadata.schema_version, STORE_SCHEMA_VERSION);
-
-        // Clean up
-        std::fs::remove_dir_all(&temp_dir).ok();
     }
 }
