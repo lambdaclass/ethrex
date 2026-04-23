@@ -388,6 +388,39 @@ impl Trie {
         Ok(trie)
     }
 
+    /// Insert without dirty/pending-removal tracking.
+    ///
+    /// Performance-optimised variant of [`insert`] for stateless tries (e.g.
+    /// in [`compute_hash_from_unsorted_iter`]).  The stateless NullTrieDB
+    /// always returns `false` from `flatkeyvalue_computed`, so the dirty set
+    /// is never consulted and the per-entry Nibbles clone it requires is pure
+    /// overhead (one 65-byte heap allocation per call).  Skipping that clone
+    /// saves ~279 allocations when building a genesis state trie.
+    #[inline]
+    fn insert_no_dirty_tracking(
+        &mut self,
+        path: PathRLP,
+        value: ValueRLP,
+    ) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(&path);
+
+        if self.root.is_valid() {
+            self.root
+                .get_node_mut(self.db.as_ref(), Nibbles::default())?
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(
+                        InconsistentTreeError::RootNotFoundNoHash,
+                    ))
+                })?
+                .insert(self.db.as_ref(), path, value)?
+        } else {
+            self.root = Node::from(LeafNode::new(path, value)).into()
+        };
+        self.root.clear_hash();
+
+        Ok(())
+    }
+
     /// Builds an in-memory trie from the given elements and returns its hash
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
@@ -396,7 +429,7 @@ impl Trie {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
             // Unwraping here won't panic as our in_memory trie DB won't fail
-            trie.insert(path, value).unwrap();
+            trie.insert_no_dirty_tracking(path, value).unwrap();
         }
 
         trie.hash_no_commit(crypto)
