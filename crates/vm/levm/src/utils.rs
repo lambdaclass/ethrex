@@ -750,6 +750,49 @@ pub fn intrinsic_gas_dimensions(
     Ok((regular_gas, state_gas))
 }
 
+/// Standalone EIP-7623/7976/7981 floor gas for a transaction. Mirrors
+/// [`VM::get_min_gas_used`] but operates on the raw transaction + fork, so it
+/// can be called by mempool admission / the payload builder without needing a
+/// VM instance. Returns `TX_BASE_COST + floor_rate * total_floor_tokens`.
+///
+/// Amsterdam+ uses the unweighted EIP-7976 floor (16 gas/token = 64 gas/byte)
+/// and folds EIP-7981 access-list data bytes into the token count. Pre-
+/// Amsterdam uses the weighted EIP-7623 formula.
+///
+/// A mismatch between this and `VM::get_min_gas_used` would cause mempool
+/// admission to drift from VM rejection; keep the two in sync. The
+/// `test_intrinsic_parity_*` suite also guards this.
+pub fn intrinsic_gas_floor(tx: &Transaction, fork: Fork) -> Result<u64, VMError> {
+    // EIP-7976: floor tokens count ALL calldata bytes unweighted. For CREATE
+    // txs the calldata is the init code. Mirrors `get_min_gas_used`.
+    let calldata = tx.data();
+
+    let mut tokens_in_calldata: u64 = if fork >= Fork::Amsterdam {
+        let total_bytes: u64 = calldata
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        total_bytes
+            .checked_mul(STANDARD_TOKEN_COST)
+            .ok_or(InternalError::Overflow)?
+    } else {
+        gas_cost::tx_calldata(calldata)? / STANDARD_TOKEN_COST
+    };
+
+    if fork >= Fork::Amsterdam {
+        let al_floor_tokens = floor_tokens_in_access_list(tx.access_list());
+        tokens_in_calldata = tokens_in_calldata
+            .checked_add(al_floor_tokens)
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    tokens_in_calldata
+        .checked_mul(total_cost_floor_per_token(fork))
+        .ok_or(InternalError::Overflow)?
+        .checked_add(TX_BASE_COST)
+        .ok_or(InternalError::Overflow.into())
+}
+
 /// Converts Account to LevmAccount
 /// The problem with this is that we don't have the storage root.
 pub fn account_to_levm_account(account: Account) -> (LevmAccount, Code) {

@@ -238,9 +238,13 @@ pub fn refund_sender(
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     gas_spent: u64,
-    // Pre-Amsterdam: gas used for receipt and user refund. Amsterdam+: unused
-    // (block gas is computed dimensionally from vm fields; user pays gas_spent).
-    gas_used_pre_refund: u64,
+    // Historically used pre-Amsterdam for receipt + user refund; Amsterdam+
+    // computes block gas dimensionally from VM fields and the user pays
+    // `gas_spent`, so this parameter is currently unused in both branches.
+    // Kept in the signature for call-site symmetry with pre-Amsterdam usage
+    // and future reintroduction; rename without the `_` prefix once it's
+    // read again.
+    _gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;
 
@@ -263,8 +267,9 @@ pub fn refund_sender(
             .state_gas_refund_absorbed
             .saturating_add(vm.state_gas_refund_pending);
         let state_gas = vm.state_gas_used.saturating_sub(execution_state_gas_refund);
-        // gas_used_pre_refund here is raw - reservoir_current (user-paid). Compute
-        // raw from scratch to avoid the reservoir-current subtraction interfering.
+        // Compute raw consumption from scratch (gas_limit minus gas_remaining)
+        // to avoid interference from any reservoir-current subtraction baked
+        // into the caller's pre-refund number.
         #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
         let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
         let raw_consumed = vm.env.gas_limit.saturating_sub(gas_remaining);
@@ -280,7 +285,6 @@ pub fn refund_sender(
         ctx_result.gas_spent = gas_spent;
     } else {
         // Pre-Amsterdam: both use post-refund value
-        let _ = gas_used_pre_refund;
         ctx_result.gas_used = gas_spent;
         ctx_result.gas_spent = gas_spent;
     }

@@ -1186,6 +1186,18 @@ impl<'a> VM<'a> {
                 let credit_against_drain_delta = self
                     .state_gas_credit_against_drain
                     .saturating_sub(state_gas_credit_against_drain_snapshot);
+                // Invariant: credit_against_drain only accumulates the portion
+                // of a clamped refund that was NOT matched against outstanding
+                // spill, so it can never exceed the spill delta in the same
+                // subtree. If this ever fires, the reservoir math silently
+                // clamps (via saturating_sub) and the block's regular
+                // dimension gets mischarged — loud panic in debug is the goal.
+                debug_assert!(
+                    outstanding_delta >= credit_against_drain_delta,
+                    "reservoir revert invariant violated: credit_against_drain_delta \
+                     ({credit_against_drain_delta}) > outstanding_delta \
+                     ({outstanding_delta})"
+                );
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
@@ -1261,6 +1273,18 @@ impl<'a> VM<'a> {
                 let credit_against_drain_delta = self
                     .state_gas_credit_against_drain
                     .saturating_sub(state_gas_credit_against_drain_snapshot);
+                // Invariant: credit_against_drain only accumulates the portion
+                // of a clamped refund that was NOT matched against outstanding
+                // spill, so it can never exceed the spill delta in the same
+                // subtree. If this ever fires, the reservoir math silently
+                // clamps (via saturating_sub) and the block's regular
+                // dimension gets mischarged — loud panic in debug is the goal.
+                debug_assert!(
+                    outstanding_delta >= credit_against_drain_delta,
+                    "reservoir revert invariant violated: credit_against_drain_delta \
+                     ({credit_against_drain_delta}) > outstanding_delta \
+                     ({outstanding_delta})"
+                );
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
