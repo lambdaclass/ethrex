@@ -225,6 +225,12 @@ pub struct Blockchain {
     /// Set of all peer-head hashes we've seen. Used to select the highest pivot.
     pub bsc_sync_head_candidates: std::sync::Mutex<std::collections::HashSet<H256>>,
     bsc_pivot_header: std::sync::Mutex<Option<ethrex_common::types::BlockHeader>>,
+    /// Serializes concurrent `add_block_pipeline` calls from the BSC NewBlock
+    /// handler. Without it, multiple peer announcements of distinct blocks
+    /// spawn parallel pipelines that contend on the shared `merkle_pool` and
+    /// deadlock when workers can't all get pool slots. Matches the design of
+    /// `start_block_executor` in `rpc.rs` which serializes RPC-driven imports.
+    pub bsc_import_lock: std::sync::Mutex<()>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
@@ -357,6 +363,7 @@ impl Blockchain {
             bsc_sync_notify: Arc::new(tokio::sync::Notify::new()),
             bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
+            bsc_import_lock: std::sync::Mutex::new(()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -373,6 +380,7 @@ impl Blockchain {
             bsc_sync_notify: Arc::new(tokio::sync::Notify::new()),
             bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
+            bsc_import_lock: std::sync::Mutex::new(()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }

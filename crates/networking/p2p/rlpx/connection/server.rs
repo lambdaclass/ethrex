@@ -1433,8 +1433,17 @@ async fn handle_incoming_message(
                     // can still become canonical), and auto-queues to the
                     // pending store when the parent is missing. Out-of-order
                     // arrivals are handled transparently.
+                    //
+                    // Serialized via `bsc_import_lock`: concurrent pipelines
+                    // starve the shared `merkle_pool` (16 workers) and
+                    // deadlock when workers can't all get pool slots. Matches
+                    // the design of the RPC path (`start_block_executor`).
                     let blockchain = state.blockchain.clone();
                     tokio::task::spawn_blocking(move || {
+                        let _guard = blockchain
+                            .bsc_import_lock
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner());
                         let _ = blockchain.add_block_pipeline(block, None);
                     });
                 }
