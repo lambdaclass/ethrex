@@ -157,8 +157,8 @@ impl Trie {
     /// Only valid for hash-only computation (e.g. `compute_hash_from_unsorted_iter`)
     /// where `get()` and `commit()` are never called, avoiding unnecessary
     /// `Nibbles` clones and `FxHashSet` operations on every insertion.
-    fn insert_untracked(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
-        let path = Nibbles::from_bytes(&path);
+    fn insert_untracked(&mut self, path: &[u8], value: ValueRLP) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(path);
         if self.root.is_valid() {
             self.root
                 .get_node_mut(self.db.as_ref(), Nibbles::default())?
@@ -409,9 +409,12 @@ impl Trie {
         Ok(trie)
     }
 
-    /// Builds an in-memory trie from the given elements and returns its hash
-    pub fn compute_hash_from_unsorted_iter(
-        iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
+    /// Builds an in-memory trie from the given elements and returns its hash.
+    ///
+    /// Accepts any key type that can be referenced as a byte slice (e.g. `Vec<u8>`,
+    /// `[u8; 32]`, `&[u8]`), allowing callers to avoid intermediate `Vec` allocations.
+    pub fn compute_hash_from_unsorted_iter<K: AsRef<[u8]>>(
+        iter: impl Iterator<Item = (K, ValueRLP)>,
         crypto: &dyn Crypto,
     ) -> H256 {
         let mut trie = Trie::stateless();
@@ -419,7 +422,7 @@ impl Trie {
             // Unwrapping here won't panic as our in_memory trie DB won't fail.
             // Use insert_untracked to skip dirty/pending_removal HashSet ops
             // that are useless for this hash-only, no-get, no-commit path.
-            trie.insert_untracked(path, value).unwrap();
+            trie.insert_untracked(path.as_ref(), value).unwrap();
         }
 
         trie.hash_no_commit(crypto)

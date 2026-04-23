@@ -342,7 +342,7 @@ impl RLPDecode for AccountStateSlimCodec {
 pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
         (!v.is_zero()).then_some((
-            crypto.keccak256(&k.to_big_endian()).to_vec(),
+            crypto.keccak256(&k.to_big_endian()),
             v.encode_to_vec(),
         ))
     });

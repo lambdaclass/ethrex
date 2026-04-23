@@ -760,7 +760,7 @@ impl Genesis {
     pub fn compute_state_root(&self) -> H256 {
         let iter = self.alloc.iter().map(|(addr, account)| {
             (
-                keccak_hash(addr).to_vec(),
+                keccak_hash(addr),
                 AccountState::from(account).encode_to_vec(),
             )
         });
