@@ -121,10 +121,18 @@ fn validate_versioned_hashes(
     Ok(())
 }
 
-/// Implementation of the `StatelessValidator` trait for the EXECUTE precompile.
+/// Concrete `StatelessValidator` used by the EXECUTE precompile: deserializes
+/// SSZ `StatelessInput`, calls `verify_stateless_new_payload`, and serializes
+/// the result back to SSZ.
 ///
-/// Deserializes SSZ `StatelessInput`, calls `verify_stateless_new_payload`,
-/// and serializes the result back to SSZ bytes.
+/// The `StatelessValidator` trait is defined in `ethrex-levm` and implemented
+/// here rather than inline in the precompile because `verify_stateless_new_payload`
+/// depends on `ethrex-vm` and `ethrex-guest-program`, which in turn depend on
+/// `ethrex-levm`. A direct call would form a cycle. The trait breaks it via
+/// dependency inversion: levm owns the interface, blockchain owns the
+/// implementation, and an `Arc<dyn StatelessValidator>` is injected into
+/// `VM::new` from blockchain at runtime (see `blockchain.rs` VM construction
+/// sites).
 pub struct StatelessExecutor {
     pub crypto: Arc<dyn Crypto>,
 }
