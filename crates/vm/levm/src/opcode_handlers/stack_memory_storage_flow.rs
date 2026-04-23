@@ -23,7 +23,6 @@ use crate::{
     gas_cost::{self, SSTORE_STIPEND, STATE_GAS_STORAGE_SET},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
-    opcodes::Opcode,
     utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
@@ -414,24 +413,24 @@ impl OpcodeHandler for OpJumpIHandler {
 }
 
 fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
-    // Check target address validity.
-    //   - Target bytecode has to be a JUMPDEST.
-    //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
-    #[expect(clippy::as_conversions, reason = "safe")]
+    // Check target address validity using only the precomputed jump_targets list.
+    //
+    // `jump_targets` is built in `Code::compute_jump_targets` by scanning the bytecode and
+    // recording every position whose byte is exactly JUMPDEST (0x5B) and that is not inside a
+    // PUSH literal. Therefore:
+    //   - If `target` is found in `jump_targets`, the byte at that position is guaranteed to be
+    //     JUMPDEST and the index is guaranteed to be within-bounds of the bytecode.
+    //   - If `target` is not in `jump_targets` (binary search returns Err), the jump is invalid.
+    //
+    // This removes the redundant `bytecode.get(target)` bounds-check and the explicit byte
+    // comparison (`value == JUMPDEST`), both of which are already encoded in `jump_targets`.
+    #[expect(clippy::as_conversions, reason = "safe: bytecode length fits in u32")]
     if vm
         .current_call_frame
         .bytecode
-        .bytecode
-        .get(target)
-        .is_some_and(|&value| {
-            value == Opcode::JUMPDEST as u8
-                && vm
-                    .current_call_frame
-                    .bytecode
-                    .jump_targets
-                    .binary_search(&(target as u32))
-                    .is_ok()
-        })
+        .jump_targets
+        .binary_search(&(target as u32))
+        .is_ok()
     {
         // Update PC and skip the JUMPDEST instruction.
         vm.current_call_frame.pc = target.wrapping_add(1);
