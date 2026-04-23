@@ -501,6 +501,11 @@ pub async fn init_l1(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
             ));
         }
+        Err(err @ StoreError::MigrationFailed { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. The database may be in an inconsistent state. Please erase your DB by running `ethrex removedb` and restart node to resync."
+            ));
+        }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
     };
 

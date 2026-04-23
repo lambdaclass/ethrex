@@ -48,4 +48,6 @@ pub enum StoreError {
     NotFoundDBVersion { expected: u64 },
     #[error("Incompatible DB Version: found v{found}, expected v{expected}")]
     IncompatibleDBVersion { found: u64, expected: u64 },
+    #[error("Migration from v{from} to v{to} failed: {reason}")]
+    MigrationFailed { from: u64, to: u64, reason: String },
 }
