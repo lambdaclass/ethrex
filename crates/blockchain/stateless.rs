@@ -1,11 +1,9 @@
-//! Stateless block validation — shared across EXECUTE precompile, EIP-8025, and zkVM guests.
+//! Stateless block validation — shared between the EXECUTE precompile and zkVM guests.
 //!
-//! The core function `verify_stateless_new_payload` implements the same logic as
-//! `verify_stateless_new_payload` from the execution-specs `projects/zkevm` branch.
-//! It is called from three entry points:
-//! - The EXECUTE precompile (via the `StatelessValidator` trait)
-//! - The EIP-8025 RPC proof generation flow
-//! - The zkVM guest program
+//! The core function mirrors `verify_stateless_new_payload` from execution-specs
+//! (projects/zkevm branch). It is invoked through two entry points:
+//! - the EXECUTE precompile (via the `StatelessValidator` trait), and
+//! - the zkVM guest program.
 
 use std::sync::Arc;
 
@@ -45,12 +43,9 @@ pub fn verify_stateless_new_payload(
     let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
 
     let successful = match verify_inner(new_payload_request, execution_witness, crypto) {
-        Ok(()) => {
-            tracing::info!("verify_stateless_new_payload: validation succeeded");
-            true
-        }
+        Ok(()) => true,
         Err(e) => {
-            tracing::error!("verify_stateless_new_payload: validation failed: {e}");
+            tracing::error!("stateless validation failed: {e}");
             false
         }
     };
@@ -78,33 +73,6 @@ fn verify_inner(
     let expected_hash =
         ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
     if computed_hash != expected_hash {
-        tracing::error!(
-            "block_hash mismatch details:\n  parent_hash: {:?}\n  coinbase: {:?}\n  state_root: {:?}\n  tx_root: {:?}\n  receipts_root: {:?}\n  number: {}\n  gas_limit: {}\n  gas_used: {}\n  timestamp: {}\n  base_fee: {:?}\n  withdrawals_root: {:?}\n  blob_gas_used: {:?}\n  excess_blob_gas: {:?}\n  parent_beacon_block_root: {:?}\n  requests_hash: {:?}\n  extra_data: {:?}",
-            block.header.parent_hash,
-            block.header.coinbase,
-            block.header.state_root,
-            block.header.transactions_root,
-            block.header.receipts_root,
-            block.header.number,
-            block.header.gas_limit,
-            block.header.gas_used,
-            block.header.timestamp,
-            block.header.base_fee_per_gas,
-            block.header.withdrawals_root,
-            block.header.blob_gas_used,
-            block.header.excess_blob_gas,
-            block.header.parent_beacon_block_root,
-            block.header.requests_hash,
-            block.header.extra_data,
-        );
-        tracing::error!(
-            "  ommers_hash: {:?}\n  difficulty: {:?}\n  nonce: {}\n  prev_randao: {:?}\n  logs_bloom len: {}",
-            block.header.ommers_hash,
-            block.header.difficulty,
-            block.header.nonce,
-            block.header.prev_randao,
-            block.header.logs_bloom.0.len(),
-        );
         return Err(ExecutionError::Internal(format!(
             "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
         )));
@@ -166,30 +134,8 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         use ethrex_vm::{InternalError, VMError};
         use libssz::SszDecode;
 
-        // Deserialize SSZ input
-        tracing::debug!(
-            "StatelessExecutor: deserializing {} bytes of SSZ input",
-            input.len()
-        );
-        let stateless_input = SszStatelessInput::from_ssz_bytes(input).map_err(|e| {
-            tracing::error!("StatelessExecutor: SSZ decode failed: {e}");
-            VMError::Internal(InternalError::Custom(format!("SSZ decode: {e}")))
-        })?;
-        tracing::info!(
-            "StatelessExecutor: decoded SSZ input - block_number={}, gas_used={}, chain_id={}, witness_headers={}, witness_state_nodes={}, witness_codes={}",
-            stateless_input
-                .new_payload_request
-                .execution_payload
-                .block_number,
-            stateless_input
-                .new_payload_request
-                .execution_payload
-                .gas_used,
-            stateless_input.chain_config.chain_id,
-            stateless_input.witness.headers.len(),
-            stateless_input.witness.state.len(),
-            stateless_input.witness.codes.len(),
-        );
+        let stateless_input = SszStatelessInput::from_ssz_bytes(input)
+            .map_err(|e| VMError::Internal(InternalError::Custom(format!("SSZ decode: {e}"))))?;
 
         // Derive first_block_number and initial_state_root from witness headers
         let (first_block_number, initial_state_root) = {
