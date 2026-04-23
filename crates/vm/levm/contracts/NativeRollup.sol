@@ -5,7 +5,7 @@ import "./MPTProof.sol";
 
 /// @title NativeRollup — L2 state manager using the EXECUTE precompile.
 ///
-/// Aligned with the l2beat native rollups spec (March 2026 rewrite).
+/// Aligned with the l2beat native rollups spec.
 /// The `advance()` method forwards SSZ-encoded `StatelessInput` to the
 /// EXECUTE precompile, which calls `verify_stateless_new_payload` and
 /// returns SSZ-encoded `StatelessValidationResult`.
@@ -49,6 +49,8 @@ contract NativeRollup {
 
     address constant EXECUTE_PRECOMPILE = address(0x0101);
     address constant L2_BRIDGE_ADDRESS = address(0x000000000000000000000000000000000000FfFD);
+    // Storage slot of `sentMessages` in L2Bridge.sol. Must match that layout —
+    // reordering L2Bridge storage silently breaks withdrawal proofs here.
     uint256 constant SENT_MESSAGES_SLOT = 3;
 
     // ===== Events =====
@@ -139,16 +141,9 @@ contract NativeRollup {
         // successful_validation is at byte 32 (1 byte, SSZ bool)
         require(uint8(result[32]) == 1, "L2 validation failed");
 
-        // chain_id is at bytes 33..41 (uint64, little-endian SSZ)
-        uint64 provenChainId;
-        assembly {
-            provenChainId := mload(add(result, 65))
-            // SSZ encodes uint64 as little-endian 8 bytes
-            // Solidity mload reads big-endian 32 bytes, so we need the last 8 bytes
-        }
-        // For a simple PoC, just verify the raw bytes match
-        // TODO: proper SSZ uint64 little-endian decoding
-        // require(provenChainId == chainId, "chain_id mismatch");
+        // chain_id is at bytes 33..41 (SSZ uint64, little-endian).
+        uint64 provenChainId = _decodeSszUint64LE(result, 33);
+        require(provenChainId == chainId, "chain_id mismatch");
 
         // Update onchain state
         uint256 newBlockNumber = blockNumber + 1;
@@ -252,5 +247,15 @@ contract NativeRollup {
         );
         uint256 value = MPTProof.decodeRlpUint(valueRLP);
         require(value == 1, "Withdrawal not found in L2Bridge storage");
+    }
+
+    /// @dev Decode an SSZ `uint64` (8 little-endian bytes) at `offset` into `data`.
+    function _decodeSszUint64LE(bytes memory data, uint256 offset) internal pure returns (uint64) {
+        require(data.length >= offset + 8, "SSZ: out of bounds");
+        uint64 value = 0;
+        for (uint256 i = 0; i < 8; i++) {
+            value |= uint64(uint8(data[offset + i])) << uint64(8 * i);
+        }
+        return value;
     }
 }
