@@ -184,27 +184,47 @@ impl RpcExecutionWitness {
 
 #[cfg(feature = "experimental-devnet")]
 impl ExecutionWitness {
-    /// Build an `ExecutionWitness` from an SSZ witness container. Used by the
+    /// Build an `ExecutionWitness` from an SSZ stateless input. Used by the
     /// stateless validator (EXECUTE precompile and zkVM guest program).
+    ///
+    /// `first_block_number` is taken from the payload's block number, and
+    /// `initial_state_root` is recovered by finding the parent header
+    /// (`number == first_block_number - 1`) among the witness headers — same
+    /// convention as `RpcExecutionWitness::into_execution_witness`.
     ///
     /// The produced `ChainConfig` only carries `chain_id` from the SSZ input;
     /// every prior fork is activated at timestamp/block 0, since stateless
     /// validation always runs at the latest fork (Amsterdam).
     pub fn from_ssz(
-        ssz_witness: &crate::types::stateless_ssz::SszExecutionWitness,
-        chain_config: &crate::types::stateless_ssz::SszChainConfig,
-        first_block_number: u64,
-        initial_state_root: H256,
+        input: &crate::types::stateless_ssz::SszStatelessInput,
     ) -> Result<Self, GuestProgramStateError> {
+        let first_block_number = input.new_payload_request.execution_payload.block_number;
+
+        let mut initial_state_root = None;
+        for h in input.witness.headers.iter() {
+            let header_bytes: Vec<u8> = h.iter().copied().collect();
+            let header = BlockHeader::decode(&header_bytes)?;
+            if header.number == first_block_number.saturating_sub(1) {
+                initial_state_root = Some(header.state_root);
+                break;
+            }
+        }
+        let initial_state_root = initial_state_root.ok_or_else(|| {
+            GuestProgramStateError::Custom(format!(
+                "header for block {} not found",
+                first_block_number.saturating_sub(1)
+            ))
+        })?;
+
         let (state_trie_root, storage_trie_roots) =
-            rebuild_state_and_storage_tries(ssz_witness.state_as_vecs(), initial_state_root)?;
+            rebuild_state_and_storage_tries(input.witness.state_as_vecs(), initial_state_root)?;
 
         Ok(Self {
-            codes: ssz_witness.codes_as_vecs(),
-            block_headers_bytes: ssz_witness.headers_as_vecs(),
+            codes: input.witness.codes_as_vecs(),
+            block_headers_bytes: input.witness.headers_as_vecs(),
             first_block_number,
             chain_config: ChainConfig {
-                chain_id: chain_config.chain_id,
+                chain_id: input.chain_config.chain_id,
                 homestead_block: Some(0),
                 eip150_block: Some(0),
                 eip155_block: Some(0),

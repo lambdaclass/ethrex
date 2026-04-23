@@ -135,30 +135,7 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         let stateless_input = SszStatelessInput::from_ssz_bytes(input)
             .map_err(|e| VMError::Internal(InternalError::Custom(format!("SSZ decode: {e}"))))?;
 
-        // Derive first_block_number and initial_state_root from witness headers
-        let (first_block_number, initial_state_root) = {
-            use ethrex_common::types::BlockHeader;
-            use ethrex_rlp::decode::RLPDecode;
-            let headers = stateless_input.witness.headers_as_vecs();
-            if headers.is_empty() {
-                return Err(VMError::Internal(InternalError::Custom(
-                    "witness contains no headers".to_string(),
-                )));
-            }
-            let last_header = BlockHeader::decode(headers.last().expect("checked non-empty"))
-                .map_err(|e| {
-                    VMError::Internal(InternalError::Custom(format!("header decode: {e}")))
-                })?;
-            (last_header.number + 1, last_header.state_root)
-        };
-
-        let execution_witness = ExecutionWitness::from_ssz(
-            &stateless_input.witness,
-            &stateless_input.chain_config,
-            first_block_number,
-            initial_state_root,
-        )
-        .map_err(|e| {
+        let execution_witness = ExecutionWitness::from_ssz(&stateless_input).map_err(|e| {
             VMError::Internal(InternalError::Custom(format!("witness conversion: {e}")))
         })?;
 
