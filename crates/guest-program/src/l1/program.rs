@@ -63,7 +63,7 @@ pub fn execution_program(
 /// EIP-8025 wire format (see [`decode_eip8025`](super::decode_eip8025)).
 #[cfg(feature = "experimental-devnet")]
 pub fn execution_program(
-    new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    new_payload_request: ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
@@ -108,7 +108,7 @@ pub fn execution_program(
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
 #[cfg(feature = "experimental-devnet")]
 pub fn new_payload_request_to_block(
-    req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,
 ) -> Result<ethrex_common::types::Block, String> {
     use bytes::Bytes;
@@ -206,7 +206,7 @@ pub fn new_payload_request_to_block(
 #[cfg(feature = "experimental-devnet")]
 fn validate_versioned_hashes(
     block: &ethrex_common::types::Block,
-    req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
 ) -> Result<(), ExecutionError> {
     use ethrex_common::H256;
 

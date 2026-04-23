@@ -36,7 +36,7 @@ impl ProgramInput {
 /// Returns an error if rkyv serialization of the execution witness fails.
 #[cfg(feature = "experimental-devnet")]
 pub fn encode_eip8025(
-    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
 ) -> Result<Vec<u8>, ProgramInputEncodeError> {
     use libssz::SszEncode;
@@ -63,7 +63,7 @@ pub fn decode_eip8025(
     bytes: &[u8],
 ) -> Result<
     (
-        ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+        ethrex_common::types::stateless_ssz::NewPayloadRequest,
         ExecutionWitness,
     ),
     ProgramInputDecodeError,
@@ -82,7 +82,7 @@ pub fn decode_eip8025(
     let rkyv_bytes = &bytes[4 + ssz_len..];
 
     let new_payload_request =
-        ethrex_common::types::eip8025_ssz::NewPayloadRequest::from_ssz_bytes(ssz_bytes)
+        ethrex_common::types::stateless_ssz::NewPayloadRequest::from_ssz_bytes(ssz_bytes)
             .map_err(ProgramInputDecodeError::Ssz)?;
     let execution_witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(rkyv_bytes)
         .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;

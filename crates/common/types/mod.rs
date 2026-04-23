@@ -5,8 +5,6 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
-#[cfg(feature = "experimental-devnet")]
-pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
 pub mod l2;
