@@ -201,7 +201,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
-    continue-on-error: ${{ matrix.optional || false }}
     env:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
@@ -233,14 +232,12 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
-          # Not required while Amsterdam fork spec is still evolving.
-          # Remove optional: true once the fork stabilizes.
+          # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
           - name: "Consume Engine Amsterdam"
             simulation: ethereum/eels/consume-engine
             limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
-            buildarg: "fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz branch=devnets/bal/3"
+            amsterdam: true
             artifact_prefix: consume_engine_amsterdam
-            optional: true
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -270,21 +267,36 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
+      - name: Load Amsterdam config
+        id: amsterdam-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
+          AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
+          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
+          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
-          for arg in $SIM_BUILDARG; do
-            FLAGS+=" --sim.buildarg $arg"
-          done
+          if [[ "$AMSTERDAM" == "true" ]]; then
+            FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+          else
+            for arg in $SIM_BUILDARG; do
+              FLAGS+=" --sim.buildarg $arg"
+            done
+          fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry

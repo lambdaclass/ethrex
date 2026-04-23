@@ -15,7 +15,7 @@ use crate::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterError},
-    types::Node,
+    types::{NetworkConfig, Node},
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
@@ -43,6 +43,8 @@ pub struct P2PContext {
     pub blockchain: Arc<Blockchain>,
     pub(crate) broadcast: PeerConnBroadcastSender,
     pub local_node: Node,
+    /// Network addressing configuration: bind vs. external addresses.
+    pub network_config: NetworkConfig,
     pub client_version: String,
     #[cfg(feature = "l2")]
     pub based_context: Option<P2PBasedContext>,
@@ -54,6 +56,7 @@ impl P2PContext {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         local_node: Node,
+        network_config: NetworkConfig,
         tracker: TaskTracker,
         signer: SecretKey,
         peer_table: PeerTable,
@@ -83,6 +86,7 @@ impl P2PContext {
 
         Ok(P2PContext {
             local_node,
+            network_config,
             tracker,
             signer,
             table: peer_table,
@@ -116,7 +120,7 @@ pub async fn start_network(
     config: DiscoveryConfig,
 ) -> Result<(), NetworkError> {
     let udp_socket = Arc::new(
-        UdpSocket::bind(context.local_node.udp_addr())
+        UdpSocket::bind(context.network_config.bind_udp_addr())
             .await
             .map_err(NetworkError::UdpSocketError)?,
     );
@@ -178,7 +182,8 @@ pub async fn start_network(
 }
 
 pub(crate) async fn serve_p2p_requests(context: P2PContext) {
-    let tcp_addr = context.local_node.tcp_addr();
+    let tcp_addr = context.network_config.bind_tcp_addr();
+    let external_tcp_addr = context.local_node.tcp_addr();
     let listener = match listener(tcp_addr) {
         Ok(result) => result,
         Err(e) => {
@@ -195,7 +200,7 @@ pub(crate) async fn serve_p2p_requests(context: P2PContext) {
             }
         };
 
-        if tcp_addr == peer_addr {
+        if external_tcp_addr == peer_addr {
             // Ignore connections from self
             continue;
         }
@@ -385,10 +390,28 @@ pub async fn periodically_show_peer_stats_during_syncing(
                     phase_elapsed_str,
                     &phase_metrics(previous_step, &phase_start).await,
                 );
+
+                // Emit final metrics for completed phase
+                #[cfg(feature = "metrics")]
+                push_sync_prometheus_metrics(previous_step);
             }
 
             // Start new phase
             phase_start_time = std::time::Instant::now();
+
+            // Record phase start timestamp for Grafana elapsed panels
+            #[cfg(feature = "metrics")]
+            {
+                let (_, phase_name) = phase_info(current_step);
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                ethrex_metrics::sync::METRICS_SYNC
+                    .phase_start_timestamp
+                    .with_label_values(&[phase_name])
+                    .set(now as i64);
+            }
 
             // Capture metrics at phase start
             phase_start = PhaseCounters::capture_current();
@@ -410,6 +433,22 @@ pub async fn periodically_show_peer_stats_during_syncing(
             &prev_interval,
         )
         .await;
+
+        // Push progress + peer health to Prometheus
+        #[cfg(feature = "metrics")]
+        {
+            push_sync_prometheus_metrics(current_step);
+            let diag = peer_table.get_peer_diagnostics().await.unwrap_or_default();
+            let snap_peers = diag
+                .iter()
+                .filter(|p| p.capabilities.iter().any(|c| c.starts_with("snap/")))
+                .count();
+            let eligible = diag.iter().filter(|p| p.eligible).count();
+            let inflight: i64 = diag.iter().map(|p| p.inflight_requests).sum();
+            ethrex_metrics::sync::METRICS_SYNC.set_snap_peers(snap_peers as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_eligible_peers(eligible as i64);
+            ethrex_metrics::sync::METRICS_SYNC.set_inflight_requests(inflight);
+        }
 
         // Update previous interval counters for next rate calculation
         prev_interval = PhaseCounters::capture_current();
@@ -674,6 +713,78 @@ async fn log_phase_progress(
             let col1 = format!("Rate: {} codes/s", format_thousands(rate));
             info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
             info!("  Total time: {}", total_elapsed);
+        }
+        CurrentStepValue::None => {}
+    }
+}
+
+/// Push snap sync progress to Prometheus gauges (from METRICS atomics).
+/// Called each polling cycle. Rates are NOT computed here — use rate() in Grafana.
+#[cfg(feature = "metrics")]
+fn push_sync_prometheus_metrics(step: CurrentStepValue) {
+    use ethrex_metrics::sync::METRICS_SYNC;
+    use std::sync::atomic::Ordering::Relaxed;
+
+    let (phase_num, _) = phase_info(step);
+    METRICS_SYNC.stage.set(phase_num as i64);
+    METRICS_SYNC
+        .pivot_block
+        .set(METRICS.sync_head_block.load(Relaxed) as i64);
+
+    // Push raw pivot timestamp — Grafana computes age via time() - timestamp
+    let pivot_ts = METRICS.pivot_timestamp.load(Relaxed);
+    if pivot_ts > 0 {
+        METRICS_SYNC.pivot_timestamp.set(pivot_ts as i64);
+    }
+    // Also update pivot_age_seconds for RPC/peer_top consumers
+    if pivot_ts > 0 {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        METRICS_SYNC
+            .pivot_age_seconds
+            .set(now.saturating_sub(pivot_ts) as i64);
+    }
+
+    match step {
+        CurrentStepValue::DownloadingHeaders => {
+            let total = METRICS.sync_head_block.load(Relaxed);
+            let downloaded = u64::min(METRICS.downloaded_headers.get(), total);
+            METRICS_SYNC.headers_downloaded.set(downloaded as i64);
+            METRICS_SYNC.headers_total.set(total as i64);
+        }
+        CurrentStepValue::RequestingAccountRanges => {
+            let downloaded = METRICS.downloaded_account_tries.load(Relaxed);
+            METRICS_SYNC.accounts_downloaded.set(downloaded as i64);
+        }
+        CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
+            let total = METRICS.downloaded_account_tries.load(Relaxed);
+            let inserted = METRICS.account_tries_inserted.load(Relaxed);
+            METRICS_SYNC.accounts_downloaded.set(total as i64);
+            METRICS_SYNC.accounts_inserted.set(inserted as i64);
+        }
+        CurrentStepValue::RequestingStorageRanges => {
+            let downloaded = METRICS.storage_leaves_downloaded.get();
+            METRICS_SYNC.storage_downloaded.set(downloaded as i64);
+        }
+        CurrentStepValue::InsertingStorageRanges => {
+            let inserted = METRICS.storage_leaves_inserted.get();
+            METRICS_SYNC.storage_inserted.set(inserted as i64);
+        }
+        CurrentStepValue::HealingState => {
+            let healed = METRICS.global_state_trie_leafs_healed.load(Relaxed);
+            METRICS_SYNC.state_leaves_healed.set(healed as i64);
+        }
+        CurrentStepValue::HealingStorage => {
+            let healed = METRICS.global_storage_tries_leafs_healed.load(Relaxed);
+            METRICS_SYNC.storage_leaves_healed.set(healed as i64);
+        }
+        CurrentStepValue::RequestingBytecodes => {
+            let total = METRICS.bytecodes_to_download.load(Relaxed);
+            let downloaded = METRICS.downloaded_bytecodes.load(Relaxed);
+            METRICS_SYNC.bytecodes_downloaded.set(downloaded as i64);
+            METRICS_SYNC.bytecodes_total.set(total as i64);
         }
         CurrentStepValue::None => {}
     }

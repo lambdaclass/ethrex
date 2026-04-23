@@ -101,6 +101,7 @@ pub async fn request_account_range(
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
     blockchain: std::sync::Arc<ethrex_blockchain::Blockchain>,
+    diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -111,9 +112,10 @@ pub async fn request_account_range(
     let limit_u256 = U256::from_big_endian(&limit.0);
 
     let range = limit_u256 - start_u256;
-    let chunk_count = U256::from(ACCOUNT_RANGE_CHUNK_COUNT)
-        .min(range.max(U256::one()))
-        .as_usize();
+    // Bounded by ACCOUNT_RANGE_CHUNK_COUNT (800), always fits in usize.
+    let chunk_count =
+        usize::try_from(U256::from(ACCOUNT_RANGE_CHUNK_COUNT).min(range.max(U256::one())))
+            .expect("chunk_count bounded by ACCOUNT_RANGE_CHUNK_COUNT");
     let chunk_size = range / chunk_count;
 
     // list of tasks to be executed
@@ -259,15 +261,22 @@ pub async fn request_account_range(
             // current pivot timestamp) because BSC peers prune at ~128 blocks
             // and extrapolation can't outpace chain production.
             *pivot_header = if chain_id == 56 || chain_id == 97 {
-                update_pivot_bsc(pivot_header, peers, &blockchain, block_sync_state)
-                    .await
-                    .expect("Should be able to update pivot (bsc)")
+                update_pivot_bsc(
+                    pivot_header,
+                    peers,
+                    &blockchain,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await
+                .expect("Should be able to update pivot (bsc)")
             } else {
                 update_pivot(
                     pivot_header.number,
                     pivot_header.timestamp,
                     peers,
                     block_sync_state,
+                    diagnostics,
                 )
                 .await
                 .expect("Should be able to update pivot")
@@ -808,7 +817,9 @@ pub async fn request_storage_ranges(
                         .checked_mul(slots_per_chunk)
                         .unwrap_or(U256::MAX);
 
-                    let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+                    let chunk_count = usize::try_from(missing_storage_range / chunk_size)
+                        .unwrap_or(ACCOUNT_RANGE_CHUNK_COUNT)
+                        .max(1);
 
                     let first_acc_hash = *accounts_by_root_hash[remaining_start]
                         .1
@@ -1317,6 +1328,7 @@ async fn request_storage_ranges_worker(
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
         response_bytes: MAX_RESPONSE_BYTES,
     });
+    tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", "Sending storage range request");
     let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await;
@@ -1328,6 +1340,9 @@ async fn request_storage_ranges_worker(
         // so call outgoing_request directly to avoid a double increment.
     })) = response
     else {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
+        tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
         tracing::debug!(
             "Failed to get storage range from peer {peer_id}: err={:?}",
             response.as_ref().err()
@@ -1336,6 +1351,9 @@ async fn request_storage_ranges_worker(
         return Ok(());
     };
     if slots.is_empty() && proof.is_empty() {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
+        tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
         tx.send(empty_task_result).await.ok();
         tracing::debug!(
             "Received empty storage range from peer {peer_id} (accounts={account_hash_count}, first={:?}, state_root={:?})",
@@ -1435,6 +1453,7 @@ async fn request_storage_ranges_worker(
     } else {
         (start + account_storages.len(), end, H256::zero())
     };
+    let slot_count: usize = account_storages.iter().map(|s| s.len()).sum();
     let task_result = StorageTaskResult {
         start_index: start,
         account_storages,
@@ -1443,6 +1462,9 @@ async fn request_storage_ranges_worker(
         remaining_end,
         remaining_hash_range: (remaining_start_hash, task.end_hash),
     };
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
+    tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
 }

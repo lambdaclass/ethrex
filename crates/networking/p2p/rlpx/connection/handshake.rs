@@ -136,6 +136,7 @@ pub(crate) async fn perform(
             negotiated_bsc_capability: None,
             last_block_range_update_block: 0,
             requested_pooled_txs: HashMap::new(),
+            pending_tx_requests: Vec::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),
@@ -147,6 +148,10 @@ pub(crate) async fn perform(
             current_requests: HashMap::new(),
             disconnect_reason: None,
             is_validated: false,
+            serve_request_window_start: std::time::Instant::now(),
+            serve_requests_in_window: 0,
+            txs_sent_to_peer: 0,
+            received_txs_from_peer: false,
         },
         stream,
     ))
