@@ -97,16 +97,28 @@ impl BlobsBundle {
         let mut commitments = Vec::new();
         let mut proofs = Vec::new();
 
+        // Cache KZG results for identical blobs to avoid redundant computation.
+        // Linear search is efficient since blob count is bounded (max 9 in Prague/Osaka).
+        let mut computed: Vec<(&Blob, Commitment, Vec<Proof>)> = Vec::new();
+
         // Populate the commitments and proofs
         for blob in blobs {
-            if wrapper_version.unwrap_or(0) == 0 {
+            // Check if KZG was already computed for this exact blob content
+            if let Some((_, commitment, blob_proofs)) =
+                computed.iter().find(|(b, _, _)| b == &blob)
+            {
+                commitments.push(*commitment);
+                proofs.extend_from_slice(blob_proofs);
+            } else if wrapper_version.unwrap_or(0) == 0 {
                 let (commitment, proof) = blob_to_kzg_commitment_and_proof(blob)?;
                 commitments.push(commitment);
                 proofs.push(proof);
+                computed.push((blob, commitment, vec![proof]));
             } else {
                 let (commitment, cell_proofs) = blob_to_commitment_and_cell_proofs(blob)?;
                 commitments.push(commitment);
-                proofs.extend(cell_proofs);
+                proofs.extend_from_slice(&cell_proofs);
+                computed.push((blob, commitment, cell_proofs));
             }
         }
 
