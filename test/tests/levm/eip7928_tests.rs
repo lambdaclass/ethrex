@@ -456,6 +456,35 @@ fn test_code_change_rlp_roundtrip() {
     assert_eq!(change, decoded);
 }
 
+/// EIP-7928 widened `BlockAccessIndex` from `uint16` to `uint32`. Round-trip
+/// each change variant at an index above `u16::MAX` to guard against an
+/// accidental revert to the old narrower type (would silently truncate
+/// indices for blocks with > 65535 slots referenced).
+#[test]
+fn test_change_variants_rlp_roundtrip_index_above_u16_max() {
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+    let idx: u32 = 70_000;
+    assert!(idx > u32::from(u16::MAX));
+
+    let storage = StorageChange::new(idx, U256::from(0xdead_beef_u64));
+    assert_eq!(
+        StorageChange::decode(&storage.encode_to_vec()).unwrap(),
+        storage
+    );
+
+    let balance = BalanceChange::new(idx, U256::from(1u64) << 128);
+    assert_eq!(
+        BalanceChange::decode(&balance.encode_to_vec()).unwrap(),
+        balance
+    );
+
+    let nonce = NonceChange::new(idx, u64::MAX);
+    assert_eq!(NonceChange::decode(&nonce.encode_to_vec()).unwrap(), nonce);
+
+    let code = CodeChange::new(idx, bytes::Bytes::from_static(&[0xde, 0xad]));
+    assert_eq!(CodeChange::decode(&code.encode_to_vec()).unwrap(), code);
+}
+
 // ==================== RLP Encoding Hex Validation Tests ====================
 // These tests verify specific RLP hex encodings for cross-implementation compatibility
 

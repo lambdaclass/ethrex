@@ -704,6 +704,15 @@ impl<'a> VM<'a> {
         // so a grandparent revert's reservoir math sees only un-cancelled spill. The
         // second portion accumulates into `state_gas_credit_against_drain` and appears
         // in the revert formula as the subtraction term.
+        //
+        // Invariant (crucial for reservoir correctness):
+        //   `state_gas_spill_outstanding - snapshot` counts only spill increments that
+        //   happened INSIDE the current frame (or its subtree, propagated up on revert).
+        //   It excludes the parent's pre-child spills because those are baked into the
+        //   snapshot captured at child-frame entry. Therefore `applied_to_spill` never
+        //   double-cancels a spill that's already been accounted for at a grandparent
+        //   boundary. Changing this subtraction, or reading `state_gas_spill` instead,
+        //   breaks `sstore_restoration_create_init_revert`.
         let frame_outstanding_delta = self
             .state_gas_spill_outstanding
             .saturating_sub(self.current_call_frame.state_gas_spill_outstanding_snapshot);

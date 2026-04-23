@@ -158,6 +158,15 @@ impl LEVM {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
 
+        // EIP-7928 BlockAccessIndex is uint32. Block validity forbids >= 2^32 txs
+        // long before we'd reach this point, but guard the invariant explicitly
+        // so any upstream bug that inflates tx counts panics in debug instead of
+        // silently producing a `u32::MAX` index.
+        debug_assert!(
+            block.body.transactions.len() < u32::MAX as usize,
+            "tx count overflows u32 BlockAccessIndex"
+        );
+
         // Enable BAL recording for Amsterdam+ forks
         if is_amsterdam {
             db.enable_bal_recording();
@@ -331,6 +340,12 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+
+        // EIP-7928 BlockAccessIndex invariant — see `execute_block` for rationale.
+        debug_assert!(
+            block.body.transactions.len() < u32::MAX as usize,
+            "tx count overflows u32 BlockAccessIndex"
+        );
 
         let transactions_with_sender =
             block
