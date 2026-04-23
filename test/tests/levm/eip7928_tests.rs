@@ -381,7 +381,7 @@ fn test_block_access_index_semantics() {
     assert_eq!(alice.storage_changes.len(), 3);
 
     // Verify indices are correctly assigned
-    let indices: Vec<u16> = alice
+    let indices: Vec<u32> = alice
         .storage_changes
         .iter()
         .flat_map(|s| s.slot_changes.iter().map(|c| c.block_access_index))
@@ -1147,4 +1147,48 @@ fn test_build_filters_reads_that_exist_in_writes() {
         "no slot should appear in both storage_changes and storage_reads"
     );
     bal.validate_ordering().unwrap();
+}
+
+// ==================== EIP-7928 u32 widening round-trip tests ====================
+// These tests prove the index type is truly u32 by using a value > u16::MAX (65535).
+
+const WIDE_IDX: u32 = u32::MAX / 2; // 2_147_483_647 — far beyond u16::MAX
+
+#[test]
+fn test_storage_change_u32_index_rlp_roundtrip() {
+    let original = StorageChange::new(WIDE_IDX, U256::from(0xdeadbeef_u64));
+    let encoded = original.encode_to_vec();
+    let decoded = StorageChange::decode(&encoded).expect("decode StorageChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
+}
+
+#[test]
+fn test_balance_change_u32_index_rlp_roundtrip() {
+    let original = BalanceChange::new(WIDE_IDX, U256::from(999_999_u64));
+    let encoded = original.encode_to_vec();
+    let decoded = BalanceChange::decode(&encoded).expect("decode BalanceChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
+}
+
+#[test]
+fn test_nonce_change_u32_index_rlp_roundtrip() {
+    let original = NonceChange::new(WIDE_IDX, 42);
+    let encoded = original.encode_to_vec();
+    let decoded = NonceChange::decode(&encoded).expect("decode NonceChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
+}
+
+#[test]
+fn test_code_change_u32_index_rlp_roundtrip() {
+    let original = CodeChange::new(
+        WIDE_IDX,
+        bytes::Bytes::from_static(&[0x60, 0x00, 0x60, 0x00]),
+    );
+    let encoded = original.encode_to_vec();
+    let decoded = CodeChange::decode(&encoded).expect("decode CodeChange");
+    assert_eq!(original, decoded);
+    assert_eq!(decoded.block_access_index, WIDE_IDX);
 }

@@ -106,9 +106,9 @@ impl GeneralizedDatabase {
         self.bal_recorder = None;
     }
 
-    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint32).
     /// Call this before each transaction or phase.
-    pub fn set_bal_index(&mut self, index: u16) {
+    pub fn set_bal_index(&mut self, index: u32) {
         if let Some(recorder) = &mut self.bal_recorder {
             recorder.set_block_access_index(index);
         }

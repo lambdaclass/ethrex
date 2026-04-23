@@ -210,8 +210,8 @@ pub async fn fill_transactions(
         }
 
         // Set BAL index for this transaction (1-indexed per EIP-7928)
-        #[allow(clippy::cast_possible_truncation, clippy::as_conversions)]
-        let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+        let tx_index =
+            u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
         context.vm.set_bal_index(tx_index);
 
         // Record tx sender and recipient for BAL

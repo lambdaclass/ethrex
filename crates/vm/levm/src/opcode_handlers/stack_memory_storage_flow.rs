@@ -20,7 +20,7 @@
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND, STATE_GAS_STORAGE_SET},
+    gas_cost::{self, SSTORE_STIPEND},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
@@ -303,8 +303,17 @@ impl OpcodeHandler for OpSStoreHandler {
             )?)?;
 
         if needs_state_gas {
-            vm.increase_state_gas(STATE_GAS_STORAGE_SET)?;
+            vm.increase_state_gas(vm.state_gas_storage_set)?;
         }
+        // EIP-8037 (Amsterdam+) 0→N→0: the slot was created in this tx (original == 0),
+        // dirtied to N (current_value != 0), and now being reset to 0 (value == original == 0).
+        // The creation state gas is refunded via clamp-and-spill, not the regular refund counter.
+        let is_zero_to_n_to_zero_amsterdam = fork >= Fork::Amsterdam
+            && value != current_value
+            && current_value != original_value
+            && value == original_value
+            && original_value.is_zero();
+
         if value != current_value {
             // EIP-2929
             const REMOVE_SLOT_COST: i64 = 4800;
@@ -334,16 +343,10 @@ impl OpcodeHandler for OpSStoreHandler {
                     if original_value.is_zero() {
                         // EIP-8037 (Amsterdam+): restore_empty_slot_cost changes from 19900 to 2800
                         // because the SSTORE creation cost changed from 20000 to 2900.
-                        // Also add state gas refund through the normal refund counter.
+                        // The state gas portion is refunded via the reservoir (clamp-and-spill),
+                        // NOT through the regular refund counter.
                         if fork >= Fork::Amsterdam {
                             delta += RESTORE_SLOT_COST; // 2800 instead of 19900
-                            #[expect(
-                                clippy::as_conversions,
-                                reason = "state gas constants fit i64"
-                            )]
-                            {
-                                delta += STATE_GAS_STORAGE_SET as i64;
-                            }
                         } else {
                             delta += RESTORE_EMPTY_SLOT_COST;
                         }
@@ -359,6 +362,11 @@ impl OpcodeHandler for OpSStoreHandler {
                 None if delta < 0 => return Err(InternalError::Underflow.into()),
                 None => return Err(InternalError::Overflow.into()),
             }
+        }
+
+        // EIP-8037: credit the state gas refund via clamp-and-spill (after regular gas processing).
+        if is_zero_to_n_to_zero_amsterdam {
+            vm.credit_state_gas_refund(vm.state_gas_storage_set)?;
         }
 
         if value != current_value {

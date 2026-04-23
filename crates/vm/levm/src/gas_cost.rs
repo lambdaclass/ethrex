@@ -7,7 +7,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{U256, types::Fork, types::tx_fields::AccessList};
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
@@ -162,14 +162,41 @@ pub const CODE_DEPOSIT_COST: u64 = 200;
 pub const CREATE_BASE_COST: u64 = 32000;
 
 // EIP-8037: Multidimensional gas for state creation (Amsterdam only)
-pub const COST_PER_STATE_BYTE: u64 = 1174;
 pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
 pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
-// Pre-computed products to avoid repeated checked_mul in hot paths
-pub const STATE_GAS_NEW_ACCOUNT: u64 = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE; // 131_488
-pub const STATE_GAS_STORAGE_SET: u64 = STATE_BYTES_PER_STORAGE_SET * COST_PER_STATE_BYTE; // 37_568
-pub const STATE_GAS_AUTH_TOTAL: u64 = STATE_BYTES_PER_AUTH_TOTAL * COST_PER_STATE_BYTE; // 158_490
+
+// EIP-8037: Dynamic cost_per_state_byte formula constants (execution-specs#2687)
+pub const BLOCKS_PER_YEAR: u64 = 2_628_000;
+pub const TARGET_STATE_GROWTH_PER_YEAR: u64 = 100 * (1u64 << 30); // 100 GiB
+pub const CPSB_SIGNIFICANT_BITS: u32 = 5;
+pub const CPSB_OFFSET: u64 = 9578;
+
+/// Compute cost_per_state_byte from the block gas limit (EIP-8037, execution-specs#2687).
+/// Sanity check: cost_per_state_byte(120_000_000) == 1174.
+#[expect(
+    clippy::as_conversions,
+    reason = "u64→u128 widening casts and final narrowing from proven-bounded u128 are safe"
+)]
+#[expect(
+    clippy::arithmetic_side_effects,
+    reason = "arithmetic is safe: u64 fits in u128; subtraction guarded by if-condition"
+)]
+pub fn cost_per_state_byte(block_gas_limit: u64) -> u64 {
+    let num = (block_gas_limit as u128) * (BLOCKS_PER_YEAR as u128);
+    let denom = 2u128 * (TARGET_STATE_GROWTH_PER_YEAR as u128);
+    let raw = num.div_ceil(denom);
+    let shifted = raw + (CPSB_OFFSET as u128);
+    let bit_length = 128 - shifted.leading_zeros();
+    let shift = bit_length.saturating_sub(CPSB_SIGNIFICANT_BITS);
+    let quantized = (shifted >> shift) << shift;
+    if quantized > CPSB_OFFSET as u128 {
+        (quantized - (CPSB_OFFSET as u128)) as u64
+    } else {
+        1
+    }
+}
+
 pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam
 pub const CODE_DEPOSIT_REGULAR_COST_PER_WORD: u64 = 6; // keccak hash cost per 32-byte word
 
@@ -197,6 +224,18 @@ pub const P256_VERIFY_COST: u64 = 6900;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+// EIP-7976 (Amsterdam+): raised floor
+pub const TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM: u64 = 16;
+
+/// Returns the floor cost per token for the given fork.
+/// EIP-7976 raises this from 10 (EIP-7623) to 16 starting at Amsterdam.
+pub fn total_cost_floor_per_token(fork: Fork) -> u64 {
+    if fork >= Fork::Amsterdam {
+        TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM
+    } else {
+        TOTAL_COST_FLOOR_PER_TOKEN
+    }
+}
 
 pub const SHA2_256_STATIC_COST: u64 = 60;
 pub const SHA2_256_DYNAMIC_BASE: u64 = 12;
@@ -430,7 +469,7 @@ pub fn sstore(
     } else if current_value == original_value {
         if original_value.is_zero() {
             // For Amsterdam+, new slot creation uses MODIFICATION cost in regular gas;
-            // the state cost (32 * COST_PER_STATE_BYTE) is charged separately.
+            // the state cost (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte) is charged separately.
             if fork >= Fork::Amsterdam {
                 SSTORE_STORAGE_MODIFICATION
             } else {
@@ -615,6 +654,23 @@ pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
         }
     }
     Ok(calldata_cost)
+}
+
+/// Returns the total byte-size of an access list:
+/// 20 bytes per address entry + 32 bytes per storage key.
+pub fn access_list_bytes(access_list: &AccessList) -> u64 {
+    let mut bytes: u64 = 0;
+    for (_addr, keys) in access_list {
+        bytes = bytes.saturating_add(20);
+        bytes = bytes.saturating_add(32_u64.saturating_mul(keys.len() as u64));
+    }
+    bytes
+}
+
+/// EIP-7981: floor_tokens_in_access_list = access_list_bytes * STANDARD_TOKEN_COST (4).
+/// Used in the floor-gas computation for Amsterdam+.
+pub fn floor_tokens_in_access_list(access_list: &AccessList) -> u64 {
+    access_list_bytes(access_list).saturating_mul(STANDARD_TOKEN_COST)
 }
 
 fn address_access_cost(
