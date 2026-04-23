@@ -87,7 +87,12 @@ fn check_gas_limit(
 /// - state dim:   `tx.gas - intrinsic.regular > block_gas_limit - block_state_gas_used`
 ///
 /// Mirrors `src/ethereum/forks/amsterdam/fork.py:560-578` at eels_commit `524b446`.
-fn check_2d_gas_allowance(
+///
+/// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
+/// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
+/// per-tx — i.e. the floor is applied before aggregation, not after. Keep this in
+/// sync with the aggregation loop in [`execute_block_parallel`].
+pub fn check_2d_gas_allowance(
     tx: &Transaction,
     fork: Fork,
     block_gas_used_regular: u64,
@@ -978,6 +983,16 @@ impl LEVM {
         let store = db.store.clone();
         let header = &block.header;
         let n_txs = txs_with_sender.len();
+        // BAL-seeded parallel execution is only reachable on Amsterdam+ (callers
+        // gate on is_amsterdam before providing a header BAL). We recompute the
+        // flag here to gate the 2D inclusion check explicitly, keeping the
+        // invariant checkable rather than implicit.
+        let chain_config = store.get_chain_config()?;
+        let is_amsterdam = chain_config.is_amsterdam_activated(header.timestamp);
+        debug_assert!(
+            is_amsterdam,
+            "execute_block_parallel invoked on non-Amsterdam block"
+        );
 
         // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
         //    This covers ALL state changes: system calls, txs, withdrawals.
@@ -1140,13 +1155,15 @@ impl LEVM {
             let (tx, _) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
-            check_2d_gas_allowance(
-                tx,
-                Fork::Amsterdam,
-                block_regular_gas_used,
-                block_state_gas_used,
-                header.gas_limit,
-            )?;
+            if is_amsterdam {
+                check_2d_gas_allowance(
+                    tx,
+                    Fork::Amsterdam,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                    header.gas_limit,
+                )?;
+            }
 
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
