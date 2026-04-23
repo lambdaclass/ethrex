@@ -158,25 +158,26 @@ pub fn download_script() {
         );
     }
 
-    // Native rollup contracts (from levm/contracts, not l2/contracts)
-    let levm_contracts_path = Path::new("../../crates/vm/levm/contracts");
+    // Native rollup contracts
+    let native_rollup_l1_path = Path::new("../../crates/l2/contracts/src/nativeRollup/l1");
+    let native_rollup_l2_path = Path::new("../../crates/l2/contracts/src/nativeRollup/l2");
     compile_contract_to_bytecode(
         &output_contracts_path,
-        &levm_contracts_path.join("NativeRollup.sol"),
+        &native_rollup_l1_path.join("NativeRollup.sol"),
         "NativeRollup",
         false,
         false,
         None,
-        &[levm_contracts_path],
+        &[native_rollup_l1_path],
     );
     compile_contract_to_bytecode(
         &output_contracts_path,
-        &levm_contracts_path.join("L2Bridge.sol"),
+        &native_rollup_l2_path.join("L2Bridge.sol"),
         "L2Bridge",
         true,
         false,
         None,
-        &[levm_contracts_path],
+        &[native_rollup_l2_path],
     );
     // Based contracts
     compile_contract_to_bytecode(
