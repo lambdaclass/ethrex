@@ -461,8 +461,8 @@ impl Blockchain {
             .chain_config()
             .is_amsterdam_activated(context.payload.header.timestamp)
         {
-            #[allow(clippy::cast_possible_truncation)]
-            let post_tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            let post_tx_index =
+                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
             context.vm.set_bal_index(post_tx_index);
             // Record withdrawal recipients as touched addresses per EIP-7928
             if let Some(recorder) = context.vm.db.bal_recorder_mut()
@@ -654,8 +654,8 @@ impl Blockchain {
             // Index is based on current transaction count + 1
             // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
             // filters for the previous (committed) tx, which may insert reads.
-            #[allow(clippy::cast_possible_truncation)]
-            let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            let tx_index =
+                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
             context.vm.set_bal_index(tx_index);
 
             // EIP-7928: Lightweight tx-level checkpoint before trying the tx.

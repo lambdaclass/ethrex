@@ -7,9 +7,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     constants::{
-        TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-        TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-        TX_INIT_CODE_WORD_GAS_COST,
+        TX_ACCESS_LIST_ADDRESS_DATA_GAS_AMSTERDAM, TX_ACCESS_LIST_ADDRESS_GAS,
+        TX_ACCESS_LIST_STORAGE_KEY_DATA_GAS_AMSTERDAM, TX_ACCESS_LIST_STORAGE_KEY_GAS,
+        TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028,
+        TX_DATA_ZERO_GAS_COST, TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
     },
     error::MempoolError,
 };
@@ -564,6 +565,17 @@ pub fn transaction_intrinsic_gas(
     gas = gas
         .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_GAS)
         .ok_or(MempoolError::TxGasOverflowError)?;
+
+    // EIP-7981 (Amsterdam+): access-list data bytes also contribute to regular intrinsic gas.
+    // Each address adds 1280 gas (20 bytes * 4 * 16) and each storage key adds 2048 gas (32 bytes * 4 * 16).
+    if config.is_amsterdam_activated(header.timestamp) {
+        gas = gas
+            .checked_add(tx.access_list().len() as u64 * TX_ACCESS_LIST_ADDRESS_DATA_GAS_AMSTERDAM)
+            .ok_or(MempoolError::TxGasOverflowError)?;
+        gas = gas
+            .checked_add(storage_keys_count * TX_ACCESS_LIST_STORAGE_KEY_DATA_GAS_AMSTERDAM)
+            .ok_or(MempoolError::TxGasOverflowError)?;
+    }
 
     Ok(gas)
 }
