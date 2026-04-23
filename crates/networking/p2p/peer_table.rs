@@ -236,6 +236,55 @@ pub enum ContactValidation {
     IpMismatch,
 }
 
+/// Reservation handle for a peer request slot.
+///
+/// **Contract:** when a `RequestPermit` exists, the `requests` counter for
+/// its peer has been incremented by one. When the permit is dropped, a
+/// fire-and-forget `DecRequests` message releases the slot.
+///
+/// The permit is the output of `get_best_peer`, `get_best_peer_excluding`,
+/// and `get_random_peer`. Those handlers bump the counter atomically with
+/// peer selection (same handler call, under the actor's `&mut self`).
+///
+/// The permit MUST travel with whatever code owns the outstanding request —
+/// move it into spawned tasks, send it through channels alongside results,
+/// etc. Dropping it early releases the slot early. `#[must_use]` catches
+/// accidental discards at call sites that should be holding it.
+#[must_use = "dropping this permit immediately releases the peer's request slot"]
+pub struct RequestPermit {
+    peer_table: PeerTable,
+    peer_id: H256,
+}
+
+impl RequestPermit {
+    pub(crate) fn new(peer_table: PeerTable, peer_id: H256) -> Self {
+        Self {
+            peer_table,
+            peer_id,
+        }
+    }
+
+    pub fn peer_id(&self) -> H256 {
+        self.peer_id
+    }
+}
+
+impl std::fmt::Debug for RequestPermit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestPermit")
+            .field("peer_id", &self.peer_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for RequestPermit {
+    fn drop(&mut self) {
+        // Fire-and-forget. If the actor mailbox is closed, p2p is already
+        // shutting down — the lost decrement is a non-issue.
+        let _ = self.peer_table.dec_requests(self.peer_id);
+    }
+}
+
 #[protocol]
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
@@ -258,7 +307,6 @@ pub trait PeerTableServerProtocol: Send + Sync {
     ) -> Result<(), ActorError>;
     fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), ActorError>;
     fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
-    fn inc_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_is_fork_id_valid(&self, node_id: H256, valid: bool) -> Result<(), ActorError>;
@@ -299,12 +347,12 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_best_peer(
         &self,
         capabilities: Vec<Capability>,
-    ) -> Response<Option<(H256, PeerConnection)>>;
+    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_best_peer_excluding(
         &self,
         capabilities: Vec<Capability>,
         excluded: Vec<H256>,
-    ) -> Response<Option<(H256, PeerConnection)>>;
+    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
@@ -325,9 +373,14 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_random_peer(
         &self,
         capabilities: Vec<Capability>,
-    ) -> Response<Option<(H256, PeerConnection)>>;
+    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
+
+    #[cfg(test)]
+    fn _test_insert_peer(&self, peer_id: H256, peer: PeerData) -> Result<(), ActorError>;
+    #[cfg(test)]
+    fn _test_bump_requests(&self, peer_id: H256) -> Result<(), ActorError>;
 }
 
 #[derive(Debug)]
@@ -427,17 +480,6 @@ impl PeerTableServer {
     }
 
     #[send_handler]
-    async fn handle_inc_requests(
-        &mut self,
-        msg: peer_table_server_protocol::IncRequests,
-        _ctx: &Context<Self>,
-    ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.requests += 1);
-    }
-
-    #[send_handler]
     async fn handle_dec_requests(
         &mut self,
         msg: peer_table_server_protocol::DecRequests,
@@ -446,6 +488,28 @@ impl PeerTableServer {
         self.peers
             .entry(msg.node_id)
             .and_modify(|peer_data| peer_data.requests = peer_data.requests.saturating_sub(1));
+    }
+
+    #[cfg(test)]
+    #[send_handler]
+    async fn handle_test_insert_peer(
+        &mut self,
+        msg: peer_table_server_protocol::TestInsertPeer,
+        _ctx: &Context<Self>,
+    ) {
+        self.peers.insert(msg.peer_id, msg.peer);
+    }
+
+    #[cfg(test)]
+    #[send_handler]
+    async fn handle_test_bump_requests(
+        &mut self,
+        msg: peer_table_server_protocol::TestBumpRequests,
+        _ctx: &Context<Self>,
+    ) {
+        self.peers
+            .entry(msg.peer_id)
+            .and_modify(|peer_data| peer_data.requests += 1);
     }
 
     #[send_handler]
@@ -706,18 +770,28 @@ impl PeerTableServer {
     async fn handle_get_best_peer(
         &mut self,
         msg: peer_table_server_protocol::GetBestPeer,
-        _ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection)> {
-        self.do_get_best_peer(&msg.capabilities)
+        ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection, RequestPermit)> {
+        let (peer_id, conn) = self.do_get_best_peer(&msg.capabilities)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_best_peer must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
     }
 
     #[request_handler]
     async fn handle_get_best_peer_excluding(
         &mut self,
         msg: peer_table_server_protocol::GetBestPeerExcluding,
-        _ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection)> {
-        self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)
+        ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection, RequestPermit)> {
+        let (peer_id, conn) = self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_best_peer_excluding must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
     }
 
     #[request_handler]
@@ -829,9 +903,14 @@ impl PeerTableServer {
     async fn handle_get_random_peer(
         &mut self,
         msg: peer_table_server_protocol::GetRandomPeer,
-        _ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection)> {
-        self.do_get_random_peer(msg.capabilities)
+        ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection, RequestPermit)> {
+        let (peer_id, conn) = self.do_get_random_peer(msg.capabilities)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_random_peer must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
     }
 
     #[request_handler]
@@ -1250,3 +1329,81 @@ impl PeerTableServer {
 }
 
 pub type PeerTable = ActorRef<PeerTableServer>;
+
+#[cfg(test)]
+mod permit_tests {
+    use super::*;
+    use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+    use ethrex_common::{H256, H512};
+    use ethrex_storage::{EngineType, Store};
+
+    async fn fresh_peer_table() -> PeerTable {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        PeerTableServer::spawn(10, store)
+    }
+
+    // NOTE: `PeerConnection` has a private field (`handle: ActorRef<...>`) and
+    // can only be constructed via `spawn_as_initiator` / `spawn_as_receiver`,
+    // both of which require a full `P2PContext`. That's too heavy to set up
+    // from a unit test. Therefore the happy-path test inserts a peer with
+    // `connection: None` and exercises the counter bookkeeping directly.
+    fn fake_peer_data() -> (H256, PeerData) {
+        let node = Node::new("127.0.0.1".parse().expect("ip"), 30303, 30303, H512::zero());
+        let peer_id = H256::from_low_u64_be(1);
+        let peer = PeerData::new(node, None, None, SUPPORTED_ETH_CAPABILITIES.to_vec());
+        (peer_id, peer)
+    }
+
+    #[tokio::test]
+    async fn permit_drop_releases_reservation() {
+        // Regression coverage: dropping a permit with an unknown peer_id must
+        // not panic (saturating_sub protects us).
+        let table = fresh_peer_table().await;
+        let permit = RequestPermit::new(table.clone(), H256::zero());
+        drop(permit);
+        let count = table.peer_count().await.unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn permit_drop_decrements_counter() {
+        // Insert a peer, bump `requests` via a test-only helper, then drop a
+        // permit pointing at that peer and verify the counter returned to 0.
+        let table = fresh_peer_table().await;
+        let (peer_id, peer) = fake_peer_data();
+
+        table
+            ._test_insert_peer(peer_id, peer)
+            .expect("insert fake peer");
+        table._test_bump_requests(peer_id).expect("bump requests");
+
+        // Let the send messages land before we measure.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        let diag = table
+            .get_peer_diagnostics()
+            .await
+            .expect("diagnostics")
+            .into_iter()
+            .find(|p| p.peer_id == peer_id)
+            .expect("peer present");
+        assert_eq!(diag.inflight_requests, 1, "test helper should have bumped");
+
+        let permit = RequestPermit::new(table.clone(), peer_id);
+        drop(permit);
+        // get_peer_diagnostics is a request; its response guarantees the
+        // dec_requests send from Drop has been processed (FIFO mailbox).
+        let diag_after = table
+            .get_peer_diagnostics()
+            .await
+            .expect("diagnostics")
+            .into_iter()
+            .find(|p| p.peer_id == peer_id)
+            .expect("peer present");
+        assert_eq!(
+            diag_after.inflight_requests, 0,
+            "permit drop should release the slot"
+        );
+    }
+}

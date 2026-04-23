@@ -739,7 +739,10 @@ pub async fn update_pivot(
             tokio::time::sleep(delay).await;
         }
 
-        let Some((peer_id, mut connection)) = peers
+        // Hold the permit for the duration of the attempt loop. It's dropped
+        // at the end of each outer-loop iteration — either on success (return),
+        // on exclusion (continue after exhausting retries), or on fall-through.
+        let Some((peer_id, mut connection, _permit)) = peers
             .peer_table
             .get_best_peer_excluding(SUPPORTED_ETH_CAPABILITIES.to_vec(), excluded_peers.clone())
             .await?
