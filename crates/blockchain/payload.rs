@@ -9,7 +9,10 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
+    constants::{
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
+        TX_MAX_GAS_LIMIT_AMSTERDAM,
+    },
     types::{
         AccountUpdate, BASE_FEE_MAX_CHANGE_DENOMINATOR, BlobsBundle, Block, BlockBody, BlockHash,
         BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind,
@@ -608,8 +611,15 @@ impl Blockchain {
                 &mut plain_txs
             };
 
-            // Check if we have enough gas to run the transaction
-            if context.remaining_gas < head_tx.tx.gas_limit() {
+            // Check if we have enough gas to run the transaction.
+            // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
+            // remaining_gas tracks regular gas only.
+            let tx_gas_reservation = if context.is_amsterdam {
+                head_tx.tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+            } else {
+                head_tx.tx.gas_limit()
+            };
+            if context.remaining_gas < tx_gas_reservation {
                 debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
@@ -826,10 +836,35 @@ pub fn apply_plain_transaction(
     // EIP-8037 (Amsterdam+): track regular and state gas separately
     let tx_state_gas = report.state_gas_used;
     let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
-    context.block_regular_gas_used = context
+
+    // Compute new totals before committing them
+    let new_regular = context
         .block_regular_gas_used
         .saturating_add(tx_regular_gas);
-    context.block_state_gas_used = context.block_state_gas_used.saturating_add(tx_state_gas);
+    let new_state = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    // EIP-8037 (Amsterdam+): post-execution block gas overflow check
+    // Reject the transaction if adding it would cause max(regular, state) to exceed the gas limit
+    if context.is_amsterdam && new_regular.max(new_state) > context.payload.header.gas_limit {
+        // Rollback transaction state before returning error:
+        // 1. Undo DB mutations (nonce, balance, storage, etc.)
+        // 2. Revert cumulative gas counter inflation
+        // This ensures the next transaction executes against clean state.
+        context.vm.undo_last_tx()?;
+        context.cumulative_gas_spent -= report.gas_spent;
+
+        return Err(EvmError::Custom(format!(
+            "block gas limit exceeded (state gas overflow): \
+             max({new_regular}, {new_state}) = {} > gas_limit {}",
+            new_regular.max(new_state),
+            context.payload.header.gas_limit
+        ))
+        .into());
+    }
+
+    // Commit the new totals
+    context.block_regular_gas_used = new_regular;
+    context.block_state_gas_used = new_state;
 
     if context.is_amsterdam {
         debug!(
@@ -845,15 +880,14 @@ pub fn apply_plain_transaction(
     }
 
     // Update remaining_gas for block gas limit checks.
-    // EIP-8037 (Amsterdam+): block capacity is max(sum_regular, sum_state), so
-    // remaining_gas = gas_limit - max(block_regular, block_state). Using the sum
-    // would be overly conservative and skip transactions that actually fit.
+    // EIP-8037 (Amsterdam+): remaining_gas reflects both regular and state gas dimensions.
+    // For pre-tx heuristic checks, this ensures we reject txs when either dimension is full.
     if context.is_amsterdam {
-        context.remaining_gas = context.payload.header.gas_limit.saturating_sub(
-            context
-                .block_regular_gas_used
-                .max(context.block_state_gas_used),
-        );
+        context.remaining_gas = context
+            .payload
+            .header
+            .gas_limit
+            .saturating_sub(new_regular.max(new_state));
     } else {
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
     }
@@ -877,7 +911,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    pub tip: u64,
+    pub tip: U256,
 }
 
 impl std::ops::Deref for HeadTransaction {

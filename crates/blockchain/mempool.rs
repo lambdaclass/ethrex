@@ -14,7 +14,7 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256,
+    Address, H160, H256, U256,
     types::{
         BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
         kzg_commitment_to_versioned_hash,
@@ -28,6 +28,10 @@ struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
+    /// Transaction hashes that have been requested via GetPooledTransactions
+    /// but whose responses haven't arrived yet. Used to avoid sending duplicate
+    /// requests when multiple peers announce the same transaction.
+    in_flight_txs: FxHashSet<H256>,
     /// Maps blob versioned hashes to transaction hashes that include them and a position inside
     /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
@@ -237,7 +241,7 @@ impl Mempool {
             }
 
             // Filter by tip & base_fee
-            if let Some(min_tip) = filter.min_tip {
+            if let Some(min_tip) = filter.min_tip.map(U256::from) {
                 if tx
                     .effective_gas_tip(filter.base_fee)
                     .is_none_or(|tip| tip < min_tip)
@@ -307,18 +311,35 @@ impl Mempool {
         Ok(txs_by_sender)
     }
 
-    /// Gets hashes from possible_hashes that are not already known in the mempool.
-    pub fn filter_unknown_transactions(
+    /// Filters hashes to those not already in the mempool or in-flight, and
+    /// atomically marks the returned hashes as in-flight under a single write
+    /// lock so that concurrent peer handlers cannot request the same hashes.
+    pub fn reserve_unknown_hashes(
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
-        let tx_pool = &self.read()?.transaction_pool;
+        let mut inner = self.write()?;
 
-        Ok(possible_hashes
+        let unknown: Vec<H256> = possible_hashes
             .iter()
-            .filter(|hash| !tx_pool.contains_key(hash))
+            .filter(|hash| {
+                !inner.in_flight_txs.contains(hash) && !inner.transaction_pool.contains_key(hash)
+            })
             .copied()
-            .collect())
+            .collect();
+
+        inner.in_flight_txs.extend(unknown.iter().copied());
+        Ok(unknown)
+    }
+
+    /// Removes transaction hashes from the in-flight set, typically called
+    /// when the GetPooledTransactions response arrives (or the connection drops).
+    pub fn clear_in_flight_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in hashes {
+            inner.in_flight_txs.remove(hash);
+        }
+        Ok(())
     }
 
     pub fn get_transaction_by_hash(

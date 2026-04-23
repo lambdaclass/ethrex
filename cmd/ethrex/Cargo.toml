@@ -131,7 +131,7 @@ perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]
 
 [build-dependencies]
-vergen-git2 = { version = "1.0.7", features = ["rustc"] }
+vergen-git2 = { version = "9.1", features = ["rustc"] }
 ethrex-sdk = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }

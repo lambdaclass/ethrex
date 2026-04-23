@@ -30,9 +30,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.90.0
+        uses: dtolnay/rust-toolchain@1.91.0
         with:
           targets: riscv64imac-unknown-none-elf
 
       - name: Check no_std crates
-        run: cargo check -p ethrex-rlp --no-default-features --target riscv64imac-unknown-none-elf
+        run: |
+          cargo check -p ethrex-rlp -p ethrex-crypto --no-default-features --target riscv64imac-unknown-none-elf
+          cargo check -p ethrex-crypto --no-default-features --features kzg-rs --target riscv64imac-unknown-none-elf

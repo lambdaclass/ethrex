@@ -1163,9 +1163,10 @@ impl Transaction {
     fn compute_sender(&self, crypto: &dyn Crypto) -> Result<Address, CryptoError> {
         let (buf, sig) = match self {
             Transaction::LegacyTransaction(tx) => {
+                let v = u64::try_from(tx.v).map_err(|_| CryptoError::InvalidSignature)?;
                 let signature_y_parity = match self.chain_id() {
-                    Some(chain_id) => tx.v.as_u64().saturating_sub(35 + chain_id * 2) != 0,
-                    None => tx.v.as_u64().saturating_sub(27) != 0,
+                    Some(chain_id) => v.saturating_sub(35 + chain_id * 2) != 0,
+                    None => v.saturating_sub(27) != 0,
                 };
                 let mut buf = vec![];
                 match self.chain_id() {
@@ -1521,21 +1522,30 @@ impl Transaction {
         *inner_hash.get_or_init(|| self.compute_hash())
     }
 
-    pub fn gas_tip_cap(&self) -> u64 {
-        self.max_priority_fee().unwrap_or(self.gas_price().as_u64())
+    pub fn gas_tip_cap(&self) -> U256 {
+        self.max_priority_fee()
+            .map(U256::from)
+            .unwrap_or_else(|| self.gas_price())
     }
 
-    pub fn gas_fee_cap(&self) -> u64 {
-        self.max_fee_per_gas().unwrap_or(self.gas_price().as_u64())
+    pub fn gas_fee_cap(&self) -> U256 {
+        self.max_fee_per_gas()
+            .map(U256::from)
+            .unwrap_or_else(|| self.gas_price())
     }
 
-    pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<u64> {
+    /// Returns the effective tip per gas for this transaction.
+    /// Returns `None` if the transaction's fee cap is below the base fee (i.e. the
+    /// transaction cannot pay for its inclusion).
+    pub fn effective_gas_tip(&self, base_fee: Option<u64>) -> Option<U256> {
+        let tip_cap = self.gas_tip_cap();
         let Some(base_fee) = base_fee else {
-            return Some(self.gas_tip_cap());
+            return Some(tip_cap);
         };
-        self.gas_fee_cap()
-            .checked_sub(base_fee)
-            .map(|tip| min(tip, self.gas_tip_cap()))
+        let base_fee = U256::from(base_fee);
+        let fee_cap = self.gas_fee_cap();
+        let tip = fee_cap.checked_sub(base_fee)?;
+        Some(min(tip, tip_cap))
     }
 
     /// Returns whether the transaction is replay-protected.
@@ -1543,7 +1553,7 @@ impl Transaction {
     pub fn protected(&self) -> bool {
         match self {
             Transaction::LegacyTransaction(tx) if tx.v.bits() <= 8 => {
-                let v = tx.v.as_u64();
+                let v = tx.v.low_u64();
                 v != 27 && v != 28 && v != 1 && v != 0
             }
             _ => true,
@@ -1552,7 +1562,7 @@ impl Transaction {
 }
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
-    let v = v.as_u64(); //TODO: Could panic if v is bigger than Max u64
+    let v = u64::try_from(v).ok()?;
     if v == 27 || v == 28 {
         None
     } else {
@@ -2370,6 +2380,17 @@ mod serde_impl {
             })
     }
 
+    fn deserialize_u64_field<'de, D>(
+        map: &mut HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Result<u64, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = deserialize_field::<U256, D>(map, key)?;
+        u64::try_from(value).map_err(|_| D::Error::custom(format!("{key} value overflows u64")))
+    }
+
     impl<'de> Deserialize<'de> for LegacyTransaction {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
         where
@@ -2378,9 +2399,9 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(LegacyTransaction {
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
                 gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
-                gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                gas: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2400,10 +2421,10 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP2930Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
                 gas_price: deserialize_field::<U256, D>(&mut map, "gasPrice")?,
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2431,15 +2452,14 @@ mod serde_impl {
         {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
             Ok(EIP1559Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2468,15 +2488,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP4844Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2510,15 +2529,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(EIP7702Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<Address, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2554,15 +2572,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(PrivilegedL2Transaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2584,15 +2601,14 @@ mod serde_impl {
             let mut map = <HashMap<String, serde_json::Value>>::deserialize(deserializer)?;
 
             Ok(FeeTokenTransaction {
-                chain_id: deserialize_field::<U256, D>(&mut map, "chainId")?.as_u64(),
-                nonce: deserialize_field::<U256, D>(&mut map, "nonce")?.as_u64(),
-                max_priority_fee_per_gas: deserialize_field::<U256, D>(
+                chain_id: deserialize_u64_field::<D>(&mut map, "chainId")?,
+                nonce: deserialize_u64_field::<D>(&mut map, "nonce")?,
+                max_priority_fee_per_gas: deserialize_u64_field::<D>(
                     &mut map,
                     "maxPriorityFeePerGas",
-                )?
-                .as_u64(),
-                max_fee_per_gas: deserialize_field::<U256, D>(&mut map, "maxFeePerGas")?.as_u64(),
-                gas_limit: deserialize_field::<U256, D>(&mut map, "gas")?.as_u64(),
+                )?,
+                max_fee_per_gas: deserialize_u64_field::<D>(&mut map, "maxFeePerGas")?,
+                gas_limit: deserialize_u64_field::<D>(&mut map, "gas")?,
                 to: deserialize_field::<TxKind, D>(&mut map, "to")?,
                 value: deserialize_field::<U256, D>(&mut map, "value")?,
                 data: deserialize_input_field(&mut map).map_err(serde::de::Error::custom)?,
@@ -2622,6 +2638,8 @@ mod serde_impl {
         BlobBundleError(#[from] BlobsBundleError),
         #[error("Missing field: {0}")]
         MissingField(String),
+        #[error("Invalid field: {0}")]
+        InvalidField(String),
     }
 
     /// Unsigned Transaction struct generic to all types which may not contain all required transaction fields
@@ -2640,8 +2658,8 @@ mod serde_impl {
         pub gas: Option<u64>,
         #[serde(default)]
         pub value: U256,
-        #[serde(default, with = "crate::serde_utils::u64::hex_str")]
-        pub gas_price: u64,
+        #[serde(default)]
+        pub gas_price: U256,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
         pub max_priority_fee_per_gas: Option<u64>,
         #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
@@ -2709,7 +2727,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -2744,7 +2762,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 access_list: value
                     .access_list
                     .into_iter()
@@ -2765,7 +2787,7 @@ mod serde_impl {
                 gas: Some(value.gas),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: Some(value.max_fee_per_blob_gas),
@@ -2827,7 +2849,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 max_fee_per_blob_gas: value.max_fee_per_blob_gas.unwrap_or_default(),
                 access_list: value
                     .access_list
@@ -2850,7 +2876,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -2890,7 +2916,11 @@ mod serde_impl {
                 chain_id: value.chain_id.unwrap_or_default(),
                 nonce: value.nonce.unwrap_or_default(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 gas_limit: value.gas.unwrap_or_default(),
                 to,
                 value: value.value,
@@ -2920,7 +2950,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -2954,7 +2984,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 access_list: value
                     .access_list
                     .into_iter()
@@ -2976,7 +3010,7 @@ mod serde_impl {
                 gas: Some(value.gas_limit),
                 value: value.value,
                 input: value.data.clone(),
-                gas_price: value.max_fee_per_gas,
+                gas_price: U256::from(value.max_fee_per_gas),
                 max_priority_fee_per_gas: Some(value.max_priority_fee_per_gas),
                 max_fee_per_gas: Some(value.max_fee_per_gas),
                 max_fee_per_blob_gas: None,
@@ -3011,7 +3045,11 @@ mod serde_impl {
                 value: value.value,
                 data: value.input.clone(),
                 max_priority_fee_per_gas: value.max_priority_fee_per_gas.unwrap_or_default(),
-                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(value.gas_price),
+                max_fee_per_gas: value.max_fee_per_gas.unwrap_or(
+                    u64::try_from(value.gas_price).map_err(|_| {
+                        GenericTransactionError::InvalidField("gas_price overflows u64".to_owned())
+                    })?,
+                ),
                 access_list: value
                     .access_list
                     .into_iter()
@@ -3037,7 +3075,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas),
                 value: value.value,
-                gas_price: value.gas_price.as_u64(),
+                gas_price: value.gas_price,
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -3062,7 +3100,7 @@ mod serde_impl {
                 from: Address::default(),
                 gas: Some(value.gas_limit),
                 value: value.value,
-                gas_price: value.gas_price.as_u64(),
+                gas_price: value.gas_price,
                 max_priority_fee_per_gas: None,
                 max_fee_per_gas: None,
                 max_fee_per_blob_gas: None,
@@ -3419,7 +3457,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::from(hex::decode("010203040506").unwrap()),
-            gas_price: 7,
+            gas_price: U256::from(7),
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
@@ -3474,7 +3512,7 @@ mod tests {
             gas: Some(0x5208),
             value: U256::from(1),
             input: Bytes::from(hex::decode("010203040506").unwrap()),
-            gas_price: 7,
+            gas_price: U256::from(7),
             max_priority_fee_per_gas: Default::default(),
             max_fee_per_gas: Default::default(),
             max_fee_per_blob_gas: Default::default(),
@@ -3678,7 +3716,7 @@ mod tests {
         let generic_tx: GenericTransaction = legacy_tx.into();
         assert_eq!(generic_tx.r#type, TxType::Legacy);
         assert_eq!(generic_tx.nonce, Some(1));
-        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas_price, U256::from(20_000_000_000u64));
         assert_eq!(generic_tx.gas, Some(21000));
         assert_eq!(generic_tx.max_priority_fee_per_gas, None);
         assert_eq!(generic_tx.max_fee_per_gas, None);
@@ -3718,7 +3756,7 @@ mod tests {
         let generic_tx: GenericTransaction = eip2930_tx.into();
         assert_eq!(generic_tx.r#type, TxType::EIP2930);
         assert_eq!(generic_tx.nonce, Some(1));
-        assert_eq!(generic_tx.gas_price, 20_000_000_000);
+        assert_eq!(generic_tx.gas_price, U256::from(20_000_000_000u64));
         assert_eq!(generic_tx.gas, Some(21000));
         assert_eq!(generic_tx.max_priority_fee_per_gas, None);
         assert_eq!(generic_tx.max_fee_per_gas, None);

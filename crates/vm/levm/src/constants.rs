@@ -25,9 +25,7 @@ pub const TX_BASE_COST: u64 = 21000;
 
 // https://eips.ethereum.org/EIPS/eip-7825
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;
-
-/// EIP-7825/EIP-8037: Maximum tx gas_limit for Prague (EIP-7825) and Amsterdam reservoir threshold.
-pub const TX_MAX_GAS_LIMIT_AMSTERDAM: u64 = 1 << 24; // 16,777,216
+pub use ethrex_common::constants::TX_MAX_GAS_LIMIT_AMSTERDAM;
 
 pub const MAX_CODE_SIZE: u64 = 0x6000;
 /// Polygon PoS maximum transaction gas limit (2^25 = 33,554,432).
