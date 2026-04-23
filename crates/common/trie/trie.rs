@@ -152,6 +152,27 @@ impl Trie {
         Ok(())
     }
 
+    /// Insert without dirty/pending_removal tracking.
+    ///
+    /// Only valid for hash-only computation (e.g. `compute_hash_from_unsorted_iter`)
+    /// where `get()` and `commit()` are never called, avoiding unnecessary
+    /// `Nibbles` clones and `FxHashSet` operations on every insertion.
+    fn insert_untracked(&mut self, path: PathRLP, value: ValueRLP) -> Result<(), TrieError> {
+        let path = Nibbles::from_bytes(&path);
+        if self.root.is_valid() {
+            self.root
+                .get_node_mut(self.db.as_ref(), Nibbles::default())?
+                .ok_or_else(|| {
+                    TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFoundNoHash))
+                })?
+                .insert(self.db.as_ref(), path, value)?
+        } else {
+            self.root = Node::from(LeafNode::new(path, value)).into()
+        };
+        self.root.clear_hash();
+        Ok(())
+    }
+
     /// Remove a value from the trie given its RLP-encoded path.
     /// Returns the value if it was succesfully removed or None if it wasn't part of the trie
     pub fn remove(&mut self, path: &[u8]) -> Result<Option<ValueRLP>, TrieError> {
@@ -395,8 +416,10 @@ impl Trie {
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
-            // Unwraping here won't panic as our in_memory trie DB won't fail
-            trie.insert(path, value).unwrap();
+            // Unwrapping here won't panic as our in_memory trie DB won't fail.
+            // Use insert_untracked to skip dirty/pending_removal HashSet ops
+            // that are useless for this hash-only, no-get, no-commit path.
+            trie.insert_untracked(path, value).unwrap();
         }
 
         trie.hash_no_commit(crypto)
