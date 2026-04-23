@@ -474,7 +474,7 @@ impl<'a> VM<'a> {
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        let mut substate = Substate::initialize(&env, tx)?;
+        let mut substate = Substate::initialize(&env, tx, vm_type)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
@@ -777,7 +777,11 @@ impl<'a> VM<'a> {
 
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
-    pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+    pub fn initialize(
+        env: &Environment,
+        tx: &Transaction,
+        vm_type: VMType,
+    ) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
         let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
@@ -805,6 +809,15 @@ impl Substate {
 
         // Add the address for the P256 verify precompile post-Osaka
         if env.config.fork >= Fork::Osaka {
+            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
+        }
+
+        // BSC-specific precompiles (0x64..=0x69, 0x100) pre-warmed so the
+        // first CALL pays the warm-access cost — matching bsc-geth.
+        if matches!(vm_type, VMType::Bsc) {
+            for i in 0x64u64..=0x69u64 {
+                initial_accessed_addresses.insert(Address::from_low_u64_be(i));
+            }
             initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }
 

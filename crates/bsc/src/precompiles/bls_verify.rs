@@ -11,9 +11,9 @@
 //!
 //! At least one public key must be present.
 //!
-//! Output:
-//! - `[0x00…01]` (32 bytes, big-endian 1) on successful verification.
-//! - `[0x00…00]` (32 bytes, big-endian 0) on failed verification.
+//! Output (matches bsc-geth — `big.Int.Bytes()` of 0 / 1):
+//! - `[0x01]` (1 byte) on successful verification.
+//! - `[]` (0 bytes, empty) on failed verification.
 //! - `Err(ExecutionReverted)` on invalid/malformed input.
 //!
 //! Gas:
@@ -34,8 +34,9 @@
 //! Aggregate:     e(agg_pk, H(msg)) == e(G1, sig)   where agg_pk = Σ pk_i
 //!
 //! The message is hashed to a G2 point using the `BLS_SIG_DST` domain
-//! separation tag `"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_"` (no proof
-//! of possession, plain message augmentation as used by Prysm).
+//! separation tag `"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_"` (proof of
+//! possession scheme, matching Prysm's default — which is what bsc-geth's
+//! blsSignatureVerify precompile calls into).
 
 use super::PrecompileError;
 use bls12_381::{G1Affine, G2Affine, G2Projective, Gt, multi_miller_loop};
@@ -51,9 +52,10 @@ const SIGNATURE_LENGTH: usize = 96;
 const PUBKEY_LENGTH: usize = 48;
 const MSG_AND_SIG_LENGTH: usize = MSG_LENGTH + SIGNATURE_LENGTH;
 
-/// Domain separation tag used by BSC / Prysm for BLS signature verification
-/// (no proof of possession, NUL augmentation).
-const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_";
+/// Domain separation tag used by BSC / Prysm for BLS signature verification.
+/// Matches prysm's `crypto/bls/blst/signature.go` DST (proof-of-possession
+/// scheme), which is what bsc-geth's `blsSignatureVerify` precompile invokes.
+const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
 /// Compute the required gas for the given input.
 pub fn required_gas(input: &[u8]) -> u64 {
@@ -134,14 +136,13 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     ])
     .final_exponentiation();
 
+    // bsc-geth returns `common.Big{0,1}.Bytes()` directly, i.e. an empty
+    // slice on failure and `[0x01]` on success. Match that exactly so
+    // callers observing `returndatasize()` see the same value.
     let result = if gt == Gt::identity() {
-        // Verification succeeded: return big-endian 1.
-        let mut out = [0u8; 32];
-        out[31] = 1;
-        out.to_vec()
+        vec![0x01]
     } else {
-        // Verification failed: return big-endian 0.
-        vec![0u8; 32]
+        Vec::new()
     };
 
     Ok((gas_cost, result))

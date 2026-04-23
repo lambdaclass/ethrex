@@ -30,6 +30,7 @@ default = ["secp256k1"]
 
 secp256k1 = ["ethrex-levm/secp256k1", "ethrex-common/secp256k1"]
 c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+bsc = ["ethrex-levm/bsc"]
 
 sp1 = ["ethrex-levm/sp1", "ethrex-common/sp1"]
 risc0 = ["ethrex-levm/risc0", "ethrex-common/risc0", "c-kzg"]
