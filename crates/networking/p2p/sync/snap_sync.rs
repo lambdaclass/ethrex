@@ -429,7 +429,13 @@ pub async fn snap_sync(
                 storage_accounts.accounts_with_storage_root.len()
             );
             storage_range_request_attempts += 1;
-            if storage_range_request_attempts < 100 {
+            // Retry storage ranges aggressively before falling back to heal.
+            // The fallback marks remaining accounts (typically large contracts
+            // whose storage trie was split into chunks) for storage healing,
+            // which on BSC is much slower than ranges due to tight peer
+            // retention. Each pivot rotation gives failed sub-ranges another
+            // chance at peers that happen to have that storage_root.
+            if storage_range_request_attempts < 10_000 {
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
