@@ -23,7 +23,7 @@ use ethrex_blockchain::payload::{
     BuildPayloadArgs, HeadTransaction, PayloadBuildContext, apply_plain_transaction,
 };
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, payload::create_payload};
-use ethrex_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
+use ethrex_l2_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
