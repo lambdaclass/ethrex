@@ -1852,8 +1852,11 @@ impl Blockchain {
         // on the shared `merkle_pool` — concurrent pipelines starve for pool
         // slots and deadlock. L1/L2 paths are already serialized upstream
         // (RPC `start_block_executor`, L2 sequencer) so skip the guard there.
-        let _guard = matches!(self.options.r#type, BlockchainType::Bsc)
-            .then(|| self.bsc_import_lock.lock().unwrap_or_else(|p| p.into_inner()));
+        let _guard = matches!(self.options.r#type, BlockchainType::Bsc).then(|| {
+            self.bsc_import_lock
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+        });
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result
     }
@@ -1865,8 +1868,11 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let _guard = matches!(self.options.r#type, BlockchainType::Bsc)
-            .then(|| self.bsc_import_lock.lock().unwrap_or_else(|p| p.into_inner()));
+        let _guard = matches!(self.options.r#type, BlockchainType::Bsc).then(|| {
+            self.bsc_import_lock
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+        });
         let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
         result?;
         Ok(produced_bal)

@@ -37,6 +37,14 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
 
+/// RAII guard that flushes the opcode tracer when `execute()` returns.
+struct TraceGuard;
+impl Drop for TraceGuard {
+    fn drop(&mut self) {
+        crate::opcode_tracer::end_tx();
+    }
+}
+
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
@@ -577,6 +585,10 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        let _trace_active =
+            crate::opcode_tracer::begin_tx(self.tx.hash(), self.env.disable_balance_check);
+        let _trace_guard = TraceGuard;
+
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -656,6 +668,17 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+
+            let trace_pre = if crate::opcode_tracer::is_active() {
+                Some((
+                    self.current_call_frame.pc,
+                    self.current_call_frame.gas_remaining,
+                    self.call_frames.len().saturating_add(1),
+                ))
+            } else {
+                None
+            };
+
             self.advance_pc(1)?;
 
             #[cfg(feature = "perf_opcode_timings")]
@@ -669,6 +692,21 @@ impl<'a> VM<'a> {
             {
                 let time = opcode_time_start.elapsed();
                 timings.update(opcode, time);
+            }
+
+            if let Some((pc_before, gas_before, depth_before)) = trace_pre {
+                let depth_after = self.call_frames.len().saturating_add(1);
+                let gas_after = if depth_after > depth_before {
+                    // CALL/CREATE pushed a child frame — parent's post-op gas is now on the stack.
+                    self.call_frames
+                        .last()
+                        .map(|f| f.gas_remaining)
+                        .unwrap_or(0)
+                } else {
+                    self.current_call_frame.gas_remaining
+                };
+                let gas_cost = gas_before.saturating_sub(gas_after);
+                crate::opcode_tracer::trace(pc_before, opcode, gas_before, gas_cost, depth_before);
             }
 
             let result = match op_result {
