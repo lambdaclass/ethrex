@@ -1771,12 +1771,6 @@ pub async fn deploy_native_rollup_contracts(
 
     info!("Starting native rollup deployment");
 
-    // Check that the contract bytecodes were compiled (empty when COMPILE_CONTRACTS isn't set).
-    #[allow(clippy::const_is_empty)]
-    if NATIVE_ROLLUP_BYTECODE.is_empty() || L2_BRIDGE_RUNTIME_BYTECODE.is_empty() {
-        return Err(DeployerError::BytecodeNotFound);
-    }
-
     let signer: Signer = LocalSigner::new(opts.private_key).into();
     let eth_client = EthClient::new_with_config(
         vec![opts.rpc_url.clone()],
