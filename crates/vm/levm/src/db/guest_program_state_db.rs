@@ -29,16 +29,13 @@ impl GuestProgramStateDb {
     }
 }
 
-/// Shared crypto provider for trie operations.
-static CRYPTO: NativeCrypto = NativeCrypto;
-
 impl Database for GuestProgramStateDb {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         Ok(self
             .state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
-            .get_account_state(address, &CRYPTO)
+            .get_account_state(address, &NativeCrypto)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default())
     }
@@ -48,7 +45,7 @@ impl Database for GuestProgramStateDb {
             .state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
-            .get_storage_slot(address, key, &CRYPTO)
+            .get_storage_slot(address, key, &NativeCrypto)
             .map_err(|e| DatabaseError::Custom(e.to_string()))?
             .unwrap_or_default())
     }
@@ -57,7 +54,7 @@ impl Database for GuestProgramStateDb {
         self.state
             .lock()
             .map_err(|e| DatabaseError::Custom(format!("Lock poisoned: {e}")))?
-            .get_block_hash(block_number, &CRYPTO)
+            .get_block_hash(block_number, &NativeCrypto)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
     }
 
