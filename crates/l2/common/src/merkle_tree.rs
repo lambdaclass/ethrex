@@ -1,88 +1,66 @@
-//! Merkle tree implementation using commutative Keccak256 hashing.
-//!
-//! The commutative property (H(a, b) == H(b, a)) is achieved by sorting inputs before hashing.
+use ethrex_common::H256;
+use ethrex_crypto::keccak::Keccak256;
+use lambdaworks_crypto::merkle_tree::{merkle::MerkleTree, traits::IsMerkleTreeBackend};
 
-use ethereum_types::H256;
-use ethrex_crypto::keccak::keccak_hash;
+// We use a newtype wrapper around `H256` because Rust's orphan rule
+// prevents implementing a foreign trait (`IsMerkleTreeBackend`) for a foreign type (`H256`).
+#[derive(Default, Debug, PartialEq, Eq)]
+struct TreeData(pub H256);
 
-/// Compute a Merkle root using commutative Keccak256 hashing.
-///
-/// Commutative hashing ensures H(a, b) == H(b, a).
-pub fn compute_merkle_root(hashes: &[H256]) -> H256 {
-    match hashes {
-        [] => H256::zero(),
-        [single] => *single,
-        _ => {
-            let mut current_level: Vec<[u8; 32]> = hashes.iter().map(|h| h.0).collect();
-            while current_level.len() > 1 {
-                current_level = merkle_next_level(&current_level);
-            }
-            current_level
-                .first()
-                .map(|h| H256::from(*h))
-                .unwrap_or_default()
-        }
-    }
-}
+// Code from https://github.com/yetanotherco/aligned_layer/blob/8a3a6448c974d09c645f3b74d4c9ff9d2dd27249/batcher/aligned-sdk/src/aggregation_layer/types.rs to build a merkle tree with commutative Keccak256 hashes
+impl IsMerkleTreeBackend for TreeData {
+    type Data = TreeData;
+    type Node = [u8; 32];
 
-/// Compute a Merkle proof for the leaf at `index`.
-///
-/// Returns the sibling hashes from leaf to root.
-pub fn compute_merkle_proof(hashes: &[H256], index: usize) -> Vec<H256> {
-    if hashes.len() <= 1 {
-        return vec![];
+    /// We don't have to hash the data, as its already hashed
+    fn hash_data(leaf: &Self::Data) -> Self::Node {
+        leaf.0.to_fixed_bytes()
     }
 
-    let mut current_level: Vec<[u8; 32]> = hashes.iter().map(|h| h.0).collect();
-    let mut proof = Vec::new();
-    let mut idx = index;
-
-    while current_level.len() > 1 {
-        // Add sibling to proof if it exists
-        let sibling_idx = if idx.is_multiple_of(2) {
-            idx.wrapping_add(1)
+    /// Computes a commutative Keccak256 hash, ensuring H(a, b) == H(b, a).
+    ///
+    /// See: https://docs.openzeppelin.com/contracts/5.x/api/utils#Hashes
+    ///
+    /// Source: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/1a87de932664d9b905612f4d9d1655fd27a41722/contracts/utils/cryptography/Hashes.sol#L17-L19
+    ///
+    /// Compliant with OpenZeppelin's `verify` function from MerkleProof.sol.
+    ///
+    /// See: https://docs.openzeppelin.com/contracts/5.x/api/utils#MerkleProof
+    ///
+    /// Source: https://github.com/OpenZeppelin/openzeppelin-contracts/blob/1a87de932664d9b905612f4d9d1655fd27a41722/contracts/utils/cryptography/MerkleProof.sol#L114-L128
+    fn hash_new_parent(child_1: &Self::Node, child_2: &Self::Node) -> Self::Node {
+        let mut hasher = Keccak256::new();
+        if child_1 < child_2 {
+            hasher.update(child_1);
+            hasher.update(child_2);
         } else {
-            idx.wrapping_sub(1)
-        };
-        if let Some(sibling) = current_level.get(sibling_idx) {
-            proof.push(H256::from(*sibling));
+            hasher.update(child_2);
+            hasher.update(child_1);
         }
-
-        current_level = merkle_next_level(&current_level);
-        idx /= 2;
+        hasher.finalize()
     }
-
-    proof
 }
 
-/// Build the next level of a Merkle tree from the current level.
-///
-/// Pairs adjacent elements and hashes them. If there's an odd element,
-/// it's promoted to the next level unchanged.
-fn merkle_next_level(current_level: &[[u8; 32]]) -> Vec<[u8; 32]> {
-    let mut next_level = Vec::new();
-    for pair in current_level.chunks(2) {
-        match pair {
-            [left, right] => next_level.push(commutative_hash(left, right)),
-            [single] => next_level.push(*single),
-            _ => {}
-        }
-    }
-    next_level
+fn build_tree(hashes: &[H256]) -> Option<MerkleTree<TreeData>> {
+    let data: Vec<TreeData> = hashes.iter().copied().map(TreeData).collect();
+    // MerkleTree::build returns None only when input is empty
+    MerkleTree::<TreeData>::build(&data)
 }
 
-/// Commutative Keccak256 hash: H(a, b) == H(b, a).
-///
-/// Sorts inputs so the smaller value comes first, matching OpenZeppelin's
-/// `_hashPair` in MerkleProof.sol.
-fn commutative_hash(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
-    let mut data = [0u8; 64];
-    if a <= b {
-        data[..32].copy_from_slice(a);
-        data[32..].copy_from_slice(b);
-    } else {
-        data[..32].copy_from_slice(b);
-        data[32..].copy_from_slice(a);
-    }
-    keccak_hash(data)
+pub fn compute_merkle_root(hashes: &[H256]) -> H256 {
+    let Some(tree) = build_tree(hashes) else {
+        return H256::zero();
+    };
+    H256::from(tree.root)
+}
+
+pub fn compute_merkle_proof(hashes: &[H256], index: usize) -> Option<Vec<H256>> {
+    Some(
+        build_tree(hashes)?
+            .get_proof_by_pos(index)?
+            .merkle_path
+            .iter()
+            .map(H256::from)
+            .collect(),
+    )
 }

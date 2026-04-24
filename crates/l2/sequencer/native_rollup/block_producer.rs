@@ -265,7 +265,11 @@ impl NativeBlockProducer {
         let mut relayer_txs = VecDeque::with_capacity(messages.len());
 
         for (i, msg) in messages.iter().enumerate() {
-            let merkle_proof = compute_merkle_proof(&message_hashes, i);
+            let merkle_proof = compute_merkle_proof(&message_hashes, i).ok_or_else(|| {
+                NativeBlockProducerError::Encoding(format!(
+                    "failed to build merkle proof for L1 message index {i}"
+                ))
+            })?;
 
             let calldata = encode_calldata(
                 "processL1Message(address,address,uint256,uint256,bytes,uint256,bytes32[])",
