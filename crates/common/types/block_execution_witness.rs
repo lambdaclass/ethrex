@@ -62,7 +62,7 @@ pub struct GuestProgramState {
 /// It is essentially an `RpcExecutionWitness` but it also contains `ChainConfig`,
 /// and `first_block_number`.
 #[derive(
-    Default, Serialize, Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive, Clone,
+    Default, Serialize, Deserialize, rkyv::Serialize, rkyv::Deserialize, rkyv::Archive, Clone, Debug,
 )]
 pub struct ExecutionWitness {
     // Contract bytecodes needed for stateless execution.
@@ -82,6 +82,329 @@ pub struct ExecutionWitness {
     #[rkyv(with = MapKV<H256Wrapper, Identity>)]
     pub storage_trie_roots: BTreeMap<H256, Node>,
 }
+
+#[cfg(feature = "eip-8025")]
+mod ssz_witness {
+    use super::*;
+    use libssz::{SszDecode, SszEncode};
+    use libssz_derive::{SszDecode as DeriveSszDecode, SszEncode as DeriveSszEncode};
+    use libssz_types::SszList;
+    use std::sync::Arc;
+
+    // Constants set based on the Ethereum spec
+    const MAX_WITNESS_NODES: usize = 1 << 20;
+    const MAX_WITNESS_CODES: usize = 1 << 16;
+    const MAX_WITNESS_HEADERS: usize = 256;
+    const MAX_BYTES_PER_WITNESS_NODE: usize = 1 << 20;
+    const MAX_BYTES_PER_CODE: usize = 1 << 24;
+    const MAX_BYTES_PER_HEADER: usize = 1 << 10;
+
+    // TODO: think about these constants
+    const MAX_CHAIN_CONFIG_BYTES: usize = 1 << 10;
+    const MAX_STORAGE_TRIE_ROOTS: usize = 1 << 20;
+
+    #[derive(Debug, thiserror::Error)]
+    pub enum ExecutionWitnessSszError {
+        #[error("invalid SSZ list bounds: {0}")]
+        InvalidSszType(String),
+        #[error("SSZ decode error: {0}")]
+        SszDecode(#[from] libssz::DecodeError),
+        #[error("RLP decode error: {0}")]
+        RlpDecode(#[from] RLPDecodeError),
+        #[error("chain config error: {0}")]
+        ChainConfig(String),
+        #[error("trie error: {0}")]
+        Trie(#[from] TrieError),
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    #[ssz(enum_behaviour = "union")]
+    enum SszNodeRef {
+        Index(u32),
+        Hash(SszList<u8, 32>),
+        None,
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    struct SszBranchNode {
+        choices: SszList<SszNodeRef, 16>,
+        value: SszList<u8, 128>,
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    struct SszExtensionNode {
+        prefix: SszList<u8, 64>,
+        child: SszNodeRef,
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    struct SszLeafNode {
+        partial: SszList<u8, 64>,
+        value: SszList<u8, 128>,
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    #[ssz(enum_behaviour = "union")]
+    enum SszNode {
+        Branch(SszBranchNode),
+        Extension(SszExtensionNode),
+        Leaf(SszLeafNode),
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    struct SszStorageTrieRoot {
+        address: SszList<u8, 32>,
+        root_index: SszNodeRef,
+    }
+
+    #[derive(Debug, DeriveSszEncode, DeriveSszDecode)]
+    struct SszExecutionWitness {
+        codes: SszList<SszList<u8, MAX_BYTES_PER_CODE>, MAX_WITNESS_CODES>,
+        block_headers_bytes: SszList<SszList<u8, MAX_BYTES_PER_HEADER>, MAX_WITNESS_HEADERS>,
+        first_block_number: u64,
+        chain_config_bytes: SszList<u8, MAX_CHAIN_CONFIG_BYTES>,
+        initial_state_root_index: SszNodeRef,
+        storage_trie_root_indices: SszList<SszStorageTrieRoot, MAX_STORAGE_TRIE_ROOTS>,
+        state_nodes: SszList<SszNode, MAX_WITNESS_NODES>,
+    }
+
+    fn to_ssz_bytes<const MAX: usize>(
+        bytes: Vec<u8>,
+    ) -> Result<SszList<u8, MAX>, ExecutionWitnessSszError> {
+        SszList::try_from(bytes)
+            .map_err(|e| ExecutionWitnessSszError::InvalidSszType(e.to_string()))
+    }
+
+    fn to_ssz_vec_vec<const MAX_ITEMS: usize, const MAX_ITEM_BYTES: usize>(
+        items: Vec<Vec<u8>>,
+    ) -> Result<SszList<SszList<u8, MAX_ITEM_BYTES>, MAX_ITEMS>, ExecutionWitnessSszError> {
+        let mut out = Vec::with_capacity(items.len());
+        for item in items {
+            out.push(
+                SszList::try_from(item)
+                    .map_err(|e| ExecutionWitnessSszError::InvalidSszType(e.to_string()))?,
+            );
+        }
+        SszList::try_from(out).map_err(|e| ExecutionWitnessSszError::InvalidSszType(e.to_string()))
+    }
+
+    impl ExecutionWitness {
+        pub fn to_ssz_bytes(&self) -> Result<Vec<u8>, ExecutionWitnessSszError> {
+            let mut state_nodes = Vec::new();
+            fn add_node(
+                node: &Node,
+                state_nodes: &mut Vec<SszNode>,
+            ) -> Result<SszNodeRef, ExecutionWitnessSszError> {
+                let ssz_node = match node {
+                    Node::Branch(branch) => {
+                        let mut choices = Vec::with_capacity(16);
+                        for child in &branch.choices {
+                            let ssz_child = match child {
+                                NodeRef::Node(n, _) => add_node(n, state_nodes)?,
+                                NodeRef::Hash(hash) => SszNodeRef::Hash(
+                                    SszList::try_from(hash.as_ref().to_vec()).map_err(|e| {
+                                        ExecutionWitnessSszError::InvalidSszType(e.to_string())
+                                    })?,
+                                ),
+                            };
+                            choices.push(ssz_child);
+                        }
+                        SszNode::Branch(SszBranchNode {
+                            choices: SszList::try_from(choices).unwrap(),
+                            value: SszList::try_from(branch.value.clone()).unwrap(),
+                        })
+                    }
+                    Node::Extension(ext) => {
+                        let ssz_child = match &ext.child {
+                            NodeRef::Node(n, _) => add_node(n, state_nodes)?,
+                            NodeRef::Hash(hash) => SszNodeRef::Hash(
+                                SszList::try_from(hash.as_ref().to_vec()).map_err(|e| {
+                                    ExecutionWitnessSszError::InvalidSszType(e.to_string())
+                                })?,
+                            ),
+                        };
+                        SszNode::Extension(SszExtensionNode {
+                            prefix: SszList::try_from(ext.prefix.encode_compact()).unwrap(),
+                            child: ssz_child,
+                        })
+                    }
+                    Node::Leaf(leaf) => SszNode::Leaf(SszLeafNode {
+                        partial: SszList::try_from(leaf.partial.encode_compact()).unwrap(),
+                        value: SszList::try_from(leaf.value.clone()).unwrap(),
+                    }),
+                };
+                let index = state_nodes.len() as u32;
+                state_nodes.push(ssz_node);
+                Ok(SszNodeRef::Index(index))
+            }
+
+            let initial_state_root_index = if let Some(root) = &self.state_trie_root {
+                add_node(root, &mut state_nodes)?
+            } else {
+                SszNodeRef::None
+            };
+
+            let mut storage_root_indices = Vec::new();
+            for (address, root) in &self.storage_trie_roots {
+                let index = add_node(root, &mut state_nodes)?;
+                storage_root_indices.push(SszStorageTrieRoot {
+                    address: SszList::try_from(address.0.to_vec()).unwrap(),
+                    root_index: index,
+                });
+            }
+
+            let ssz = SszExecutionWitness {
+                codes: to_ssz_vec_vec::<MAX_WITNESS_CODES, MAX_BYTES_PER_CODE>(self.codes.clone())?,
+                block_headers_bytes: to_ssz_vec_vec::<MAX_WITNESS_HEADERS, MAX_BYTES_PER_HEADER>(
+                    self.block_headers_bytes.clone(),
+                )?,
+                first_block_number: self.first_block_number,
+                chain_config_bytes: to_ssz_bytes::<MAX_CHAIN_CONFIG_BYTES>(
+                    self.chain_config.encode_bytes(),
+                )?,
+                initial_state_root_index,
+                storage_trie_root_indices: SszList::try_from(storage_root_indices).unwrap(),
+                state_nodes: SszList::try_from(state_nodes).unwrap(),
+            };
+            Ok(ssz.to_ssz())
+        }
+
+        pub fn from_ssz_bytes(
+            bytes: &[u8],
+            _crypto: &dyn Crypto,
+        ) -> Result<Self, ExecutionWitnessSszError> {
+            let ssz_witness = SszExecutionWitness::from_ssz_bytes(bytes)?;
+            let chain_config = ChainConfig::decode_bytes(&ssz_witness.chain_config_bytes)
+                .map_err(ExecutionWitnessSszError::ChainConfig)?;
+
+            fn decode_node_hash(
+                hash_bytes: &[u8],
+            ) -> Result<ethrex_trie::NodeHash, ExecutionWitnessSszError> {
+                match hash_bytes.len() {
+                    0..32 => {
+                        let mut inline = [0_u8; 31];
+                        inline[..hash_bytes.len()].copy_from_slice(hash_bytes);
+                        Ok(ethrex_trie::NodeHash::Inline((
+                            inline,
+                            hash_bytes.len() as u8,
+                        )))
+                    }
+                    32 => Ok(ethrex_trie::NodeHash::Hashed(H256::from_slice(hash_bytes))),
+                    _ => Err(ExecutionWitnessSszError::InvalidSszType(
+                        "invalid hash length in node reference".to_string(),
+                    )),
+                }
+            }
+
+            fn rebuild_node_ref(
+                ssz_ref: &SszNodeRef,
+                nodes: &[SszNode],
+            ) -> Result<NodeRef, ExecutionWitnessSszError> {
+                match ssz_ref {
+                    SszNodeRef::Index(i) => {
+                        let node = rebuild_node_by_index(*i as usize, nodes)?;
+                        Ok(NodeRef::Node(Arc::new(node), std::sync::OnceLock::new()))
+                    }
+                    SszNodeRef::Hash(hash_bytes) => {
+                        let node_hash = decode_node_hash(hash_bytes.as_ref())?;
+                        Ok(NodeRef::Hash(node_hash))
+                    }
+                    SszNodeRef::None => Ok(NodeRef::Hash(ethrex_trie::NodeHash::default())),
+                }
+            }
+
+            fn rebuild_node_by_index(
+                index: usize,
+                nodes: &[SszNode],
+            ) -> Result<Node, ExecutionWitnessSszError> {
+                let ssz_node = nodes.get(index).ok_or_else(|| {
+                    ExecutionWitnessSszError::InvalidSszType("Node index out of bounds".to_string())
+                })?;
+                let node = match ssz_node {
+                    SszNode::Branch(b) => {
+                        let mut choices =
+                            [(); 16].map(|_| NodeRef::Hash(ethrex_trie::NodeHash::default()));
+                        for (i, choice_ref) in b.choices.iter().enumerate() {
+                            let child_ref = rebuild_node_ref(choice_ref, nodes)?;
+                            if child_ref.is_valid() {
+                                choices[i] = child_ref;
+                            }
+                        }
+                        let value = if b.value.is_empty() {
+                            None
+                        } else {
+                            Some(b.value.to_vec())
+                        };
+                        Node::Branch(Box::new(ethrex_trie::node::BranchNode {
+                            choices,
+                            value: value.unwrap_or_default(),
+                        }))
+                    }
+                    SszNode::Extension(e) => {
+                        let child = rebuild_node_ref(&e.child, nodes)?;
+                        if !child.is_valid() {
+                            return Err(ExecutionWitnessSszError::InvalidSszType(
+                                "Extension must have a child".to_string(),
+                            ));
+                        }
+                        Node::Extension(ethrex_trie::node::ExtensionNode {
+                            prefix: Nibbles::decode_compact(&e.prefix),
+                            child,
+                        })
+                    }
+                    SszNode::Leaf(l) => Node::Leaf(ethrex_trie::node::LeafNode {
+                        partial: Nibbles::decode_compact(&l.partial),
+                        value: l.value.to_vec(),
+                    }),
+                };
+                Ok(node)
+            }
+
+            fn rebuild_node(
+                ssz_ref: &SszNodeRef,
+                nodes: &[SszNode],
+            ) -> Result<Option<Node>, ExecutionWitnessSszError> {
+                match ssz_ref {
+                    SszNodeRef::None => Ok(None),
+                    SszNodeRef::Index(i) => rebuild_node_by_index(*i as usize, nodes).map(Some),
+                    SszNodeRef::Hash(_) => Err(ExecutionWitnessSszError::InvalidSszType(
+                        "root node cannot be a hash reference".to_string(),
+                    )),
+                }
+            }
+
+            let state_nodes = ssz_witness.state_nodes.into_inner();
+            let state_trie_root =
+                rebuild_node(&ssz_witness.initial_state_root_index, &state_nodes)?;
+            let mut storage_trie_roots = BTreeMap::new();
+            for item in ssz_witness.storage_trie_root_indices {
+                if let Some(root) = rebuild_node(&item.root_index, &state_nodes)? {
+                    storage_trie_roots.insert(H256::from_slice(&item.address), root);
+                }
+            }
+
+            Ok(Self {
+                codes: ssz_witness
+                    .codes
+                    .into_iter()
+                    .map(|l| l.into_inner())
+                    .collect(),
+                block_headers_bytes: ssz_witness
+                    .block_headers_bytes
+                    .into_iter()
+                    .map(|l| l.into_inner())
+                    .collect(),
+                first_block_number: ssz_witness.first_block_number,
+                chain_config,
+                state_trie_root,
+                storage_trie_roots,
+            })
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+pub use ssz_witness::ExecutionWitnessSszError;
 
 /// RPC-friendly representation of an execution witness.
 ///

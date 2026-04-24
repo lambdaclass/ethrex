@@ -33,6 +33,8 @@ pub mod execution {
 #[cfg(not(feature = "l2"))]
 pub mod execution {
     pub use crate::l1::execution_program;
+    #[cfg(feature = "eip-8025")]
+    pub use crate::l1::execution_program_eip8025_bytes;
 }
 
 // When running clippy, the ELFs are not built, so we define them empty.
