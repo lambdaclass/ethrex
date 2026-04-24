@@ -3231,7 +3231,6 @@ dependencies = [
  "serde_json",
  "spawned-concurrency",
  "spawned-rt",
- "tempfile",
  "thiserror 2.0.18",
  "tikv-jemallocator",
  "tokio",
@@ -3531,7 +3530,6 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "bitvec",
  "bytes",
  "derive_more 1.0.0",
  "ethrex-common 9.0.0",
