@@ -411,7 +411,6 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
-                // Release the peer's slot as soon as the wire response is in.
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
@@ -505,7 +504,6 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
-                // Release the peer's slot as soon as the wire response is in.
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
