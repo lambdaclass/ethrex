@@ -30,8 +30,6 @@ use ethrex_l2_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
 use ethrex_l2_rpc::signer::{Signable, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
-// L1Anchor predeploy removed — L1 messages Merkle root is now
-// carried via parent_beacon_block_root in the block header.
 use ethrex_storage::Store;
 use ethrex_vm::BlockExecutionResult;
 use spawned_concurrency::{
@@ -321,11 +319,6 @@ impl NativeBlockProducer {
 
         Ok(relayer_txs)
     }
-
-    // anchor_l1_messages removed — L1 messages Merkle root is now set via
-    // parent_beacon_block_root in the block header (see produce_block).
-    // The EIP-4788 system contract writes it to BEACON_ROOTS_ADDRESS during
-    // block processing, making it accessible to L2 contracts.
 
     /// Fill transactions into the payload context.
     ///
