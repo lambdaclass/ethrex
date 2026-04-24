@@ -12,6 +12,11 @@ use std::{
 };
 use tracing::warn;
 
+#[cfg(feature = "eip-8025")]
+use libssz::{SszDecode, SszEncode};
+#[cfg(feature = "eip-8025")]
+use libssz_derive::{SszDecode as DeriveSszDecode, SszEncode as DeriveSszEncode};
+
 use super::{
     AccountState, Block, BlockBody, BlockHeader, BlockNumber, INITIAL_BASE_FEE,
     compute_receipts_root, compute_transactions_root, compute_withdrawals_root,
@@ -273,6 +278,288 @@ pub struct ChainConfig {
 
     #[serde(default)]
     pub enable_verkle_at_genesis: bool,
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSszEncode, DeriveSszDecode)]
+#[ssz(enum_behaviour = "union")]
+enum OptionalU64 {
+    None,
+    Some(u64),
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<Option<u64>> for OptionalU64 {
+    fn from(value: Option<u64>) -> Self {
+        match value {
+            Some(v) => Self::Some(v),
+            None => Self::None,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<OptionalU64> for Option<u64> {
+    fn from(value: OptionalU64) -> Self {
+        match value {
+            OptionalU64::None => None,
+            OptionalU64::Some(v) => Some(v),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSszEncode, DeriveSszDecode)]
+#[ssz(enum_behaviour = "union")]
+enum OptionalU128 {
+    None,
+    Some(u128),
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<Option<u128>> for OptionalU128 {
+    fn from(value: Option<u128>) -> Self {
+        match value {
+            Some(v) => Self::Some(v),
+            None => Self::None,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<OptionalU128> for Option<u128> {
+    fn from(value: OptionalU128) -> Self {
+        match value {
+            OptionalU128::None => None,
+            OptionalU128::Some(v) => Some(v),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSszEncode, DeriveSszDecode)]
+#[ssz(enum_behaviour = "union")]
+enum OptionalForkBlobSchedule {
+    None,
+    Some(SszForkBlobSchedule),
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<Option<ForkBlobSchedule>> for OptionalForkBlobSchedule {
+    fn from(value: Option<ForkBlobSchedule>) -> Self {
+        match value {
+            Some(v) => Self::Some(v.into()),
+            None => Self::None,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<OptionalForkBlobSchedule> for Option<ForkBlobSchedule> {
+    fn from(value: OptionalForkBlobSchedule) -> Self {
+        match value {
+            OptionalForkBlobSchedule::None => None,
+            OptionalForkBlobSchedule::Some(v) => Some(v.into()),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSszEncode, DeriveSszDecode)]
+struct SszForkBlobSchedule {
+    base_fee_update_fraction: u64,
+    max: u32,
+    target: u32,
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<ForkBlobSchedule> for SszForkBlobSchedule {
+    fn from(value: ForkBlobSchedule) -> Self {
+        Self {
+            base_fee_update_fraction: value.base_fee_update_fraction,
+            max: value.max,
+            target: value.target,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<SszForkBlobSchedule> for ForkBlobSchedule {
+    fn from(value: SszForkBlobSchedule) -> Self {
+        Self {
+            base_fee_update_fraction: value.base_fee_update_fraction,
+            max: value.max,
+            target: value.target,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSszEncode, DeriveSszDecode)]
+struct SszBlobSchedule {
+    cancun: SszForkBlobSchedule,
+    prague: SszForkBlobSchedule,
+    osaka: SszForkBlobSchedule,
+    bpo1: SszForkBlobSchedule,
+    bpo2: SszForkBlobSchedule,
+    bpo3: OptionalForkBlobSchedule,
+    bpo4: OptionalForkBlobSchedule,
+    bpo5: OptionalForkBlobSchedule,
+    amsterdam: OptionalForkBlobSchedule,
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<BlobSchedule> for SszBlobSchedule {
+    fn from(value: BlobSchedule) -> Self {
+        Self {
+            cancun: value.cancun.into(),
+            prague: value.prague.into(),
+            osaka: value.osaka.into(),
+            bpo1: value.bpo1.into(),
+            bpo2: value.bpo2.into(),
+            bpo3: value.bpo3.into(),
+            bpo4: value.bpo4.into(),
+            bpo5: value.bpo5.into(),
+            amsterdam: value.amsterdam.into(),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<SszBlobSchedule> for BlobSchedule {
+    fn from(value: SszBlobSchedule) -> Self {
+        Self {
+            cancun: value.cancun.into(),
+            prague: value.prague.into(),
+            osaka: value.osaka.into(),
+            bpo1: value.bpo1.into(),
+            bpo2: value.bpo2.into(),
+            bpo3: value.bpo3.into(),
+            bpo4: value.bpo4.into(),
+            bpo5: value.bpo5.into(),
+            amsterdam: value.amsterdam.into(),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, DeriveSszEncode, DeriveSszDecode)]
+struct SszChainConfig {
+    chain_id: u64,
+    homestead_block: OptionalU64,
+    dao_fork_block: OptionalU64,
+    dao_fork_support: bool,
+    eip150_block: OptionalU64,
+    eip155_block: OptionalU64,
+    eip158_block: OptionalU64,
+    byzantium_block: OptionalU64,
+    constantinople_block: OptionalU64,
+    petersburg_block: OptionalU64,
+    istanbul_block: OptionalU64,
+    muir_glacier_block: OptionalU64,
+    berlin_block: OptionalU64,
+    london_block: OptionalU64,
+    arrow_glacier_block: OptionalU64,
+    gray_glacier_block: OptionalU64,
+    merge_netsplit_block: OptionalU64,
+    shanghai_time: OptionalU64,
+    cancun_time: OptionalU64,
+    prague_time: OptionalU64,
+    verkle_time: OptionalU64,
+    osaka_time: OptionalU64,
+    bpo1_time: OptionalU64,
+    bpo2_time: OptionalU64,
+    bpo3_time: OptionalU64,
+    bpo4_time: OptionalU64,
+    bpo5_time: OptionalU64,
+    amsterdam_time: OptionalU64,
+    terminal_total_difficulty: OptionalU128,
+    terminal_total_difficulty_passed: bool,
+    blob_schedule: SszBlobSchedule,
+    deposit_contract_address: [u8; 20],
+    enable_verkle_at_genesis: bool,
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<ChainConfig> for SszChainConfig {
+    fn from(value: ChainConfig) -> Self {
+        Self {
+            chain_id: value.chain_id,
+            homestead_block: value.homestead_block.into(),
+            dao_fork_block: value.dao_fork_block.into(),
+            dao_fork_support: value.dao_fork_support,
+            eip150_block: value.eip150_block.into(),
+            eip155_block: value.eip155_block.into(),
+            eip158_block: value.eip158_block.into(),
+            byzantium_block: value.byzantium_block.into(),
+            constantinople_block: value.constantinople_block.into(),
+            petersburg_block: value.petersburg_block.into(),
+            istanbul_block: value.istanbul_block.into(),
+            muir_glacier_block: value.muir_glacier_block.into(),
+            berlin_block: value.berlin_block.into(),
+            london_block: value.london_block.into(),
+            arrow_glacier_block: value.arrow_glacier_block.into(),
+            gray_glacier_block: value.gray_glacier_block.into(),
+            merge_netsplit_block: value.merge_netsplit_block.into(),
+            shanghai_time: value.shanghai_time.into(),
+            cancun_time: value.cancun_time.into(),
+            prague_time: value.prague_time.into(),
+            verkle_time: value.verkle_time.into(),
+            osaka_time: value.osaka_time.into(),
+            bpo1_time: value.bpo1_time.into(),
+            bpo2_time: value.bpo2_time.into(),
+            bpo3_time: value.bpo3_time.into(),
+            bpo4_time: value.bpo4_time.into(),
+            bpo5_time: value.bpo5_time.into(),
+            amsterdam_time: value.amsterdam_time.into(),
+            terminal_total_difficulty: value.terminal_total_difficulty.into(),
+            terminal_total_difficulty_passed: value.terminal_total_difficulty_passed,
+            blob_schedule: value.blob_schedule.into(),
+            deposit_contract_address: *value.deposit_contract_address.as_fixed_bytes(),
+            enable_verkle_at_genesis: value.enable_verkle_at_genesis,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<SszChainConfig> for ChainConfig {
+    fn from(value: SszChainConfig) -> Self {
+        Self {
+            chain_id: value.chain_id,
+            homestead_block: value.homestead_block.into(),
+            dao_fork_block: value.dao_fork_block.into(),
+            dao_fork_support: value.dao_fork_support,
+            eip150_block: value.eip150_block.into(),
+            eip155_block: value.eip155_block.into(),
+            eip158_block: value.eip158_block.into(),
+            byzantium_block: value.byzantium_block.into(),
+            constantinople_block: value.constantinople_block.into(),
+            petersburg_block: value.petersburg_block.into(),
+            istanbul_block: value.istanbul_block.into(),
+            muir_glacier_block: value.muir_glacier_block.into(),
+            berlin_block: value.berlin_block.into(),
+            london_block: value.london_block.into(),
+            arrow_glacier_block: value.arrow_glacier_block.into(),
+            gray_glacier_block: value.gray_glacier_block.into(),
+            merge_netsplit_block: value.merge_netsplit_block.into(),
+            shanghai_time: value.shanghai_time.into(),
+            cancun_time: value.cancun_time.into(),
+            prague_time: value.prague_time.into(),
+            verkle_time: value.verkle_time.into(),
+            osaka_time: value.osaka_time.into(),
+            bpo1_time: value.bpo1_time.into(),
+            bpo2_time: value.bpo2_time.into(),
+            bpo3_time: value.bpo3_time.into(),
+            bpo4_time: value.bpo4_time.into(),
+            bpo5_time: value.bpo5_time.into(),
+            amsterdam_time: value.amsterdam_time.into(),
+            terminal_total_difficulty: value.terminal_total_difficulty.into(),
+            terminal_total_difficulty_passed: value.terminal_total_difficulty_passed,
+            blob_schedule: value.blob_schedule.into(),
+            deposit_contract_address: Address::from(value.deposit_contract_address),
+            enable_verkle_at_genesis: value.enable_verkle_at_genesis,
+        }
+    }
 }
 
 lazy_static::lazy_static! {
@@ -660,6 +947,23 @@ impl ChainConfig {
         timestamp_based_forks.retain(|block_timestamp| *block_timestamp > genesis_header.timestamp);
 
         (block_number_based_forks, timestamp_based_forks)
+    }
+
+    /// Encode ChainConfig as SSZ bytes through an SSZ-only wrapper.
+    /// Optional values are represented as SSZ unions:
+    /// - selector 0 => None
+    /// - selector 1 + payload bytes => Some(value)
+    #[cfg(feature = "eip-8025")]
+    pub fn encode_bytes(&self) -> Vec<u8> {
+        SszChainConfig::from(*self).to_ssz()
+    }
+
+    /// Decode ChainConfig from SSZ bytes produced by `encode_bytes`.
+    #[cfg(feature = "eip-8025")]
+    pub fn decode_bytes(data: &[u8]) -> Result<Self, String> {
+        SszChainConfig::from_ssz_bytes(data)
+            .map(ChainConfig::from)
+            .map_err(|e| format!("failed to decode chain config bytes: {e}"))
     }
 }
 

@@ -72,36 +72,37 @@ pub fn execution_program(
     // Compute the hash_tree_root before consuming the payload.
     let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
 
-    // Transform SSZ NewPayloadRequest → Block
-    let block = new_payload_request_to_block(&new_payload_request, crypto.as_ref())
-        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
-
-    // Validate block_hash: the SSZ payload carries block_hash which must match
-    // the hash of the reconstructed block header.
-    let computed_hash = block.hash();
-    let expected_hash =
-        ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
-    if computed_hash != expected_hash {
-        return Err(ExecutionError::Internal(format!(
-            "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
-        )));
-    }
-
-    // Validate blob versioned hashes
-    validate_versioned_hashes(&block, &new_payload_request)?;
-
-    // Execute statelessly — reuse the common `execute_blocks` infrastructure
-    let _result = execute_blocks(
-        &[block],
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-        crypto.clone(),
-    )?;
+    validate_eip8025_execution(&new_payload_request, execution_witness, crypto)?;
 
     Ok(ProgramOutput {
         new_payload_request_root: request_root,
         valid: true,
+    })
+}
+
+/// Decode and execute the L1 stateless validation program from EIP-8025 wire
+/// bytes.
+///
+/// The wire format is `[ssz_len: u32 LE][ssz_bytes][rkyv_bytes]`, matching
+/// [`decode_eip8025`](super::decode_eip8025).
+#[cfg(feature = "eip-8025")]
+pub fn execution_program_eip8025_bytes(
+    bytes: &[u8],
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
+    use libssz_merkle::{HashTreeRoot, Sha2Hasher};
+
+    let (new_payload_request, execution_witness) = super::decode_eip8025(bytes, crypto.as_ref())
+        .map_err(|err| {
+            ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
+        })?;
+
+    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
+    let valid = validate_eip8025_execution(&new_payload_request, execution_witness, crypto).is_ok();
+
+    Ok(ProgramOutput {
+        new_payload_request_root: request_root,
+        valid,
     })
 }
 
@@ -113,7 +114,7 @@ fn new_payload_request_to_block(
 ) -> Result<ethrex_common::types::Block, String> {
     use bytes::Bytes;
     use ethrex_common::constants::DEFAULT_OMMERS_HASH;
-    use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
+    use ethrex_common::types::requests::compute_requests_hash;
     use ethrex_common::types::{
         Block, BlockBody, BlockHeader, Transaction, Withdrawal, compute_transactions_root,
         compute_withdrawals_root,
@@ -144,15 +145,8 @@ fn new_payload_request_to_block(
         })
         .collect();
 
-    // Build execution_requests from the SSZ field for requests_hash
-    let execution_requests: Vec<EncodedRequests> = req
-        .execution_requests
-        .iter()
-        .map(|r| {
-            let raw: Vec<u8> = r.iter().copied().collect();
-            EncodedRequests(Bytes::from(raw))
-        })
-        .collect();
+    // Build execution_requests from the SSZ typed ExecutionRequests field
+    let execution_requests = req.execution_requests.to_encoded_requests();
     let requests_hash = compute_requests_hash(&execution_requests);
 
     // Convert base_fee_per_gas from [u8; 32] LE uint256 to u64
@@ -231,4 +225,64 @@ fn validate_versioned_hashes(
     }
 
     Ok(())
+}
+
+#[cfg(feature = "eip-8025")]
+fn validate_eip8025_execution(
+    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
+    crypto: Arc<dyn Crypto>,
+) -> Result<(), ExecutionError> {
+    // Transform SSZ NewPayloadRequest → Block
+    let block = new_payload_request_to_block(new_payload_request, crypto.as_ref())
+        .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
+
+    // Validate block_hash: the SSZ payload carries block_hash which must match
+    // the hash of the reconstructed block header.
+    let computed_hash = block.hash();
+    let expected_hash =
+        ethrex_common::H256::from_slice(&new_payload_request.execution_payload.block_hash);
+    if computed_hash != expected_hash {
+        return Err(ExecutionError::Internal(format!(
+            "block_hash mismatch: expected {expected_hash:?}, got {computed_hash:?}"
+        )));
+    }
+
+    // Validate blob versioned hashes
+    validate_versioned_hashes(&block, new_payload_request)?;
+
+    // Execute statelessly — reuse the common `execute_blocks` infrastructure
+    let _result = execute_blocks(
+        &[block],
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+        crypto.clone(),
+    )?;
+
+    Ok(())
+}
+
+#[cfg(all(test, feature = "eip-8025"))]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::{
+        common::ExecutionError, crypto::NativeCrypto, l1::execution_program_eip8025_bytes,
+    };
+
+    #[test]
+    fn execution_program_eip8025_bytes_rejects_invalid_wire_bytes() {
+        let err = match execution_program_eip8025_bytes(&[], Arc::new(NativeCrypto)) {
+            Ok(_) => panic!("expected invalid EIP-8025 input to fail decoding"),
+            Err(err) => err,
+        };
+
+        match err {
+            ExecutionError::Internal(msg) => {
+                assert_eq!(msg, "failed to decode EIP-8025 input: input too short");
+            }
+            other => panic!("expected internal decode error, got {other:?}"),
+        }
+    }
 }
