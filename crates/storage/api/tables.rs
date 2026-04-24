@@ -102,18 +102,7 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-/// Execution proofs column family (EIP-8025): [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///    ```rust,no_run
-///     // let mut composite_key = Vec::with_capacity(8 + 32 + 8);
-///     // composite_key.extend_from_slice(&block_number.to_be_bytes());
-///     // composite_key.extend_from_slice(new_payload_request_root.as_bytes());
-///     // composite_key.extend_from_slice(&proof_type.to_be_bytes());
-///    ```
-/// - [`Vec<u8>`] = serialized proof data
-pub const EXECUTION_PROOFS: &str = "execution_proofs";
-
-pub const TABLES: [&str; 20] = [
+pub const TABLES: [&str; 19] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -133,5 +122,4 @@ pub const TABLES: [&str; 20] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
-    EXECUTION_PROOFS,
 ];
