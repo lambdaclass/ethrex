@@ -231,6 +231,13 @@ pub struct Blockchain {
     /// deadlock when workers can't all get pool slots. Matches the design of
     /// `start_block_executor` in `rpc.rs` which serializes RPC-driven imports.
     pub bsc_import_lock: std::sync::Mutex<()>,
+    /// Block hashes currently being fetched from peers (cross-peer dedup).
+    /// A hash is inserted when a peer connection decides to fetch it via
+    /// `GetBlockHeaders`/`GetBlockBodies` in response to a `NewBlockHashes`
+    /// announcement, and removed once the fetch completes (success, failure,
+    /// or timeout sweep). Prevents N peers that all announced the same hash
+    /// from each issuing redundant fetches.
+    pub fetching_blocks: std::sync::Mutex<std::collections::HashSet<H256>>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
@@ -364,6 +371,7 @@ impl Blockchain {
             bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
             bsc_import_lock: std::sync::Mutex::new(()),
+            fetching_blocks: std::sync::Mutex::new(std::collections::HashSet::new()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -381,6 +389,7 @@ impl Blockchain {
             bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
             bsc_pivot_header: std::sync::Mutex::new(None),
             bsc_import_lock: std::sync::Mutex::new(()),
+            fetching_blocks: std::sync::Mutex::new(std::collections::HashSet::new()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -1857,6 +1866,16 @@ impl Blockchain {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
         });
+        // Early dedup: the sync bridge and the direct-fetch path race at tip.
+        // Skip only if BOTH header and state are already on hand — otherwise
+        // startup `regenerate_head_state` (which re-applies blocks whose
+        // headers are stored but whose state layers were never flushed)
+        // would short-circuit and silently do nothing.
+        if let Some(stored_header) = self.storage.get_block_header_by_hash(block.hash())? {
+            if self.storage.has_state_root(stored_header.state_root)? {
+                return Ok(());
+            }
+        }
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result
     }
@@ -1873,6 +1892,11 @@ impl Blockchain {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
         });
+        if let Some(stored_header) = self.storage.get_block_header_by_hash(block.hash())? {
+            if self.storage.has_state_root(stored_header.state_root)? {
+                return Ok(None);
+            }
+        }
         let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
         result?;
         Ok(produced_bal)

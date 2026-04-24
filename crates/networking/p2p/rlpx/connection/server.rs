@@ -15,7 +15,7 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            blocks::{BlockBodies, BlockHeaders, GetBlockHeaders, HashOrNumber},
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             bsc::UpgradeStatusMsg,
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
@@ -395,7 +395,9 @@ impl PeerConnectionServer {
                 message=%msg.message,
                 "Received incoming message",
             );
-            let result = handle_incoming_message(established_state, msg.message).await;
+            let self_handle = ctx.actor_ref();
+            let result =
+                handle_incoming_message(established_state, msg.message, self_handle).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
             debug!("Connection not yet established");
@@ -1178,6 +1180,7 @@ fn check_serve_request_rate(state: &mut Established) -> bool {
 async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
+    self_handle: ActorRef<PeerConnectionServer>,
 ) -> Result<(), PeerConnectionError> {
     #[cfg(feature = "metrics")]
     {
@@ -1384,16 +1387,72 @@ async fn handle_incoming_message(
             send(state, response).await?;
         }
         Message::NewBlockHashes(announce) => {
-            // BSC peers broadcast NewBlockHashes on every new tip (every ~3s).
-            // Forward the highest-numbered hash to the BSC sync bridge so it
-            // triggers immediately instead of waiting for the periodic
-            // BlockRangeUpdate (much sparser), closing the gap to chain tip.
+            // BSC peers broadcast NewBlockHashes on every new tip. Forward the
+            // highest-numbered hash to the BSC sync bridge (fallback) AND
+            // directly fetch each announced block from this peer in parallel.
+            // The direct fetch cuts the batch-wait incurred by forward_sync
+            // (~0.5-2s) and gets blocks executed near-immediately.
             let chain_id = state.storage.get_chain_config().chain_id;
             if chain_id == 56 || chain_id == 97 {
                 if let Some((hash, _)) = announce.hashes_and_numbers.iter().max_by_key(|(_, n)| *n)
                     && !hash.is_zero()
                 {
                     state.blockchain.set_bsc_sync_head(*hash);
+                }
+                // Direct-fetch only when close to tip. When catching up,
+                // forward sync stores headers ahead of state.
+                const DIRECT_FETCH_AHEAD_LIMIT: u64 = 8;
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                for (hash, number) in &announce.hashes_and_numbers {
+                    if hash.is_zero() {
+                        continue;
+                    }
+                    if *number > latest + DIRECT_FETCH_AHEAD_LIMIT {
+                        continue;
+                    }
+                    // Dedup: already have this block?
+                    let already_stored = state
+                        .storage
+                        .get_block_header_by_hash(*hash)
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    if already_stored {
+                        continue;
+                    }
+                    // Cross-peer dedup: another peer already fetching this hash?
+                    let inserted = state
+                        .blockchain
+                        .fetching_blocks
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(*hash);
+                    if !inserted {
+                        continue;
+                    }
+                    // Spawn a task that fetches header + body in parallel from
+                    // THIS peer, then hands the assembled block to the import
+                    // pipeline. On any failure, we just release the in-flight
+                    // mark — the sync bridge (primed via set_bsc_sync_head
+                    // above) will pick up the block.
+                    let hash = *hash;
+                    let blockchain = state.blockchain.clone();
+                    let peer_handle = self_handle.clone();
+                    tokio::spawn(async move {
+                        let peer_conn = PeerConnection {
+                            handle: peer_handle,
+                        };
+                        let outcome =
+                            fetch_and_import_bsc_block(peer_conn, hash, blockchain.clone()).await;
+                        if let Err(e) = outcome {
+                            debug!(%hash, "BSC direct fetch/import failed: {e}");
+                        }
+                        blockchain
+                            .fetching_blocks
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&hash);
+                    });
                 }
             }
         }
@@ -1767,5 +1826,54 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
             .insert(request_id, (announcement, chunk.to_vec(), Instant::now()));
     }
 
+    Ok(())
+}
+
+/// Fetch a single block (header + body, in parallel) by hash from `peer_conn`
+/// and submit it to `add_block_pipeline`.  Used by the BSC `NewBlockHashes`
+/// fast-path.  Errors are non-fatal (sync bridge fallback covers them).
+async fn fetch_and_import_bsc_block(
+    peer_conn: PeerConnection,
+    hash: H256,
+    blockchain: Arc<Blockchain>,
+) -> Result<(), String> {
+    use ethrex_common::types::Block;
+    const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
+    let header_req = Message::GetBlockHeaders(GetBlockHeaders {
+        id: rand::random(),
+        startblock: HashOrNumber::Hash(hash),
+        limit: 1,
+        skip: 0,
+        reverse: false,
+    });
+    let body_req = Message::GetBlockBodies(GetBlockBodies {
+        id: rand::random(),
+        block_hashes: vec![hash],
+    });
+    let mut hdr_conn = peer_conn.clone();
+    let mut body_conn = peer_conn;
+    let (hdr_result, body_result) = tokio::join!(
+        hdr_conn.outgoing_request(header_req, FETCH_TIMEOUT),
+        body_conn.outgoing_request(body_req, FETCH_TIMEOUT),
+    );
+    let header = match hdr_result.map_err(|e| format!("header: {e}"))? {
+        Message::BlockHeaders(BlockHeaders { block_headers, .. }) => block_headers
+            .into_iter()
+            .find(|h| h.hash() == hash)
+            .ok_or_else(|| "header hash mismatch".to_string())?,
+        other => return Err(format!("unexpected header response: {other}")),
+    };
+    let body = match body_result.map_err(|e| format!("body: {e}"))? {
+        Message::BlockBodies(BlockBodies { block_bodies, .. }) => block_bodies
+            .into_iter()
+            .next()
+            .ok_or_else(|| "empty body response".to_string())?,
+        other => return Err(format!("unexpected body response: {other}")),
+    };
+    let block = Block { header, body };
+    tokio::task::spawn_blocking(move || blockchain.add_block_pipeline(block, None))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+        .map_err(|e| format!("pipeline: {e}"))?;
     Ok(())
 }
