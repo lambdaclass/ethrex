@@ -269,7 +269,7 @@ impl LEVM {
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
-        #[allow(unused_variables)] stateless_validator: Option<&dyn StatelessValidator>,
+        stateless_validator: Option<&dyn StatelessValidator>,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
