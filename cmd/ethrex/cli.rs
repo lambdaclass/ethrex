@@ -517,6 +517,14 @@ pub enum Subcommand {
         last: Option<u64>,
     },
     #[command(
+        name = "inspect-state",
+        about = "Report head block, its state_root, and whether the state trie is reachable on disk"
+    )]
+    InspectState {
+        #[arg(long = "walk-back", default_value_t = 10000)]
+        walk_back: u64,
+    },
+    #[command(
         name = "compute-state-root",
         about = "Compute the state root from a genesis file"
     )]
@@ -647,6 +655,47 @@ impl Subcommand {
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &effective_datadir, first, last).await
+            }
+            Subcommand::InspectState { walk_back } => {
+                let store = load_store(&effective_datadir).await?;
+                let head = store.get_latest_block_number().await?;
+                let Some(head_header) = store.get_block_header(head)? else {
+                    println!("Head header missing for {head}");
+                    return Ok(());
+                };
+                let head_root = head_header.state_root;
+                let head_ok = store.has_state_root(head_root)?;
+                println!("Head: {head}  state_root: {head_root:#x}  has_state_root: {head_ok}");
+                if head_ok {
+                    return Ok(());
+                }
+                let mut found_state_at: Option<u64> = None;
+                let mut first_missing_header: Option<u64> = None;
+                let limit = head.saturating_sub(walk_back);
+                for n in (limit..head).rev() {
+                    match store.get_block_header(n)? {
+                        Some(h) => {
+                            if store.has_state_root(h.state_root)? {
+                                found_state_at = Some(n);
+                                println!(
+                                    "Found state_root on disk at block {n}: {:#x}",
+                                    h.state_root
+                                );
+                                break;
+                            }
+                        }
+                        None => {
+                            first_missing_header = Some(n);
+                            break;
+                        }
+                    }
+                }
+                if found_state_at.is_none() {
+                    println!("No state_root on disk for any block in [{limit}..{head}]");
+                }
+                if let Some(n) = first_missing_header {
+                    println!("First missing header walking back: {n}");
+                }
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;
