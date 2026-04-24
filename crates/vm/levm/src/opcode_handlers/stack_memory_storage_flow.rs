@@ -416,14 +416,17 @@ fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
     // Check target address validity.
     //   - Target bytecode has to be a JUMPDEST.
     //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
-    #[expect(clippy::as_conversions, reason = "safe: bytecode length fits in u32")]
-    if vm
-        .current_call_frame
-        .bytecode
-        .jump_targets
-        .binary_search(&(target as u32))
-        .is_ok()
-    {
+    //
+    // `u32::try_from` rejects targets whose upper bits are nonzero: a lossy
+    // `target as u32` would let `2^32 + k` pass for a valid JUMPDEST at `k`.
+    let is_valid = u32::try_from(target).is_ok_and(|t| {
+        vm.current_call_frame
+            .bytecode
+            .jump_targets
+            .binary_search(&t)
+            .is_ok()
+    });
+    if is_valid {
         // Update PC and skip the JUMPDEST instruction.
         vm.current_call_frame.pc = target.wrapping_add(1);
         vm.current_call_frame
