@@ -63,12 +63,12 @@ pub const MAX_WITNESSES: u64 = 128;
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
 #[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+const DB_COMMIT_THRESHOLD: usize = 10_000;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
-const BATCH_COMMIT_THRESHOLD: usize = 4;
+const BATCH_COMMIT_THRESHOLD: usize = 10;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
