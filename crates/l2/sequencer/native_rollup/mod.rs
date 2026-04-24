@@ -3,10 +3,10 @@
 //!
 //! This module provides the actors that implement the native rollup L2 lifecycle:
 //!
-//! - **NativeL1Watcher**: polls L1 for `L1MessageRecorded` events and pushes
-//!   them into a shared queue
-//! - **NativeBlockProducer**: drains L1 messages, builds relayer txs, adds them
-//!   to the mempool, then uses the standard payload builder flow to produce blocks
+//! - **NativeL1Watcher**: polls L1 for `L1MessageRecorded` events and forwards
+//!   them to the block producer via `EnqueueL1Messages` messages
+//! - **NativeBlockProducer**: owns the pending-L1-messages queue, drains it to
+//!   build relayer txs, and uses the standard payload builder flow to produce blocks
 //! - **NativeL1Advancer**: reads produced blocks from the Store, generates an
 //!   execution witness, and submits via advance()
 
@@ -15,8 +15,7 @@ pub mod l1_advancer;
 pub mod l1_watcher;
 pub mod types;
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use ethrex_blockchain::Blockchain;
 use ethrex_common::Address;
@@ -29,7 +28,6 @@ use tracing::info;
 use block_producer::{NativeBlockProducer, NativeBlockProducerConfig};
 use l1_advancer::NativeL1Advancer;
 use l1_watcher::NativeL1Watcher;
-use types::PendingL1Messages;
 
 use ethrex_storage::Store;
 
@@ -86,23 +84,10 @@ pub fn start_native_rollup_l2(
     info!("  Coinbase: {:?}", config.coinbase);
     info!("  Chain ID: {}", config.chain_id);
 
-    // Shared state
-    let pending_l1_messages: PendingL1Messages = Arc::new(Mutex::new(VecDeque::new()));
-
     // Create EthClient for L1
     let eth_client = EthClient::new_with_multiple_urls(config.l1_rpc_urls.clone())?;
 
-    // 1. Spawn NativeL1Watcher
-    let watcher_ref = NativeL1Watcher::spawn(
-        eth_client.clone(),
-        config.contract_address,
-        pending_l1_messages.clone(),
-        config.watch_interval_ms,
-        config.max_block_step,
-    );
-    info!("  NativeL1Watcher started");
-
-    // 2. Spawn NativeBlockProducer
+    // 1. Spawn NativeBlockProducer first so the watcher can hold its ActorRef.
     let relayer_address = config.relayer_signer.address();
     let producer_config = NativeBlockProducerConfig {
         block_time_ms: config.block_time_ms,
@@ -111,13 +96,19 @@ pub fn start_native_rollup_l2(
         chain_id: config.chain_id,
         relayer_signer: config.relayer_signer,
     };
-    let producer_ref = NativeBlockProducer::spawn(
-        store.clone(),
-        producer_config,
-        blockchain.clone(),
-        pending_l1_messages,
-    );
+    let producer_ref =
+        NativeBlockProducer::spawn(store.clone(), producer_config, blockchain.clone());
     info!("  NativeBlockProducer started");
+
+    // 2. Spawn NativeL1Watcher with a handle to the block producer.
+    let watcher_ref = NativeL1Watcher::spawn(
+        eth_client.clone(),
+        config.contract_address,
+        producer_ref.clone(),
+        config.watch_interval_ms,
+        config.max_block_step,
+    );
+    info!("  NativeL1Watcher started");
 
     // 3. Spawn NativeL1Advancer
     let advancer_ref = NativeL1Advancer::spawn(

@@ -23,10 +23,10 @@ use ethrex_blockchain::payload::{
     BuildPayloadArgs, HeadTransaction, PayloadBuildContext, apply_plain_transaction,
 };
 use ethrex_blockchain::{Blockchain, fork_choice::apply_fork_choice, payload::create_payload};
-use ethrex_l2_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_common::types::{EIP1559Transaction, MempoolTransaction, Transaction, TxKind};
 use ethrex_common::{Address, H256, U256};
 use ethrex_l2_common::calldata::Value;
+use ethrex_l2_common::merkle_tree::{compute_merkle_proof, compute_merkle_root};
 use ethrex_l2_common::messages::NATIVE_ROLLUP_L2_BRIDGE;
 use ethrex_l2_rpc::signer::{Signable, Signer};
 use ethrex_l2_sdk::calldata::encode_calldata;
@@ -42,7 +42,7 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::types::{L1Message, PendingL1Messages};
+use super::types::L1Message;
 
 /// Configuration for the native block producer.
 #[derive(Clone, Debug)]
@@ -82,13 +82,16 @@ pub enum NativeBlockProducerError {
 #[protocol]
 pub trait NativeBlockProducerProtocol: Send + Sync {
     fn produce(&self) -> Result<(), ActorError>;
+    fn enqueue_l1_messages(&self, messages: Vec<L1Message>) -> Result<(), ActorError>;
 }
 
 pub struct NativeBlockProducer {
     store: Store,
     config: NativeBlockProducerConfig,
     blockchain: Arc<Blockchain>,
-    pending_l1_messages: PendingL1Messages,
+    /// Queue of L1 messages waiting to be included in the next L2 block.
+    /// Populated by the L1 watcher via `EnqueueL1Messages` messages.
+    pending_l1_messages: VecDeque<L1Message>,
 }
 
 impl NativeBlockProducer {
@@ -96,13 +99,12 @@ impl NativeBlockProducer {
         store: Store,
         config: NativeBlockProducerConfig,
         blockchain: Arc<Blockchain>,
-        pending_l1_messages: PendingL1Messages,
     ) -> Self {
         Self {
             store,
             config,
             blockchain,
-            pending_l1_messages,
+            pending_l1_messages: VecDeque::new(),
         }
     }
 
@@ -204,41 +206,33 @@ impl NativeBlockProducer {
 
     // -- Helpers --
 
-    /// Take L1 messages from the shared queue that fit within the block gas limit.
+    /// Take L1 messages from the internal queue that fit within the block gas limit.
     ///
     /// Pops messages one by one, summing each message's gas limit. Once adding
     /// another message would exceed `block_gas_limit`, the remaining messages
     /// stay in the queue for the next block.
-    fn take_l1_messages_for_block(&self) -> Vec<L1Message> {
-        match self.pending_l1_messages.lock() {
-            Ok(mut queue) => {
-                let mut selected = Vec::new();
-                let mut cumulative_gas: u64 = 0;
+    fn take_l1_messages_for_block(&mut self) -> Vec<L1Message> {
+        let mut selected = Vec::new();
+        let mut cumulative_gas: u64 = 0;
 
-                while let Some(msg) = queue.front() {
-                    let next_gas = cumulative_gas.saturating_add(msg.gas_limit);
-                    if next_gas > self.config.block_gas_limit {
-                        warn!(
-                            "NativeBlockProducer: L1 messages gas ({next_gas}) would exceed \
-                             block gas limit ({}), deferring {} remaining messages",
-                            self.config.block_gas_limit,
-                            queue.len()
-                        );
-                        break;
-                    }
-                    cumulative_gas = next_gas;
-                    if let Some(msg) = queue.pop_front() {
-                        selected.push(msg);
-                    }
-                }
-
-                selected
+        while let Some(msg) = self.pending_l1_messages.front() {
+            let next_gas = cumulative_gas.saturating_add(msg.gas_limit);
+            if next_gas > self.config.block_gas_limit {
+                warn!(
+                    "NativeBlockProducer: L1 messages gas ({next_gas}) would exceed \
+                     block gas limit ({}), deferring {} remaining messages",
+                    self.config.block_gas_limit,
+                    self.pending_l1_messages.len()
+                );
+                break;
             }
-            Err(e) => {
-                error!("NativeBlockProducer: failed to lock pending_l1_messages: {e}");
-                Vec::new()
+            cumulative_gas = next_gas;
+            if let Some(msg) = self.pending_l1_messages.pop_front() {
+                selected.push(msg);
             }
         }
+
+        selected
     }
 
     /// Build signed EIP-1559 relayer transactions for each L1 message.
@@ -439,9 +433,8 @@ impl NativeBlockProducer {
         store: Store,
         config: NativeBlockProducerConfig,
         blockchain: Arc<Blockchain>,
-        pending_l1_messages: PendingL1Messages,
     ) -> ActorRef<NativeBlockProducer> {
-        let producer = Self::new(store, config, blockchain, pending_l1_messages);
+        let producer = Self::new(store, config, blockchain);
         producer.start()
     }
 
@@ -468,5 +461,20 @@ impl NativeBlockProducer {
             ctx.clone(),
             native_block_producer_protocol::Produce,
         );
+    }
+
+    #[send_handler]
+    async fn handle_enqueue_l1_messages(
+        &mut self,
+        msg: native_block_producer_protocol::EnqueueL1Messages,
+        _ctx: &Context<Self>,
+    ) {
+        for m in &msg.messages {
+            debug!(
+                "NativeBlockProducer: queued L1 message nonce={} sender={:?} to={:?} value={}",
+                m.nonce, m.sender, m.to, m.value
+            );
+        }
+        self.pending_l1_messages.extend(msg.messages);
     }
 }

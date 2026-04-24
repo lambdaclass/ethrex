@@ -19,7 +19,8 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info, warn};
 
-use super::types::{L1Message, PendingL1Messages};
+use super::block_producer::{NativeBlockProducer, native_block_producer_protocol};
+use super::types::L1Message;
 
 /// Cached event topic: keccak256("L1MessageRecorded(address,address,uint256,uint256,bytes,uint256)")
 /// Must stay in sync with the event declaration in NativeRollup.sol.
@@ -44,7 +45,7 @@ pub enum NativeL1WatcherError {
 pub struct NativeL1Watcher {
     eth_client: EthClient,
     contract_address: Address,
-    pending_messages: PendingL1Messages,
+    producer_ref: ActorRef<NativeBlockProducer>,
     last_block_fetched: U256,
     check_interval_ms: u64,
     max_block_step: U256,
@@ -54,14 +55,14 @@ impl NativeL1Watcher {
     pub fn new(
         eth_client: EthClient,
         contract_address: Address,
-        pending_messages: PendingL1Messages,
+        producer_ref: ActorRef<NativeBlockProducer>,
         check_interval_ms: u64,
         max_block_step: u64,
     ) -> Self {
         Self {
             eth_client,
             contract_address,
-            pending_messages,
+            producer_ref,
             last_block_fetched: U256::zero(),
             check_interval_ms,
             max_block_step: U256::from(max_block_step),
@@ -123,21 +124,12 @@ impl NativeL1Watcher {
             }
         }
 
-        if !parsed.is_empty() {
-            match self.pending_messages.lock() {
-                Ok(mut queue) => {
-                    for msg in &parsed {
-                        debug!(
-                            "NativeL1Watcher: queued L1 message nonce={} sender={:?} to={:?} value={}",
-                            msg.nonce, msg.sender, msg.to, msg.value
-                        );
-                    }
-                    queue.extend(parsed);
-                }
-                Err(e) => {
-                    error!("NativeL1Watcher: failed to lock pending_messages: {e}");
-                }
-            }
+        if !parsed.is_empty()
+            && let Err(e) = self
+                .producer_ref
+                .send(native_block_producer_protocol::EnqueueL1Messages { messages: parsed })
+        {
+            error!("NativeL1Watcher: failed to send L1 messages to block producer: {e}");
         }
 
         self.last_block_fetched = to_block;
@@ -253,14 +245,14 @@ impl NativeL1Watcher {
     pub fn spawn(
         eth_client: EthClient,
         contract_address: Address,
-        pending_messages: PendingL1Messages,
+        producer_ref: ActorRef<NativeBlockProducer>,
         check_interval_ms: u64,
         max_block_step: u64,
     ) -> ActorRef<NativeL1Watcher> {
         let watcher = Self::new(
             eth_client,
             contract_address,
-            pending_messages,
+            producer_ref,
             check_interval_ms,
             max_block_step,
         );

@@ -1,16 +1,13 @@
 //! Shared types for the native rollup L2 PoC.
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
-
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
 
 /// An L1 message recorded on the NativeRollup contract via sendL1Message().
 ///
-/// The L1 watcher parses `L1MessageRecorded` events into this struct and pushes
-/// them into the shared `PendingL1Messages` queue for the block producer.
+/// The L1 watcher parses `L1MessageRecorded` events into this struct and
+/// forwards them to the block producer via an `EnqueueL1Messages` message.
 #[derive(Clone, Debug)]
 pub struct L1Message {
     pub sender: Address,
@@ -39,6 +36,3 @@ impl L1Message {
         H256(keccak_hash(&preimage))
     }
 }
-
-/// Thread-safe queue of L1 messages waiting to be included in an L2 block.
-pub type PendingL1Messages = Arc<Mutex<VecDeque<L1Message>>>;
