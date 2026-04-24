@@ -21,14 +21,7 @@ strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
 rayon.workspace = true
 
-bitvec = { version = "1.0.1", features = ["alloc"] }
 libssz = { workspace = true, optional = true }
-
-[dev-dependencies]
-hex.workspace = true
-colored = "2.1.0"
-spinoff = "0.8.0"
-ethrex-trie = { workspace = true }
 
 [features]
 default = []
