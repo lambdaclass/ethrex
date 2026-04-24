@@ -792,7 +792,7 @@ pub async fn update_pivot(
         // One attempt per peer per rotation. A peer that fails is excluded for
         // this rotation and will be retried (with backoff) in the next one.
         let outcome = peers
-            .get_block_header(peer_id, &mut connection, permit, new_pivot_block_number)
+            .get_block_header(&mut connection, permit, new_pivot_block_number)
             .await;
 
         match outcome {

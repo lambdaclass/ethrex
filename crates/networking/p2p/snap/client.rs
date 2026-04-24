@@ -1036,14 +1036,14 @@ pub async fn request_storage_ranges(
 }
 
 /// Requests state trie nodes at the given paths from an already-selected peer.
-/// Consumes a `RequestPermit` reserved by the caller at peer selection time;
-/// the permit drops when this function returns, releasing the slot.
+/// Releases the peer slot as soon as the wire response is in; hash
+/// verification below is pure computation.
 /// Returns `SnapError::InvalidHash` if any returned node's hash does not match
 /// the requested path, and `SnapError::InvalidData` on an empty or oversized
 /// response.
 pub async fn request_state_trienodes(
     mut connection: PeerConnection,
-    _permit: RequestPermit,
+    permit: RequestPermit,
     state_root: H256,
     paths: Vec<RequestMetadata>,
 ) -> Result<Vec<Node>, SnapError> {
@@ -1060,10 +1060,11 @@ pub async fn request_state_trienodes(
             .collect(),
         bytes: MAX_RESPONSE_BYTES,
     });
-    let nodes = match connection
+    let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
-    {
+        .await;
+    drop(permit);
+    let nodes = match response {
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
             .nodes
             .iter()

@@ -478,9 +478,16 @@ impl PeerTableServer {
         _ctx: &Context<Self>,
     ) {
         self.peers.entry(msg.node_id).and_modify(|peer_data| {
-            // Clamp at 0: a stale permit drop firing after a peer
-            // disconnect+reconnect would otherwise push `requests`
-            // negative (i64::saturating_sub saturates at i64::MIN).
+            if peer_data.requests <= 0 {
+                // Expected under the reconnect race (stale permit fires
+                // after remove_peer + new_connected_peer), self-heals.
+                // Otherwise points to a bookkeeping bug worth chasing.
+                tracing::debug!(
+                    peer_id = ?msg.node_id,
+                    requests = peer_data.requests,
+                    "dec_requests with counter already <= 0",
+                );
+            }
             peer_data.requests = peer_data.requests.saturating_sub(1).max(0)
         });
     }
@@ -791,7 +798,14 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::HasEligiblePeer,
         _ctx: &Context<Self>,
     ) -> bool {
-        self.do_get_best_peer(&msg.capabilities).is_some()
+        self.peers.values().any(|peer_data| {
+            peer_data.connection.is_some()
+                && self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                && msg
+                    .capabilities
+                    .iter()
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+        })
     }
 
     #[request_handler]
@@ -994,7 +1008,9 @@ impl PeerTableServer {
 
     /// Returns up to `n` best peers with capability overlap, sorted by weight
     /// descending. Excludes peers at capacity. Does NOT mutate state — caller
-    /// is responsible for incrementing `requests` on each returned peer.
+    /// is responsible for incrementing `requests` on each returned peer. The
+    /// sort uses a pre-increment snapshot: later picks don't see earlier
+    /// picks' bumps, which is fine for small `n`.
     fn do_get_best_n_peers(
         &self,
         capabilities: &[Capability],

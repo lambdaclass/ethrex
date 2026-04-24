@@ -450,12 +450,12 @@ impl PeerHandler {
     }
 
     /// Given a peer id, a chunk start and a chunk limit, requests the block headers from the peer.
-    /// Consumes a `RequestPermit` that was reserved at peer selection time;
-    /// the permit drops when this function returns, releasing the peer's slot.
+    /// Releases the peer slot as soon as the wire response is in; validation
+    /// below is pure computation.
     async fn download_chunk_from_peer(
         peer_id: H256,
         connection: &mut PeerConnection,
-        _permit: RequestPermit,
+        permit: RequestPermit,
         startblock: u64,
         chunk_limit: u64,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
@@ -468,12 +468,14 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
+        let response = connection
+            .outgoing_request(request, PEER_REPLY_TIMEOUT)
+            .await;
+        drop(permit);
         if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
-        })) = connection
-            .outgoing_request(request, PEER_REPLY_TIMEOUT)
-            .await
+        })) = response
         {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                 Ok(block_headers)
@@ -591,7 +593,6 @@ impl PeerHandler {
     /// time; the permit drops when this function returns, releasing the slot.
     pub async fn get_block_header(
         &mut self,
-        _peer_id: H256,
         connection: &mut PeerConnection,
         _permit: RequestPermit,
         block_number: u64,
