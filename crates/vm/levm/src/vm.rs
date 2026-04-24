@@ -38,10 +38,16 @@ use std::{
 pub type Storage = FxHashMap<U256, H256>;
 
 /// RAII guard that flushes the opcode tracer when `execute()` returns.
-struct TraceGuard;
+/// Only fires `end_tx` if this invocation is the one that activated tracing —
+/// avoids clobbering the target tx's state when other (parallel) txs finish.
+struct TraceGuard {
+    active: bool,
+}
 impl Drop for TraceGuard {
     fn drop(&mut self) {
-        crate::opcode_tracer::end_tx();
+        if self.active {
+            crate::opcode_tracer::end_tx();
+        }
     }
 }
 
@@ -585,9 +591,11 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
-        let _trace_active =
+        let trace_active =
             crate::opcode_tracer::begin_tx(self.tx.hash(), self.env.disable_balance_check);
-        let _trace_guard = TraceGuard;
+        let _trace_guard = TraceGuard {
+            active: trace_active,
+        };
 
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.

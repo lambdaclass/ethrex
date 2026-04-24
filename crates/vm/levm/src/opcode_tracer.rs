@@ -67,6 +67,10 @@ fn init_from_env() {
 /// Called at the start of `VM::execute()`. Returns true if the current tx is the
 /// target and this is a real (non-prewarm) execution. Truncates the trace file
 /// on each activation so retries don't append to stale data.
+///
+/// Important: BSC Amsterdam+ executes block txs in parallel via rayon. We must
+/// NEVER touch `ACTIVE` when `tx_hash` is not the target — doing so would race
+/// with and clobber the target thread's tracing.
 pub fn begin_tx(tx_hash: H256, is_prewarm: bool) -> bool {
     init_from_env();
     if !CONFIGURED.load(Ordering::Relaxed) {
@@ -76,29 +80,27 @@ pub fn begin_tx(tx_hash: H256, is_prewarm: bool) -> bool {
         return false;
     };
     let is_target = state.target_tx == Some(tx_hash);
-    let active = is_target && !is_prewarm;
-    if active {
-        let path = state.path.clone();
-        if let Some(path) = path {
-            match File::create(&path) {
-                Ok(file) => {
-                    let mut writer = BufWriter::new(file);
-                    let _ = writeln!(writer, "Step,PC,Operation,Gas,GasCost,Depth");
-                    state.writer = Some(writer);
-                }
-                Err(e) => {
-                    eprintln!("[opcode_tracer] could not open trace file {path}: {e}");
-                    return false;
-                }
+    if !is_target || is_prewarm {
+        return false;
+    }
+    let path = state.path.clone();
+    if let Some(path) = path {
+        match File::create(&path) {
+            Ok(file) => {
+                let mut writer = BufWriter::new(file);
+                let _ = writeln!(writer, "Step,PC,Operation,Gas,GasCost,Depth");
+                state.writer = Some(writer);
+            }
+            Err(e) => {
+                eprintln!("[opcode_tracer] could not open trace file {path}: {e}");
+                return false;
             }
         }
-        state.step = 0;
-        ACTIVE.store(true, Ordering::Relaxed);
-        eprintln!("[opcode_tracer] begin trace for tx {tx_hash:?}");
-    } else {
-        ACTIVE.store(false, Ordering::Relaxed);
     }
-    active
+    state.step = 0;
+    ACTIVE.store(true, Ordering::Relaxed);
+    eprintln!("[opcode_tracer] begin trace for tx {tx_hash:?}");
+    true
 }
 
 /// Cheap per-opcode check. Inlined so the compiler can hoist the load.
