@@ -446,13 +446,11 @@ pub async fn init_native_rollup_l2(
         .contract_address
         .ok_or_else(|| eyre::eyre!("--native-rollups.contract-address is required"))?;
 
-    let l1_rpc_url = opts
-        .sequencer_opts
-        .eth_opts
-        .rpc_url
-        .first()
-        .cloned()
-        .ok_or_else(|| eyre::eyre!("--eth.rpc-url is required"))?;
+    let l1_rpc_urls = opts.sequencer_opts.eth_opts.rpc_url.clone();
+
+    let block_gas_limit =
+        ethrex_l2::sequencer::utils::get_l2_gas_limit(l1_rpc_urls.clone(), contract_address)
+            .await?;
 
     let relayer_signer: ethrex_l2_rpc::signer::Signer =
         LocalSigner::new(native_opts.relayer_private_key).into();
@@ -460,14 +458,14 @@ pub async fn init_native_rollup_l2(
         LocalSigner::new(native_opts.l1_private_key).into();
 
     let config = NativeRollupConfig {
-        l1_rpc_urls: vec![l1_rpc_url],
+        l1_rpc_urls,
         contract_address,
         block_time_ms: native_opts.block_time_ms,
-        watch_interval_ms: 5000,
+        watch_interval_ms: opts.sequencer_opts.watcher_opts.watch_interval_ms,
         advance_interval_ms: native_opts.advance_interval_ms,
-        max_block_step: 5000,
+        max_block_step: opts.sequencer_opts.watcher_opts.max_block_step,
         coinbase: relayer_signer.address(),
-        block_gas_limit: 30_000_000,
+        block_gas_limit,
         chain_id: store.get_chain_config().chain_id,
         relayer_signer,
         l1_signer,

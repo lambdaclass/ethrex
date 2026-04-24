@@ -14,7 +14,7 @@ import "./MPTProof.sol";
 ///   Slot 0: blockHash (bytes32)
 ///   Slot 1: stateRoot (bytes32)
 ///   Slot 2: blockNumber (uint256)
-///   Slot 3: gasLimit (uint256)
+///   Slot 3: l2GasLimit (uint256)
 ///   Slot 4: chainId (uint256)
 ///   Slot 5: pendingL1Messages (bytes32[])
 ///   Slot 6: l1MessageIndex (uint256)
@@ -28,7 +28,7 @@ contract NativeRollup {
     bytes32 public blockHash;
     bytes32 public stateRoot;
     uint256 public blockNumber;
-    uint256 public gasLimit;
+    uint256 public l2GasLimit;
     uint256 public chainId;
 
     // ===== L1→L2 messaging =====
@@ -74,7 +74,7 @@ contract NativeRollup {
         stateRoot = _initialStateRoot;
         blockHash = _initialBlockHash;
         blockNumber = 0;
-        gasLimit = _blockGasLimit;
+        l2GasLimit = _blockGasLimit;
         chainId = _chainId;
         CHAIN_ID = _chainId;
         FINALITY_DELAY = 0;
