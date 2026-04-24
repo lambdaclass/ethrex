@@ -1,7 +1,7 @@
 use std::{
     fs::{File, OpenOptions, read_to_string},
     io::{BufWriter, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
 };
@@ -1812,11 +1812,10 @@ pub async fn deploy_native_rollup_contracts(
     write_genesis_as_json(genesis.clone(), genesis_path)
         .map_err(|e| DeployerError::InternalError(format!("Failed to write genesis: {e}")))?;
 
-    // 4. Compute L2 genesis state root by initializing a temp in-memory store
-    let temp_dir = tempfile::tempdir()
-        .map_err(|e| DeployerError::InternalError(format!("Failed to create temp dir: {e}")))?;
+    // 4. Compute L2 genesis state root by initializing an in-memory store.
+    // The `InMemory` backend ignores the path, so any value works.
     let store = ethrex_storage::Store::new_from_genesis(
-        temp_dir.path(),
+        Path::new(""),
         EngineType::InMemory,
         genesis_path
             .to_str()
