@@ -4152,21 +4152,16 @@ dependencies = [
 name = "ethrex-levm"
 version = "9.0.0"
 dependencies = [
- "bitvec",
  "bytes",
- "colored 2.2.0",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
- "ethrex-trie",
- "hex",
  "libssz",
  "malachite 0.6.1",
  "rayon",
  "rustc-hash 2.1.2",
  "serde",
- "spinoff",
  "strum 0.27.2",
  "thiserror 2.0.18",
 ]
@@ -13458,17 +13453,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d5fe4ccb98d9c292d56fec89a5e07da7fc4cf0dc11e156b41793132775d3e591"
 dependencies = [
  "lock_api",
-]
-
-[[package]]
-name = "spinoff"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20aa2ed67fbb202e7b716ff8bfc6571dd9301617767380197d701c31124e88f6"
-dependencies = [
- "colored 2.2.0",
- "once_cell",
- "paste",
 ]
 
 [[package]]
