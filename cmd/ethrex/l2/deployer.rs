@@ -1,7 +1,7 @@
 use std::{
     fs::{File, OpenOptions, read_to_string},
     io::{BufWriter, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command, Stdio},
     str::FromStr,
 };
@@ -1767,7 +1767,6 @@ pub async fn deploy_native_rollup_contracts(
 ) -> Result<Address, DeployerError> {
     use ethrex_common::genesis_utils::write_genesis_as_json;
     use ethrex_l2_common::utils::get_address_from_secret_key;
-    use ethrex_storage::EngineType;
 
     info!("Starting native rollup deployment");
 
@@ -1806,28 +1805,16 @@ pub async fn deploy_native_rollup_contracts(
     write_genesis_as_json(genesis.clone(), genesis_path)
         .map_err(|e| DeployerError::InternalError(format!("Failed to write genesis: {e}")))?;
 
-    // 4. Compute L2 genesis state root by initializing an in-memory store.
-    // The `InMemory` backend ignores the path, so any value works.
-    let store = ethrex_storage::Store::new_from_genesis(
-        Path::new(""),
-        EngineType::InMemory,
-        genesis_path
-            .to_str()
-            .ok_or(DeployerError::FailedToGetStringFromPath)?,
-    )
-    .await
-    .map_err(|e| DeployerError::InternalError(format!("Failed to init store from genesis: {e}")))?;
-    let genesis_header = store
-        .get_block_header(0)
-        .map_err(|e| DeployerError::InternalError(format!("Failed to get genesis header: {e}")))?
-        .ok_or_else(|| DeployerError::InternalError("Genesis header not found".to_string()))?;
-    let initial_state_root = genesis_header.state_root;
+    // 4. Derive L2 genesis state root and block hash straight from the Genesis
+    //    struct (trie built from `alloc`, block hash computed over the genesis
+    //    header). No database needed.
+    let genesis_block = genesis.get_block();
+    let initial_state_root = genesis_block.header.state_root;
+    let initial_block_hash = genesis_block.hash();
     info!("L2 genesis state root: {initial_state_root:#x}");
+    info!("L2 genesis block hash: {initial_block_hash:#x}");
 
     // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, initialBlockHash, blockGasLimit, chainId)
-    let block_gas_limit: u64 = 30_000_000;
-    let initial_block_hash = genesis_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
-    info!("L2 genesis block hash: {initial_block_hash:#x}");
 
     let l2_chain_id = genesis.config.chain_id;
     let constructor_args = encode_calldata(
@@ -1835,7 +1822,7 @@ pub async fn deploy_native_rollup_contracts(
         &[
             Value::FixedBytes(initial_state_root.as_bytes().to_vec().into()),
             Value::FixedBytes(initial_block_hash.as_bytes().to_vec().into()),
-            Value::Uint(U256::from(block_gas_limit)),
+            Value::Uint(U256::from(opts.l2_gas_limit)),
             Value::Uint(U256::from(l2_chain_id)),
         ],
     )?;
@@ -1890,9 +1877,12 @@ pub async fn deploy_native_rollup_contracts(
     }
     info!("NativeRollup.sol deployed at: {contract_address:#x}");
 
-    // 6. Fund the contract with ETH to cover withdrawal claims.
-    //    The amount matches the relayer's L2 prefund (100 ETH) — the contract
-    //    only needs enough to pay out withdrawals, which are bounded by deposits.
+    // 6. Back the relayer's L2 genesis prefund with L1 ETH in the contract.
+    //    User withdrawals are already covered by the corresponding deposits
+    //    held in the contract, but the relayer's 100 ETH on L2 was minted at
+    //    genesis without a matching L1 deposit. Sending 100 ETH here keeps the
+    //    L1-reserves / L2-supply accounting honest in case the relayer ever
+    //    withdraws those funds.
     let fund_nonce = eth_client
         .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Pending))
         .await?;
