@@ -1167,18 +1167,11 @@ impl Blockchain {
         &self,
         blocks: &[Block],
     ) -> Result<ExecutionWitness, ChainError> {
-        self.generate_witness_inner(blocks, None).await
+        self.generate_witness_for_blocks_with_fee_configs(blocks, None)
+            .await
     }
 
     pub async fn generate_witness_for_blocks_with_fee_configs(
-        &self,
-        blocks: &[Block],
-        fee_configs: Option<&[FeeConfig]>,
-    ) -> Result<ExecutionWitness, ChainError> {
-        self.generate_witness_inner(blocks, fee_configs).await
-    }
-
-    async fn generate_witness_inner(
         &self,
         blocks: &[Block],
         fee_configs: Option<&[FeeConfig]>,
