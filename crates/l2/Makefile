@@ -190,8 +190,6 @@ init-l2-native: ## 🚀 Initializes a native rollup L2 client
 	--eth.rpc-url ${L1_RPC_URL} \
 	--no-monitor
 
-native-rollup: init-l1-native deploy-l1-native init-l2-native ## 🚀 Initializes a native rollup end-to-end (L1 with EXECUTE precompile, NativeRollup.sol deploy, native L2 client)
-
 init-l2-dev: ## 🚀 Initializes an L1 and L2 Lambda ethrex Client
 	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
