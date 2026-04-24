@@ -54,39 +54,13 @@ pub fn execution_program(
     })
 }
 
-/// Execute the L1 stateless validation program (EIP-8025).
-///
-/// This transforms the SSZ `NewPayloadRequest` into a `Block`, validates it,
-/// executes it statelessly, and produces the `hash_tree_root` commitment.
-///
-/// Takes the raw `NewPayloadRequest` and `ExecutionWitness` decoded from the
-/// EIP-8025 wire format (see [`decode_eip8025`](super::decode_eip8025)).
-#[cfg(feature = "eip-8025")]
-pub fn execution_program(
-    new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequest,
-    execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
-    crypto: Arc<dyn Crypto>,
-) -> Result<ProgramOutput, ExecutionError> {
-    use libssz_merkle::{HashTreeRoot, Sha2Hasher};
-
-    // Compute the hash_tree_root before consuming the payload.
-    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
-
-    validate_eip8025_execution(&new_payload_request, execution_witness, crypto)?;
-
-    Ok(ProgramOutput {
-        new_payload_request_root: request_root,
-        valid: true,
-    })
-}
-
 /// Decode and execute the L1 stateless validation program from EIP-8025 wire
 /// bytes.
 ///
 /// The wire format is `[ssz_len: u32 LE][ssz_bytes][rkyv_bytes]`, matching
 /// [`decode_eip8025`](super::decode_eip8025).
 #[cfg(feature = "eip-8025")]
-pub fn execution_program_eip8025_bytes(
+pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
@@ -266,13 +240,11 @@ fn validate_eip8025_execution(
 mod tests {
     use std::sync::Arc;
 
-    use crate::{
-        common::ExecutionError, crypto::NativeCrypto, l1::execution_program_eip8025_bytes,
-    };
+    use crate::{common::ExecutionError, crypto::NativeCrypto, l1::execution_program};
 
     #[test]
-    fn execution_program_eip8025_bytes_rejects_invalid_wire_bytes() {
-        let err = match execution_program_eip8025_bytes(&[], Arc::new(NativeCrypto)) {
+    fn execution_program_rejects_invalid_eip8025_wire_bytes() {
+        let err = match execution_program(&[], Arc::new(NativeCrypto)) {
             Ok(_) => panic!("expected invalid EIP-8025 input to fail decoding"),
             Err(err) => err,
         };
