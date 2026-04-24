@@ -347,7 +347,7 @@ Verifying the contract in Blockscout lets it decode function selectors (like `0x
 From the ethrex repo root, run:
 
 ```shell
-python3 scripts/blockscout_verify_native_rollup.py $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS
+python3 tooling/l2/dev/blockscout_verify_native_rollup.py $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS
 ```
 
 You should see `Contract verified successfully!`. Now Blockscout will show decoded method names, event names, and parameter values for all interactions with the contract.

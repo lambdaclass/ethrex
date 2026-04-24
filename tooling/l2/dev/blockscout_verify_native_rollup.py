@@ -2,7 +2,7 @@
 """Verify the NativeRollup contract in a local Blockscout instance.
 
 Usage:
-    python3 scripts/blockscout_verify_native_rollup.py <contract_address> [blockscout_url]
+    python3 tooling/l2/dev/blockscout_verify_native_rollup.py <contract_address> [blockscout_url]
 
 The script flattens NativeRollup.sol + MPTProof.sol, submits them to Blockscout's
 standard-input verification API, and polls until verification completes.
