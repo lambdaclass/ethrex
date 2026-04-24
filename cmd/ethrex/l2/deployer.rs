@@ -1878,11 +1878,6 @@ pub async fn deploy_native_rollup_contracts(
     info!("NativeRollup.sol deployed at: {contract_address:#x}");
 
     // 6. Back the relayer's L2 genesis prefund with L1 ETH in the contract.
-    //    User withdrawals are already covered by the corresponding deposits
-    //    held in the contract, but the relayer's 100 ETH on L2 was minted at
-    //    genesis without a matching L1 deposit. Sending 100 ETH here keeps the
-    //    L1-reserves / L2-supply accounting honest in case the relayer ever
-    //    withdraws those funds.
     let fund_nonce = eth_client
         .get_nonce(signer.address(), BlockIdentifier::Tag(BlockTag::Pending))
         .await?;
