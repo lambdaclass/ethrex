@@ -125,14 +125,33 @@ impl NativeL1Advancer {
             body: block_body.clone(),
         };
 
-        // 3. Generate execution witness.
+        // 3. Get the execution witness. Reuse the cached one stored at block
+        //    execution time when --precompute-witnesses is enabled; otherwise
+        //    re-execute the block to produce it.
         //    The parent_beacon_block_root carries the L1 messages Merkle root.
         //    The EIP-4788 system contract writes it during block processing,
         //    so the witness must include the beacon roots contract state.
-        let witness = self
-            .blockchain
-            .generate_witness_for_blocks(&[block])
-            .await?;
+        let block_hash = block_header.hash();
+        let witness = match self
+            .store
+            .get_witness_by_number_and_hash(next_block, block_hash)?
+        {
+            Some(rpc_witness) => {
+                let chain_config = self.store.get_chain_config();
+                rpc_witness
+                    .into_execution_witness(chain_config, next_block)
+                    .map_err(|e| {
+                        NativeL1AdvancerError::Encoding(format!(
+                            "cached witness conversion: {e}"
+                        ))
+                    })?
+            }
+            None => {
+                self.blockchain
+                    .generate_witness_for_blocks(&[block])
+                    .await?
+            }
+        };
 
         // 4. Count L1 messages by counting relayer txs in the block
         let l1_messages_count: u64 = block_body
