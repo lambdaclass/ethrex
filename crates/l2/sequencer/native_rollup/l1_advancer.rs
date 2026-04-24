@@ -141,9 +141,7 @@ impl NativeL1Advancer {
                 rpc_witness
                     .into_execution_witness(chain_config, next_block)
                     .map_err(|e| {
-                        NativeL1AdvancerError::Encoding(format!(
-                            "cached witness conversion: {e}"
-                        ))
+                        NativeL1AdvancerError::Encoding(format!("cached witness conversion: {e}"))
                     })?
             }
             None => {

@@ -299,6 +299,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 

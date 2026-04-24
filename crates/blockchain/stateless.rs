@@ -151,4 +151,3 @@ impl ethrex_vm::StatelessValidator for StatelessExecutor {
         Ok(buf)
     }
 }
-

@@ -289,9 +289,7 @@ where
     if let Some(root) = &state_trie_root {
         let accounts = collect_accounts_from_trie(root, &nodes, &NativeCrypto);
         for (hashed_address, storage_root_hash) in accounts {
-            if storage_root_hash == *EMPTY_TRIE_HASH
-                || !nodes.contains_key(&storage_root_hash)
-            {
+            if storage_root_hash == *EMPTY_TRIE_HASH || !nodes.contains_key(&storage_root_hash) {
                 continue;
             }
             let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
