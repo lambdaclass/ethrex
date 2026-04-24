@@ -426,6 +426,17 @@ pub async fn init_native_rollup_l2(
     let rollup_store_dir = datadir.join("rollup_store");
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
+    let native_opts = &opts.sequencer_opts.native_rollup_opts;
+    let contract_address = native_opts
+        .contract_address
+        .ok_or_else(|| eyre::eyre!("--native-rollups.contract-address is required"))?;
+
+    let l1_rpc_urls = opts.sequencer_opts.eth_opts.rpc_url.clone();
+
+    let block_gas_limit =
+        ethrex_l2::sequencer::utils::get_l2_gas_limit(l1_rpc_urls.clone(), contract_address)
+            .await?;
+
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -438,19 +449,8 @@ pub async fn init_native_rollup_l2(
         tracker,
         rollup_store,
         log_filter_handler,
-        30_000_000, // block gas limit
+        block_gas_limit,
     );
-
-    let native_opts = &opts.sequencer_opts.native_rollup_opts;
-    let contract_address = native_opts
-        .contract_address
-        .ok_or_else(|| eyre::eyre!("--native-rollups.contract-address is required"))?;
-
-    let l1_rpc_urls = opts.sequencer_opts.eth_opts.rpc_url.clone();
-
-    let block_gas_limit =
-        ethrex_l2::sequencer::utils::get_l2_gas_limit(l1_rpc_urls.clone(), contract_address)
-            .await?;
 
     let relayer_signer: ethrex_l2_rpc::signer::Signer =
         LocalSigner::new(native_opts.relayer_private_key).into();
