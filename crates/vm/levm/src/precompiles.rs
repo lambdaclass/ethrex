@@ -320,7 +320,7 @@ pub fn execute_precompile(
     fork: Fork,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
-    #[allow(unused_variables)] stateless_validator: Option<&dyn crate::StatelessValidator>,
+    _stateless_validator: Option<&dyn crate::StatelessValidator>,
 ) -> Result<Bytes, VMError> {
     type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
@@ -361,7 +361,7 @@ pub fn execute_precompile(
             gas_remaining,
             fork,
             crypto,
-            stateless_validator,
+            _stateless_validator,
         );
     }
 
