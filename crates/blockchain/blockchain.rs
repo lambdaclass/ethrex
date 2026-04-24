@@ -861,7 +861,7 @@ impl Blockchain {
         }
 
         // Extract witness accumulator before consuming updates
-        let accumulated_updates = if cfg!(feature = "experimental-devnet") {
+        let accumulated_updates = if self.options.precompute_witnesses {
             Some(all_updates.values().cloned().collect::<Vec<_>>())
         } else {
             None
@@ -1879,7 +1879,7 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if cfg!(feature = "experimental-devnet") && self.is_synced() {
+        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
