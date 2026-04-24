@@ -111,14 +111,27 @@ pub async fn sync_cycle_full(
                 blocks.first().map(|b| b.header.number).unwrap_or(0),
                 blocks.last().map(|b| b.header.number).unwrap_or(0),
             );
-            add_blocks_in_batch(
-                blockchain.clone(),
-                cancel_token.clone(),
-                blocks,
-                true,
-                store.clone(),
-            )
-            .await?;
+            // Small batches (< SMALL_BATCH_THRESHOLD) are typically live-tip
+            // arrivals. Running them through `add_blocks_in_batch` defers the
+            // `forkchoice_update` until the whole batch finishes, pinning
+            // `eth_blockNumber` at the pre-batch value for up to ~2s and
+            // making ethrex appear to lag the chain head. For small batches,
+            // commit each block individually so the canonical head advances
+            // per block. Large batches keep using the batched path for
+            // throughput (amortized forkchoice + storage flush).
+            const SMALL_BATCH_THRESHOLD: usize = 16;
+            if blocks.len() < SMALL_BATCH_THRESHOLD {
+                execute_blocks_per_block_fc(blockchain.clone(), blocks, store.clone()).await?;
+            } else {
+                add_blocks_in_batch(
+                    blockchain.clone(),
+                    cancel_token.clone(),
+                    blocks,
+                    true,
+                    store.clone(),
+                )
+                .await?;
+            }
 
             if batch_size < *EXECUTE_BATCH_SIZE {
                 // Got fewer headers than a full batch — we're caught up
@@ -580,4 +593,26 @@ async fn run_blocks_pipeline(
     })
     .await
     .map_err(|e| (ChainError::Custom(e.to_string()), None))?
+}
+
+/// Execute blocks one at a time, advancing the canonical head after each.
+/// Used for small BSC batches (live tip) so `eth_blockNumber` updates
+/// per-block instead of once per batch.
+async fn execute_blocks_per_block_fc(
+    blockchain: Arc<Blockchain>,
+    blocks: Vec<Block>,
+    store: Store,
+) -> Result<(), SyncError> {
+    for block in blocks {
+        let number = block.header.number;
+        let hash = block.hash();
+        let blockchain_ref = blockchain.clone();
+        tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
+            .await
+            .map_err(SyncError::JoinHandle)??;
+        store
+            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
+            .await?;
+    }
+    Ok(())
 }
