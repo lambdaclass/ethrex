@@ -1863,14 +1863,7 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
-            // Inject StatelessValidator so the EXECUTE precompile works
-            // during block import (same as new_evm does for the non-logger path).
-            #[cfg(feature = "experimental-devnet")]
-            if matches!(self.options.r#type, BlockchainType::L1) {
-                vm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
-                    crypto: Arc::new(NativeCrypto),
-                }));
-            }
+            attach_stateless_validator_if_l1(&mut vm, &self.options.r#type);
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -3079,18 +3072,30 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
+    attach_stateless_validator_if_l1(&mut evm, blockchain_type);
+    Ok(evm)
+}
 
-    // For L1 EVMs, inject the StatelessValidator so the EXECUTE precompile
-    // can delegate to verify_stateless_new_payload when processing native
-    // rollup advance() calls.
+/// Attach the L1 stateless validator to an `Evm` so its `EXECUTE` precompile
+/// can delegate to `verify_stateless_new_payload` when processing native-rollup
+/// `advance()` calls.
+///
+/// Lives here (not in `Evm`'s constructor) because `StatelessExecutor` is
+/// implemented by the blockchain crate and calls back into `Evm::new_for_l1`
+/// when verifying — an auto-inject in the constructor would recurse. Other
+/// callers that build `Evm::new_for_l1` without blockchain access (the
+/// guest-program crate, the stateless verifier itself, witness generation,
+/// the prover backend) also rely on the constructor staying validator-less.
+///
+/// No-op for L2 EVMs and when `experimental-devnet` is disabled.
+#[allow(unused_variables)]
+fn attach_stateless_validator_if_l1(evm: &mut Evm, blockchain_type: &BlockchainType) {
     #[cfg(feature = "experimental-devnet")]
     if matches!(blockchain_type, BlockchainType::L1) {
         evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
             crypto: Arc::new(NativeCrypto),
         }));
     }
-
-    Ok(evm)
 }
 
 /// Performs post-execution checks
