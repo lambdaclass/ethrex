@@ -675,6 +675,21 @@ impl Subcommand {
                 let head_ok = store.has_state_root(head_root)?;
                 println!("Head: {head}  state_root: {head_root:#x}  has_state_root: {head_ok}");
 
+                // Report what (if anything) is actually at the state-trie root path.
+                // If nothing is there, the account trie root node has been erased.
+                let trie = store.open_state_trie(head_root)?;
+                match trie.db().get(ethrex_trie::Nibbles::default())? {
+                    Some(bytes) => {
+                        use ethrex_rlp::decode::RLPDecode;
+                        let node = ethrex_trie::Node::decode(&bytes)?;
+                        let hash = node
+                            .compute_hash(&ethrex_crypto::NativeCrypto)
+                            .finalize(&ethrex_crypto::NativeCrypto);
+                        println!("Root node present: {} bytes, hash={:#x}", bytes.len(), hash);
+                    }
+                    None => println!("Root node MISSING at account_trie_nodes[empty]"),
+                }
+
                 if let Some(path) = check_roots_file {
                     let contents = std::fs::read_to_string(&path)
                         .map_err(|e| eyre::eyre!("read {path:?}: {e}"))?;
