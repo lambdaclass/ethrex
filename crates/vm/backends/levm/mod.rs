@@ -260,7 +260,7 @@ impl LEVM {
         ))
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,
@@ -1189,7 +1189,7 @@ impl LEVM {
     /// `index`: pre-built validation index
     /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
     /// `store`: database (fallback for pre-state lookups)
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn validate_tx_execution(
         bal_idx: u16,
         seed_idx: u16,
@@ -1840,7 +1840,6 @@ impl LEVM {
         Ok(env)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn execute_tx(
         // The transaction to execute.
         tx: &Transaction,
@@ -1868,7 +1867,7 @@ impl LEVM {
     }
 
     // Like execute_tx but allows reusing the stack pool
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
         tx: &Transaction,
@@ -1906,7 +1905,6 @@ impl LEVM {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn simulate_tx_from_generic(
         // The transaction to execute.
         tx: &GenericTransaction,
