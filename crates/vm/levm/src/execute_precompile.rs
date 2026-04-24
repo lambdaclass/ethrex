@@ -20,6 +20,12 @@ use crate::precompiles::increase_precompile_consumed_gas;
 ///
 /// Input: SSZ-encoded `StatelessInput`.
 /// Output: SSZ-encoded `StatelessValidationResult`.
+///
+/// This wrapper exists to mimic the standard precompile signature
+/// (`fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>`) plus
+/// the extra `stateless_validator` slot threaded through the dispatcher. It
+/// also converts the `Option` into an error, so `run_execute` can work with a
+/// guaranteed-`Some` validator.
 pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
@@ -41,20 +47,6 @@ fn run_execute(
     calldata: &Bytes,
     gas_remaining: &mut u64,
 ) -> Result<Bytes, VMError> {
-    // Charge gas based on the L2 block's gas_used
-    let gas_to_charge = extract_gas_used(calldata)?;
-    increase_precompile_consumed_gas(gas_to_charge, gas_remaining)?;
-
-    // Validate L2-specific constraints
-    validate_l2_constraints(calldata)?;
-
-    // Delegate to verify_stateless_new_payload via the trait
-    let result = validator.verify(calldata)?;
-    Ok(Bytes::from(result))
-}
-
-/// Extract `execution_payload.gas_used` from SSZ-encoded `StatelessInput`.
-fn extract_gas_used(calldata: &[u8]) -> Result<u64, VMError> {
     use ethrex_common::types::stateless_ssz::SszStatelessInput;
     use libssz::SszDecode;
 
@@ -64,20 +56,24 @@ fn extract_gas_used(calldata: &[u8]) -> Result<u64, VMError> {
         )))
     })?;
 
-    Ok(input.new_payload_request.execution_payload.gas_used)
+    // Charge gas based on the L2 block's gas_used
+    increase_precompile_consumed_gas(
+        input.new_payload_request.execution_payload.gas_used,
+        gas_remaining,
+    )?;
+
+    // Validate L2-specific constraints
+    validate_l2_constraints(&input)?;
+
+    // Delegate to verify_stateless_new_payload via the trait
+    let result = validator.verify(calldata)?;
+    Ok(Bytes::from(result))
 }
 
 /// Validate L2-specific constraints on the ExecutionPayload.
-fn validate_l2_constraints(calldata: &[u8]) -> Result<(), VMError> {
-    use ethrex_common::types::stateless_ssz::SszStatelessInput;
-    use libssz::SszDecode;
-
-    let input = SszStatelessInput::from_ssz_bytes(calldata).map_err(|e| {
-        VMError::Internal(InternalError::Custom(format!(
-            "EXECUTE: SSZ decode for L2 validation: {e}"
-        )))
-    })?;
-
+fn validate_l2_constraints(
+    input: &ethrex_common::types::stateless_ssz::SszStatelessInput,
+) -> Result<(), VMError> {
     let payload = &input.new_payload_request.execution_payload;
 
     if payload.blob_gas_used != 0 {
