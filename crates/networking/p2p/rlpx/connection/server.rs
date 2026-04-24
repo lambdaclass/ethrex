@@ -1871,9 +1871,19 @@ async fn fetch_and_import_bsc_block(
         other => return Err(format!("unexpected body response: {other}")),
     };
     let block = Block { header, body };
-    tokio::task::spawn_blocking(move || blockchain.add_block_pipeline(block, None))
+    let number = block.header.number;
+    let block_hash = block.hash();
+    let blockchain_ref = blockchain.clone();
+    tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
         .await
         .map_err(|e| format!("join: {e}"))?
         .map_err(|e| format!("pipeline: {e}"))?;
+    // Advance the canonical head so `eth_blockNumber` reflects the new tip
+    // and forward_sync's next `latest+1` request skips this block rather
+    // than re-downloading it.
+    blockchain
+        .advance_canonical_head(number, block_hash)
+        .await
+        .map_err(|e| format!("forkchoice: {e}"))?;
     Ok(())
 }

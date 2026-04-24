@@ -82,6 +82,7 @@ pub async fn sync_cycle_full(
                 &mut start_block_number,
                 &mut end_block_number,
                 &mut headers,
+                blockchain.bsc_sync_notify.clone(),
             )
             .await?
             {
@@ -440,6 +441,7 @@ async fn request_forward_headers(
     start_block_number: &mut u64,
     end_block_number: &mut u64,
     headers: &mut Vec<BlockHeader>,
+    new_head_notify: Arc<tokio::sync::Notify>,
 ) -> Result<bool, SyncError> {
     let mut failures = 0u64;
     let wait_start = Instant::now();
@@ -496,8 +498,18 @@ async fn request_forward_headers(
                     warn!(failures, "Forward sync: too many failures, giving up");
                     return Ok(false);
                 }
+                // Empty response means peer has no block after our latest —
+                // we're at tip. Wait on the notify (fired by
+                // `set_bsc_sync_head` on every NewBlockHashes announcement)
+                // instead of polling every 2s. The short fallback covers
+                // the case where the announcement is missed (dropped
+                // connection, peer switch) so we don't hang.
                 warn!(failures, "Forward sync: request failed, retrying...");
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                let _ = tokio::time::timeout(
+                    Duration::from_millis(500),
+                    new_head_notify.notified(),
+                )
+                .await;
             }
         }
     }

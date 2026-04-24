@@ -1851,6 +1851,20 @@ impl Blockchain {
         result
     }
 
+    /// Advance the canonical head pointer to a block we've already stored.
+    /// Used by the BSC direct-fetch path so `eth_blockNumber` reflects the
+    /// import without depending on a separate `forkchoice_update` cadence.
+    pub async fn advance_canonical_head(
+        &self,
+        number: BlockNumber,
+        hash: H256,
+    ) -> Result<(), ChainError> {
+        self.storage
+            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
+            .await
+            .map_err(Into::into)
+    }
+
     pub fn add_block_pipeline(
         &self,
         block: Block,
