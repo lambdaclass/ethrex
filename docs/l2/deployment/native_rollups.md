@@ -114,8 +114,8 @@ Deploy `NativeRollup.sol` to L1 and generate the L2 genesis:
 ./target/release/ethrex l2 deploy \
   --eth-rpc-url http://localhost:8545 \
   --private-key 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
-  --eip-8079 \
-  --eip-8079.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
   --genesis-l2-path fixtures/genesis/native_l2.json
 ```
 
@@ -132,10 +132,10 @@ Load the contract address and start the L2 node:
 source cmd/.env
 
 ./target/release/ethrex l2 \
-  --eip-8079 \
-  --eip-8079.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
-  --eip-8079.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
-  --eip-8079.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
+  --native-rollups \
+  --native-rollups.contract-address $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS \
+  --native-rollups.relayer-pk 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d \
+  --native-rollups.l1-pk 0x385c546456b6a603a1cfcaa9ec9494ba4832da08dd6bcf4de9a71e4a01b74924 \
   --network fixtures/genesis/native_l2.json \
   --http.port 1729 --http.addr 0.0.0.0 \
   --datadir /tmp/ethrex_l2 \

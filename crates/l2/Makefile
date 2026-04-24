@@ -100,8 +100,8 @@ deploy-l1: ## 📜 Deploys NativeRollup.sol to L1 (native rollups mode)
 	cargo run --release --features l2,l2-sql,experimental-devnet --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--eip-8079 \
-	--eip-8079.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollups \
+	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
 	--genesis-l2-path ${NATIVE_L2_GENESIS_FILE_PATH}
 else
 deploy-l1: ## 📜 Deploys the L1 contracts
@@ -155,11 +155,11 @@ init-l2: ## 🚀 Initializes a native rollup L2 client
 	ETHREX_NO_MONITOR=true \
 	cargo run --release --features l2,l2-sql,experimental-devnet --manifest-path ../../Cargo.toml -- \
 	l2 \
-	--eip-8079 \
-	--eip-8079.block-time 10000 \
-	--eip-8079.contract-address $${ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS} \
-	--eip-8079.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
-	--eip-8079.l1-pk ${L1_PRIVATE_KEY} \
+	--native-rollups \
+	--native-rollups.block-time 10000 \
+	--native-rollups.contract-address $${ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS} \
+	--native-rollups.relayer-pk ${NATIVE_RELAYER_PRIVATE_KEY} \
+	--native-rollups.l1-pk ${L1_PRIVATE_KEY} \
 	--network ${NATIVE_L2_GENESIS_FILE_PATH} \
 	--http.port ${L2_PORT} \
 	--http.addr ${L2_RPC_ADDRESS} \

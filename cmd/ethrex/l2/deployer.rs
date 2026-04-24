@@ -388,7 +388,7 @@ pub struct DeployerOptions {
     )]
     pub initial_fee_token: Option<Address>,
     #[arg(
-        long = "eip-8079",
+        long = "native-rollups",
         default_value = "false",
         value_name = "BOOLEAN",
         env = "ETHREX_NATIVE_ROLLUPS",
@@ -399,7 +399,7 @@ pub struct DeployerOptions {
     pub native_rollups: bool,
     #[cfg(feature = "experimental-devnet")]
     #[arg(
-        long = "eip-8079.relayer-pk",
+        long = "native-rollups.relayer-pk",
         value_name = "PRIVATE_KEY",
         value_parser = parse_private_key,
         env = "ETHREX_NATIVE_ROLLUPS_RELAYER_PK",
