@@ -523,6 +523,11 @@ pub enum Subcommand {
     InspectState {
         #[arg(long = "walk-back", default_value_t = 10000)]
         walk_back: u64,
+        /// Path to a file with one candidate state_root per line (hex, with or without 0x).
+        /// Each line may be `<state_root>` or `<block_number> <state_root>`. Blocks whose
+        /// state_root is present on disk are printed.
+        #[arg(long = "check-roots-file")]
+        check_roots_file: Option<PathBuf>,
     },
     #[command(
         name = "compute-state-root",
@@ -656,7 +661,10 @@ impl Subcommand {
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &effective_datadir, first, last).await
             }
-            Subcommand::InspectState { walk_back } => {
+            Subcommand::InspectState {
+                walk_back,
+                check_roots_file,
+            } => {
                 let store = load_store(&effective_datadir).await?;
                 let head = store.get_latest_block_number().await?;
                 let Some(head_header) = store.get_block_header(head)? else {
@@ -666,6 +674,39 @@ impl Subcommand {
                 let head_root = head_header.state_root;
                 let head_ok = store.has_state_root(head_root)?;
                 println!("Head: {head}  state_root: {head_root:#x}  has_state_root: {head_ok}");
+
+                if let Some(path) = check_roots_file {
+                    let contents = std::fs::read_to_string(&path)
+                        .map_err(|e| eyre::eyre!("read {path:?}: {e}"))?;
+                    let mut checked = 0usize;
+                    let mut found = 0usize;
+                    for (i, line) in contents.lines().enumerate() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        let mut parts = line.split_whitespace();
+                        let first = parts.next().unwrap_or("");
+                        let second = parts.next();
+                        let (label, root_hex) = match second {
+                            Some(r) => (first.to_string(), r),
+                            None => (format!("line:{}", i + 1), first),
+                        };
+                        let cleaned = root_hex.trim().trim_start_matches("0x");
+                        let Ok(root) = ethrex_common::H256::from_str(cleaned) else {
+                            println!("{label}: invalid state_root {root_hex}");
+                            continue;
+                        };
+                        checked += 1;
+                        if store.has_state_root(root)? {
+                            found += 1;
+                            println!("FOUND  {label}: {root:#x}");
+                        }
+                    }
+                    println!("Checked {checked} roots from file, {found} on disk.");
+                    return Ok(());
+                }
+
                 if head_ok {
                     return Ok(());
                 }
