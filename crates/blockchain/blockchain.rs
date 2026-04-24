@@ -1863,7 +1863,7 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
-            attach_stateless_validator_if_l1(&mut vm, &self.options.r#type);
+            attach_stateless_validator(&mut vm);
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -3072,11 +3072,11 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
-    attach_stateless_validator_if_l1(&mut evm, blockchain_type);
+    attach_stateless_validator(&mut evm);
     Ok(evm)
 }
 
-/// Attach the L1 stateless validator to an `Evm` so its `EXECUTE` precompile
+/// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
 /// can delegate to `verify_stateless_new_payload` when processing native-rollup
 /// `advance()` calls.
 ///
@@ -3087,11 +3087,11 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 /// guest-program crate, the stateless verifier itself, witness generation,
 /// the prover backend) also rely on the constructor staying validator-less.
 ///
-/// No-op for L2 EVMs and when `experimental-devnet` is disabled.
+/// No-op when `experimental-devnet` is disabled.
 #[allow(unused_variables)]
-fn attach_stateless_validator_if_l1(evm: &mut Evm, blockchain_type: &BlockchainType) {
+fn attach_stateless_validator(evm: &mut Evm) {
     #[cfg(feature = "experimental-devnet")]
-    if matches!(blockchain_type, BlockchainType::L1) {
+    {
         evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
             crypto: Arc::new(NativeCrypto),
         }));
