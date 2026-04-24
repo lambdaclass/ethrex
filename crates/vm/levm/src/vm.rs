@@ -455,7 +455,9 @@ pub struct VM<'a> {
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
     /// Optional stateless validator for the EXECUTE precompile.
-    /// Passed through `VM::new` from the `Evm` struct.
+    /// `None` on VMs that never dispatch EXECUTE (guest program, witness
+    /// generation, the stateless validator itself) — those paths can't supply
+    /// one without a dependency cycle or recursion.
     pub stateless_validator: Option<&'a dyn crate::StatelessValidator>,
 }
 
