@@ -676,16 +676,12 @@ impl Subcommand {
                 println!("Head: {head}  state_root: {head_root:#x}  has_state_root: {head_ok}");
 
                 // Report what (if anything) is actually at the state-trie root path.
-                // If nothing is there, the account trie root node has been erased.
+                // state_root = keccak256(raw_bytes_at_empty_nibbles).
                 let trie = store.open_state_trie(head_root)?;
                 match trie.db().get(ethrex_trie::Nibbles::default())? {
                     Some(bytes) => {
-                        use ethrex_rlp::decode::RLPDecode;
-                        let node = ethrex_trie::Node::decode(&bytes)?;
-                        let hash = node
-                            .compute_hash(&ethrex_crypto::NativeCrypto)
-                            .finalize(&ethrex_crypto::NativeCrypto);
-                        println!("Root node present: {} bytes, hash={:#x}", bytes.len(), hash);
+                        let hash = ethrex_common::utils::keccak(&bytes);
+                        println!("Root node present: {} bytes, hash={hash:#x}", bytes.len());
                     }
                     None => println!("Root node MISSING at account_trie_nodes[empty]"),
                 }
