@@ -36,12 +36,7 @@ jobs:
       - name: Select Slack webhook
         id: select_webhook
         run: |
-          WF_NAME="${{ github.event.workflow_run.name }}"
-          if echo "$WF_NAME" | grep -Eiq 'L2'; then
-            echo "webhook=${{ secrets.ETHREX_L2_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "webhook=${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
-          fi
+          echo "webhook=${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout sources
         uses: actions/checkout@v4
