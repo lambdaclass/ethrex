@@ -60,7 +60,6 @@ pub const MAX_WITNESSES: u64 = 128;
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
 
-#[allow(unused)]
 pub const DB_COMMIT_THRESHOLD: usize = 256;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
