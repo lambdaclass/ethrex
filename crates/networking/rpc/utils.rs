@@ -22,7 +22,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32602`: Invalid params
 /// - `-32603`: Internal error
 /// - `-32000`: Generic server error
-/// - `-38001` to `-38005`: Engine API specific errors
+/// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
@@ -54,6 +54,8 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     #[error("Invalid payload attributes: {0}")]
     InvalidPayloadAttributes(String),
+    #[error("Too deep reorg: {0}")]
+    TooDeepReorg(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
     // EIP-8025 proof errors (-39001 .. -39004)
@@ -160,6 +162,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -38003,
                 data: Some(data),
                 message: "Invalid payload attributes".to_string(),
+            },
+            RpcErr::TooDeepReorg(data) => RpcErrorMetadata {
+                code: -38006,
+                data: Some(data),
+                message: "Too deep reorg".to_string(),
             },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,
