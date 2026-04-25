@@ -329,6 +329,10 @@ async fn handle_forkchoice(
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
                 }
+                InvalidForkChoice::TooDeepReorg { .. } => {
+                    warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
+                    return Err(RpcErr::TooDeepReorg(forkchoice_error.to_string()));
+                }
                 InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
                         last_valid_hash,
