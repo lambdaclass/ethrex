@@ -3,6 +3,7 @@ use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{fmt, sync::Arc};
+use crate::store::DB_COMMIT_THRESHOLD;
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -69,8 +70,7 @@ impl Default for TrieLayerCache {
             bloom: Self::create_filter(BLOOM_SIZE),
             last_id: 0,
             layers: Default::default(),
-            // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
-            commit_threshold: 128,
+            commit_threshold: DB_COMMIT_THRESHOLD,
         }
     }
 }
