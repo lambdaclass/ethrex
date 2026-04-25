@@ -11,6 +11,14 @@ use crate::{
     is_canonical,
 };
 
+/// Maximum number of canonical blocks that may be replaced by a forkchoice update.
+///
+/// Per execution-apis PR 786 (engine: Restrict no-reorg to the prefix of known finalized),
+/// the EL MUST return `-38006: Too deep reorg` when an FCU would replace more canonical
+/// blocks than this limit. The value is implementation-specific; 32 matches one Ethereum
+/// finalization epoch and aligns with what nethermind ships in their glamsterdam branch.
+pub const REORG_DEPTH_LIMIT: u64 = 32;
+
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
 /// - The saved blocks should be in the correct order (finalized <= safe <= head).
@@ -57,9 +65,15 @@ pub async fn apply_fork_choice(
     };
 
     let latest = store.get_latest_block_number().await?;
+    let head_is_canonical = is_canonical(store, head.number, head_hash).await?;
 
-    // If the head block is an already present head ancestor, skip the update.
-    if is_canonical(store, head.number, head_hash).await? && head.number < latest {
+    // execution-apis PR 786: the no-reorg skip is only allowed when there is a known
+    // finalized block and the head references a VALID ancestor of it. Skipping for
+    // unfinalized canonical ancestors is no longer permitted - those must trigger a reorg.
+    if let Some(stored_finalized) = store.get_finalized_block_number().await?
+        && head.number <= stored_finalized
+        && head_is_canonical
+    {
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
 
@@ -96,6 +110,28 @@ pub async fn apply_fork_choice(
             error::ForkChoiceElement::Head,
             error::ForkChoiceElement::Safe,
         ));
+    }
+
+    // execution-apis PR 786: depth of reorg is the number of canonical blocks that would
+    // be replaced by the new head. The shared canonical ancestor is `head` itself when
+    // head is canonical (the FCU truncates the canonical chain), or one below the lowest
+    // sidechain block in `new_canonical_blocks` otherwise. When the branch is empty and
+    // head is non-canonical, head's parent is the canonical link.
+    let canonical_link_height = if head_is_canonical {
+        head.number
+    } else {
+        new_canonical_blocks
+            .last()
+            .map(|(n, _)| *n)
+            .unwrap_or(head.number)
+            .saturating_sub(1)
+    };
+    let reorg_depth = latest.saturating_sub(canonical_link_height);
+    if reorg_depth > REORG_DEPTH_LIMIT {
+        return Err(InvalidForkChoice::TooDeepReorg {
+            reorg_depth,
+            limit: REORG_DEPTH_LIMIT,
+        });
     }
 
     let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
