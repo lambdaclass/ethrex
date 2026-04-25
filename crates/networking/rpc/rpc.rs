@@ -384,6 +384,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::AuthenticationError(_) => "AuthenticationError",
         RpcErr::InvalidForkChoiceState(_) => "InvalidForkChoiceState",
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
+        RpcErr::TooDeepReorg(_) => "TooDeepReorg",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
         RpcErr::InvalidProofFormat(_) => "InvalidProofFormat",
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",

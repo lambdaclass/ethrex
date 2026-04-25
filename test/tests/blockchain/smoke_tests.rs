@@ -180,51 +180,53 @@ async fn test_reorg_from_long_to_short_chain() {
 }
 
 #[tokio::test]
-async fn new_head_with_canonical_ancestor_should_skip() {
-    // Store and genesis
+async fn new_head_ancestor_of_finalized_should_skip() {
+    // Per execution-apis PR 786, the no-reorg skip optimization only applies when the new
+    // head is a VALID canonical ancestor of the latest known finalized block. Build a chain
+    // of 3 blocks, finalize block 2, then FCU to block 1 (an ancestor of finalized) and
+    // assert that the update is skipped.
     let store = test_store().await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
-    let genesis_hash = genesis_header.hash();
-
-    // Create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
 
-    // Add block at height 1.
     let block_1 = new_block(&store, &genesis_header).await;
     let hash_1 = block_1.hash();
     blockchain
         .add_block(block_1.clone())
-        .expect("Could not add block 1b.");
+        .expect("Could not add block 1.");
 
-    // Add child at height 2.
     let block_2 = new_block(&store, &block_1.header).await;
     let hash_2 = block_2.hash();
     blockchain
         .add_block(block_2.clone())
         .expect("Could not add block 2.");
 
-    assert!(!is_canonical(&store, 1, hash_1).await.unwrap());
-    assert!(!is_canonical(&store, 2, hash_2).await.unwrap());
+    let block_3 = new_block(&store, &block_2.header).await;
+    let hash_3 = block_3.hash();
+    blockchain
+        .add_block(block_3.clone())
+        .expect("Could not add block 3.");
 
-    // Make that chain the canonical one.
-    apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+    // Make the chain canonical and finalize block 2.
+    apply_fork_choice(&store, hash_3, hash_2, hash_2)
         .await
         .unwrap();
 
     assert!(is_canonical(&store, 1, hash_1).await.unwrap());
     assert!(is_canonical(&store, 2, hash_2).await.unwrap());
+    assert!(is_canonical(&store, 3, hash_3).await.unwrap());
 
+    // FCU to block 1 (ancestor of finalized): MUST be skipped.
     let result = apply_fork_choice(&store, hash_1, hash_1, hash_1).await;
-
     assert!(matches!(
         result,
         Err(InvalidForkChoice::NewHeadAlreadyCanonical)
     ));
 
-    // Important blocks should still be the same as before.
-    assert!(store.get_finalized_block_number().await.unwrap() == Some(0));
-    assert!(store.get_safe_block_number().await.unwrap() == Some(0));
-    assert!(store.get_latest_block_number().await.unwrap() == 2);
+    // State must be unchanged after the skip.
+    assert_eq!(store.get_finalized_block_number().await.unwrap(), Some(2));
+    assert_eq!(store.get_safe_block_number().await.unwrap(), Some(2));
+    assert_eq!(store.get_latest_block_number().await.unwrap(), 3);
 }
 
 #[tokio::test]
