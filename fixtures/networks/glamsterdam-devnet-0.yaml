@@ -1,0 +1,45 @@
+participants_matrix:
+  el:
+    - el_type: ethrex
+      el_image: ethrex:local
+  cl:
+    - cl_type: prysm
+      cl_image: ethpandaops/prysm-beacon-chain:glamsterdam-devnet-0
+      validator_image: ethpandaops/prysm-validator:glamsterdam-devnet-0
+  count: 3
+
+network_params:
+  gloas_fork_epoch: 0
+  preset: minimal
+  withdrawal_type: "0x01"
+  validator_balance: 40000
+  num_validator_keys_per_node: 1000
+
+additional_services:
+  - dora
+  - assertoor
+  - spamoor
+  - checkpointz
+
+spamoor_params:
+  image: ethpandaops/spamoor:master
+
+assertoor_params:
+  image: ethpandaops/assertoor:master
+  run_stability_check: false
+  run_block_proposal_check: false
+  tests:
+    - { file: "https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/gloas-dev/builder-lifecycle.yaml" }
+
+snooper_enabled: false
+global_log_level: debug
+
+port_publisher:
+  additional_services:
+    enabled: true
+
+dora_params:
+  image: ethpandaops/dora:master
+
+checkpointz_params:
+  image: ethpandaops/checkpointz:gloas-latest
