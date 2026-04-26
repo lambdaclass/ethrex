@@ -2,6 +2,8 @@
 pub mod api;
 #[cfg(any(feature = "api", feature = "metrics"))]
 pub mod blocks;
+#[cfg(any(feature = "api", feature = "metrics"))]
+pub mod fullsync;
 #[cfg(feature = "api")]
 pub mod l2;
 #[cfg(feature = "api")]

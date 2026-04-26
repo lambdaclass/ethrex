@@ -1,8 +1,8 @@
 use axum::{Router, routing::get};
 
 use crate::{
-    MetricsApiError, blocks::METRICS_BLOCKS, gather_default_metrics, node::METRICS_NODE,
-    p2p::METRICS_P2P, process::METRICS_PROCESS, transactions::METRICS_TX,
+    MetricsApiError, blocks::METRICS_BLOCKS, fullsync::METRICS_FULLSYNC, gather_default_metrics,
+    node::METRICS_NODE, p2p::METRICS_P2P, process::METRICS_PROCESS, transactions::METRICS_TX,
 };
 
 pub async fn start_prometheus_metrics_api(
@@ -56,6 +56,12 @@ pub(crate) async fn get_metrics() -> String {
 
     // METRICS_SYNC registers into the default Prometheus registry at init,
     // so its metrics are already included in gather_default_metrics() above.
+
+    ret_string.push('\n');
+    match METRICS_FULLSYNC.gather_metrics() {
+        Ok(s) => ret_string.push_str(&s),
+        Err(_) => tracing::error!("Failed to gather METRICS_FULLSYNC"),
+    };
 
     ret_string.push('\n');
     if let Some(node_metrics) = METRICS_NODE.get() {
