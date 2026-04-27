@@ -30,9 +30,6 @@ pub struct StateDiff {
     pub cancellations_account: FxHashSet<Address>,
 }
 
-/// Auth-only delta: 135 (full new-account+auth) - 112 (account-only) = 23 bytes (auth-specific component).
-const STATE_BYTES_PER_AUTH_ONLY: u64 = 23;
-
 impl StateDiff {
     /// Compute the total state bytes this diff represents.
     #[expect(
@@ -41,7 +38,8 @@ impl StateDiff {
     )]
     pub fn bytes(&self) -> u64 {
         use crate::gas_cost::{
-            STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
+            STATE_BYTES_PER_AUTH_ONLY, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
+            STATE_BYTES_PER_STORAGE_SET,
         };
 
         (self.new_accounts.len() as u64)
@@ -177,6 +175,11 @@ impl StateDiff {
         self.new_storage_slots.extend(child.new_storage_slots);
         self.auth_total.extend(child.auth_total);
         self.auth_only.extend(child.auth_only);
+        // Enforce mutual exclusion: auth_only takes precedence (downgrade is monotonic).
+        // Without this, an authority appearing in both sets would be double-counted in bytes().
+        for addr in self.auth_only.iter() {
+            self.auth_total.remove(addr);
+        }
 
         // 3. Sum-merge code_deposits
         for (addr, len) in child.code_deposits {
@@ -320,6 +323,33 @@ mod tests {
         assert!(ancestors[0].new_accounts.is_empty());
         assert!(ancestors[0].new_storage_slots.is_empty());
         assert!(ancestors[0].code_deposits.is_empty());
+    }
+
+    #[test]
+    fn bytes_code_deposit() {
+        let mut d = StateDiff::default();
+        d.record_code_deposit(addr(1), 100);
+        assert_eq!(d.bytes(), 100);
+        // Idempotent sum-merge: a second deposit on the same address adds.
+        d.record_code_deposit(addr(1), 50);
+        assert_eq!(d.bytes(), 150);
+    }
+
+    #[test]
+    fn merge_auth_only_takes_precedence_over_auth_total() {
+        // Parent has authority in auth_only (downgraded). Child re-records in auth_total.
+        // After merge, auth_only must win (monotonic downgrade) — no double-count.
+        let mut parent = StateDiff::default();
+        parent.record_auth_total(addr(1));
+        parent.record_auth_downgrade_to_only(addr(1));
+        assert_eq!(parent.bytes(), 23);
+        let mut child = StateDiff::default();
+        child.record_auth_total(addr(1));
+        parent.merge_from_child(child, &mut []);
+        // Must remain 23, not 23 + 135 = 158.
+        assert_eq!(parent.bytes(), 23);
+        assert!(!parent.auth_total.contains(&addr(1)));
+        assert!(parent.auth_only.contains(&addr(1)));
     }
 
     #[test]

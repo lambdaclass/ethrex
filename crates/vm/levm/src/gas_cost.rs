@@ -165,6 +165,7 @@ pub const CREATE_BASE_COST: u64 = 32000;
 pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
 pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
+pub const STATE_BYTES_PER_AUTH_ONLY: u64 = 23; // auth-specific delta when authority pre-existed (downgrade)
 
 // EIP-8037: Dynamic cost_per_state_byte formula constants (execution-specs#2687)
 pub const BLOCKS_PER_YEAR: u64 = 2_628_000;
