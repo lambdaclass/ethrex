@@ -151,36 +151,37 @@ impl RpcExecutionWitness {
             ));
         }
 
-        let mut initial_state_root = None;
+        // Skip headers that fail to decode (tolerance) and pick the parent by number.
+        let initial_state_root = self
+            .headers
+            .iter()
+            .filter_map(|h| BlockHeader::decode(h).ok())
+            .find(|header| header.number == first_block_number - 1)
+            .map(|header| header.state_root)
+            .ok_or_else(|| {
+                GuestProgramStateError::Custom(format!(
+                    "header for block {} not found",
+                    first_block_number - 1
+                ))
+            })?;
 
-        for h in &self.headers {
-            let header = BlockHeader::decode(h)?;
-            if header.number == first_block_number - 1 {
-                initial_state_root = Some(header.state_root);
-                break;
-            }
-        }
-
-        let initial_state_root = initial_state_root.ok_or_else(|| {
-            GuestProgramStateError::Custom(format!(
-                "header for block {} not found",
-                first_block_number - 1
-            ))
-        })?;
-
+        // Tolerate witness entries that fail to decode (malformed RLP, or the `Null`
+        // node `[0x80]` other clients emit): drop them silently. They cannot be looked
+        // up by hash, so tolerating them is safe. If execution actually requires one,
+        // the trie walk will fail with a missing-node error (completeness check).
+        //
+        // Matches EELS `witness_state.build_node_db` and geth `MakeHashDB`, both of
+        // which store entries keyed by hash without pre-validation:
+        //   https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L37-L42
+        //   https://github.com/ethereum/go-ethereum/blob/master/core/stateless/database.go#L26-L67
         let nodes: BTreeMap<H256, Node> = self
             .state
             .into_iter()
             .filter_map(|b| {
-                if b == Bytes::from_static(&[0x80]) {
-                    // other implementations of debug_executionWitness allow for a `Null` node,
-                    // which would fail to decode in ours
-                    return None;
-                }
-                let hash = keccak(&b);
-                Some(Node::decode(&b).map(|node| (hash, node)))
+                let node = Node::decode(&b).ok()?;
+                Some((keccak(&b), node))
             })
-            .collect::<Result<_, RLPDecodeError>>()?;
+            .collect();
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
@@ -325,17 +326,31 @@ impl GuestProgramState {
         value: ExecutionWitness,
         crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
-        let block_headers: BTreeMap<u64, BlockHeader> = value
-            .block_headers_bytes
-            .into_iter()
-            .map(|bytes| BlockHeader::decode(bytes.as_ref()))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| {
-                GuestProgramStateError::Custom(format!("Failed to decode block headers: {}", e))
-            })?
-            .into_iter()
-            .map(|header| (header.number, header))
-            .collect();
+        // Decode headers and verify they form a contiguous chain in list order:
+        // every header's `parent_hash` must equal `keccak256(previous header bytes)`.
+        // Mirrors EELS `stateless.validate_headers`:
+        //   https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
+        // A non-contiguous chain (e.g. reordered headers) makes the witness invalid
+        // even if a by-number lookup would otherwise resolve to the right header.
+        let mut block_headers: BTreeMap<u64, BlockHeader> = BTreeMap::new();
+        let mut prev_hash: Option<H256> = None;
+        for bytes in &value.block_headers_bytes {
+            let Ok(header) = BlockHeader::decode(bytes.as_ref()) else {
+                // Tolerate malformed entries by treating them as a chain break:
+                // subsequent headers will not satisfy the parent_hash check.
+                prev_hash = None;
+                continue;
+            };
+            if let Some(expected_parent) = prev_hash {
+                if header.parent_hash != expected_parent {
+                    return Err(GuestProgramStateError::Custom(
+                        "witness headers are not contiguous".to_string(),
+                    ));
+                }
+            }
+            prev_hash = Some(H256(crypto.keccak256(bytes)));
+            block_headers.insert(header.number, header);
+        }
 
         let parent_number =
             value
@@ -588,29 +603,28 @@ impl GuestProgramState {
         Ok(self.chain_config)
     }
 
-    /// Retrieves the account code for a specific account.
-    /// Returns an Err if the code is not found.
+    /// Retrieves the account code for a specific code hash.
+    ///
+    /// Errors if the code is not present in the witness. Per the EELS reference
+    /// implementation, a stateless executor that touches code missing from its
+    /// witness MUST treat the witness as incomplete and reject:
+    ///   https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L204-L212
+    /// Geth implements the same hash-keyed-store + error-on-miss model:
+    ///   https://github.com/ethereum/go-ethereum/blob/master/core/stateless/database.go#L26-L46
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => {
-                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
-                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
-                // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                    hex::encode(code_hash)
-                );
-                Ok(Code::default())
-            }
-        }
+        self.codes_hashed.get(&code_hash).cloned().ok_or_else(|| {
+            GuestProgramStateError::Database(format!(
+                "missing bytecode for hash {} in witness",
+                hex::encode(code_hash)
+            ))
+        })
     }
 
-    /// Retrieves code metadata (length) for a specific code hash.
-    /// This is an optimized path for EXTCODESIZE opcode.
+    /// Retrieves code metadata (length) for a specific code hash. Errors on miss for
+    /// the same completeness reason as `get_account_code`.
     pub fn get_code_metadata(
         &self,
         code_hash: H256,
@@ -620,19 +634,17 @@ impl GuestProgramState {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(CodeMetadata {
+        self.codes_hashed
+            .get(&code_hash)
+            .map(|code| CodeMetadata {
                 length: code.bytecode.len() as u64,
-            }),
-            None => {
-                // Same as get_account_code - default to empty for missing bytecode
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
+            })
+            .ok_or_else(|| {
+                GuestProgramStateError::Database(format!(
+                    "missing bytecode for hash {} in witness",
                     hex::encode(code_hash)
-                );
-                Ok(CodeMetadata { length: 0 })
-            }
-        }
+                ))
+            })
     }
 
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
