@@ -3853,6 +3853,7 @@ dependencies = [
  "secp256k1",
  "serde_json",
  "tempfile",
+ "tikv-jemallocator",
  "tokio",
 ]
 
