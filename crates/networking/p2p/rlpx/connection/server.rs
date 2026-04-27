@@ -60,7 +60,7 @@ use spawned_rt::tasks::BroadcastStream;
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex as StdMutex, OnceLock, RwLock},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -114,6 +114,38 @@ pub struct L2Message {
 #[cfg(feature = "l2")]
 impl spawned_concurrency::message::Message for L2Message {
     type Result = ();
+}
+
+/// Diagnostic: per-block-hash, the time and message-source at which we first
+/// heard about that block. Inserted on NewBlockHashes / NewBlockAnnouncement,
+/// removed on import. Lets the import logs report `first_heard_ms` so we can
+/// compare the two ingest paths and see which one the import actually rode in
+/// on.
+type FirstHeardMap = HashMap<H256, (Instant, &'static str)>;
+static BSC_FIRST_HEARD: OnceLock<StdMutex<FirstHeardMap>> = OnceLock::new();
+
+fn bsc_first_heard_map() -> &'static StdMutex<FirstHeardMap> {
+    BSC_FIRST_HEARD.get_or_init(|| StdMutex::new(FirstHeardMap::new()))
+}
+
+fn bsc_record_first_heard(hash: H256, source: &'static str) {
+    let mut map = bsc_first_heard_map()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    // Crude bound: if the table grows past 4096 entries (i.e., 4096
+    // announcements never followed by an import), wipe it. Avoids leaking
+    // memory across long uptime without a separate sweeper.
+    if map.len() > 4096 {
+        map.clear();
+    }
+    map.entry(hash).or_insert_with(|| (Instant::now(), source));
+}
+
+fn bsc_take_first_heard(hash: H256) -> Option<(Instant, &'static str)> {
+    bsc_first_heard_map()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&hash)
 }
 
 #[derive(Clone, Debug)]
@@ -396,8 +428,7 @@ impl PeerConnectionServer {
                 "Received incoming message",
             );
             let self_handle = ctx.actor_ref();
-            let result =
-                handle_incoming_message(established_state, msg.message, self_handle).await;
+            let result = handle_incoming_message(established_state, msg.message, self_handle).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
             debug!("Connection not yet established");
@@ -1392,8 +1423,16 @@ async fn handle_incoming_message(
             // directly fetch each announced block from this peer in parallel.
             // The direct fetch cuts the batch-wait incurred by forward_sync
             // (~0.5-2s) and gets blocks executed near-immediately.
+            let handler_entry = std::time::Instant::now();
             let chain_id = state.storage.get_chain_config().chain_id;
             if chain_id == 56 || chain_id == 97 {
+                // Record first-heard time for every announced hash, so the
+                // import logs can later report first-heard-to-imported.
+                for (hash, _) in &announce.hashes_and_numbers {
+                    if !hash.is_zero() {
+                        bsc_record_first_heard(*hash, "hashes");
+                    }
+                }
                 if let Some((hash, _)) = announce.hashes_and_numbers.iter().max_by_key(|(_, n)| *n)
                     && !hash.is_zero()
                 {
@@ -1448,6 +1487,7 @@ async fn handle_incoming_message(
                             peer_table,
                             hash,
                             blockchain.clone(),
+                            handler_entry,
                         )
                         .await;
                         if let Err(e) = outcome {
@@ -1463,6 +1503,7 @@ async fn handle_incoming_message(
             }
         }
         Message::NewBlockAnnouncement(announce) => {
+            let nb_handler_entry = std::time::Instant::now();
             // BSC peers broadcast full blocks inline. Importing directly
             // removes the header+body round-trips a sync cycle would need,
             // getting us to tip with near-zero lag.
@@ -1483,6 +1524,8 @@ async fn handle_incoming_message(
             if chain_id == 56 || chain_id == 97 {
                 let block = announce.block;
                 let block_hash = block.hash();
+                let block_number = block.header.number;
+                bsc_record_first_heard(block_hash, "newblock");
                 // Skip if we already have this block stored (likely: multiple
                 // peers announced the same block). `add_block_pipeline` has
                 // no early duplicate check and would re-execute.
@@ -1500,9 +1543,11 @@ async fn handle_incoming_message(
                     // arrivals are handled transparently. `add_block_pipeline`
                     // internally serializes BSC callers on `bsc_import_lock`.
                     let blockchain = state.blockchain.clone();
-                    let block_number = block.header.number;
                     tokio::task::spawn_blocking(move || {
-                        if blockchain.add_block_pipeline(block, None).is_ok() {
+                        let pipeline_start = std::time::Instant::now();
+                        let pipeline_ok = blockchain.add_block_pipeline(block, None).is_ok();
+                        let pipeline_done = std::time::Instant::now();
+                        if pipeline_ok {
                             // Match the direct-fetch path: advance the
                             // canonical head so RPC reflects the new tip
                             // and forward_sync skips this block on its
@@ -1512,13 +1557,33 @@ async fn handle_incoming_message(
                                     .advance_canonical_head(block_number, block_hash)
                                     .await;
                             });
+                            let head_done = std::time::Instant::now();
+                            let (first_heard_ms, first_source) = bsc_take_first_heard(block_hash)
+                                .map(|(t, s)| (head_done.duration_since(t).as_millis() as u64, s))
+                                .unwrap_or((0, "unknown"));
+                            info!(
+                                block = block_number,
+                                dispatch_ms =
+                                    pipeline_start.duration_since(nb_handler_entry).as_millis()
+                                        as u64,
+                                pipeline_ms =
+                                    pipeline_done.duration_since(pipeline_start).as_millis() as u64,
+                                forkchoice_ms =
+                                    head_done.duration_since(pipeline_done).as_millis() as u64,
+                                first_heard_ms,
+                                first_source,
+                                "BSC newblock import"
+                            );
                         }
                     });
                 }
-                // Wake the sync bridge so any newly-pending blocks get
-                // drained promptly. BSC forward sync fetches by number,
-                // so peer-claimed hash can't poison the import path.
-                state.blockchain.set_bsc_sync_head(block_hash);
+                // Wake the sync bridge only when this block claims to advance
+                // beyond our current tip — re-broadcasts of old blocks must
+                // not pollute `bsc_sync_head` with a stale target.
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                if block_number > latest {
+                    state.blockchain.set_bsc_sync_head(block_hash);
+                }
                 // Else: ignore. Other triggers (NewBlockHashes,
                 // BlockRangeUpdate) will drive the sync bridge if we're
                 // actually behind.
@@ -1860,6 +1925,7 @@ async fn fetch_and_import_bsc_block(
     peer_table: PeerTable,
     hash: H256,
     blockchain: Arc<Blockchain>,
+    handler_entry: std::time::Instant,
 ) -> Result<(), String> {
     use ethrex_common::types::Block;
     const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
@@ -1988,12 +2054,19 @@ async fn fetch_and_import_bsc_block(
         .await
         .map_err(|e| format!("forkchoice: {e}"))?;
     let head_done = std::time::Instant::now();
+    let select_ms = fetch_start.duration_since(handler_entry).as_millis() as u64;
+    let (first_heard_ms, first_source) = bsc_take_first_heard(hash)
+        .map(|(t, s)| (head_done.duration_since(t).as_millis() as u64, s))
+        .unwrap_or((0, "unknown"));
     info!(
         block = number,
         winner = winner_i,
+        select_ms,
         fetch_ms,
         pipeline_ms = pipeline_done.duration_since(pipeline_start).as_millis() as u64,
         forkchoice_ms = head_done.duration_since(pipeline_done).as_millis() as u64,
+        first_heard_ms,
+        first_source,
         "BSC direct-fetch import"
     );
     Ok(())
