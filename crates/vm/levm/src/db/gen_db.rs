@@ -433,7 +433,8 @@ impl GeneralizedDatabase {
             // Ensure account exists in initial_accounts_state for storage access
             // If it was created in a previous block of this batch, add it now
             if !self.initial_accounts_state.contains_key(address) {
-                self.initial_accounts_state.insert(*address, account.clone());
+                self.initial_accounts_state
+                    .insert(*address, account.clone());
             }
         }
     }
