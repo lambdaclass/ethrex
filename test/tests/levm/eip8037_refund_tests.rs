@@ -97,8 +97,10 @@ const CONTRACT_B: u64 = 0x3000;
 const CONTRACT_C: u64 = 0x4000;
 // Large enough to cover SSTORE state gas plus regular gas
 const GAS_LIMIT: u64 = 500_000;
-// block_gas_limit = GAS_LIMIT * 2 = 1_000_000; cost_per_state_byte(1_000_000) = 1
-// so state_gas_storage_set = STATE_BYTES_PER_STORAGE_SET(32) * 1 = 32
+// block_gas_limit = GAS_LIMIT * 2 = 1_000_000.
+// NOTE (bal-devnet-4 CPSB pin): cost_per_state_byte is currently fixed at 1174.
+// With the dynamic formula, cost_per_state_byte(1_000_000) = 1 → state_gas_storage_set = 32.
+// Tests below compute amounts via the live function so they hold under both regimes.
 
 // ==================== Bytecode helpers ====================
 
