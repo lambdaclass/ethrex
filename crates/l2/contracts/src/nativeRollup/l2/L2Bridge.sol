@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.27;
 
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
 /// @title L2Bridge — Unified L1 message processing and withdrawal bridge for Native Rollups PoC.
 ///
 /// Deployed at 0x000000000000000000000000000000000000fffd (L2 predeploy).
@@ -83,7 +85,7 @@ contract L2Bridge {
         // Query it with block.timestamp (set during this block's processing).
         bytes32 root = _getBeaconRoot(block.timestamp);
         require(root != bytes32(0), "L2Bridge: no L1 anchor");
-        require(_verifyMerkleProof(merkleProof, root, messageHash), "L2Bridge: invalid proof");
+        require(MerkleProof.verify(merkleProof, root, messageHash), "L2Bridge: invalid proof");
 
         // Execute the L2 subcall. Don't revert on failure — nonce stays in sync, assets stay in bridge.
         to.call{value: value, gas: gasLimit}(data);
@@ -114,28 +116,5 @@ contract L2Bridge {
         (bool success, bytes memory data) = BEACON_ROOTS_ADDRESS.staticcall(abi.encode(timestamp));
         if (!success || data.length < 32) return bytes32(0);
         return abi.decode(data, (bytes32));
-    }
-
-    /// @dev Verify a Merkle proof using commutative Keccak256 hashing.
-    /// Compatible with OpenZeppelin's MerkleProof.verify().
-    function _verifyMerkleProof(
-        bytes32[] calldata proof,
-        bytes32 root,
-        bytes32 leaf
-    ) internal pure returns (bool) {
-        bytes32 computedHash = leaf;
-        for (uint256 i = 0; i < proof.length; i++) {
-            computedHash = _hashPair(computedHash, proof[i]);
-        }
-        return computedHash == root;
-    }
-
-    /// @dev Commutative hash pair: H(a, b) == H(b, a).
-    function _hashPair(bytes32 a, bytes32 b) private pure returns (bytes32) {
-        if (a < b) {
-            return keccak256(abi.encodePacked(a, b));
-        } else {
-            return keccak256(abi.encodePacked(b, a));
-        }
     }
 }
