@@ -178,7 +178,7 @@ rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "stateRoot()" --rpc-url http://l
 rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "blockHash()" --rpc-url http://localhost:8545
 
 # Block gas limit
-rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "gasLimit()" --rpc-url http://localhost:8545
+rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "l2GasLimit()" --rpc-url http://localhost:8545
 
 # Chain ID
 rex call $ETHREX_NATIVE_ROLLUP_CONTRACT_ADDRESS "chainId()" --rpc-url http://localhost:8545
