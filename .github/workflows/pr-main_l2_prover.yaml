@@ -44,6 +44,10 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     runs-on: ubuntu-latest
     strategy:
+      # Each backend's lint stands on its own — a flaky SP1 toolchain install
+      # (sp1up's `succinct-1.<rust-ver>` release tag is intermittently 404 from
+      # upstream) shouldn't cancel risc0 and zisk, which are independent.
+      fail-fast: false
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
         backend: ["sp1", "risc0", "zisk"]
