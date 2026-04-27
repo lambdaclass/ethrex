@@ -27,8 +27,12 @@ use crate::utils::node_id;
 ///
 /// This supports two independent axes of configuration:
 /// - NAT traversal: bind to `0.0.0.0` but announce a public IP (`--nat.extip`).
-/// - Split transports: run UDP discovery on a different address than TCP RLPx
-///   (`--discovery.addr`), enabling e.g. IPv4 discv4 with IPv6 RLPx.
+/// - Split transports: run UDP discovery on a different interface/address than
+///   TCP RLPx (`--discovery.addr`).
+///
+/// NOTE: all addresses must currently share the same IP family (all IPv4 or
+/// all IPv6). Mixed-family (e.g. IPv4 discovery + IPv6 RLPx) is not yet
+/// supported and will be enabled in a follow-up PR.
 #[derive(Debug, Clone)]
 pub struct NetworkConfig {
     /// Address to bind the UDP discovery socket to.
@@ -256,15 +260,21 @@ impl Node {
             (Some(ipv4), Some(_ipv6)) => IpAddr::from(ipv4),
         };
 
-        // both udp and tcp can be defined in the pairs or only one
-        // in the latter case, we have to default both ports to the one provided
+        // Both udp and tcp can be defined in the pairs or only one;
+        // in the latter case, we default both ports to the one provided.
+        // For IPv6 nodes, ports may be stored under the `udp6`/`tcp6` keys
+        // instead of the IPv4 `udp`/`tcp` keys, so we fall back accordingly.
         let udp_port = pairs
             .udp_port
+            .or(pairs.udp6_port)
             .or(pairs.tcp_port)
+            .or(pairs.tcp6_port)
             .ok_or(NodeError::MissingField("No port found in record".into()))?;
         let tcp_port = pairs
             .tcp_port
+            .or(pairs.tcp6_port)
             .or(pairs.udp_port)
+            .or(pairs.udp6_port)
             .ok_or(NodeError::MissingField("No port found in record".into()))?;
 
         Ok(Self::new(ip, udp_port, tcp_port, public_key))
