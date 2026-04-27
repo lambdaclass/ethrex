@@ -64,6 +64,15 @@ pub struct RequestStorageTrieNodesError {
     pub source: SnapError,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum StorageFailureMode {
+    Success,
+    Timeout,
+    Empty,
+    ValidationFail,
+    NoData,
+}
+
 #[derive(Clone)]
 struct StorageTaskResult {
     start_index: usize,
@@ -72,6 +81,9 @@ struct StorageTaskResult {
     remaining_start: usize,
     remaining_end: usize,
     remaining_hash_range: (H256, Option<H256>),
+    failure_mode: StorageFailureMode,
+    /// First account hash in the request, for per-account failure mode tracking.
+    first_account: Option<H256>,
 }
 
 #[derive(Debug)]
@@ -687,6 +699,37 @@ pub async fn request_storage_ranges(
 
     let mut logged_no_free_peers_count = 0;
 
+    // Diagnostic: per-account failure mode counts. Per-call so we can see
+    // why specific accounts aren't progressing this iteration.
+    let mut failure_mode_counts: HashMap<H256, [u32; 5]> = HashMap::new();
+    let mut last_sample_dump = std::time::Instant::now();
+
+    // Diagnostic: at function entry, log task partition (bulk vs per-interval).
+    let bulk_task_count = tasks_queue_not_started
+        .iter()
+        .filter(|t| t.end_hash.is_none())
+        .count();
+    let interval_task_count = tasks_queue_not_started
+        .iter()
+        .filter(|t| t.end_hash.is_some())
+        .count();
+    let interval_account_count = accounts_by_root_hash
+        .iter()
+        .filter(|(_, accs)| {
+            accs.first()
+                .and_then(|a| account_storage_roots.accounts_with_storage_root.get(a))
+                .map(|(_, intervals)| !intervals.is_empty())
+                .unwrap_or(false)
+        })
+        .count();
+    info!(
+        "request_storage_ranges entry: groups={}, bulk_tasks={}, interval_tasks={}, in_progress_accounts={}",
+        accounts_by_root_hash.len(),
+        bulk_task_count,
+        interval_task_count,
+        interval_account_count,
+    );
+
     debug!("Starting request_storage_ranges loop");
     loop {
         if current_account_storages
@@ -738,10 +781,58 @@ pub async fn request_storage_ranges(
                 remaining_start,
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
+                failure_mode,
+                first_account,
             } = result;
             // Release the reservation we made before spawning the task.
             peers.peer_table.dec_requests(peer_id)?;
             completed_tasks += 1;
+
+            if let Some(acc) = first_account {
+                let entry = failure_mode_counts.entry(acc).or_insert([0u32; 5]);
+                let idx = match failure_mode {
+                    StorageFailureMode::Success => 0,
+                    StorageFailureMode::Timeout => 1,
+                    StorageFailureMode::Empty => 2,
+                    StorageFailureMode::ValidationFail => 3,
+                    StorageFailureMode::NoData => 4,
+                };
+                entry[idx] = entry[idx].saturating_add(1);
+            }
+
+            // Sample-dump every 60s: pick 5 accounts with most failures and
+            // log their state to spot stuck accounts.
+            if last_sample_dump.elapsed() >= std::time::Duration::from_secs(60) {
+                last_sample_dump = std::time::Instant::now();
+                let mut samples: Vec<(H256, [u32; 5])> =
+                    failure_mode_counts.iter().map(|(k, v)| (*k, *v)).collect();
+                samples.sort_unstable_by_key(|(_, c)| std::cmp::Reverse(c[1] + c[2] + c[3] + c[4]));
+                for (acc, counts) in samples.into_iter().take(5) {
+                    let intervals_len = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(&acc)
+                        .map(|(_, i)| i.len())
+                        .unwrap_or(0);
+                    let cached_root_some = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(&acc)
+                        .map(|(r, _)| r.is_some())
+                        .unwrap_or(false);
+                    let healed = account_storage_roots.healed_accounts.contains(&acc);
+                    info!(
+                        "stuck_sample acc={:#x} success={} timeout={} empty={} valid_fail={} nodata={} intervals={} cached_root_some={} healed={}",
+                        acc,
+                        counts[0],
+                        counts[1],
+                        counts[2],
+                        counts[3],
+                        counts[4],
+                        intervals_len,
+                        cached_root_some,
+                        healed,
+                    );
+                }
+            }
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                 for account in accounts {
@@ -1361,6 +1452,9 @@ async fn request_storage_ranges_worker(
     let end = task.end_index;
     let start_hash = task.start_hash;
 
+    let request_id = rand::random();
+    let account_hash_count = chunk_account_hashes.len();
+    let first_account = chunk_account_hashes.first().copied();
     let empty_task_result = StorageTaskResult {
         start_index: task.start_index,
         account_storages: Vec::new(),
@@ -1368,10 +1462,9 @@ async fn request_storage_ranges_worker(
         remaining_start: task.start_index,
         remaining_end: task.end_index,
         remaining_hash_range: (start_hash, task.end_hash),
+        failure_mode: StorageFailureMode::NoData,
+        first_account,
     };
-    let request_id = rand::random();
-    let account_hash_count = chunk_account_hashes.len();
-    let first_account = chunk_account_hashes.first().copied();
     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
         id: request_id,
         root_hash: state_root,
@@ -1399,14 +1492,18 @@ async fn request_storage_ranges_worker(
             "Failed to get storage range from peer {peer_id}: err={:?}",
             response.as_ref().err()
         );
-        tx.send(empty_task_result).await.ok();
+        let mut r = empty_task_result;
+        r.failure_mode = StorageFailureMode::Timeout;
+        tx.send(r).await.ok();
         return Ok(());
     };
     if slots.is_empty() && proof.is_empty() {
         #[cfg(feature = "metrics")]
         ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
         tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
-        tx.send(empty_task_result).await.ok();
+        let mut r = empty_task_result;
+        r.failure_mode = StorageFailureMode::Empty;
+        tx.send(r).await.ok();
         tracing::debug!(
             "Received empty storage range from peer {peer_id} (accounts={account_hash_count}, first={:?}, state_root={:?})",
             first_account,
@@ -1416,7 +1513,9 @@ async fn request_storage_ranges_worker(
     }
     // Check we got some data and no more than the requested amount
     if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-        tx.send(empty_task_result).await.ok();
+        let mut r = empty_task_result;
+        r.failure_mode = StorageFailureMode::NoData;
+        tx.send(r).await.ok();
         return Ok(());
     }
     // Unzip & validate response
@@ -1431,7 +1530,9 @@ async fn request_storage_ranges_worker(
         if next_account_slots.is_empty() {
             // This shouldn't happen
             error!("Received empty storage range, skipping");
-            tx.send(empty_task_result.clone()).await.ok();
+            let mut r = empty_task_result.clone();
+            r.failure_mode = StorageFailureMode::Empty;
+            tx.send(r).await.ok();
             return Ok(());
         }
         let encoded_values = next_account_slots
@@ -1443,7 +1544,9 @@ async fn request_storage_ranges_worker(
         let storage_root = match storage_roots.next() {
             Some(root) => root,
             None => {
-                tx.send(empty_task_result.clone()).await.ok();
+                let mut r = empty_task_result.clone();
+                r.failure_mode = StorageFailureMode::NoData;
+                tx.send(r).await.ok();
                 error!("No storage root for account {i}");
                 return Err(SnapError::NoStorageRoots);
             }
@@ -1458,7 +1561,9 @@ async fn request_storage_ranges_worker(
                 &encoded_values,
                 &proof,
             ) else {
-                tx.send(empty_task_result).await.ok();
+                let mut r = empty_task_result;
+                r.failure_mode = StorageFailureMode::ValidationFail;
+                tx.send(r).await.ok();
                 return Ok(());
             };
             should_continue = sc;
@@ -1471,7 +1576,9 @@ async fn request_storage_ranges_worker(
         )
         .is_err()
         {
-            tx.send(empty_task_result.clone()).await.ok();
+            let mut r = empty_task_result.clone();
+            r.failure_mode = StorageFailureMode::ValidationFail;
+            tx.send(r).await.ok();
             return Ok(());
         }
 
@@ -1486,7 +1593,9 @@ async fn request_storage_ranges_worker(
         let last_account_storage = match account_storages.last() {
             Some(storage) => storage,
             None => {
-                tx.send(empty_task_result.clone()).await.ok();
+                let mut r = empty_task_result.clone();
+                r.failure_mode = StorageFailureMode::NoData;
+                tx.send(r).await.ok();
                 error!("No account storage found, this shouldn't happen");
                 return Err(SnapError::NoAccountStorages);
             }
@@ -1494,7 +1603,9 @@ async fn request_storage_ranges_worker(
         let (last_hash, _) = match last_account_storage.last() {
             Some(last_hash) => last_hash,
             None => {
-                tx.send(empty_task_result.clone()).await.ok();
+                let mut r = empty_task_result.clone();
+                r.failure_mode = StorageFailureMode::NoData;
+                tx.send(r).await.ok();
                 error!("No last hash found, this shouldn't happen");
                 return Err(SnapError::NoAccountStorages);
             }
@@ -1513,6 +1624,8 @@ async fn request_storage_ranges_worker(
         remaining_start,
         remaining_end,
         remaining_hash_range: (remaining_start_hash, task.end_hash),
+        failure_mode: StorageFailureMode::Success,
+        first_account,
     };
     #[cfg(feature = "metrics")]
     ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
