@@ -363,33 +363,36 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    // Determine bind and external addresses.
+    // Determine RLPx bind and external addresses.
     //
     // --nat.extip sets the address announced to peers (for nodes behind NAT).
-    // --p2p.addr sets the bind address (defaults to the auto-detected local IP
-    //   when --nat.extip is not given, or to the unspecified address when it is:
-    //   0.0.0.0 for IPv4, :: for IPv6).
-    let (bind_addr, external_addr): (IpAddr, IpAddr) = match (&opts.p2p_addr, &opts.nat_extip) {
+    // --p2p.addr sets the RLPx TCP bind address (defaults to the auto-detected
+    //   local IP when --nat.extip is not given, or to the unspecified address
+    //   when it is: 0.0.0.0 for IPv4, :: for IPv6).
+    let (rlpx_bind_addr, rlpx_external_addr): (IpAddr, IpAddr) = match (
+        &opts.p2p_addr,
+        &opts.nat_extip,
+    ) {
         (_, Some(extip)) => {
             let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
             let bind: IpAddr = opts
-                .p2p_addr
-                .as_deref()
-                .map(|a| {
-                    let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
-                    assert!(
-                        addr.is_ipv4() == external.is_ipv4(),
-                        "--p2p.addr and --nat.extip must use the same address family (both IPv4 or both IPv6)"
-                    );
-                    addr
-                })
-                .unwrap_or_else(|| {
-                    if external.is_ipv6() {
-                        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
-                    } else {
-                        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-                    }
-                });
+                    .p2p_addr
+                    .as_deref()
+                    .map(|a| {
+                        let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
+                        assert!(
+                            addr.is_ipv4() == external.is_ipv4(),
+                            "--p2p.addr and --nat.extip must use the same address family (both IPv4 or both IPv6)"
+                        );
+                        addr
+                    })
+                    .unwrap_or_else(|| {
+                        if external.is_ipv6() {
+                            IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+                        } else {
+                            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                        }
+                    });
             (bind, external)
         }
         (Some(addr), None) => {
@@ -404,9 +407,40 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         }
     };
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    // Determine discovery bind address.
+    // --discovery.addr sets the UDP bind addr independently of RLPx.
+    // Defaults to rlpx_bind_addr so the two channels co-locate by default.
+    let discovery_bind_addr: IpAddr = opts
+        .discovery_addr
+        .as_deref()
+        .map(|a| {
+            let addr: IpAddr = a.parse().expect("Failed to parse --discovery.addr address");
+            assert!(
+                addr.is_ipv4() == rlpx_external_addr.is_ipv4(),
+                "--discovery.addr and external address must use the same address family (both IPv4 or both IPv6)"
+            );
+            addr
+        })
+        .unwrap_or(rlpx_bind_addr);
+
+    // Discovery external address: always use rlpx_external_addr (which is
+    // --nat.extip when set) so the announced address reflects what peers see.
+    // Only fall back to the discovery bind addr when no NAT external IP is
+    // configured and the bind addr is a specific (non-wildcard) IP.
+    let discovery_external_addr = if opts.nat_extip.is_some() {
+        rlpx_external_addr
+    } else if !discovery_bind_addr.is_unspecified() {
+        discovery_bind_addr
+    } else {
+        rlpx_external_addr
+    };
+
+    let node = Node::new(rlpx_external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
-        bind_addr,
+        discovery_bind_addr,
+        discovery_external_addr,
+        rlpx_bind_addr,
+        rlpx_external_addr,
         tcp_port,
         udp_port,
     };

@@ -9,13 +9,13 @@ use ethrex_p2p::discv5::{
     session::{build_challenge_data, create_id_signature, derive_session_keys},
 };
 use ethrex_p2p::rlpx::utils::compress_pubkey;
-use ethrex_p2p::types::{NodeRecord, NodeRecordPairs};
+use ethrex_p2p::types::{Node, NodeRecord, NodeRecordPairs};
 use ethrex_p2p::utils::{node_id, public_key_from_signing_key};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use hex_literal::hex;
 use secp256k1::SecretKey;
 use std::{
-    net::{Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     str::FromStr,
 };
 
@@ -357,6 +357,8 @@ fn encode_ping_handshake_packet_with_enr() {
             ip6: None,
             tcp_port: None,
             udp_port: None,
+            tcp6_port: None,
+            udp6_port: None,
             secp256k1: Some(H264::from_str(key).unwrap()),
             eth: None,
             snap: None,
@@ -655,4 +657,43 @@ fn ticket_packet_codec_roundtrip() {
 
     let buf = pkt.encode_to_vec();
     assert_eq!(TicketMessage::decode(&buf).unwrap(), pkt);
+}
+
+/// Verifies that an IPv6 node can round-trip through ENR encoding:
+/// Node → NodeRecord::from_node → pairs → Node::from_enr
+/// This locks in the `ip6`/`tcp6`/`udp6` ENR key handling.
+#[test]
+fn ipv6_enr_roundtrip() {
+    let signer = SecretKey::from_byte_array(&hex!(
+        "eef77acb6c6a6eebc5b363a475ac583ec7eccdb42b6481424c60f59aa326547f"
+    ))
+    .unwrap();
+    let public_key = public_key_from_signing_key(&signer);
+
+    let ipv6_addr = Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1);
+    let node = Node::new(IpAddr::V6(ipv6_addr), 30303, 30303, public_key);
+
+    // Encode to ENR
+    let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+    let pairs = record.pairs();
+
+    // Verify IPv6-specific ENR keys are set, IPv4 keys are not
+    assert!(pairs.ip.is_none(), "IPv6 node should not set `ip` field");
+    assert_eq!(pairs.ip6, Some(ipv6_addr));
+    assert!(
+        pairs.tcp_port.is_none(),
+        "IPv6 node should not set `tcp` field"
+    );
+    assert!(
+        pairs.udp_port.is_none(),
+        "IPv6 node should not set `udp` field"
+    );
+    assert_eq!(pairs.tcp6_port, Some(30303));
+    assert_eq!(pairs.udp6_port, Some(30303));
+
+    // Decode back to Node
+    let decoded = Node::from_enr(&record).unwrap();
+    assert_eq!(decoded.ip, IpAddr::V6(ipv6_addr));
+    assert_eq!(decoded.tcp_port, 30303);
+    assert_eq!(decoded.udp_port, 30303);
 }
