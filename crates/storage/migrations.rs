@@ -63,7 +63,11 @@ pub fn run_pending_migrations(
         })?;
 
         // Persist the new version to metadata.json after each migration step
-        write_metadata_version(db_path, target)?;
+        write_metadata_version(db_path, target).map_err(|e| StoreError::MigrationFailed {
+            from: version,
+            to: target,
+            reason: format!("failed to write metadata: {e}"),
+        })?;
 
         tracing::info!("Migration v{version} → v{target} completed");
     }
