@@ -853,13 +853,20 @@ pub async fn regenerate_head_state(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
             ));
         }
+        // Walk back via parent_hash, not parent_number. The canonical-by-
+        // number map (CANONICAL_BLOCK_HASHES) can have gaps (e.g., when
+        // blocks were imported without `forkchoice_update` advancing the
+        // canonical pointer for them), but headers are always stored by
+        // hash. Following parent_hash traces the actual chain regardless
+        // of canonical-map completeness.
+        let parent_hash = current_last_header.parent_hash;
         let parent_number = current_last_header.number - 1;
 
         debug!("Need to regenerate state for block {parent_number}");
 
-        let Some(parent_header) = store.get_block_header(parent_number)? else {
+        let Some(parent_header) = store.get_block_header_by_hash(parent_hash)? else {
             return Err(eyre::eyre!(
-                "Parent header for block {parent_number} not found"
+                "Parent header for block {parent_number} (hash {parent_hash:?}) not found"
             ));
         };
 
