@@ -573,19 +573,71 @@ pub async fn request_storage_ranges(
     // TODO: Turn this into a stable sort for binary search.
     accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
     let chunk_size = STORAGE_BATCH_SIZE;
-    let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
     // list of tasks to be executed
     // Types are (start_index, end_index, starting_hash)
     // NOTE: end_index is NOT inclusive
 
+    // Partition into bulk-path tasks (fresh accounts with empty intervals) and
+    // per-interval tasks (big accounts marked in a prior call). The previous
+    // implementation queued every account from `start_hash: zero` and relied
+    // on branch-3 in the response handler re-firing each call to re-queue
+    // per-interval tasks for big accounts. That fails when peers cover a big
+    // account fully without hitting their response limit on it: branch-3
+    // doesn't fire, no per-interval tasks get queued, intervals never drain,
+    // the account is stuck pending forever even after its data is on disk.
     let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
-    for i in 0..chunk_count {
-        let chunk_start = chunk_size * i;
-        let chunk_end = (chunk_start + chunk_size).min(accounts_by_root_hash.len());
+    let mut bulk_chunk_start: Option<usize> = None;
+    for i in 0..accounts_by_root_hash.len() {
+        let first_account = *accounts_by_root_hash[i].1.first().ok_or_else(|| {
+            SnapError::InternalError("Empty accounts vector while scheduling tasks".to_owned())
+        })?;
+        let intervals = &account_storage_roots
+            .accounts_with_storage_root
+            .get(&first_account)
+            .ok_or_else(|| {
+                SnapError::InternalError(
+                    "Could not find intervals for account while scheduling".to_owned(),
+                )
+            })?
+            .1;
+        if intervals.is_empty() {
+            if bulk_chunk_start.is_none() {
+                bulk_chunk_start = Some(i);
+            }
+            if i + 1 - bulk_chunk_start.unwrap_or(i) >= chunk_size {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: bulk_chunk_start.unwrap_or(i),
+                    end_index: i + 1,
+                    start_hash: H256::zero(),
+                    end_hash: None,
+                });
+                bulk_chunk_start = None;
+            }
+        } else {
+            if let Some(start) = bulk_chunk_start {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: start,
+                    end_index: i,
+                    start_hash: H256::zero(),
+                    end_hash: None,
+                });
+                bulk_chunk_start = None;
+            }
+            for (start_hash, end_hash) in intervals.clone() {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: i,
+                    end_index: i + 1,
+                    start_hash,
+                    end_hash: Some(end_hash),
+                });
+            }
+        }
+    }
+    if let Some(start) = bulk_chunk_start {
         tasks_queue_not_started.push_back(StorageTask {
-            start_index: chunk_start,
-            end_index: chunk_end,
+            start_index: start,
+            end_index: accounts_by_root_hash.len(),
             start_hash: H256::zero(),
             end_hash: None,
         });
