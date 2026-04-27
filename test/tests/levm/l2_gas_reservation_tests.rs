@@ -576,3 +576,109 @@ fn test_eip7623_floor_plus_l1_gas_exactly_covered_succeeds() {
         "L1 fee vault should receive full l1_gas * gas_price"
     );
 }
+
+/// Reproducer for an L2 fee-validation gap in the L1-fee path.
+///
+/// `calculate_l1_fee_gas` (called from `reserve_l1_gas` during
+/// `prepare_execution`) computes
+/// `l1_fee_gas = l1_fee.checked_div(vm.env.gas_price)` and propagates a
+/// `None` divisor as `InternalError::DivisionByZero`. None of the
+/// upstream validators reject `gas_price == 0` in this configuration:
+///
+/// - `default_hook::validate_sufficient_max_fee_per_gas` only checks
+///   `max_fee_per_gas < base_fee_per_gas`. With `base_fee_per_gas = 0`,
+///   any `max_fee_per_gas` (including `0`) passes.
+/// - `validate_sufficient_max_fee_per_gas_l2` early-returns when
+///   `operator_fee_config` is `None`.
+///
+/// So a transaction with all of `base_fee_per_gas`,
+/// `max_fee_per_gas`, `max_priority_fee_per_gas` set to zero —
+/// configurations that occur on quiet L2s (or in early blocks) — gets
+/// past validation and divides by zero in `calculate_l1_fee_gas` as
+/// soon as the L1 fee config is enabled. The result surfaces as
+/// `VMError::Internal(InternalError::DivisionByZero)`, the
+/// "invariant violated" path; user-controlled inputs must never reach
+/// it. The fix should be either (a) tighten validation to require
+/// `gas_price > 0` (or `>= base_fee + operator_fee + 1`) when an L1
+/// fee config is set, or (b) make `calculate_l1_fee_gas` short-circuit
+/// to a `TxValidationError` (e.g. `IntrinsicGasTooLow` /
+/// `InsufficientMaxFeePerGas`) when `gas_price == 0`.
+#[test]
+fn zero_gas_price_with_l1_fee_config_divides_by_zero_in_reserve() {
+    use ethrex_levm::errors::InternalError;
+
+    let gas_limit: u64 = 100_000;
+
+    // Build a tx with all gas params at zero. EIP-1559 validation only checks
+    // max_priority <= max_fee (0 <= 0 ✓) and max_fee >= base_fee (0 >= 0 ✓).
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit,
+        to: TxKind::Call(recipient_addr()),
+        value: U256::zero(),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+
+    // Mirror the tx's gas params in env (gas_price = 0, base_fee = 0).
+    let fork = Fork::Prague;
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    let env = Environment {
+        origin: sender_addr(),
+        gas_limit,
+        config: EVMConfig::new(fork, blob_schedule),
+        block_number: 1,
+        coinbase: Address::from_low_u64_be(0xCCC),
+        timestamp: 1000,
+        prev_randao: Some(H256::zero()),
+        difficulty: U256::zero(),
+        slot_number: U256::zero(),
+        chain_id: U256::from(1),
+        base_fee_per_gas: U256::zero(),
+        base_blob_fee_per_gas: U256::from(1),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: None,
+        block_blob_gas_used: None,
+        tx_blob_hashes: vec![],
+        tx_max_priority_fee_per_gas: Some(U256::zero()),
+        tx_max_fee_per_gas: Some(U256::zero()),
+        tx_max_fee_per_blob_gas: None,
+        tx_nonce: 0,
+        block_gas_limit: gas_limit * 2,
+        is_privileged: false,
+        fee_token: None,
+        disable_balance_check: false,
+    };
+
+    // l1_fee_config is the trigger: with it set, `reserve_l1_gas` runs
+    // `calculate_l1_fee_gas` which divides by `gas_price`. operator_fee_config
+    // is intentionally None so the iteration-1-style underflow path doesn't
+    // shadow this one — we want to isolate the DivisionByZero finding.
+    let mut db = make_db(U256::from(SENDER_BALANCE));
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config()),
+        &NativeCrypto,
+    )
+    .unwrap();
+
+    let err = vm.execute().expect_err(
+        "Expected execute to fail because reserve_l1_gas calls \
+         calculate_l1_fee_gas which divides by gas_price = 0",
+    );
+
+    assert!(
+        matches!(err, VMError::Internal(InternalError::DivisionByZero)),
+        "Expected InternalError::DivisionByZero from calculate_l1_fee_gas; \
+         got: {err:?}. After the fix this should be a TxValidationError \
+         instead, but this test pins the *current* (buggy) behaviour so any \
+         change in handling is caught.",
+    );
+}
