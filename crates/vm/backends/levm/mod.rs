@@ -16,6 +16,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
+use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     types::{
@@ -374,7 +375,7 @@ impl LEVM {
             // post-withdrawal/request state.
             #[allow(clippy::cast_possible_truncation)]
             let withdrawal_idx = (block.body.transactions.len() as u16) + 1;
-            Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx)?;
+            Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx, &validation_index)?;
 
             // Mark storage_reads that occurred during the withdrawal/request phase.
             if !unread_storage_reads.is_empty() {
@@ -1492,7 +1493,7 @@ impl LEVM {
 
             // Storage: for each slot in execution state, check it's expected
             for (key_h256, &value) in &account.storage {
-                let slot_u256 = U256::from_big_endian(key_h256.as_bytes());
+                let slot_u256 = u256_from_big_endian_const(key_h256.0);
                 // EIP-7928 requires storage_changes sorted by slot, so use binary search.
                 let pos = acct
                     .storage_changes
@@ -1526,13 +1527,22 @@ impl LEVM {
     /// Validates BAL entries at the withdrawal index against actual post-withdrawal state.
     ///
     /// After `process_withdrawals` + `extract_all_requests_levm` run on the BAL-seeded
-    /// DB, `current_accounts_state` reflects the actual state. Any BAL claim at the
-    /// withdrawal index that doesn't match is either a mismatch or extraneous.
+    /// DB, `current_accounts_state` reflects the actual state. Validation is bidirectional:
+    ///
+    /// Part A (BAL -> DB): every BAL claim at the withdrawal index must match the DB.
+    /// Part B (DB -> BAL): every account modified during the withdrawal/request phase
+    ///         must have a corresponding BAL entry. Without this reverse check, a
+    ///         malicious builder could omit a withdrawal recipient from the BAL,
+    ///         causing the BAL-derived state root to exclude the withdrawal balance
+    ///         change.
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
         withdrawal_idx: u16,
+        index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
+        // Part A: For each BAL account with changes at the withdrawal index,
+        //         verify the DB matches.
         for acct in bal.accounts() {
             let addr = acct.address;
             let actual = db.current_accounts_state.get(&addr);
@@ -1624,6 +1634,192 @@ impl LEVM {
                 }
             }
         }
+
+        // Part B: For each account modified during the withdrawal/request phase,
+        //         verify it has a corresponding BAL entry claiming the change.
+        for (addr, account) in &db.current_accounts_state {
+            if account.is_unmodified() {
+                continue;
+            }
+
+            let Some(&bal_acct_idx) = index.addr_to_idx.get(addr) else {
+                // Account modified during withdrawal/request phase but absent
+                // from BAL entirely. Compare with pre-state (store) to
+                // distinguish genuine mutations from warm-access artifacts.
+                let pre_state = db.store.get_account_state(*addr).map_err(|e| {
+                    EvmError::Custom(format!(
+                        "BAL validation failed for withdrawal: db error reading \
+                         account {addr:?}: {e}"
+                    ))
+                })?;
+                let pre = (pre_state.balance, pre_state.nonce, pre_state.code_hash);
+                let post = (
+                    account.info.balance,
+                    account.info.nonce,
+                    account.info.code_hash,
+                );
+                if pre != post {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for withdrawal: account {addr:?} was modified \
+                         during withdrawal/request phase but is absent from BAL"
+                    )));
+                }
+                // Also check storage: if any slot differs from pre-state,
+                // the account should have been in the BAL.
+                for (key_h256, &value) in &account.storage {
+                    let pre_value = db.store.get_storage_value(*addr, *key_h256).map_err(|e| {
+                        EvmError::Custom(format!(
+                            "BAL validation failed for withdrawal: db error reading \
+                                 storage {addr:?}[{}]: {e}",
+                            u256_from_big_endian_const(key_h256.0)
+                        ))
+                    })?;
+                    if value != pre_value {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for withdrawal: account {addr:?} storage \
+                             slot {} changed during withdrawal/request phase but is absent \
+                             from BAL",
+                            u256_from_big_endian_const(key_h256.0)
+                        )));
+                    }
+                }
+                continue;
+            };
+
+            let acct = &bal.accounts()[bal_acct_idx];
+
+            // Balance: if BAL has no change at withdrawal_idx, the withdrawal
+            // phase must not have changed it relative to the last BAL entry.
+            if !has_exact_change_balance(&acct.balance_changes, withdrawal_idx) {
+                let seeded = match acct.balance_changes.last() {
+                    Some(c) => c.post_balance,
+                    None => {
+                        db.store
+                            .get_account_state(*addr)
+                            .map_err(|e| {
+                                EvmError::Custom(format!(
+                                    "BAL validation failed for withdrawal: db error reading \
+                                 account {addr:?}: {e}"
+                                ))
+                            })?
+                            .balance
+                    }
+                };
+                if account.info.balance != seeded {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for withdrawal: account {addr:?} balance \
+                         changed during withdrawal/request phase ({}) but BAL has no \
+                         balance change at index {withdrawal_idx} (last_bal={seeded})",
+                        account.info.balance
+                    )));
+                }
+            }
+
+            // Nonce
+            if !has_exact_change_nonce(&acct.nonce_changes, withdrawal_idx) {
+                let seeded = match acct.nonce_changes.last() {
+                    Some(c) => c.post_nonce,
+                    None => {
+                        db.store
+                            .get_account_state(*addr)
+                            .map_err(|e| {
+                                EvmError::Custom(format!(
+                                    "BAL validation failed for withdrawal: db error reading \
+                                 account {addr:?}: {e}"
+                                ))
+                            })?
+                            .nonce
+                    }
+                };
+                if account.info.nonce != seeded {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for withdrawal: account {addr:?} nonce \
+                         changed during withdrawal/request phase ({}) but BAL has no \
+                         nonce change at index {withdrawal_idx} (last_bal={seeded})",
+                        account.info.nonce
+                    )));
+                }
+            }
+
+            // Code
+            if !has_exact_change_code(&acct.code_changes, withdrawal_idx) {
+                let seeded_hash = match acct.code_changes.last() {
+                    Some(c) if c.new_code.is_empty() => *EMPTY_KECCACK_HASH,
+                    Some(c) => ethrex_common::utils::keccak(&c.new_code),
+                    None => {
+                        db.store
+                            .get_account_state(*addr)
+                            .map_err(|e| {
+                                EvmError::Custom(format!(
+                                    "BAL validation failed for withdrawal: db error reading \
+                                 account {addr:?}: {e}"
+                                ))
+                            })?
+                            .code_hash
+                    }
+                };
+                if account.info.code_hash != seeded_hash {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for withdrawal: account {addr:?} code \
+                         changed during withdrawal/request phase but BAL has no \
+                         code change at index {withdrawal_idx} \
+                         (actual={:?}, last_bal={seeded_hash:?})",
+                        account.info.code_hash
+                    )));
+                }
+            }
+
+            // Storage: for each slot in the withdrawal/request-phase state,
+            // verify the BAL has a corresponding entry or the value is unchanged.
+            for (key_h256, &value) in &account.storage {
+                let slot_u256 = u256_from_big_endian_const(key_h256.0);
+                let pos = acct
+                    .storage_changes
+                    .partition_point(|sc| sc.slot < slot_u256);
+                if pos < acct.storage_changes.len() && acct.storage_changes[pos].slot == slot_u256 {
+                    let sc = &acct.storage_changes[pos];
+                    if !has_exact_change_storage(&sc.slot_changes, withdrawal_idx) {
+                        // No BAL entry at withdrawal_idx; compare against
+                        // last BAL entry (the seeded value).
+                        let seeded = match sc.slot_changes.last() {
+                            Some(c) => c.post_value,
+                            None => db.store.get_storage_value(*addr, *key_h256).map_err(|e| {
+                                EvmError::Custom(format!(
+                                    "BAL validation failed for withdrawal: db error reading \
+                                     storage {addr:?}[{slot_u256}]: {e}"
+                                ))
+                            })?,
+                        };
+                        if value != seeded {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for withdrawal: account {addr:?} \
+                                 storage slot {slot_u256} changed during withdrawal/request \
+                                 phase ({value}) but BAL has no change at index \
+                                 {withdrawal_idx} (last_bal={seeded})"
+                            )));
+                        }
+                    }
+                } else {
+                    // Slot not in BAL storage_changes at all: verify it
+                    // wasn't actually mutated during the withdrawal/request phase.
+                    let pre_value = db.store.get_storage_value(*addr, *key_h256).map_err(|e| {
+                        EvmError::Custom(format!(
+                            "BAL validation failed for withdrawal: db error reading \
+                             storage {addr:?}[{slot_u256}]: {e}"
+                        ))
+                    })?;
+                    if value != pre_value {
+                        return Err(EvmError::Custom(format!(
+                            "BAL validation failed for withdrawal: account {addr:?} \
+                             storage slot {slot_u256} changed during withdrawal/request \
+                             phase ({value}) but slot is absent from BAL storage_changes \
+                             (pre={pre_value})"
+                        )));
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 

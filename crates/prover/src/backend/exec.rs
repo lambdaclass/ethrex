@@ -24,8 +24,8 @@ impl ExecBackend {
     /// Core execution - runs the guest program directly.
     fn execute_core(input: ProgramInput) -> Result<ProgramOutput, BackendError> {
         let crypto = Arc::new(NativeCrypto);
-        // In EIP-8025 mode, execution_program takes (NewPayloadRequest, ExecutionWitness)
-        // which doesn't match ProgramInput. Use execute_blocks directly instead.
+        // In EIP-8025 mode, execution_program takes raw input bytes, which doesn't
+        // match ProgramInput. Use execute_blocks directly instead.
         #[cfg(feature = "experimental-devnet")]
         {
             use ethrex_common::types::ELASTICITY_MULTIPLIER;

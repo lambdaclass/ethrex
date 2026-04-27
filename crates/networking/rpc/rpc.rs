@@ -869,6 +869,8 @@ pub async fn map_admin_requests(
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data).await,
         "admin_peers" => admin::peers(&mut context).await,
+        "admin_peerScores" => admin::peer_scores(&mut context).await,
+        "admin_syncStatus" => admin::sync_status(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
@@ -894,7 +896,9 @@ pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<V
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex),
+        "txpool_contentFrom" => mempool::content_from(&req.params, contex),
         "txpool_status" => mempool::status(contex),
+        "txpool_inspect" => mempool::inspect(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }
