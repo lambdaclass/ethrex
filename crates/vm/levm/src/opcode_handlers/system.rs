@@ -1350,6 +1350,11 @@ impl<'a> VM<'a> {
                 // `credit_state_gas_refund(evm, create_account_state_gas)`.
                 if self.env.config.fork >= Fork::Amsterdam {
                     self.credit_state_gas_refund(self.state_gas_new_account)?;
+                    // EIP-8037 StateDiff: cancel the record made on the parent frame's
+                    // diff before the child was launched (Task 2.3). The child diff is
+                    // dropped on revert via Phase 1 plumbing, but the new-account record
+                    // lives on the parent and must be undone explicitly.
+                    self.current_call_frame.state_diff.cancel_new_account(to);
                 }
 
                 // If revert we have to copy the return_data

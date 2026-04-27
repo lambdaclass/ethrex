@@ -441,10 +441,16 @@ impl<'a> VM<'a> {
             // Downgrades for pre-existing authorities happen later in eip7702_set_access_code.
             // Recovery is re-done here (matching the same ecrecover logic) so the seed address-set
             // mirrors what eip7702_set_access_code will later potentially downgrade.
-            // Tuples that fail ecrecover are NOT recorded — they cost the full 135-byte intrinsic
-            // charge in legacy but their address is unknown, so diff cannot track them by address.
-            // This is an accepted asymmetry: legacy auth-total gas for failed-recover tuples has no
-            // corresponding diff entry. The parity check in Phase 3 will account for this.
+            //
+            // Accepted asymmetries vs. legacy intrinsic charging — the parity check in Phase 3
+            // must account for ALL of these (legacy charges all N tuples * 135 bytes regardless):
+            //   1. Tuples that fail ecrecover are NOT recorded here (address unknown).
+            //   2. Tuples that pass ecrecover but later fail chain-id, nonce, or
+            //      already-delegated-to-same-target checks in eip7702_set_access_code are
+            //      recorded as auth_total here but never downgraded — they remain at 135 bytes,
+            //      which matches legacy. (Only valid same-target redundant downgrades happen.)
+            //   3. Duplicate authorities across tuples deduplicate at record_auth_total (HashSet);
+            //      legacy charges per-tuple. This is also an asymmetry to compensate at parity.
             if let Some(auth_list) = self.tx.authorization_list() {
                 for auth in auth_list.iter() {
                     if let Ok(Some(authority)) = eip7702_recover_address(auth, self.crypto) {
