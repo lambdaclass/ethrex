@@ -214,9 +214,7 @@ pub async fn sync_cycle_full(
                     }
                 }
             }
-            if !blocks.is_empty()
-                && body_tx.send(Ok((blocks, final_batch))).await.is_err()
-            {
+            if !blocks.is_empty() && body_tx.send(Ok((blocks, final_batch))).await.is_err() {
                 // Receiver dropped (execution loop stopped), stop downloading
                 return;
             }
