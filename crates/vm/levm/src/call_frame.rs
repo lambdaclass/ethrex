@@ -494,12 +494,9 @@ impl<'a> VM<'a> {
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+    pub fn advance_pc(&mut self, count: usize) {
+        // PC overflow is impossible: bytecode size is bounded by gas limits (EIP-7825: max 2^24),
+        // which is far below usize::MAX on any supported platform.
+        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(count);
     }
 }
