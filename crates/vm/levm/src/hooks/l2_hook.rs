@@ -104,6 +104,11 @@ impl Hook for L2Hook {
             )?;
         }
 
+        // EIP-8037: settle state_diff_finalized for both privileged and non-privileged
+        // L2 txs (Amsterdam+). Mirrors DefaultHook so ExecutionReport.state_gas_used and
+        // refund_sender's state-gas dimension are populated correctly on L2.
+        default_hook::settle_state_diff_finalized(vm, ctx_result.is_success());
+
         Ok(())
     }
 }

@@ -143,32 +143,7 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        // EIP-8037: Settle state_diff_finalized.
-        //
-        // Collision and non-success paths: only intrinsic state gas stays charged,
-        // so reset finalized diff to the pre-execution intrinsic seed.
-        // Success path: snapshot the top frame's accumulated diff (which already
-        // contains intrinsic + execution records from merge_child_state_diff calls),
-        // then apply same-tx-selfdestruct cancellations to remove accounts that
-        // were created and then destroyed in the same tx.
-        if vm.env.config.fork >= Fork::Amsterdam {
-            if ctx_result.is_success() {
-                // Snapshot the top frame's diff (intrinsic + execution records).
-                vm.state_diff_finalized = vm.current_call_frame.state_diff.clone();
-                // Apply same-tx-selfdestruct cancellations: for each account that was
-                // both created and selfdestructed in this tx, cancel it from the diff.
-                let selfdestruct_addrs: Vec<Address> =
-                    vm.substate.iter_selfdestruct().copied().collect();
-                for addr in selfdestruct_addrs {
-                    if vm.substate.is_account_created(&addr) {
-                        vm.state_diff_finalized.cancel_new_account(addr);
-                    }
-                }
-            } else {
-                // Revert, exceptional halt, or collision: only intrinsic events charged.
-                vm.state_diff_finalized = vm.state_diff_intrinsic_seed.clone();
-            }
-        }
+        settle_state_diff_finalized(vm, ctx_result.is_success());
 
         // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
         // Per EELS, collision at process_message_call level returns
@@ -235,6 +210,33 @@ impl Hook for DefaultHook {
         delete_self_destruct_accounts(vm)?;
 
         Ok(())
+    }
+}
+
+/// EIP-8037: Settle `state_diff_finalized` at the end of a tx.
+///
+/// Collision and non-success paths: only intrinsic state gas stays charged,
+/// so reset finalized diff to the pre-execution intrinsic seed.
+/// Success path: snapshot the top frame's accumulated diff (which already
+/// contains intrinsic + execution records from `merge_child_state_diff` calls),
+/// then apply same-tx-selfdestruct cancellations to remove accounts that were
+/// created and then destroyed in the same tx.
+///
+/// Shared between L1 (`DefaultHook`) and L2 (`L2Hook`) finalize paths.
+pub fn settle_state_diff_finalized(vm: &mut VM<'_>, is_success: bool) {
+    if vm.env.config.fork < Fork::Amsterdam {
+        return;
+    }
+    if is_success {
+        vm.state_diff_finalized = vm.current_call_frame.state_diff.clone();
+        let selfdestruct_addrs: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
+        for addr in selfdestruct_addrs {
+            if vm.substate.is_account_created(&addr) {
+                vm.state_diff_finalized.cancel_new_account(addr);
+            }
+        }
+    } else {
+        vm.state_diff_finalized = vm.state_diff_intrinsic_seed.clone();
     }
 }
 

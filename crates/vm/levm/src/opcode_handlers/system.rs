@@ -157,7 +157,8 @@ impl OpcodeHandler for OpCallHandler {
             &data,
         );
 
-        // Generic call.
+        // Generic call. `needs_state_gas` flows through so generic_call can refund the
+        // reservoir + cancel the diff entry if the call early-reverts (OutOfFund/MaxDepth).
         vm.generic_call(
             gas_limit,
             value,
@@ -171,6 +172,7 @@ impl OpcodeHandler for OpCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            needs_state_gas,
         )
     }
 }
@@ -267,6 +269,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false, // needs_state_gas: only OpCallHandler with value-to-empty creates a new account
         )
     }
 }
@@ -358,6 +361,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false, // needs_state_gas: only OpCallHandler with value-to-empty creates a new account
         )
     }
 }
@@ -447,6 +451,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false, // needs_state_gas: only OpCallHandler with value-to-empty creates a new account
         )
     }
 }
@@ -963,6 +968,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
+        needs_state_gas: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -971,6 +977,7 @@ impl<'a> VM<'a> {
         if should_transfer_value && !value.is_zero() {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
+                self.undo_call_state_gas_on_early_revert(needs_state_gas, to)?;
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -983,6 +990,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
+            self.undo_call_state_gas_on_early_revert(needs_state_gas, to)?;
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
         }
@@ -1322,14 +1330,39 @@ impl<'a> VM<'a> {
         self.current_call_frame.memory.load_range(offset, size)
     }
 
-    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    /// EIP-8037: when a CALL with value-to-empty triggers `early_revert_message_call`
+    /// (OutOfFund / MaxDepth), the new-account state-gas draw and diff record made by
+    /// `OpCallHandler` must be undone — no account is actually created.
+    fn undo_call_state_gas_on_early_revert(
+        &mut self,
+        needs_state_gas: bool,
+        callee: Address,
+    ) -> Result<(), VMError> {
+        if !needs_state_gas {
+            return Ok(());
+        }
+        #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+        let new_account_state_gas =
+            gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+        self.refund_state_gas_to_reservoir(new_account_state_gas)?;
+        self.current_call_frame
+            .state_diff
+            .cancel_new_account(callee);
+        Ok(())
+    }
+
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {
         let callframe = &mut self.current_call_frame;
 
         // Return gas_limit to callframe.
+        #[expect(
+            clippy::as_conversions,
+            reason = "gas_limit ≤ tx gas_limit which fits in i64"
+        )]
+        let gas_limit_i64 = gas_limit as i64;
         callframe.gas_remaining = callframe
             .gas_remaining
-            .checked_add(gas_limit as i64)
+            .checked_add(gas_limit_i64)
             .ok_or(InternalError::Overflow)?;
         callframe.stack.push(FAIL)?; // It's the same as revert for CREATE
 
