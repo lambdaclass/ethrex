@@ -7,7 +7,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockHeader, Genesis};
 use ethrex_config::networks::Network;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
@@ -899,21 +899,21 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
+    // Walk back via parent_hash, collecting headers, until we hit a block
+    // whose state is on disk. Both the back-walk and the forward re-apply
+    // bypass the canonical-by-number map (CANONICAL_BLOCK_HASHES), since
+    // that map can have gaps (e.g., from earlier concurrent
+    // forkchoice_update races); headers are always stored under their
+    // hash, so following parent_hash traces the actual chain regardless
+    // of canonical-map completeness.
+    let mut chain_to_replay: Vec<BlockHeader> = Vec::new();
     let mut current_last_header = last_header;
-
-    // Find the last block with a known state root
     while !store.has_state_root(current_last_header.state_root)? {
         if current_last_header.number == 0 {
             return Err(eyre::eyre!(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
             ));
         }
-        // Walk back via parent_hash, not parent_number. The canonical-by-
-        // number map (CANONICAL_BLOCK_HASHES) can have gaps (e.g., when
-        // blocks were imported without `forkchoice_update` advancing the
-        // canonical pointer for them), but headers are always stored by
-        // hash. Following parent_hash traces the actual chain regardless
-        // of canonical-map completeness.
         let parent_hash = current_last_header.parent_hash;
         let parent_number = current_last_header.number - 1;
 
@@ -925,31 +925,28 @@ pub async fn regenerate_head_state(
             ));
         };
 
+        chain_to_replay.push(current_last_header);
         current_last_header = parent_header;
     }
 
     let last_state_number = current_last_header.number;
 
-    if last_state_number == head_block_number {
+    if chain_to_replay.is_empty() {
         debug!("State is already up to date");
         return Ok(());
     }
 
     info!("Regenerating state from block {last_state_number} to {head_block_number}");
 
-    // Re-apply blocks from the last known state root to the head block.
-    // Stop early if a block is missing (can happen after interrupted batch sync).
-    for i in (last_state_number + 1)..=head_block_number {
-        debug!("Re-applying block {i} to regenerate state");
-
-        let Some(block) = store.get_block_by_number(i).await? else {
-            warn!(
-                "Block {i} not found during state regeneration, rolling back head to block {}",
-                i - 1
-            );
-            store.rollback_latest_block_number(i - 1)?;
-            break;
-        };
+    for header in chain_to_replay.into_iter().rev() {
+        let header_hash = header.hash();
+        debug!("Re-applying block {} to regenerate state", header.number);
+        let block = store.get_block_by_hash(header_hash).await?.ok_or_else(|| {
+            eyre::eyre!(
+                "Block {} (hash {header_hash:?}) not found in store",
+                header.number
+            )
+        })?;
 
         blockchain.add_block_pipeline(block, None)?;
     }
