@@ -53,6 +53,19 @@ contract NativeRollup {
     // reordering L2Bridge storage silently breaks withdrawal proofs here.
     uint256 constant SENT_MESSAGES_SLOT = 3;
 
+    // SSZ `StatelessValidationResult` layout: 32B root + 1B bool + 8B chain_id LE.
+    uint256 constant RESULT_LEN = 41;
+    uint256 constant RESULT_SUCCESS_OFFSET = 32;
+    uint256 constant RESULT_CHAIN_ID_OFFSET = 33;
+
+    // Byte offsets inside the SSZ `ExecutionPayload` fixed prefix.
+    uint256 constant EP_PARENT_HASH_OFFSET = 0;
+    uint256 constant EP_STATE_ROOT_OFFSET = 52;
+    uint256 constant EP_BLOCK_NUMBER_OFFSET = 404;
+    uint256 constant EP_GAS_LIMIT_OFFSET = 412;
+    uint256 constant EP_BLOCK_HASH_OFFSET = 472;
+    uint256 constant EP_FIXED_PREFIX_LEN = 528;
+
     // ===== Events =====
     event StateAdvanced(uint256 indexed newBlockNumber, bytes32 indexed newStateRoot);
     event L1MessageRecorded(address indexed sender, address indexed to, uint256 value, uint256 gasLimit, bytes data, uint256 indexed nonce);
@@ -83,6 +96,9 @@ contract NativeRollup {
     // ===== L1 Messaging =====
 
     function sendL1Message(address _to, uint256 _gasLimit, bytes calldata _data) external payable {
+        // Reject messages that can never fit in a single L2 block.
+        require(_gasLimit > 0, "gasLimit must be > 0");
+        require(_gasLimit <= l2GasLimit, "gasLimit exceeds L2 block gas limit");
         _burnGas(_gasLimit);
         _recordL1Message(msg.sender, _to, msg.value, _gasLimit, _data);
     }
@@ -112,86 +128,81 @@ contract NativeRollup {
 
     /// @notice Advance the L2 state by one block.
     /// @param _l1MessagesCount Number of L1 messages consumed in this block.
-    /// @param _sszStatelessInput SSZ-encoded StatelessInput (constructed off-chain by the advancer).
-    ///        The advancer encodes: NewPayloadRequest (with parent_beacon_block_root = L1 messages
-    ///        Merkle root), ExecutionWitness, ChainConfig, and public_keys.
-    /// @param _newBlockHash Expected block hash after execution.
-    /// @param _newStateRoot Expected state root after execution.
+    /// @param _sszStatelessInput SSZ-encoded `StatelessInput` for the block.
+    /// @dev    Block fields are read from `_sszStatelessInput`; once the
+    ///         precompile reports `successful_validation == true` those bytes
+    ///         describe a correctly executed block, so the caller cannot
+    ///         substitute the new block_hash, state_root, etc.
     function advance(
         uint256 _l1MessagesCount,
-        bytes calldata _sszStatelessInput,
-        bytes32 _newBlockHash,
-        bytes32 _newStateRoot
+        bytes calldata _sszStatelessInput
     ) external {
         uint256 startIdx = l1MessageIndex;
         require(startIdx + _l1MessagesCount <= pendingL1Messages.length, "Not enough L1 messages");
 
         l1MessageIndex = startIdx + _l1MessagesCount;
 
-        // Call EXECUTE precompile with the SSZ-encoded StatelessInput.
-        // The precompile validates L2 constraints, charges gas_used,
-        // and delegates to verify_stateless_new_payload.
         (bool success, bytes memory result) = EXECUTE_PRECOMPILE.staticcall(_sszStatelessInput);
         require(success, "EXECUTE precompile failed");
 
-        // Decode SSZ StatelessValidationResult.
-        // Format: new_payload_request_root (32 bytes) + successful_validation (1 byte) + chain_config (8 bytes)
-        require(result.length >= 41, "Invalid result length");
+        require(result.length >= RESULT_LEN, "Invalid result length");
+        require(uint8(result[RESULT_SUCCESS_OFFSET]) == 1, "L2 validation failed");
 
-        // successful_validation is at byte 32 (1 byte, SSZ bool)
-        require(uint8(result[32]) == 1, "L2 validation failed");
-
-        // chain_id is at bytes 33..41 (SSZ uint64, little-endian).
-        uint64 provenChainId = _decodeSszUint64LE(result, 33);
+        uint64 provenChainId = _decodeSszUint64LE(result, RESULT_CHAIN_ID_OFFSET);
         require(provenChainId == chainId, "chain_id mismatch");
 
-        // Update onchain state
-        uint256 newBlockNumber = blockNumber + 1;
-        blockHash = _newBlockHash;
-        stateRoot = _newStateRoot;
-        blockNumber = newBlockNumber;
-        stateRootHistory[newBlockNumber] = _newStateRoot;
-        stateRootTimestamps[newBlockNumber] = block.timestamp;
+        (
+            uint64 provenBlockNumber,
+            bytes32 provenParentHash,
+            bytes32 provenBlockHash,
+            bytes32 provenStateRoot,
+            uint64 provenGasLimit
+        ) = _decodeProvenPayloadFields(_sszStatelessInput);
 
-        emit StateAdvanced(newBlockNumber, _newStateRoot);
+        // Bind the proof to *this* L2 chain.
+        uint256 expectedBlockNumber = blockNumber + 1;
+        require(uint256(provenBlockNumber) == expectedBlockNumber, "block_number mismatch");
+        require(provenParentHash == blockHash, "parent_hash mismatch");
+        require(uint256(provenGasLimit) == l2GasLimit, "gas_limit mismatch");
+
+        blockHash = provenBlockHash;
+        stateRoot = provenStateRoot;
+        blockNumber = expectedBlockNumber;
+        stateRootHistory[expectedBlockNumber] = provenStateRoot;
+        stateRootTimestamps[expectedBlockNumber] = block.timestamp;
+
+        emit StateAdvanced(expectedBlockNumber, provenStateRoot);
     }
 
-    // ===== L1 Messages Merkle Tree =====
+    /// @dev Walk SSZ offsets on a `StatelessInput` buffer:
+    ///        StatelessInput[0..4]      -> NewPayloadRequest start
+    ///        NewPayloadRequest[0..4]   -> ExecutionPayload start
+    ///      Then read the fixed-position fields off ExecutionPayload.
+    function _decodeProvenPayloadFields(bytes calldata sszInput)
+        internal
+        pure
+        returns (
+            uint64 blockNumber,
+            bytes32 parentHash,
+            bytes32 blockHash_,
+            bytes32 stateRoot_,
+            uint64 gasLimit
+        )
+    {
+        require(sszInput.length >= 20, "SSZ: input too short");
+        uint256 nprAbs = _readU32LECalldata(sszInput, 0);
+        require(sszInput.length >= nprAbs + 44, "SSZ: NPR offset out of range");
+        uint256 epAbs = nprAbs + _readU32LECalldata(sszInput, nprAbs);
+        require(
+            sszInput.length >= epAbs + EP_FIXED_PREFIX_LEN,
+            "SSZ: EP offset out of range"
+        );
 
-    /// @notice Compute the commutative Merkle root over a range of pending L1 messages.
-    function computeMerkleRoot(uint256 startIdx, uint256 count) external view returns (bytes32) {
-        return _computeMerkleRoot(startIdx, count);
-    }
-
-    function _computeMerkleRoot(uint256 startIdx, uint256 count) internal view returns (bytes32) {
-        if (count == 0) return bytes32(0);
-        if (count == 1) return pendingL1Messages[startIdx];
-
-        bytes32[] memory layer = new bytes32[](count);
-        for (uint256 i = 0; i < count; i++) {
-            layer[i] = pendingL1Messages[startIdx + i];
-        }
-
-        while (layer.length > 1) {
-            uint256 newLen = (layer.length + 1) / 2;
-            bytes32[] memory newLayer = new bytes32[](newLen);
-            for (uint256 i = 0; i < newLen; i++) {
-                if (2 * i + 1 < layer.length) {
-                    newLayer[i] = _hashPair(layer[2 * i], layer[2 * i + 1]);
-                } else {
-                    newLayer[i] = layer[2 * i];
-                }
-            }
-            layer = newLayer;
-        }
-        return layer[0];
-    }
-
-    function _hashPair(bytes32 a, bytes32 b) internal pure returns (bytes32) {
-        if (uint256(a) < uint256(b)) {
-            return keccak256(abi.encodePacked(a, b));
-        }
-        return keccak256(abi.encodePacked(b, a));
+        parentHash = _readBytes32Calldata(sszInput, epAbs + EP_PARENT_HASH_OFFSET);
+        stateRoot_ = _readBytes32Calldata(sszInput, epAbs + EP_STATE_ROOT_OFFSET);
+        blockNumber = _readU64LECalldata(sszInput, epAbs + EP_BLOCK_NUMBER_OFFSET);
+        gasLimit = _readU64LECalldata(sszInput, epAbs + EP_GAS_LIMIT_OFFSET);
+        blockHash_ = _readBytes32Calldata(sszInput, epAbs + EP_BLOCK_HASH_OFFSET);
     }
 
     // ===== Withdrawal Claiming (MPT proof-based) =====
@@ -249,7 +260,7 @@ contract NativeRollup {
         require(value == 1, "Withdrawal not found in L2Bridge storage");
     }
 
-    /// @dev Decode an SSZ `uint64` (8 little-endian bytes) at `offset` into `data`.
+    /// @dev Decode an SSZ `uint64` (8 little-endian bytes) at `offset` into `data` (memory).
     function _decodeSszUint64LE(bytes memory data, uint256 offset) internal pure returns (uint64) {
         require(data.length >= offset + 8, "SSZ: out of bounds");
         uint64 value = 0;
@@ -257,5 +268,31 @@ contract NativeRollup {
             value |= uint64(uint8(data[offset + i])) << uint64(8 * i);
         }
         return value;
+    }
+
+    /// @dev Decode an SSZ `uint32` (4 little-endian bytes) at `offset` into `data` (calldata).
+    function _readU32LECalldata(bytes calldata data, uint256 offset) internal pure returns (uint256) {
+        require(data.length >= offset + 4, "SSZ: u32 out of bounds");
+        return uint256(uint8(data[offset]))
+            | (uint256(uint8(data[offset + 1])) << 8)
+            | (uint256(uint8(data[offset + 2])) << 16)
+            | (uint256(uint8(data[offset + 3])) << 24);
+    }
+
+    /// @dev Decode an SSZ `uint64` (8 little-endian bytes) at `offset` into `data` (calldata).
+    function _readU64LECalldata(bytes calldata data, uint256 offset) internal pure returns (uint64 v) {
+        require(data.length >= offset + 8, "SSZ: u64 out of bounds");
+        for (uint256 i = 0; i < 8; i++) {
+            v |= uint64(uint8(data[offset + i])) << uint64(8 * i);
+        }
+    }
+
+    /// @dev Read 32 contiguous bytes at `offset` from calldata as a `bytes32`.
+    function _readBytes32Calldata(bytes calldata data, uint256 offset) internal pure returns (bytes32 out) {
+        require(data.length >= offset + 32, "SSZ: bytes32 out of bounds");
+        // solhint-disable-next-line no-inline-assembly
+        assembly {
+            out := calldataload(add(data.offset, offset))
+        }
     }
 }

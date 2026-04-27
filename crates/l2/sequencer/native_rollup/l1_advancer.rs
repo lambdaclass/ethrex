@@ -1,12 +1,6 @@
 //! NativeL1Advancer GenServer — reads produced L2 blocks from the Store,
 //! generates an execution witness, and submits them to the NativeRollup.sol
-//! contract via advance().
-//!
-//! The new advance() call sends:
-//!   advance(uint256 l1MessagesCount, bytes sszStatelessInput, bytes32 newBlockHash, bytes32 newStateRoot)
-//!
-//! where sszStatelessInput is the SSZ-encoded StatelessInput containing:
-//!   NewPayloadRequest, ExecutionWitness, ChainConfig, and public_keys.
+//! contract via advance(uint256 l1MessagesCount, bytes sszStatelessInput).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -22,7 +16,6 @@ use ethrex_l2_sdk::{
     build_generic_tx, calldata::encode_calldata, get_native_rollup_block_number,
     send_tx_bump_gas_exponential_backoff,
 };
-use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::clients::Overrides;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage::Store;
@@ -34,7 +27,7 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info};
 
-const ADVANCE_FUNCTION_SIGNATURE: &str = "advance(uint256,bytes,bytes32,bytes32)";
+const ADVANCE_FUNCTION_SIGNATURE: &str = "advance(uint256,bytes)";
 
 #[protocol]
 pub trait NativeL1AdvancerProtocol: Send + Sync {
@@ -165,9 +158,7 @@ impl NativeL1Advancer {
             .map_err(|e| NativeL1AdvancerError::Encoding(format!("SSZ encoding: {e}")))?;
 
         // 6. Send advance() tx
-        let tx_hash = self
-            .send_advance(&block_header, &ssz_input, l1_messages_count)
-            .await?;
+        let tx_hash = self.send_advance(&ssz_input, l1_messages_count).await?;
 
         info!(
             "NativeL1Advancer: advanced block {} on L1 (state_root={:?}, l1_msgs={}, tx={:?})",
@@ -180,7 +171,6 @@ impl NativeL1Advancer {
     /// Build and send the advance() transaction to NativeRollup.sol.
     async fn send_advance(
         &self,
-        header: &BlockHeader,
         ssz_input: &[u8],
         l1_messages_count: u64,
     ) -> Result<H256, NativeL1AdvancerError> {
@@ -189,10 +179,6 @@ impl NativeL1Advancer {
             &[
                 Value::Uint(U256::from(l1_messages_count)),
                 Value::Bytes(Bytes::from(ssz_input.to_vec())),
-                Value::FixedBytes(Bytes::from(
-                    header.compute_block_hash(&NativeCrypto).as_bytes().to_vec(),
-                )),
-                Value::FixedBytes(Bytes::from(header.state_root.as_bytes().to_vec())),
             ],
         )
         .map_err(|e| NativeL1AdvancerError::Encoding(e.to_string()))?;
@@ -229,7 +215,6 @@ pub fn build_ssz_stateless_input(
     witness: &ethrex_common::types::block_execution_witness::ExecutionWitness,
 ) -> Result<Vec<u8>, String> {
     use ethrex_common::types::stateless_ssz::*;
-    use ethrex_rlp::encode::RLPEncode;
     use libssz::SszEncode;
     use libssz_types::SszList;
 
@@ -241,14 +226,14 @@ pub fn build_ssz_stateless_input(
             let encoded = tx.encode_canonical_to_vec();
             let mut list = SszList::new();
             for byte in encoded {
-                list.push(byte);
+                let _ = list.push(byte);
             }
             list
         })
         .collect();
     let mut ssz_transactions = SszList::new();
     for tx in transactions {
-        ssz_transactions.push(tx);
+        let _ = ssz_transactions.push(tx);
     }
 
     let ssz_withdrawals = SszList::new(); // Empty for L2
@@ -268,7 +253,7 @@ pub fn build_ssz_stateless_input(
     // extra_data
     let mut extra_data = SszList::new();
     for byte in header.extra_data.iter() {
-        extra_data.push(*byte);
+        let _ = extra_data.push(*byte);
     }
 
     // block_hash
@@ -292,9 +277,6 @@ pub fn build_ssz_stateless_input(
         withdrawals: ssz_withdrawals,
         blob_gas_used: header.blob_gas_used.unwrap_or(0),
         excess_blob_gas: header.excess_blob_gas.unwrap_or(0),
-        deposit_requests: SszList::new(),
-        withdrawal_requests: SszList::new(),
-        consolidation_requests: SszList::new(),
     };
 
     // 2. Build SSZ NewPayloadRequest
@@ -303,11 +285,18 @@ pub fn build_ssz_stateless_input(
         .map(|h| h.0)
         .unwrap_or([0u8; 32]);
 
+    // L2 blocks never carry EIP-7685 requests.
+    let execution_requests = ExecutionRequests {
+        deposits: SszList::new(),
+        withdrawals: SszList::new(),
+        consolidations: SszList::new(),
+    };
+
     let new_payload_request = NewPayloadRequest {
         execution_payload,
         versioned_hashes: SszList::new(), // Empty for L2
         parent_beacon_block_root,
-        execution_requests: SszList::new(), // Empty for L2
+        execution_requests,
     };
 
     // 3. Convert internal ExecutionWitness → SSZ ExecutionWitness
@@ -338,7 +327,6 @@ fn internal_witness_to_ssz(
     witness: &ethrex_common::types::block_execution_witness::ExecutionWitness,
 ) -> Result<ethrex_common::types::stateless_ssz::SszExecutionWitness, String> {
     use ethrex_common::types::stateless_ssz::SszExecutionWitness;
-    use ethrex_rlp::encode::RLPEncode;
     use libssz_types::SszList;
 
     // State: encode trie nodes back to their RLP preimage bytes.
@@ -351,22 +339,22 @@ fn internal_witness_to_ssz(
         for preimage in preimages {
             let mut node_list = SszList::new();
             for byte in preimage {
-                node_list.push(byte);
+                let _ = node_list.push(byte);
             }
-            state_nodes.push(node_list);
+            let _ = state_nodes.push(node_list);
         }
     }
 
     // Also add storage trie node preimages
-    for (_addr, storage_root) in &witness.storage_trie_roots {
+    for storage_root in witness.storage_trie_roots.values() {
         let mut preimages = Vec::new();
         collect_node_preimages(storage_root, &mut preimages);
         for preimage in preimages {
             let mut node_list = SszList::new();
             for byte in preimage {
-                node_list.push(byte);
+                let _ = node_list.push(byte);
             }
-            state_nodes.push(node_list);
+            let _ = state_nodes.push(node_list);
         }
     }
 
@@ -375,9 +363,9 @@ fn internal_witness_to_ssz(
     for code in &witness.codes {
         let mut code_list = SszList::new();
         for byte in code {
-            code_list.push(*byte);
+            let _ = code_list.push(*byte);
         }
-        codes.push(code_list);
+        let _ = codes.push(code_list);
     }
 
     // Headers
@@ -385,9 +373,9 @@ fn internal_witness_to_ssz(
     for header_bytes in &witness.block_headers_bytes {
         let mut header_list = SszList::new();
         for byte in header_bytes {
-            header_list.push(*byte);
+            let _ = header_list.push(*byte);
         }
-        headers.push(header_list);
+        let _ = headers.push(header_list);
     }
 
     Ok(SszExecutionWitness {

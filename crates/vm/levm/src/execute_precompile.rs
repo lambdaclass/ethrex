@@ -91,7 +91,9 @@ fn validate_l2_constraints(
             "EXECUTE: L2 blocks must have empty withdrawals".to_string(),
         )));
     }
-    if !input.new_payload_request.execution_requests.is_empty() {
+    let reqs = &input.new_payload_request.execution_requests;
+    if !reqs.deposits.is_empty() || !reqs.withdrawals.is_empty() || !reqs.consolidations.is_empty()
+    {
         return Err(VMError::Internal(InternalError::Custom(
             "EXECUTE: L2 blocks must have empty execution_requests".to_string(),
         )));
