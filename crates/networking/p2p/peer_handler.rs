@@ -663,8 +663,7 @@ impl PeerHandler {
 
         loop {
             // Collect completed tasks (non-blocking)
-            while let Ok((chunk_idx, bodies, peer_id, _connection, chunk_headers)) = rx.try_recv()
-            {
+            while let Ok((chunk_idx, bodies, peer_id, _connection, chunk_headers)) = rx.try_recv() {
                 self.peer_table.dec_requests(peer_id)?;
 
                 if bodies.is_empty() {
