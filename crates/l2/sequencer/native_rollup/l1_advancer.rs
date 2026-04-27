@@ -360,9 +360,8 @@ fn internal_witness_to_ssz(
         .iter()
         .enumerate()
         .map(|(i, header_bytes)| {
-            SszList::try_from(header_bytes.clone()).map_err(|e| {
-                format!("witness headers[{i}] exceeds MAX_WITNESS_HEADER_SIZE: {e:?}")
-            })
+            SszList::try_from(header_bytes.clone())
+                .map_err(|e| format!("witness headers[{i}] exceeds MAX_WITNESS_HEADER_SIZE: {e:?}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let headers = SszList::try_from(headers)

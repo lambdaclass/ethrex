@@ -83,9 +83,7 @@ impl NativeL1Watcher {
                     );
                 }
                 Err(e) => {
-                    error!(
-                        "NativeL1Watcher: failed to read lastFetchedL1Block from contract: {e}"
-                    );
+                    error!("NativeL1Watcher: failed to read lastFetchedL1Block from contract: {e}");
                     return;
                 }
             }
