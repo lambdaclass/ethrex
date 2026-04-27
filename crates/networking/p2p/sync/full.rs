@@ -292,6 +292,7 @@ async fn add_blocks(
 /// between batch mode (shared VM state) and single-block pipeline mode.
 /// Pre-execution validation errors (header, body, structural) would fail
 /// identically in both modes, so retrying them is pointless.
+#[allow(dead_code)]
 fn is_post_execution_error(err: &InvalidBlockError) -> bool {
     matches!(
         err,
@@ -304,6 +305,7 @@ fn is_post_execution_error(err: &InvalidBlockError) -> bool {
     )
 }
 
+#[allow(dead_code)]
 async fn run_blocks_pipeline(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
