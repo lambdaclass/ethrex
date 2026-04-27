@@ -229,9 +229,17 @@ pub fn settle_state_diff_finalized(vm: &mut VM<'_>, is_success: bool) {
     }
     if is_success {
         vm.state_diff_finalized = vm.current_call_frame.state_diff.clone();
+        // For each account both created and selfdestructed in this tx, cancel the
+        // new-account entry from the diff. Same-frame cancellations have already
+        // been applied at SELFDESTRUCT time; this sweep covers cross-frame cases
+        // where the create lived in an ancestor and the selfdestruct in a descendant.
+        // Guard with `contains` so already-cancelled entries don't pollute
+        // `cancellations_account` with stale propagations.
         let selfdestruct_addrs: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
         for addr in selfdestruct_addrs {
-            if vm.substate.is_account_created(&addr) {
+            if vm.substate.is_account_created(&addr)
+                && vm.state_diff_finalized.new_accounts.contains(&addr)
+            {
                 vm.state_diff_finalized.cancel_new_account(addr);
             }
         }
@@ -264,12 +272,7 @@ pub fn refund_sender(
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     gas_spent: u64,
-    // Historically used pre-Amsterdam for receipt + user refund; Amsterdam+
-    // computes block gas dimensionally from VM fields and the user pays
-    // `gas_spent`, so this parameter is currently unused in both branches.
-    // Kept in the signature for call-site symmetry with pre-Amsterdam usage
-    // and future reintroduction; rename without the `_` prefix once it's
-    // read again.
+    // Currently unused; kept in the signature for call-site symmetry.
     _gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;

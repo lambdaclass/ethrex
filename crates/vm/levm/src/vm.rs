@@ -457,7 +457,7 @@ pub struct VM<'a> {
     /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
     pub cost_per_state_byte: u64,
     /// EIP-8037 state-diff journal: finalized diff for the completed transaction.
-    /// Populated at finalize_execution time (Phase 3).
+    /// Populated at finalize_execution by `settle_state_diff_finalized`.
     pub state_diff_finalized: StateDiff,
     /// EIP-8037 state-diff journal: seed diff from intrinsic tx costs (access-list entries,
     /// auth tuples pre-charged before execution begins). Used to restore on top-level revert.

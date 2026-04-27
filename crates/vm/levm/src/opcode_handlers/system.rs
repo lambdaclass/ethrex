@@ -549,7 +549,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
         // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
         if vm.env.config.fork >= Fork::Amsterdam {
             let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
-            // Phase 1: Check base cost is available (without charging)
+            // Step 1: Check base cost is available (without charging)
             #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
             if vm.current_call_frame.gas_remaining < (base_cost as i64) {
                 return Err(ExceptionalHalt::OutOfGas.into());
@@ -569,7 +569,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 }
             }
 
-            // Phase 2: Charge the full cost (base only for Amsterdam+; NEW_ACCOUNT moved to state gas)
+            // Step 2: Charge the full cost (base only for Amsterdam+; NEW_ACCOUNT moved to state gas)
             vm.current_call_frame
                 .increase_consumed_gas(gas_cost::selfdestruct(
                     target_account_is_cold,
@@ -631,7 +631,8 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
                 // EIP-8037 StateDiff: same-frame cancellation for account created in this tx.
                 // Cross-frame cases (account created in an ancestor frame) are handled at
-                // tx-finalize time in Phase 3.2 via substate.iter_selfdestruct sweep.
+                // tx-finalize time via the substate.iter_selfdestruct sweep in
+                // settle_state_diff_finalized.
                 vm.current_call_frame.state_diff.cancel_new_account(to);
             }
 
@@ -660,7 +661,8 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
             // EIP-8037 StateDiff: same-frame cancellation for account created in this tx.
             // Cross-frame cases (account created in an ancestor frame) are handled at
-            // tx-finalize time in Phase 3.2 via substate.iter_selfdestruct sweep.
+            // tx-finalize time via the substate.iter_selfdestruct sweep in
+            // settle_state_diff_finalized.
             if vm.substate.is_account_created(&to) {
                 vm.current_call_frame.state_diff.cancel_new_account(to);
             }
@@ -1279,10 +1281,10 @@ impl<'a> VM<'a> {
                     let new_account_state_gas =
                         gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
                     self.refund_state_gas_to_reservoir(new_account_state_gas)?;
-                    // EIP-8037 StateDiff: cancel the record made on the parent frame's
-                    // diff before the child was launched (Task 2.3). The child diff is
-                    // dropped on revert via Phase 1 plumbing, but the new-account record
-                    // lives on the parent and must be undone explicitly.
+                    // EIP-8037 StateDiff: cancel the record made on the parent frame's diff
+                    // before the child was launched. The child diff is dropped on revert via
+                    // merge-on-success / drop-on-revert plumbing, but the new-account record
+                    // lives on the parent and must be undone explicitly here.
                     self.current_call_frame.state_diff.cancel_new_account(to);
                 }
 

@@ -151,11 +151,11 @@ fn finalize_non_privileged_execution(
     // EIP-7778: pre-refund gas for block accounting
     let total_gas_pre_refund = ctx_result.gas_used;
 
-    // Clear the backup so that Phase 2's rollback only undoes mutations
+    // Clear the backup so that the mutation rollback below only undoes mutations
     // from apply_finalize_mutations, not the gas-overuse revert above.
     vm.current_call_frame.call_frame_backup.clear();
 
-    // === Phase 1: Fallible computations (no state mutations) ===
+    // === Step 1: Fallible computations (no state mutations) ===
     // Perform contract calls and conversions that can fail BEFORE any
     // mutations, so an error here leaves the DB state unchanged.
     let fee_token_ratio: u64 = match (cached_fee_token_ratio, use_fee_token) {
@@ -177,7 +177,7 @@ fn finalize_non_privileged_execution(
         (None, false) => 1u64,
     };
 
-    // === Phase 2: State mutations (with rollback on error) ===
+    // === Step 2: State mutations (with rollback on error) ===
     // Mutations record original values in call_frame_backup via
     // backup_account_info / backup_storage_slot. If any step fails,
     // we restore the cache to undo all partial mutations.
@@ -195,7 +195,7 @@ fn finalize_non_privileged_execution(
     );
 
     if let Err(e) = result {
-        // Rollback DB cache to undo partial Phase 2 mutations.
+        // Rollback DB cache to undo partial mutations from apply_finalize_mutations.
         // Note: substate (logs, selfdestruct) is NOT rolled back here because
         // the substate parent was already consumed by handle_state_backup()
         // during run_execution(). This is safe because the Err propagates to

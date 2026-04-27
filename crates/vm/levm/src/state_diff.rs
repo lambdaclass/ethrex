@@ -6,9 +6,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 /// Tracks all state-growth events that occurred within a single call frame.
 /// On successful return, the child's diff is merged into the parent via
 /// [`StateDiff::merge_from_child`]. On revert, the diff is discarded.
-///
-/// This is scaffolding for Phase 2+ of the state-diff-at-frame-return refactor.
-/// The legacy state-gas accounting in `VM` is still authoritative in Phase 1.
+/// Block-level state gas is computed from the tx-level finalized diff
+/// (`VM::state_diff_finalized.bytes() * cost_per_state_byte`).
 #[derive(Debug, Clone, Default)]
 pub struct StateDiff {
     /// Addresses that this frame has created (CREATE/CREATE2/CALL-with-value to empty).
@@ -119,12 +118,13 @@ impl StateDiff {
 
     /// Merge a successful child frame's diff into self (parent).
     ///
-    /// `ancestors` is the slice of frames *deeper* than self in the call stack
-    /// (i.e., frames between self and the tx-level seed) — required for cross-frame
-    /// cancellation resolution. Pass an empty slice if self is already at the top.
+    /// `ancestors` is the slice of older frames in the call stack (call_frames[0..parent]),
+    /// passed in stack order (oldest first). The cancellation search iterates ancestors
+    /// in REVERSE order so the youngest ancestor is checked first — required for cross-frame
+    /// cancellation resolution. Pass an empty slice if self is the only frame above child.
     ///
     /// Algorithm:
-    ///   1. Apply child's cancellations: search self FIRST, then ancestors in REVERSE order.
+    ///   1. Apply child's cancellations: search self FIRST, then ancestors youngest-first.
     ///      Idempotent: if not found anywhere, propagate up so a higher merge can resolve.
     ///   2. Set-union the rest: child's new_accounts/new_storage_slots/auth_total/auth_only into self.
     ///   3. Sum-merge code_deposits.

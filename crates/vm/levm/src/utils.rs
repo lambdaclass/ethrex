@@ -364,7 +364,7 @@ impl<'a> VM<'a> {
                     // EIP-8037 StateDiff: downgrade auth_total → auth_only for pre-existing authority.
                     // The seed snapshot (from add_intrinsic_gas) has the full auth_total (135 bytes);
                     // after this downgrade the live diff reflects 23 bytes. On top-level revert
-                    // (Phase 3), state_diff_finalized is reset to the seed → counts 135 bytes.
+                    // state_diff_finalized is reset to the seed → counts 135 bytes.
                     self.current_call_frame
                         .state_diff
                         .record_auth_downgrade_to_only(authority_address);
