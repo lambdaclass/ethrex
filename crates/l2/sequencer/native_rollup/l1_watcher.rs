@@ -206,7 +206,19 @@ impl NativeL1Watcher {
             .try_into()
             .map_err(|_| NativeL1WatcherError::Parse("gasLimit exceeds u64".into()))?;
 
-        // data[64..96] = ABI offset for `bytes data` (skip — we know it points to 96)
+        // Verify the dynamic-bytes ABI offset so a future event-shape change
+        // fails loudly here instead of silently parsing garbage.
+        const EXPECTED_BYTES_OFFSET: u64 = 96;
+        let offset_word = data
+            .get(64..96)
+            .ok_or(parse_err("data too short for bytes offset"))?;
+        let offset = U256::from_big_endian(offset_word);
+        if offset != U256::from(EXPECTED_BYTES_OFFSET) {
+            return Err(NativeL1WatcherError::Parse(format!(
+                "unexpected ABI offset for bytes data: {offset} (expected {EXPECTED_BYTES_OFFSET})"
+            )));
+        }
+
         // data[96..128] = byte length of `data`
         let byte_len_word = data
             .get(96..128)
