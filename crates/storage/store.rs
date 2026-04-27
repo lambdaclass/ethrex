@@ -2914,12 +2914,11 @@ fn apply_trie_updates(
             }
         }
 
-        // Signal the caller that the in-memory view is updated (they can proceed).
-        result_sender
-            .send(Ok(()))
-            .map_err(|_| StoreError::LockError)?;
-
         // Write nodes to disk immediately (no layer accumulation).
+        // The caller MUST NOT proceed until the disk write completes,
+        // because `disable_batch_trie_cache` drops the LRU. If we
+        // signalled before the write, the next batch could find nodes
+        // in neither the (fresh, empty) LRU nor on disk.
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
 
         let last_written = backend
@@ -2961,7 +2960,14 @@ fn apply_trie_updates(
             result = write_tx.commit();
         }
         let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
-        return result;
+
+        // Signal the caller only after disk write is complete, so the
+        // batch boundary (disable + re-enable cache) is safe.
+        let ok = result.is_ok();
+        result_sender
+            .send(result)
+            .map_err(|_| StoreError::LockError)?;
+        return if ok { Ok(()) } else { Err(StoreError::Custom("batch trie disk write failed".to_string())) };
     }
 
     // --- Normal path: layered diff-chain cache ---
