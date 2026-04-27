@@ -18,7 +18,16 @@ import uuid
 COMPILER_VERSION = "v0.8.31+commit.fd3a2265"
 CONTRACT_NAME = "NativeRollup"
 CONTRACTS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "crates", "vm", "levm", "contracts"
+    os.path.dirname(__file__),
+    "..",
+    "..",
+    "..",
+    "crates",
+    "l2",
+    "contracts",
+    "src",
+    "nativeRollup",
+    "l1",
 )
 
 
