@@ -254,11 +254,6 @@ impl NewPayloadRequest {
 // ============================================================================
 
 // ── Stateless validation limits ──────────────────────────────────
-//
-// Only `MAX_WITNESS_HEADERS` has spec backing (stateless.py asserts
-// `len(encoded_headers) <= 256`). The rest are ethrex-chosen bounds
-// required to type the SSZ lists; the reference stateless.py uses
-// untyped Python lists with no size limits.
 
 /// MAX_WITNESS_NODES — max trie-node preimages in an execution witness.
 const MAX_WITNESS_NODES: usize = 1_048_576; // 2^20

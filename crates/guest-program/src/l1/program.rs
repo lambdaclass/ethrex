@@ -54,6 +54,9 @@ pub fn execution_program(
     })
 }
 
+/// Decode and execute the L1 stateless validation program from EIP-8025 wire
+/// bytes.
+///
 /// The wire format is `[ssz_len: u32 LE][ssz_bytes][rkyv_bytes]`, matching
 /// [`decode_eip8025`](super::decode_eip8025).
 #[cfg(feature = "experimental-devnet")]
