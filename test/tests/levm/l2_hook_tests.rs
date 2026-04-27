@@ -677,3 +677,135 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         "Recipient should not receive funds from a reverted privileged tx"
     );
 }
+
+/// Reproducer for an L2 fee-validation gap.
+///
+/// `validate_sufficient_max_fee_per_gas_l2` only requires
+/// `max_fee_per_gas >= base_fee_per_gas + operator_fee_per_gas`, so a
+/// transaction can satisfy that cap while still setting
+/// `max_priority_fee_per_gas < operator_fee_per_gas`. In that case the
+/// effective `gas_price = min(max_priority + base_fee, max_fee)` becomes
+/// `max_priority + base_fee`, the priority component
+/// (`gas_price - base_fee = max_priority`) is below `operator_fee_per_gas`,
+/// and `compute_priority_fee_per_gas` underflows when subtracting the
+/// operator fee — surfacing as `InternalError::Underflow` rather than a
+/// regular `TxValidationError`.
+///
+/// This test pins the current (buggy) behaviour: the transaction should
+/// have been rejected during validation, but instead execution proceeds
+/// to finalize and trips an internal-error path that is reserved for
+/// "this can't happen" invariants. A user-supplied input must never hit
+/// it. After a fix we expect a `TxValidationError` (e.g. a new
+/// `PriorityFeeBelowOperatorFee` variant or an extension of
+/// `InsufficientMaxFeePerGas`) instead.
+#[test]
+fn priority_fee_below_operator_fee_underflows_in_finalize() {
+    use ethrex_levm::errors::{InternalError, VMError};
+
+    let sender = Address::from_low_u64_be(SENDER);
+    let coinbase = Address::from_low_u64_be(COINBASE);
+    let operator_fee_vault = Address::from_low_u64_be(0xFEE);
+
+    let gas_limit: u64 = 100_000;
+    let base_fee_per_gas: u64 = 10;
+    let operator_fee_per_gas: u64 = 100;
+
+    // max_fee_per_gas covers base + operator (passes
+    // validate_sufficient_max_fee_per_gas_l2), but max_priority_fee_per_gas
+    // is below operator_fee_per_gas — the case the L2 validator misses.
+    let max_fee_per_gas: u64 = base_fee_per_gas + operator_fee_per_gas + 90; // 200
+    let max_priority_fee_per_gas: u64 = operator_fee_per_gas - 50; // 50
+
+    // gas_price = min(priority + base, max_fee) = min(60, 200) = 60
+    let gas_price: u64 = max_priority_fee_per_gas + base_fee_per_gas;
+
+    let accounts: FxHashMap<Address, Account> = [
+        // Fund well above max_fee_per_gas * gas_limit so the upfront balance
+        // check passes — we want to exercise the fee-priority math.
+        (
+            sender,
+            eoa(U256::from(max_fee_per_gas) * U256::from(gas_limit) * U256::from(2)),
+        ),
+        (coinbase, eoa(U256::zero())),
+        (operator_fee_vault, eoa(U256::zero())),
+    ]
+    .into_iter()
+    .collect();
+
+    let test_db = TestDatabase::new();
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
+
+    let fork = Fork::Prague;
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    let env = Environment {
+        origin: sender,
+        gas_limit,
+        config: EVMConfig::new(fork, blob_schedule),
+        block_number: 1,
+        coinbase,
+        timestamp: 1000,
+        prev_randao: Some(H256::zero()),
+        difficulty: U256::zero(),
+        slot_number: U256::zero(),
+        chain_id: U256::from(1),
+        base_fee_per_gas: U256::from(base_fee_per_gas),
+        base_blob_fee_per_gas: U256::from(1),
+        gas_price: U256::from(gas_price),
+        block_excess_blob_gas: None,
+        block_blob_gas_used: None,
+        tx_blob_hashes: vec![],
+        tx_max_priority_fee_per_gas: Some(U256::from(max_priority_fee_per_gas)),
+        tx_max_fee_per_gas: Some(U256::from(max_fee_per_gas)),
+        tx_max_fee_per_blob_gas: None,
+        tx_nonce: 0,
+        block_gas_limit: gas_limit * 2,
+        is_privileged: false,
+        fee_token: None,
+        disable_balance_check: false,
+    };
+
+    let fee_config = FeeConfig {
+        base_fee_vault: None,
+        operator_fee_config: Some(OperatorFeeConfig {
+            operator_fee_vault,
+            operator_fee_per_gas,
+        }),
+        l1_fee_config: None,
+    };
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(Address::from_low_u64_be(0x9999)),
+        value: U256::zero(),
+        data: Bytes::new(),
+        gas_limit,
+        max_fee_per_gas,
+        max_priority_fee_per_gas,
+        ..Default::default()
+    });
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config),
+        &NativeCrypto,
+    )
+    .unwrap();
+
+    let result = vm.execute();
+
+    // Current behaviour: the underflow leaks out as InternalError, which is
+    // the "invariant violated" path — it should be a tx-validation reject.
+    let err = result.expect_err(
+        "Expected execute to fail because max_priority_fee_per_gas \
+         (< operator_fee_per_gas) makes priority - operator underflow",
+    );
+    assert!(
+        matches!(err, VMError::Internal(InternalError::Underflow)),
+        "Expected InternalError::Underflow from compute_priority_fee_per_gas; \
+         got: {err:?}. After the fix this should be a TxValidationError instead, \
+         but this test pins the *current* (buggy) behaviour so any change in \
+         handling is caught.",
+    );
+}
