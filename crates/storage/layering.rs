@@ -17,7 +17,10 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 /// Maximum number of entries in the trie read cache.
 /// Caches trie nodes read from disk to avoid repeated RocksDB lookups
 /// for frequently-accessed but unmodified nodes.
-const READ_CACHE_CAPACITY: usize = 200_000;
+const READ_CACHE_CAPACITY: NonZeroUsize = match NonZeroUsize::new(200_000) {
+    Some(v) => v,
+    None => panic!("READ_CACHE_CAPACITY must be non-zero"),
+};
 
 /// LRU cache for trie nodes read from disk.
 ///
@@ -29,7 +32,7 @@ pub type TrieReadCache = Arc<RwLock<LruCache<Vec<u8>, Vec<u8>, FxBuildHasher>>>;
 /// Creates a new [`TrieReadCache`] with the default capacity.
 pub fn new_trie_read_cache() -> TrieReadCache {
     Arc::new(RwLock::new(LruCache::with_hasher(
-        NonZeroUsize::new(READ_CACHE_CAPACITY).unwrap(),
+        READ_CACHE_CAPACITY,
         FxBuildHasher,
     )))
 }
@@ -358,20 +361,20 @@ impl TrieDB for TrieWrapper {
         }
 
         // Level 2: Check the LRU read cache for recently-read disk nodes
-        if let Ok(mut cache) = self.read_cache.write() {
-            if let Some(value) = cache.get(key.as_ref()) {
-                return Ok(Some(value.clone()));
-            }
+        if let Ok(mut cache) = self.read_cache.write()
+            && let Some(value) = cache.get(key.as_ref())
+        {
+            return Ok(Some(value.clone()));
         }
 
         // Level 3: Read from disk (RocksDB)
         let result = self.db.get(key.clone())?;
 
         // Populate the read cache on a disk hit
-        if let Some(ref value) = result {
-            if let Ok(mut cache) = self.read_cache.write() {
-                cache.put(key.into_vec(), value.clone());
-            }
+        if let Some(ref value) = result
+            && let Ok(mut cache) = self.read_cache.write()
+        {
+            cache.put(key.into_vec(), value.clone());
         }
 
         Ok(result)
