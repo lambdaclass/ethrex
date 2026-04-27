@@ -2,7 +2,7 @@ use std::{fmt::Debug, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 
 use crate::{RollupStoreError, api::StoreEngineRollup};
-use ethereum_types::U256;
+use ethrex_common::U256;
 use ethrex_common::{
     H256,
     types::{

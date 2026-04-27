@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use calldata::encode_calldata;
-use ethereum_types::{H160, H256, U256};
+use ethereum_types::{H160, H256};
+use ethrex_common::U256;
 use ethrex_common::types::EIP7702Transaction;
 use ethrex_common::types::FeeTokenTransaction;
 use ethrex_common::types::Fork;

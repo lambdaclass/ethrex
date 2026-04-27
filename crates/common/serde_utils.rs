@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer, Serializer, de::Error, ser::SerializeSeq}
 
 pub mod u256 {
     use super::*;
-    use ethereum_types::U256;
+    use crate::U256;
 
     pub mod dec_str {
         use super::*;

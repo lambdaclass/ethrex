@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used)]
 use criterion::{BatchSize, Bencher, BenchmarkId, Criterion, criterion_group, criterion_main};
-use ethereum_types::{H256, U256};
+use ethereum_types::H256;
+use ethrex_common::U256;
 use ethrex_p2p::{
     rlpx::{p2p::Capability, snap::StorageSlot},
     types::Endpoint,

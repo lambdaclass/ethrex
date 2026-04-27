@@ -1,5 +1,6 @@
+use crate::U256;
 use bytes::Bytes;
-use ethereum_types::{Bloom, H160, H256, U256};
+use ethereum_types::{Bloom, H160, H256};
 use rkyv::{
     Archive, Archived, Deserialize, Serialize,
     rancor::{Fallible, Source},
@@ -34,11 +35,15 @@ impl From<VecVecWrapper> for Vec<Vec<u8>> {
 
 #[derive(Archive, Serialize, Deserialize)]
 #[rkyv(remote = U256)]
-pub struct U256Wrapper([u64; 4]);
+pub struct U256Wrapper(#[rkyv(getter = get_u256_limbs)] [u64; 4]);
+
+fn get_u256_limbs(u: &U256) -> [u64; 4] {
+    *u.as_limbs()
+}
 
 impl From<U256Wrapper> for U256 {
     fn from(value: U256Wrapper) -> Self {
-        Self(value.0)
+        Self::from_limbs(value.0)
     }
 }
 

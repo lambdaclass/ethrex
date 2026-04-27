@@ -1,5 +1,5 @@
 use super::{BlobsBundle, Block, block_access_list::BlockAccessList, requests::EncodedRequests};
-use ethereum_types::U256;
+use crate::U256;
 
 #[derive(Debug, Clone)]
 pub struct PayloadBundle {

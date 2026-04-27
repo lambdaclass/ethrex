@@ -8,7 +8,7 @@ use ethrex::utils::{default_datadir, init_datadir};
 use ethrex_common::types::{BlockHash, Code};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, serde_utils};
-use ethrex_common::{BigEndianHash, Bytes, H256, U256, types::BlockNumber};
+use ethrex_common::{Bytes, H256, U256, types::BlockNumber};
 use ethrex_common::{
     constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
     types::{AccountState, Block},
@@ -207,7 +207,7 @@ async fn send_ipc_json_request(stream: &mut UnixStream, request: &Value) -> eyre
 }
 
 fn hash_next(hash: H256) -> H256 {
-    H256::from_uint(&(hash.into_uint() + 1))
+    (U256::from_h256(hash) + 1u64).to_h256()
 }
 
 impl DumpAccount {

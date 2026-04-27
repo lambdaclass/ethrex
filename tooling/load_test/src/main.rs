@@ -1,5 +1,6 @@
 use clap::{Parser, ValueEnum};
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H160, H256};
+use ethrex_common::U256;
 use ethrex_blockchain::constants::TX_GAS_COST;
 use ethrex_common::types::TxType;
 use ethrex_l2_common::calldata::Value;

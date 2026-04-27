@@ -13,9 +13,14 @@ use ethrex_guest_program::crypto::zisk::ZiskCrypto;
 #[cfg(not(feature = "eip-8025"))]
 use rkyv::rancor::Error;
 
+mod ruint_backend;
+
 ziskos::entrypoint!(main);
 
 pub fn main() {
+    // Install ruint U256 backend.
+    ethrex_common::install_uint256_backend(ruint_backend::RuintUint256Ops);
+
     println!("start reading input");
     let input = ziskos::io::read_vec();
 
