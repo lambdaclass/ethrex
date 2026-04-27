@@ -1048,7 +1048,7 @@ impl PeerTableServer {
                 peer_id: *id,
                 score: peer_data.score,
                 inflight_requests: peer_data.requests,
-                eligible: self.can_try_more_requests(&peer_data.score, &peer_data.requests),
+                eligible: self.can_try_more_requests(peer_data),
                 capabilities: peer_data
                     .supported_capabilities
                     .iter()
