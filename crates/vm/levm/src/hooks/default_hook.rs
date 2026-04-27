@@ -187,6 +187,9 @@ impl Hook for DefaultHook {
             // state_gas_used already = intrinsic_state (no execution state gas).
             // Per EELS, `tx_env.intrinsic_state_gas` is immutable — any auth refund
             // goes to the reservoir, not to block-accounted state_gas.
+            // NOTE: this is the *gross* state_gas_used (no execution_state_gas_refund subtraction
+            // unlike the normal path in `refund_sender`). On collision no execution-phase refunds
+            // accrue, so gross == net. Phase 5 must preserve this asymmetry when removing legacy.
             let state_gas = vm.state_gas_used;
             let floor = vm.get_min_gas_used()?;
             // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
@@ -346,6 +349,14 @@ pub fn refund_sender(
         // Unresolved cancellations are only present if the cancel target wasn't found
         // anywhere in the frame hierarchy — after merge they either resolved or propagated.
         // Auth_total and auth_only are mutually exclusive (downgrade is monotonic).
+        //
+        // NOTE: by the time we reach finalize, all successful cancellations have already
+        // been applied at merge time, so the cancellations_* sets here only contain
+        // *unresolved* (target-not-found-anywhere) entries. These checks therefore catch:
+        //   - bugs in cancel_*_local where the entry stayed in new_* after successful removal
+        //   - regressions in merge_from_child's cross-cancellation walk
+        //   - bugs in record_auth_downgrade_to_only that left the authority in auth_total
+        // They do NOT catch double-cancellation (same key cancelled twice).
         #[cfg(debug_assertions)]
         {
             for addr in &vm.state_diff_finalized.cancellations_account {
