@@ -1076,7 +1076,7 @@ impl PeerTableServer {
     ) -> bool {
         self.peers.values().any(|peer_data| {
             peer_data.connection.is_some()
-                && self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                && self.can_try_more_requests(peer_data)
                 && msg
                     .capabilities
                     .iter()
@@ -1235,7 +1235,7 @@ impl PeerTableServer {
                 peer_id: *id,
                 score: peer_data.score,
                 inflight_requests: peer_data.requests,
-                eligible: self.can_try_more_requests(&peer_data.score, &peer_data.requests),
+                eligible: self.can_try_more_requests(peer_data),
                 capabilities: peer_data
                     .supported_capabilities
                     .iter()
@@ -1405,11 +1405,11 @@ impl PeerTableServer {
         capabilities: &[Capability],
         n: usize,
     ) -> Vec<(H256, PeerConnection)> {
-        let mut candidates: Vec<(H256, i64, i64, PeerConnection)> = self
+        let mut candidates: Vec<(H256, &PeerData, PeerConnection)> = self
             .peers
             .iter()
             .filter_map(|(id, peer_data)| {
-                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                if !self.can_try_more_requests(peer_data)
                     || !capabilities
                         .iter()
                         .any(|cap| peer_data.supported_capabilities.contains(cap))
@@ -1417,16 +1417,16 @@ impl PeerTableServer {
                     None
                 } else {
                     let connection = peer_data.connection.clone()?;
-                    Some((*id, peer_data.score, peer_data.requests, connection))
+                    Some((*id, peer_data, connection))
                 }
             })
             .collect();
 
-        candidates.sort_by_key(|(_, score, reqs, _)| -self.weight_peer(score, reqs));
+        candidates.sort_by_key(|(_, peer_data, _)| -self.weight_peer(peer_data));
         candidates
             .into_iter()
             .take(n)
-            .map(|(id, _, _, conn)| (id, conn))
+            .map(|(id, _, conn)| (id, conn))
             .collect()
     }
 

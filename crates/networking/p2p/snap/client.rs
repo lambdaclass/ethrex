@@ -1097,11 +1097,9 @@ pub async fn request_state_trienodes(
             .collect(),
         bytes: MAX_RESPONSE_BYTES,
     });
-    let req_start = Instant::now();
     let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await;
-    let elapsed = req_start.elapsed();
     drop(permit);
     let nodes = match response {
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
@@ -1129,9 +1127,6 @@ pub async fn request_state_trienodes(
             return Err(SnapError::InvalidHash);
         }
     }
-
-    // Record latency only after full validation (decode + hash check).
-    let _ = peer_table.record_response_latency(peer_id, elapsed);
 
     Ok(nodes)
 }

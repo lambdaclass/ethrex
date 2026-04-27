@@ -76,18 +76,15 @@ async fn ask_peer_head_number(
 
     debug!("(Retry {retries}) Requesting sync head {sync_head:?} to peer {peer_id}");
 
-    let req_start = Instant::now();
-    let result = connection
+    match connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await;
-    let elapsed = req_start.elapsed();
-    match result {
+        .await
+    {
         Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
             block_headers,
         })) => {
             if !block_headers.is_empty() {
-                let _ = peer_table.record_response_latency(peer_id, elapsed);
                 let sync_head_number = block_headers
                     .last()
                     .ok_or(PeerHandlerError::BlockHeaders)?
@@ -684,18 +681,15 @@ impl PeerHandler {
             reverse: false,
         });
         debug!("get_block_header: requesting header with number {block_number}");
-        let req_start = Instant::now();
-        let result = connection
+        match connection
             .outgoing_request(request, PEER_REPLY_TIMEOUT)
-            .await;
-        let elapsed = req_start.elapsed();
-        match result {
+            .await
+        {
             Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                 id: _,
                 block_headers,
             })) => {
                 if !block_headers.is_empty() {
-                    let _ = self.peer_table.record_response_latency(peer_id, elapsed);
                     return Ok(Some(
                         block_headers
                             .last()
