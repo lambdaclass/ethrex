@@ -579,7 +579,7 @@ pub async fn snap_sync(
             // which on BSC is much slower than ranges due to tight peer
             // retention. Each pivot rotation gives failed sub-ranges another
             // chance at peers that happen to have that storage_root.
-            if storage_range_request_attempts < 10_000 {
+            if storage_range_request_attempts < 250 {
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
