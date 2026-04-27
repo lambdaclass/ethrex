@@ -1436,10 +1436,8 @@ impl Blockchain {
 
             block_headers_bytes.push(current_header.encode_to_vec());
         }
-        // EELS witness format requires headers in ascending block-number order so
-        // each header's `parent_hash` matches `keccak(prev header bytes)`. We walked
-        // the chain backward (newest → oldest), so reverse to ascend.
-        // https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
+        // EELS expects ascending order; we walked the chain backward, so reverse.
+        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
         block_headers_bytes.reverse();
 
         // Get initial state trie root and embed the rest of the trie into it
@@ -1675,10 +1673,8 @@ impl Blockchain {
 
             block_headers_bytes.push(current_header.encode_to_vec());
         }
-        // EELS witness format requires headers in ascending block-number order so
-        // each header's `parent_hash` matches `keccak(prev header bytes)`. We walked
-        // the chain backward (newest → oldest), so reverse to ascend.
-        // https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
+        // EELS expects ascending order; we walked the chain backward, so reverse.
+        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
         block_headers_bytes.reverse();
 
         // Get initial state trie root and embed the rest of the trie into it

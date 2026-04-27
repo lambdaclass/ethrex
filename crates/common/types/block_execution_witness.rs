@@ -151,7 +151,7 @@ impl RpcExecutionWitness {
             ));
         }
 
-        // Skip headers that fail to decode (tolerance) and pick the parent by number.
+        // §Tolerance: skip headers that fail to decode, then pick parent by number.
         let initial_state_root = self
             .headers
             .iter()
@@ -165,15 +165,9 @@ impl RpcExecutionWitness {
                 ))
             })?;
 
-        // Tolerate witness entries that fail to decode (malformed RLP, or the `Null`
-        // node `[0x80]` other clients emit): drop them silently. They cannot be looked
-        // up by hash, so tolerating them is safe. If execution actually requires one,
-        // the trie walk will fail with a missing-node error (completeness check).
-        //
-        // Matches EELS `witness_state.build_node_db` and geth `MakeHashDB`, both of
-        // which store entries keyed by hash without pre-validation:
-        //   https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L37-L42
-        //   https://github.com/ethereum/go-ethereum/blob/master/core/stateless/database.go#L26-L67
+        // EIP-8025 §Tolerance: drop entries that don't decode. They can't be looked
+        // up by hash anyway; if execution needs them, the trie walk fails there.
+        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L37-L42
         let nodes: BTreeMap<H256, Node> = self
             .state
             .into_iter()
@@ -326,18 +320,15 @@ impl GuestProgramState {
         value: ExecutionWitness,
         crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
-        // Decode headers and verify they form a contiguous chain in list order:
-        // every header's `parent_hash` must equal `keccak256(previous header bytes)`.
-        // Mirrors EELS `stateless.validate_headers`:
-        //   https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
-        // A non-contiguous chain (e.g. reordered headers) makes the witness invalid
-        // even if a by-number lookup would otherwise resolve to the right header.
+        // EIP-8025 §Completeness: headers must form a contiguous chain in list order
+        // (each `parent_hash` matches keccak of the previous header bytes). Reordered
+        // or fragmented chains are invalid even if by-number lookup would resolve.
+        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
         let mut block_headers: BTreeMap<u64, BlockHeader> = BTreeMap::new();
         let mut prev_hash: Option<H256> = None;
         for bytes in &value.block_headers_bytes {
             let Ok(header) = BlockHeader::decode(bytes.as_ref()) else {
-                // Tolerate malformed entries by treating them as a chain break:
-                // subsequent headers will not satisfy the parent_hash check.
+                // Malformed entry is a chain break; the next parent_hash check fails.
                 prev_hash = None;
                 continue;
             };
@@ -603,14 +594,9 @@ impl GuestProgramState {
         Ok(self.chain_config)
     }
 
-    /// Retrieves the account code for a specific code hash.
+    /// Retrieves bytecode by code hash. Errors if missing — EIP-8025 §Completeness.
     ///
-    /// Errors if the code is not present in the witness. Per the EELS reference
-    /// implementation, a stateless executor that touches code missing from its
-    /// witness MUST treat the witness as incomplete and reject:
-    ///   https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L204-L212
-    /// Geth implements the same hash-keyed-store + error-on-miss model:
-    ///   https://github.com/ethereum/go-ethereum/blob/master/core/stateless/database.go#L26-L46
+    /// Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L204-L212
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
@@ -623,8 +609,7 @@ impl GuestProgramState {
         })
     }
 
-    /// Retrieves code metadata (length) for a specific code hash. Errors on miss for
-    /// the same completeness reason as `get_account_code`.
+    /// Code length by hash. Errors on miss, like `get_account_code`.
     pub fn get_code_metadata(
         &self,
         code_hash: H256,
