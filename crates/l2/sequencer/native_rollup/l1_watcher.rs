@@ -9,6 +9,7 @@ use bytes::Bytes;
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, U256};
 use ethrex_crypto::keccak::keccak_hash;
+use ethrex_l2_sdk::get_last_fetched_l1_block;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_rpc::types::receipt::RpcLog;
 use spawned_concurrency::{
@@ -71,6 +72,24 @@ impl NativeL1Watcher {
 
     async fn poll_l1_messages(&mut self) {
         let topic = *L1_MESSAGE_RECORDED_TOPIC;
+
+        if self.last_block_fetched.is_zero() {
+            match get_last_fetched_l1_block(&self.eth_client, self.contract_address).await {
+                Ok(deploy_block) => {
+                    self.last_block_fetched = U256::from(deploy_block);
+                    info!(
+                        "NativeL1Watcher: seeded cursor at L1 block {} from contract",
+                        deploy_block
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "NativeL1Watcher: failed to read lastFetchedL1Block from contract: {e}"
+                    );
+                    return;
+                }
+            }
+        }
 
         let latest_block = match self.eth_client.get_block_number().await {
             Ok(n) => U256::from(n),

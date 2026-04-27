@@ -114,7 +114,7 @@ impl RpcHandler for GetNativeWithdrawalProof {
         let mut slot_preimage = [0u8; 64];
         slot_preimage[..32].copy_from_slice(withdrawal_hash.as_bytes());
         slot_preimage[32..].copy_from_slice(&U256::from(SENT_MESSAGES_SLOT).to_big_endian());
-        let storage_key = H256::from_slice(keccak(slot_preimage).as_bytes());
+        let storage_key = keccak(slot_preimage);
 
         // 6. Get the block header for the state root
         let header = storage.get_block_header(block_number)?.ok_or_else(|| {

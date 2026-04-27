@@ -41,7 +41,7 @@ pub fn execute_precompile(
     run_execute(validator, calldata, gas_remaining)
 }
 
-/// Core execution logic: charge gas, validate L2 constraints, delegate.
+/// Validate L2 constraints, charge gas, delegate.
 fn run_execute(
     validator: &dyn crate::StatelessValidator,
     calldata: &Bytes,
@@ -56,16 +56,13 @@ fn run_execute(
         )))
     })?;
 
-    // Charge gas based on the L2 block's gas_used
+    validate_l2_constraints(&input)?;
+
     increase_precompile_consumed_gas(
         input.new_payload_request.execution_payload.gas_used,
         gas_remaining,
     )?;
 
-    // Validate L2-specific constraints
-    validate_l2_constraints(&input)?;
-
-    // Delegate to verify_stateless_new_payload via the trait
     let result = validator.verify(calldata)?;
     Ok(Bytes::from(result))
 }

@@ -222,19 +222,14 @@ pub fn build_ssz_stateless_input(
     let transactions: Vec<SszList<u8, 1_073_741_824>> = body
         .transactions
         .iter()
-        .map(|tx| {
-            let encoded = tx.encode_canonical_to_vec();
-            let mut list = SszList::new();
-            for byte in encoded {
-                let _ = list.push(byte);
-            }
-            list
+        .enumerate()
+        .map(|(i, tx)| {
+            SszList::try_from(tx.encode_canonical_to_vec())
+                .map_err(|e| format!("transaction[{i}] exceeds MAX_BYTES_PER_TRANSACTION: {e:?}"))
         })
-        .collect();
-    let mut ssz_transactions = SszList::new();
-    for tx in transactions {
-        let _ = ssz_transactions.push(tx);
-    }
+        .collect::<Result<_, _>>()?;
+    let ssz_transactions = SszList::try_from(transactions)
+        .map_err(|e| format!("transactions exceed MAX_TRANSACTIONS_PER_PAYLOAD: {e:?}"))?;
 
     let ssz_withdrawals = SszList::new(); // Empty for L2
 
@@ -251,10 +246,8 @@ pub fn build_ssz_stateless_input(
         .map_err(|_| "logs_bloom conversion failed")?;
 
     // extra_data
-    let mut extra_data = SszList::new();
-    for byte in header.extra_data.iter() {
-        let _ = extra_data.push(*byte);
-    }
+    let extra_data = SszList::try_from(header.extra_data.to_vec())
+        .map_err(|e| format!("extra_data exceeds MAX_EXTRA_DATA_BYTES: {e:?}"))?;
 
     // block_hash
     let block_hash = header.compute_block_hash(&NativeCrypto);
@@ -332,54 +325,51 @@ fn internal_witness_to_ssz(
     // State: encode trie nodes back to their RLP preimage bytes.
     // The internal witness stores them as embedded Node structures.
     // We need to flatten them back to raw bytes for SSZ.
-    let mut state_nodes = SszList::new();
+    let mut state_preimages: Vec<Vec<u8>> = Vec::new();
     if let Some(ref root_node) = witness.state_trie_root {
-        let mut preimages = Vec::new();
-        collect_node_preimages(root_node, &mut preimages);
-        for preimage in preimages {
-            let mut node_list = SszList::new();
-            for byte in preimage {
-                let _ = node_list.push(byte);
-            }
-            let _ = state_nodes.push(node_list);
-        }
+        collect_node_preimages(root_node, &mut state_preimages);
     }
-
-    // Also add storage trie node preimages
     for storage_root in witness.storage_trie_roots.values() {
-        let mut preimages = Vec::new();
-        collect_node_preimages(storage_root, &mut preimages);
-        for preimage in preimages {
-            let mut node_list = SszList::new();
-            for byte in preimage {
-                let _ = node_list.push(byte);
-            }
-            let _ = state_nodes.push(node_list);
-        }
+        collect_node_preimages(storage_root, &mut state_preimages);
     }
+    let state_nodes = state_preimages
+        .into_iter()
+        .enumerate()
+        .map(|(i, preimage)| {
+            SszList::try_from(preimage)
+                .map_err(|e| format!("witness state[{i}] exceeds MAX_WITNESS_NODE_SIZE: {e:?}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let state = SszList::try_from(state_nodes)
+        .map_err(|e| format!("witness state exceeds MAX_WITNESS_NODES: {e:?}"))?;
 
-    // Codes
-    let mut codes = SszList::new();
-    for code in &witness.codes {
-        let mut code_list = SszList::new();
-        for byte in code {
-            let _ = code_list.push(*byte);
-        }
-        let _ = codes.push(code_list);
-    }
+    let codes = witness
+        .codes
+        .iter()
+        .enumerate()
+        .map(|(i, code)| {
+            SszList::try_from(code.clone())
+                .map_err(|e| format!("witness codes[{i}] exceeds MAX_WITNESS_CODE_SIZE: {e:?}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let codes = SszList::try_from(codes)
+        .map_err(|e| format!("witness codes exceed MAX_WITNESS_CODES: {e:?}"))?;
 
-    // Headers
-    let mut headers = SszList::new();
-    for header_bytes in &witness.block_headers_bytes {
-        let mut header_list = SszList::new();
-        for byte in header_bytes {
-            let _ = header_list.push(*byte);
-        }
-        let _ = headers.push(header_list);
-    }
+    let headers = witness
+        .block_headers_bytes
+        .iter()
+        .enumerate()
+        .map(|(i, header_bytes)| {
+            SszList::try_from(header_bytes.clone()).map_err(|e| {
+                format!("witness headers[{i}] exceeds MAX_WITNESS_HEADER_SIZE: {e:?}")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let headers = SszList::try_from(headers)
+        .map_err(|e| format!("witness headers exceed MAX_WITNESS_HEADERS: {e:?}"))?;
 
     Ok(SszExecutionWitness {
-        state: state_nodes,
+        state,
         codes,
         headers,
     })
