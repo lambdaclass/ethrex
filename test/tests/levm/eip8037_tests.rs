@@ -42,6 +42,7 @@ fn test_cpsb_120m() {
 /// quantized = (9946 >> 9) << 9 = 19 * 512 = 9728
 /// result = 9728 - 9578 = 150
 #[test]
+#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
 fn test_cpsb_30m() {
     assert_eq!(cost_per_state_byte(30_000_000), 150);
 }
@@ -53,6 +54,7 @@ fn test_cpsb_30m() {
 /// quantized = (15697 >> 9) << 9 = 30 * 512 = 15360
 /// result = 15360 - 9578 = 5782
 #[test]
+#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
 fn test_cpsb_500m() {
     assert_eq!(cost_per_state_byte(500_000_000), 5782);
 }
@@ -61,6 +63,7 @@ fn test_cpsb_500m() {
 /// returns 1 (the minimum viable cost). Guard against an off-by-one in the
 /// `if quantized > CPSB_OFFSET` branch.
 #[test]
+#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
 fn test_cpsb_clamp_to_one_for_tiny_gas_limit() {
     assert_eq!(cost_per_state_byte(1), 1);
     assert_eq!(cost_per_state_byte(5_000_000), 1);
@@ -70,6 +73,7 @@ fn test_cpsb_clamp_to_one_for_tiny_gas_limit() {
 /// jump across the next bin's value just because `raw` changes by 1. All
 /// gas_limits in the 5M–30M range quantize to 150.
 #[test]
+#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
 fn test_cpsb_30m_bin_boundary() {
     assert_eq!(cost_per_state_byte(14_999_999), 150);
     assert_eq!(cost_per_state_byte(15_000_000), 150);
