@@ -25,7 +25,6 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
 use ethrex_common::{tracing::CallType, types::Code};
-use std::mem;
 
 pub struct OpCallHandler;
 impl OpcodeHandler for OpCallHandler {
@@ -96,14 +95,16 @@ impl OpcodeHandler for OpCallHandler {
         // reservoir on frame failure.
         let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
         let gas_left = if needs_state_gas {
-            let state_gas_new_account = vm.state_gas_new_account;
-            let from_reservoir = vm.state_gas_reservoir.min(state_gas_new_account);
-            // Safe: from_reservoir = min(reservoir, state_gas_new_account) <= state_gas_new_account
+            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+            let new_account_state_gas =
+                gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * vm.cost_per_state_byte;
+            let from_reservoir = vm.state_gas_reservoir.min(new_account_state_gas);
+            // Safe: from_reservoir = min(reservoir, new_account_state_gas) <= new_account_state_gas
             #[expect(
                 clippy::arithmetic_side_effects,
-                reason = "from_reservoir <= state_gas_new_account"
+                reason = "from_reservoir <= new_account_state_gas"
             )]
-            let spill = state_gas_new_account - from_reservoir;
+            let spill = new_account_state_gas - from_reservoir;
             gas_left
                 .checked_sub(spill)
                 .ok_or(ExceptionalHalt::OutOfGas)?
@@ -131,8 +132,11 @@ impl OpcodeHandler for OpCallHandler {
 
         // Then charge state gas for new account creation.
         if needs_state_gas {
-            vm.increase_state_gas(vm.state_gas_new_account)?;
-            // EIP-8037 StateDiff: record new account alongside legacy state gas charge.
+            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+            let new_account_state_gas =
+                gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * vm.cost_per_state_byte;
+            vm.draw_state_gas(new_account_state_gas)?;
+            // EIP-8037 StateDiff: record new account.
             vm.current_call_frame.state_diff.record_new_account(callee);
         }
 
@@ -571,8 +575,11 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
             // EIP-8037 (Amsterdam+): charge state gas for new account creation via SELFDESTRUCT
             if target_account_is_empty && balance > U256::zero() {
-                vm.increase_state_gas(vm.state_gas_new_account)?;
-                // EIP-8037 StateDiff: record new account alongside legacy state gas charge.
+                #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                let new_account_state_gas =
+                    gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * vm.cost_per_state_byte;
+                vm.draw_state_gas(new_account_state_gas)?;
+                // EIP-8037 StateDiff: record new account.
                 vm.current_call_frame
                     .state_diff
                     .record_new_account(beneficiary);
@@ -711,7 +718,10 @@ impl<'a> VM<'a> {
         // EIP-8037 (Amsterdam+): charge state gas for new account creation AFTER
         // initcode size validation, so oversized CREATE doesn't burn state gas.
         if self.env.config.fork >= Fork::Amsterdam {
-            self.increase_state_gas(self.state_gas_new_account)?;
+            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+            let new_account_state_gas =
+                gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+            self.draw_state_gas(new_account_state_gas)?;
         }
 
         let current_call_frame = &mut self.current_call_frame;
@@ -747,8 +757,7 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
-        // EIP-8037 StateDiff: record new account alongside the state gas charged above.
-        // new_address is now known; increase_state_gas ran earlier (before address calc).
+        // EIP-8037 StateDiff: record new account (address now known; state gas was drawn above).
         if self.env.config.fork >= Fork::Amsterdam {
             self.current_call_frame
                 .state_diff
@@ -782,10 +791,12 @@ impl<'a> VM<'a> {
         for (condition, reason) in checks {
             if condition {
                 // EIP-8037: no account created on early failure — refund the CREATE
-                // account state gas charged at the top of this function, per EELS
-                // `credit_state_gas_refund(evm, create_account_state_gas)`.
+                // account state gas charged at the top of this function.
                 if self.env.config.fork >= Fork::Amsterdam {
-                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                    let new_account_state_gas =
+                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+                    self.refund_state_gas_to_reservoir(new_account_state_gas)?;
                     // EIP-8037 StateDiff: cancel the record made above — no account was created.
                     self.current_call_frame
                         .state_diff
@@ -807,16 +818,16 @@ impl<'a> VM<'a> {
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
 
-        // EIP-8037: Save snapshot AFTER charging CREATE's account state gas
-        let create_state_gas_used_snapshot = self.state_gas_used;
-
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
             // Per EELS: on collision, regular gas stays consumed (not returned)
             // but the CREATE account state gas IS refunded — no account was created.
             if self.env.config.fork >= Fork::Amsterdam {
-                self.credit_state_gas_refund(self.state_gas_new_account)?;
+                #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                let new_account_state_gas =
+                    gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+                self.refund_state_gas_to_reservoir(new_account_state_gas)?;
                 // EIP-8037 StateDiff: cancel the record made above — collision means no account created.
                 self.current_call_frame
                     .state_diff
@@ -856,13 +867,7 @@ impl<'a> VM<'a> {
         );
         // Store BAL checkpoint in the call frame's backup for restoration on revert
         new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
-        new_call_frame.state_gas_used_snapshot = create_state_gas_used_snapshot;
-        new_call_frame.state_gas_refund_pending_snapshot = self.state_gas_refund_pending;
-        new_call_frame.state_gas_refund_absorbed_snapshot = self.state_gas_refund_absorbed;
         new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
-        new_call_frame.state_gas_spill_outstanding_snapshot = self.state_gas_spill_outstanding;
-        new_call_frame.state_gas_credit_against_drain_snapshot =
-            self.state_gas_credit_against_drain;
 
         self.add_callframe(new_call_frame);
 
@@ -1077,13 +1082,7 @@ impl<'a> VM<'a> {
             );
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
-            new_call_frame.state_gas_used_snapshot = self.state_gas_used;
-            new_call_frame.state_gas_refund_pending_snapshot = self.state_gas_refund_pending;
-            new_call_frame.state_gas_refund_absorbed_snapshot = self.state_gas_refund_absorbed;
             new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
-            new_call_frame.state_gas_spill_outstanding_snapshot = self.state_gas_spill_outstanding;
-            new_call_frame.state_gas_credit_against_drain_snapshot =
-                self.state_gas_credit_against_drain;
 
             self.add_callframe(new_call_frame);
 
@@ -1150,12 +1149,7 @@ impl<'a> VM<'a> {
             ret_offset,
             ret_size,
             memory: old_callframe_memory,
-            state_gas_used_snapshot,
-            state_gas_refund_pending_snapshot,
-            state_gas_refund_absorbed_snapshot,
             state_gas_reservoir_snapshot,
-            state_gas_spill_outstanding_snapshot,
-            state_gas_credit_against_drain_snapshot,
             call_frame_backup,
             stack,
             state_diff: child_state_diff,
@@ -1196,13 +1190,6 @@ impl<'a> VM<'a> {
                 self.current_call_frame.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
 
-                // EIP-8037 clamp-and-spill: on successful child return, flush any pending
-                // state gas refund into the parent frame (which may absorb all, part, or none).
-                if self.state_gas_refund_pending > 0 {
-                    let pending = mem::replace(&mut self.state_gas_refund_pending, 0);
-                    self.credit_state_gas_refund(pending)?;
-                }
-
                 // EIP-8037 StateDiff: merge child's diff into parent.
                 // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
                 self.merge_child_state_diff(child_state_diff);
@@ -1212,42 +1199,10 @@ impl<'a> VM<'a> {
                 // — its mutations and cancellations are discarded.
                 // (Implicit drop when executed_call_frame goes out of scope.)
 
-                // EIP-8037 `incorporate_child_on_error`:
-                //   parent.state_gas_left += child.state_gas_used + child.state_gas_left - child.state_gas_refund
-                // Translated into our shared-reservoir model with split spill counters:
-                //   new_reservoir = R_snap + outstanding_delta - credit_against_drain_delta
-                // — the outstanding delta represents spills in this subtree that weren't
-                // cancelled locally (those were already netted inside `credit_state_gas_refund`
-                // against the current frame's spill). `credit_against_drain_delta` is the
-                // credit portion that went to cancel reservoir drains and appears as the
-                // subtraction term. Using the monotonic `state_gas_spill` / `state_gas_refund_absorbed`
-                // counters here would double-count a reverted descendant whose credit already
-                // cancelled its own spill (cf. `sstore_restoration_create_init_revert`).
-                let outstanding_delta = self
-                    .state_gas_spill_outstanding
-                    .saturating_sub(state_gas_spill_outstanding_snapshot);
-                let credit_against_drain_delta = self
-                    .state_gas_credit_against_drain
-                    .saturating_sub(state_gas_credit_against_drain_snapshot);
-                // Invariant: credit_against_drain only accumulates the portion
-                // of a clamped refund that was NOT matched against outstanding
-                // spill, so it can never exceed the spill delta in the same
-                // subtree. If this ever fires, the reservoir math silently
-                // clamps (via saturating_sub) and the block's regular
-                // dimension gets mischarged — loud panic in debug is the goal.
-                debug_assert!(
-                    outstanding_delta >= credit_against_drain_delta,
-                    "reservoir revert invariant violated: credit_against_drain_delta \
-                     ({credit_against_drain_delta}) > outstanding_delta \
-                     ({outstanding_delta})"
-                );
-                self.state_gas_used = state_gas_used_snapshot;
-                self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
-                self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-                self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                self.state_gas_reservoir = state_gas_reservoir_snapshot
-                    .saturating_add(outstanding_delta)
-                    .saturating_sub(credit_against_drain_delta);
+                // On revert, restore the reservoir to its pre-child snapshot. Any gas
+                // drawn from the reservoir inside the child (for new-account, SSTORE, etc.)
+                // is returned because the child's state mutations are rolled back.
+                self.state_gas_reservoir = state_gas_reservoir_snapshot;
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1273,12 +1228,7 @@ impl<'a> VM<'a> {
             to,
             call_frame_backup,
             memory: old_callframe_memory,
-            state_gas_used_snapshot,
-            state_gas_refund_pending_snapshot,
-            state_gas_refund_absorbed_snapshot,
             state_gas_reservoir_snapshot,
-            state_gas_spill_outstanding_snapshot,
-            state_gas_credit_against_drain_snapshot,
             stack,
             state_diff: child_state_diff,
             ..
@@ -1302,13 +1252,6 @@ impl<'a> VM<'a> {
                 self.current_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
 
-                // EIP-8037 clamp-and-spill: on successful child return, flush any pending
-                // state gas refund into the parent frame (which may absorb all, part, or none).
-                if self.state_gas_refund_pending > 0 {
-                    let pending = mem::replace(&mut self.state_gas_refund_pending, 0);
-                    self.credit_state_gas_refund(pending)?;
-                }
-
                 // EIP-8037 StateDiff: merge child's diff into parent.
                 // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
                 self.merge_child_state_diff(child_state_diff);
@@ -1318,38 +1261,16 @@ impl<'a> VM<'a> {
                 // — its mutations and cancellations are discarded.
                 // (Implicit drop when executed_call_frame goes out of scope.)
 
-                // EIP-8037 `incorporate_child_on_error` (same logic as handle_return_call).
-                let outstanding_delta = self
-                    .state_gas_spill_outstanding
-                    .saturating_sub(state_gas_spill_outstanding_snapshot);
-                let credit_against_drain_delta = self
-                    .state_gas_credit_against_drain
-                    .saturating_sub(state_gas_credit_against_drain_snapshot);
-                // Invariant: credit_against_drain only accumulates the portion
-                // of a clamped refund that was NOT matched against outstanding
-                // spill, so it can never exceed the spill delta in the same
-                // subtree. If this ever fires, the reservoir math silently
-                // clamps (via saturating_sub) and the block's regular
-                // dimension gets mischarged — loud panic in debug is the goal.
-                debug_assert!(
-                    outstanding_delta >= credit_against_drain_delta,
-                    "reservoir revert invariant violated: credit_against_drain_delta \
-                     ({credit_against_drain_delta}) > outstanding_delta \
-                     ({outstanding_delta})"
-                );
-                self.state_gas_used = state_gas_used_snapshot;
-                self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
-                self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-                self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                self.state_gas_reservoir = state_gas_reservoir_snapshot
-                    .saturating_add(outstanding_delta)
-                    .saturating_sub(credit_against_drain_delta);
+                // On revert, restore the reservoir to its pre-child snapshot.
+                self.state_gas_reservoir = state_gas_reservoir_snapshot;
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
-                // the child frame began; no account was created, so refund it per EELS
-                // `credit_state_gas_refund(evm, create_account_state_gas)`.
+                // the child frame began; no account was created, so refund it to the reservoir.
                 if self.env.config.fork >= Fork::Amsterdam {
-                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                    let new_account_state_gas =
+                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+                    self.refund_state_gas_to_reservoir(new_account_state_gas)?;
                     // EIP-8037 StateDiff: cancel the record made on the parent frame's
                     // diff before the child was launched (Task 2.3). The child diff is
                     // dropped on revert via Phase 1 plumbing, but the new-account record

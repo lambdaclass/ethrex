@@ -354,9 +354,12 @@ impl<'a> VM<'a> {
                     // `tx_env.intrinsic_state_gas` stays immutable — the refund only flows
                     // to the reservoir so the sender gets it back at tx finalization; block
                     // accounting still sees the full intrinsic state charge.
+                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                    let new_account_state_gas =
+                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
-                        .checked_add(self.state_gas_new_account)
+                        .checked_add(new_account_state_gas)
                         .ok_or(InternalError::Overflow)?;
                     // EIP-8037 StateDiff: downgrade auth_total → auth_only for pre-existing authority.
                     // The seed snapshot (from add_intrinsic_gas) has the full auth_total (135 bytes);
@@ -416,19 +419,6 @@ impl<'a> VM<'a> {
             .increase_consumed_gas(total_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
-        self.state_gas_used = self
-            .state_gas_used
-            .checked_add(state_gas)
-            .ok_or(InternalError::Overflow)?;
-
-        // EIP-8037 (PR #2689): Capture the intrinsic state gas charged so that top-level
-        // failure handling can distinguish intrinsic (stays charged) from execution (wiped).
-        debug_assert_eq!(
-            self.intrinsic_state_gas_charged, 0,
-            "intrinsic_state_gas_charged set twice"
-        );
-        self.intrinsic_state_gas_charged = self.state_gas_used;
-
         // EIP-8037: Seed the tx-level diff with intrinsic state-creating events.
         if self.env.config.fork >= Fork::Amsterdam {
             // CREATE-tx target: a new contract account is being created.
@@ -437,20 +427,13 @@ impl<'a> VM<'a> {
                     .state_diff
                     .record_new_account(self.current_call_frame.to);
             }
-            // EIP-7702 auth tuples: each tuple is charged STATE_BYTES_PER_AUTH_TOTAL intrinsically.
-            // Downgrades for pre-existing authorities happen later in eip7702_set_access_code.
-            // Recovery is re-done here (matching the same ecrecover logic) so the seed address-set
-            // mirrors what eip7702_set_access_code will later potentially downgrade.
-            //
-            // Accepted asymmetries vs. legacy intrinsic charging — the parity check in Phase 3
-            // must account for ALL of these (legacy charges all N tuples * 135 bytes regardless):
-            //   1. Tuples that fail ecrecover are NOT recorded here (address unknown).
-            //   2. Tuples that pass ecrecover but later fail chain-id, nonce, or
-            //      already-delegated-to-same-target checks in eip7702_set_access_code are
-            //      recorded as auth_total here but never downgraded — they remain at 135 bytes,
-            //      which matches legacy. (Only valid same-target redundant downgrades happen.)
-            //   3. Duplicate authorities across tuples deduplicate at record_auth_total (HashSet);
-            //      legacy charges per-tuple. This is also an asymmetry to compensate at parity.
+            // EIP-7702 auth tuples: each tuple is recorded into state_diff_intrinsic_seed for
+            // net state-bytes accounting. Tuples that fail ecrecover are NOT recorded (address
+            // unknown); per option-2 semantics, only state actually written is charged. Tuples
+            // that pass ecrecover but fail later validation (chain-id, nonce) remain in auth_total
+            // (full 135 bytes) — matching the EELS reference: invalid tuples still cost the full
+            // intrinsic. Duplicate authorities deduplicate via FxHashSet — option-2 only charges
+            // once for the net state written even if multiple tuples point at the same authority.
             if let Some(auth_list) = self.tx.authorization_list() {
                 for auth in auth_list.iter() {
                     if let Ok(Some(authority)) = eip7702_recover_address(auth, self.crypto) {
@@ -460,7 +443,7 @@ impl<'a> VM<'a> {
                     }
                 }
             }
-            // Snapshot the intrinsic seed for top-level-revert finalization (Phase 3).
+            // Snapshot the intrinsic seed for top-level-revert finalization.
             self.state_diff_intrinsic_seed = self.current_call_frame.state_diff.clone();
         }
 
@@ -518,8 +501,11 @@ impl<'a> VM<'a> {
                 regular_gas = regular_gas
                     .checked_add(REGULAR_GAS_CREATE)
                     .ok_or(OutOfGas)?;
+                #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                let new_account_state_gas =
+                    gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
                 state_gas = state_gas
-                    .checked_add(self.state_gas_new_account)
+                    .checked_add(new_account_state_gas)
                     .ok_or(OutOfGas)?;
             } else {
                 // https://eips.ethereum.org/EIPS/eip-2#specification
@@ -587,8 +573,10 @@ impl<'a> VM<'a> {
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
-            let state_auth_cost = self
-                .state_gas_auth_total
+            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+            let auth_total_state_gas =
+                gas_cost::STATE_BYTES_PER_AUTH_TOTAL * self.cost_per_state_byte;
+            let state_auth_cost = auth_total_state_gas
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             state_gas = state_gas.checked_add(state_auth_cost).ok_or(OutOfGas)?;
