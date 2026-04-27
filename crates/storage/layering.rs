@@ -358,6 +358,10 @@ pub enum TrieCacheRef {
     /// Simple LRU cache for full sync batch mode. Uses `Arc<std::sync::Mutex<_>>` because
     /// `LruCache::get` requires `&mut self`.
     Flat(Arc<std::sync::Mutex<FlatTrieCache>>),
+    /// Flat LRU cache with a layered-cache fallback. Used when batch mode is active
+    /// so that uncommitted layers from a previous normal-path run (e.g. after a
+    /// `StateRootMismatch` fallback to single-block pipeline) remain accessible.
+    FlatWithFallback(Arc<std::sync::Mutex<FlatTrieCache>>, Arc<TrieLayerCache>),
 }
 
 impl fmt::Debug for TrieCacheRef {
@@ -365,6 +369,9 @@ impl fmt::Debug for TrieCacheRef {
         match self {
             Self::Layered(c) => write!(f, "TrieCacheRef::Layered({c:?})"),
             Self::Flat(c) => write!(f, "TrieCacheRef::Flat({c:?})"),
+            Self::FlatWithFallback(c, l) => {
+                write!(f, "TrieCacheRef::FlatWithFallback({c:?}, {l:?})")
+            }
         }
     }
 }
@@ -375,6 +382,12 @@ impl TrieCacheRef {
         match self {
             Self::Layered(cache) => cache.get(state_root, key),
             Self::Flat(cache) => cache.lock().ok()?.get(key),
+            Self::FlatWithFallback(flat, layered) => {
+                if let Some(v) = flat.lock().ok()?.get(key) {
+                    return Some(v);
+                }
+                layered.get(state_root, key)
+            }
         }
     }
 }

@@ -2559,8 +2559,12 @@ impl Store {
 
     /// Returns the appropriate [`TrieCacheRef`] for trie opens.
     ///
-    /// If batch mode is active, returns the flat LRU cache; otherwise returns
-    /// the layered diff-chain cache.
+    /// If batch mode is active, returns the flat LRU cache with a layered-cache
+    /// fallback. The fallback is necessary because a previous normal-path run
+    /// (e.g. after a `StateRootMismatch` triggered a single-block pipeline
+    /// fallback) may have left trie nodes only in the layered cache's
+    /// uncommitted top layers, not yet on disk. Without the fallback,
+    /// `has_state_root` would miss these nodes and fail.
     fn trie_cache_ref(&self) -> Result<TrieCacheRef, StoreError> {
         // Check batch cache first
         if let Some(flat) = self
@@ -2569,7 +2573,12 @@ impl Store {
             .map_err(|_| StoreError::LockError)?
             .as_ref()
         {
-            return Ok(TrieCacheRef::Flat(flat.clone()));
+            let layered = self
+                .trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .clone();
+            return Ok(TrieCacheRef::FlatWithFallback(flat.clone(), layered));
         }
         // Fall back to layered cache
         Ok(TrieCacheRef::Layered(
