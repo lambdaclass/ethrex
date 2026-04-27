@@ -148,12 +148,14 @@ impl Hook for DefaultHook {
         // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
         // The user pays tx.gas (everything), but block accounting only sees
         // intrinsic gas (no execution gas was consumed).
+        // TODO(eip-8037-state-diff): mirror parity assertion in Phase 3.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
             // Block accounting: gas_used = intrinsic_regular + intrinsic_state.
             // state_gas_used already = intrinsic_state (no execution state gas).
             // Per EELS, `tx_env.intrinsic_state_gas` is immutable — any auth refund
             // goes to the reservoir, not to block-accounted state_gas.
+            // TODO(eip-8037-state-diff): switched to state_diff_finalized.bytes() in Phase 3.
             let state_gas = vm.state_gas_used;
             let floor = vm.get_min_gas_used()?;
             // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
@@ -183,6 +185,7 @@ impl Hook for DefaultHook {
         // created accounts that were SELFDESTRUCTed — NEW_ACCOUNT + SSTORE
         // state gas for created slots + code_length * cpsb. Must run BEFORE
         // the reservoir subtraction so sender gets the refund.
+        // TODO(eip-8037-state-diff): replaced by Phase 3.2 cancellation sweep on state_diff_finalized.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_success() {
             apply_same_tx_selfdestruct_state_refund(vm)?;
         }
@@ -263,6 +266,7 @@ pub fn refund_sender(
         // reservoir (pre-consumed from gas_remaining in add_intrinsic_gas), and any
         // state-gas spills that reduced gas_remaining (EELS charge_state_gas spills
         // don't count as regular_gas_used).
+        // TODO(eip-8037-state-diff): switched to state_diff_finalized.bytes() in Phase 3.
         let execution_state_gas_refund = vm
             .state_gas_refund_absorbed
             .saturating_add(vm.state_gas_refund_pending);

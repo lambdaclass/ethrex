@@ -280,6 +280,12 @@ pub fn eip7702_get_code(
 impl<'a> VM<'a> {
     /// Sets the account code as the EIP7702 determines.
     pub fn eip7702_set_access_code(&mut self) -> Result<(), VMError> {
+        // EIP-8037 StateDiff: tuples that fail ecrecover, chain-ID validation, nonce check,
+        // or any other validation in this function never reach the
+        // `record_auth_downgrade_to_only` call below. They remain in `auth_total` in
+        // state_diff_intrinsic_seed (seeded by add_intrinsic_gas), matching legacy behavior
+        // where invalid tuples still cost the full STATE_BYTES_PER_AUTH_TOTAL (135 bytes)
+        // intrinsic state gas.
         let mut refunded_gas: u64 = 0;
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
@@ -352,6 +358,13 @@ impl<'a> VM<'a> {
                         .state_gas_reservoir
                         .checked_add(self.state_gas_new_account)
                         .ok_or(InternalError::Overflow)?;
+                    // EIP-8037 StateDiff: downgrade auth_total → auth_only for pre-existing authority.
+                    // The seed snapshot (from add_intrinsic_gas) has the full auth_total (135 bytes);
+                    // after this downgrade the live diff reflects 23 bytes. On top-level revert
+                    // (Phase 3), state_diff_finalized is reset to the seed → counts 135 bytes.
+                    self.current_call_frame
+                        .state_diff
+                        .record_auth_downgrade_to_only(authority_address);
                 } else {
                     refunded_gas = refunded_gas
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
@@ -415,6 +428,35 @@ impl<'a> VM<'a> {
             "intrinsic_state_gas_charged set twice"
         );
         self.intrinsic_state_gas_charged = self.state_gas_used;
+
+        // EIP-8037: Seed the tx-level diff with intrinsic state-creating events.
+        if self.env.config.fork >= Fork::Amsterdam {
+            // CREATE-tx target: a new contract account is being created.
+            if self.is_create()? {
+                self.current_call_frame
+                    .state_diff
+                    .record_new_account(self.current_call_frame.to);
+            }
+            // EIP-7702 auth tuples: each tuple is charged STATE_BYTES_PER_AUTH_TOTAL intrinsically.
+            // Downgrades for pre-existing authorities happen later in eip7702_set_access_code.
+            // Recovery is re-done here (matching the same ecrecover logic) so the seed address-set
+            // mirrors what eip7702_set_access_code will later potentially downgrade.
+            // Tuples that fail ecrecover are NOT recorded — they cost the full 135-byte intrinsic
+            // charge in legacy but their address is unknown, so diff cannot track them by address.
+            // This is an accepted asymmetry: legacy auth-total gas for failed-recover tuples has no
+            // corresponding diff entry. The parity check in Phase 3 will account for this.
+            if let Some(auth_list) = self.tx.authorization_list() {
+                for auth in auth_list.iter() {
+                    if let Ok(Some(authority)) = eip7702_recover_address(auth, self.crypto) {
+                        self.current_call_frame
+                            .state_diff
+                            .record_auth_total(authority);
+                    }
+                }
+            }
+            // Snapshot the intrinsic seed for top-level-revert finalization (Phase 3).
+            self.state_diff_intrinsic_seed = self.current_call_frame.state_diff.clone();
+        }
 
         // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.
         // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much

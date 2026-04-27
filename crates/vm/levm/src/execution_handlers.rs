@@ -191,6 +191,10 @@ impl<'a> VM<'a> {
             self.current_call_frame.increase_consumed_gas(regular)?;
             if state > 0 {
                 self.increase_state_gas(state)?;
+                // EIP-8037 StateDiff: record code deposit alongside legacy state gas charge.
+                self.current_call_frame
+                    .state_diff
+                    .record_code_deposit(self.current_call_frame.to, code_length);
             }
         } else {
             // Pre-Amsterdam: size check first, then regular gas charge

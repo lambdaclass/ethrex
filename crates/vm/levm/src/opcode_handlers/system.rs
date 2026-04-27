@@ -132,6 +132,8 @@ impl OpcodeHandler for OpCallHandler {
         // Then charge state gas for new account creation.
         if needs_state_gas {
             vm.increase_state_gas(vm.state_gas_new_account)?;
+            // EIP-8037 StateDiff: record new account alongside legacy state gas charge.
+            vm.current_call_frame.state_diff.record_new_account(callee);
         }
 
         // Resize memory: this is necessary for multiple reasons:
@@ -570,6 +572,10 @@ impl OpcodeHandler for OpSelfDestructHandler {
             // EIP-8037 (Amsterdam+): charge state gas for new account creation via SELFDESTRUCT
             if target_account_is_empty && balance > U256::zero() {
                 vm.increase_state_gas(vm.state_gas_new_account)?;
+                // EIP-8037 StateDiff: record new account alongside legacy state gas charge.
+                vm.current_call_frame
+                    .state_diff
+                    .record_new_account(beneficiary);
             }
         } else {
             vm.current_call_frame
@@ -610,6 +616,11 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 }
 
                 vm.substate.add_selfdestruct(to);
+
+                // EIP-8037 StateDiff: same-frame cancellation for account created in this tx.
+                // Cross-frame cases (account created in an ancestor frame) are handled at
+                // tx-finalize time in Phase 3.2 via substate.iter_selfdestruct sweep.
+                vm.current_call_frame.state_diff.cancel_new_account(to);
             }
 
             // EIP-7708: Emit appropriate log for ETH movement
@@ -634,6 +645,13 @@ impl OpcodeHandler for OpSelfDestructHandler {
             }
 
             vm.substate.add_selfdestruct(to);
+
+            // EIP-8037 StateDiff: same-frame cancellation for account created in this tx.
+            // Cross-frame cases (account created in an ancestor frame) are handled at
+            // tx-finalize time in Phase 3.2 via substate.iter_selfdestruct sweep.
+            if vm.substate.is_account_created(&to) {
+                vm.current_call_frame.state_diff.cancel_new_account(to);
+            }
         }
 
         vm.tracer.enter(
@@ -729,6 +747,14 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
+        // EIP-8037 StateDiff: record new account alongside the state gas charged above.
+        // new_address is now known; increase_state_gas ran earlier (before address calc).
+        if self.env.config.fork >= Fork::Amsterdam {
+            self.current_call_frame
+                .state_diff
+                .record_new_account(new_address);
+        }
+
         // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => CallType::CREATE2,
@@ -760,6 +786,10 @@ impl<'a> VM<'a> {
                 // `credit_state_gas_refund(evm, create_account_state_gas)`.
                 if self.env.config.fork >= Fork::Amsterdam {
                     self.credit_state_gas_refund(self.state_gas_new_account)?;
+                    // EIP-8037 StateDiff: cancel the record made above — no account was created.
+                    self.current_call_frame
+                        .state_diff
+                        .cancel_new_account(new_address);
                 }
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
                 return Ok(OpcodeResult::Continue);
@@ -787,6 +817,10 @@ impl<'a> VM<'a> {
             // but the CREATE account state gas IS refunded — no account was created.
             if self.env.config.fork >= Fork::Amsterdam {
                 self.credit_state_gas_refund(self.state_gas_new_account)?;
+                // EIP-8037 StateDiff: cancel the record made above — collision means no account created.
+                self.current_call_frame
+                    .state_diff
+                    .cancel_new_account(new_address);
             }
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
