@@ -87,8 +87,10 @@ library MPTProof {
         revert("MPT: proof incomplete");
     }
 
-    /// @dev Process an inline node embedded in a branch child.
-    /// `content` is the list content (header already stripped by rlpListItem).
+    /// @dev Process an inline leaf or extension. `content` is the RLP list
+    /// content (header stripped). Inline extension's child must itself be
+    /// inline (a 32-byte hash + RLP framing exceeds the inline budget).
+    /// Inline branches (17 items) are not supported.
     function processInlineNode(
         bytes memory content,
         bytes memory path,
@@ -127,17 +129,56 @@ library MPTProof {
             pathOffset++;
         }
 
-        require(isLeaf, "MPT: inline ext not supported");
-        require(pathOffset == path.length, "MPT: leaf path incomplete");
-
-        // Second item: value
+        // Second item: leaf value or extension child.
         uint256 nextPos = skipRlpItem(content, 0);
-        (uint256 vStart, uint256 vLen) = decodeRlpItemMem(content, nextPos);
-        bytes memory val = new bytes(vLen);
-        for (uint256 j = 0; j < vLen; j++) {
-            val[j] = content[vStart + j];
+
+        if (isLeaf) {
+            require(pathOffset == path.length, "MPT: leaf path incomplete");
+            (uint256 vStart, uint256 vLen) = decodeRlpItemMem(content, nextPos);
+            bytes memory val = new bytes(vLen);
+            for (uint256 j = 0; j < vLen; j++) {
+                val[j] = content[vStart + j];
+            }
+            return val;
         }
-        return val;
+
+        // Extension: recurse on the inline child.
+        require(pathOffset < path.length, "MPT: ext path exhausted");
+        (bool childIsList, uint256 cStart, uint256 cLen) = peekRlpItemKindMem(content, nextPos);
+        require(childIsList, "MPT: inline ext child must be inline");
+        bytes memory childContent = new bytes(cLen);
+        for (uint256 j = 0; j < cLen; j++) {
+            childContent[j] = content[cStart + j];
+        }
+        return processInlineNode(childContent, path, pathOffset);
+    }
+
+    /// @dev Like `decodeRlpItemMem` but also reports list vs string.
+    function peekRlpItemKindMem(bytes memory data, uint256 pos)
+        internal
+        pure
+        returns (bool isList, uint256 cStart, uint256 cLen)
+    {
+        uint8 p = uint8(data[pos]);
+        if (p < 0x80) {
+            return (false, pos, 1);
+        }
+        if (p <= 0xb7) {
+            return (false, pos + 1, uint256(p) - 0x80);
+        }
+        if (p <= 0xbf) {
+            uint256 lb = uint256(p) - 0xb7;
+            uint256 l = 0;
+            for (uint256 i = 0; i < lb; i++) l = (l << 8) | uint8(data[pos + 1 + i]);
+            return (false, pos + 1 + lb, l);
+        }
+        if (p <= 0xf7) {
+            return (true, pos + 1, uint256(p) - 0xc0);
+        }
+        uint256 lb2 = uint256(p) - 0xf7;
+        uint256 l2 = 0;
+        for (uint256 i = 0; i < lb2; i++) l2 = (l2 << 8) | uint8(data[pos + 1 + i]);
+        return (true, pos + 1 + lb2, l2);
     }
 
     function toNibbles(bytes memory data) internal pure returns (bytes memory nibbles) {
@@ -153,6 +194,7 @@ library MPTProof {
         if (p >= 0xc0 && p <= 0xf7) {
             return (p - 0xc0, 1);
         }
+        require(p >= 0xf8, "MPT: not a list");
         uint256 lenBytes = p - 0xf7;
         length = 0;
         for (uint256 i = 0; i < lenBytes; i++) {

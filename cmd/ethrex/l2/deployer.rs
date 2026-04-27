@@ -408,6 +408,15 @@ pub struct DeployerOptions {
         default_value = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
     )]
     pub native_rollups_relayer_pk: SecretKey,
+    #[cfg(feature = "experimental-devnet")]
+    #[arg(
+        long = "native-rollups.advancer-address",
+        value_name = "ADDRESS",
+        env = "ETHREX_NATIVE_ROLLUPS_ADVANCER_ADDRESS",
+        help_heading = "Native rollups options",
+        help = "L1 address authorized to call NativeRollup.advance(). Defaults to the deployer address."
+    )]
+    pub native_rollups_advancer_address: Option<Address>,
 }
 
 impl Default for DeployerOptions {
@@ -497,6 +506,8 @@ impl Default for DeployerOptions {
                     .expect("Valid hex"),
             )
             .expect("Valid key"),
+            #[cfg(feature = "experimental-devnet")]
+            native_rollups_advancer_address: None,
         }
     }
 }
@@ -1814,16 +1825,21 @@ pub async fn deploy_native_rollup_contracts(
     info!("L2 genesis state root: {initial_state_root:#x}");
     info!("L2 genesis block hash: {initial_block_hash:#x}");
 
-    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, initialBlockHash, blockGasLimit, chainId)
+    // 5. Deploy NativeRollup.sol with constructor(initialStateRoot, initialBlockHash, blockGasLimit, chainId, advancer)
 
     let l2_chain_id = genesis.config.chain_id;
+    let advancer = opts
+        .native_rollups_advancer_address
+        .unwrap_or_else(|| signer.address());
+    info!("Advancer address (authorized for advance()): {advancer:#x}");
     let constructor_args = encode_calldata(
-        "constructor(bytes32,bytes32,uint256,uint256)",
+        "constructor(bytes32,bytes32,uint256,uint256,address)",
         &[
             Value::FixedBytes(initial_state_root.as_bytes().to_vec().into()),
             Value::FixedBytes(initial_block_hash.as_bytes().to_vec().into()),
             Value::Uint(U256::from(opts.l2_gas_limit)),
             Value::Uint(U256::from(l2_chain_id)),
+            Value::Address(advancer),
         ],
     )?;
     // Strip the 4-byte selector from the encoded constructor args

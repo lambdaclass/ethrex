@@ -11,17 +11,19 @@ import "./MPTProof.sol";
 /// returns SSZ-encoded `StatelessValidationResult`.
 ///
 /// Storage layout:
-///   Slot 0: blockHash (bytes32)
-///   Slot 1: stateRoot (bytes32)
-///   Slot 2: blockNumber (uint256)
-///   Slot 3: l2GasLimit (uint256)
-///   Slot 4: chainId (uint256)
-///   Slot 5: pendingL1Messages (bytes32[])
-///   Slot 6: l1MessageIndex (uint256)
-///   Slot 7: stateRootHistory (mapping(uint256 => bytes32))
-///   Slot 8: claimedWithdrawals (mapping(bytes32 => bool))
-///   Slot 9: stateRootTimestamps (mapping(uint256 => uint256))
+///   Slot 0:  blockHash (bytes32)
+///   Slot 1:  stateRoot (bytes32)
+///   Slot 2:  blockNumber (uint256)
+///   Slot 3:  l2GasLimit (uint256)
+///   Slot 4:  chainId (uint256)
+///   Slot 5:  pendingL1Messages (bytes32[])
+///   Slot 6:  l1MessageIndex (uint256)
+///   Slot 7:  stateRootHistory (mapping(uint256 => bytes32))
+///   Slot 8:  claimedWithdrawals (mapping(bytes32 => bool))
+///   Slot 9:  stateRootTimestamps (mapping(uint256 => uint256))
 ///   Slot 10: _locked (bool)
+///   Slot 11: lastFetchedL1Block (uint256)
+///   Slot 12: advancer (address)
 
 contract NativeRollup {
     // ===== L2 chain state (spec-aligned) =====
@@ -42,6 +44,13 @@ contract NativeRollup {
 
     // ===== Reentrancy guard =====
     bool private _locked;
+
+    // ===== L1 watcher cursor =====
+    /// Deploy block. Watcher seeds its cursor from this on first poll.
+    uint256 public lastFetchedL1Block;
+
+    // ===== Access control =====
+    address public advancer;
 
     // ===== Immutables =====
     uint256 public immutable CHAIN_ID;
@@ -78,12 +87,19 @@ contract NativeRollup {
         _locked = false;
     }
 
+    modifier onlyAdvancer() {
+        require(msg.sender == advancer, "NativeRollup: not advancer");
+        _;
+    }
+
     constructor(
         bytes32 _initialStateRoot,
         bytes32 _initialBlockHash,
         uint256 _blockGasLimit,
-        uint256 _chainId
+        uint256 _chainId,
+        address _advancer
     ) {
+        require(_advancer != address(0), "NativeRollup: advancer is zero");
         stateRoot = _initialStateRoot;
         blockHash = _initialBlockHash;
         blockNumber = 0;
@@ -91,6 +107,8 @@ contract NativeRollup {
         chainId = _chainId;
         CHAIN_ID = _chainId;
         FINALITY_DELAY = 0;
+        advancer = _advancer;
+        lastFetchedL1Block = block.number;
     }
 
     // ===== L1 Messaging =====
@@ -136,7 +154,7 @@ contract NativeRollup {
     function advance(
         uint256 _l1MessagesCount,
         bytes calldata _sszStatelessInput
-    ) external {
+    ) external onlyAdvancer {
         uint256 startIdx = l1MessageIndex;
         require(startIdx + _l1MessagesCount <= pendingL1Messages.length, "Not enough L1 messages");
 
@@ -191,6 +209,7 @@ contract NativeRollup {
     {
         require(sszInput.length >= 20, "SSZ: input too short");
         uint256 nprAbs = _readU32LECalldata(sszInput, 0);
+        // 44 = NPR fixed prefix: 3 var-field offsets (12) + parent_beacon_block_root (32).
         require(sszInput.length >= nprAbs + 44, "SSZ: NPR offset out of range");
         uint256 epAbs = nprAbs + _readU32LECalldata(sszInput, nprAbs);
         require(
