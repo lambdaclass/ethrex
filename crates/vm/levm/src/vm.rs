@@ -21,6 +21,7 @@ use crate::{
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
+    state_diff::StateDiff,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -493,6 +494,12 @@ pub struct VM<'a> {
     /// is charged. On top-level tx failure, only this portion stays charged; the execution
     /// portion (state_gas_used - intrinsic_state_gas_charged) is wiped back to the reservoir.
     pub intrinsic_state_gas_charged: u64,
+    /// EIP-8037 state-diff journal: finalized diff for the completed transaction.
+    /// Populated at finalize_execution time (Phase 3). Dead in Phase 1.
+    pub state_diff_finalized: StateDiff,
+    /// EIP-8037 state-diff journal: seed diff from intrinsic tx costs (access-list entries,
+    /// auth tuples pre-charged before execution begins). Populated in Phase 2. Dead in Phase 1.
+    pub state_diff_intrinsic_seed: StateDiff,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -558,6 +565,8 @@ impl<'a> VM<'a> {
             state_gas_refund_pending: 0,
             state_gas_refund_absorbed: 0,
             intrinsic_state_gas_charged: 0,
+            state_diff_finalized: StateDiff::default(),
+            state_diff_intrinsic_seed: StateDiff::default(),
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,

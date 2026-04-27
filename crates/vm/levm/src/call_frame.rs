@@ -3,6 +3,7 @@ use crate::{
     constants::STACK_LIMIT,
     errors::{ExceptionalHalt, InternalError, VMError},
     memory::Memory,
+    state_diff::StateDiff,
     utils::restore_cache_state,
     vm::VM,
 };
@@ -310,6 +311,9 @@ pub struct CallFrame {
     /// Restored on revert so reverted children don't leak drain-credits into the
     /// reservoir math at a grandparent boundary.
     pub state_gas_credit_against_drain_snapshot: u64,
+    /// EIP-8037 state-diff journal: tracks state-growth events in this frame.
+    /// Merged into parent on success; dropped on revert.
+    pub state_diff: StateDiff,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -411,6 +415,7 @@ impl CallFrame {
             state_gas_reservoir_snapshot: 0,
             state_gas_spill_outstanding_snapshot: 0,
             state_gas_credit_against_drain_snapshot: 0,
+            state_diff: StateDiff::default(),
         }
     }
 
@@ -518,6 +523,29 @@ impl<'a> VM<'a> {
         }
 
         Ok(())
+    }
+
+    /// EIP-8037 StateDiff: merge a child frame's diff into the current (parent) frame.
+    ///
+    /// Ancestor resolution walks `self.call_frames` (grandparent+ stack). Because
+    /// `merge_from_child` requires `&mut [StateDiff]` but the stack holds `CallFrame`s,
+    /// ancestor diffs are temporarily swapped out, the merge is performed, then written back.
+    pub fn merge_child_state_diff(&mut self, child_diff: StateDiff) {
+        // Swap ancestor diffs out so we can pass &mut [StateDiff] to merge_from_child.
+        let mut ancestor_diffs: Vec<StateDiff> = self
+            .call_frames
+            .iter_mut()
+            .map(|f| std::mem::take(&mut f.state_diff))
+            .collect();
+
+        self.current_call_frame
+            .state_diff
+            .merge_from_child(child_diff, &mut ancestor_diffs);
+
+        // Write modified ancestor diffs back.
+        for (frame, diff) in self.call_frames.iter_mut().zip(ancestor_diffs.into_iter()) {
+            frame.state_diff = diff;
+        }
     }
 
     #[inline(always)]

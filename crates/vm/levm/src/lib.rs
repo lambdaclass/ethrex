@@ -82,5 +82,7 @@ pub mod utils;
 pub mod vm;
 pub use environment::*;
 pub mod account;
+pub mod state_diff;
+pub use state_diff::StateDiff;
 #[cfg(feature = "perf_opcode_timings")]
 pub mod timings;

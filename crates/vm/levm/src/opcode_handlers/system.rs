@@ -1124,6 +1124,7 @@ impl<'a> VM<'a> {
             state_gas_credit_against_drain_snapshot,
             call_frame_backup,
             stack,
+            state_diff: child_state_diff,
             ..
         } = executed_call_frame;
 
@@ -1167,8 +1168,16 @@ impl<'a> VM<'a> {
                     let pending = mem::replace(&mut self.state_gas_refund_pending, 0);
                     self.credit_state_gas_refund(pending)?;
                 }
+
+                // EIP-8037 StateDiff: merge child's diff into parent.
+                // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
+                self.merge_child_state_diff(child_state_diff);
             }
             TxResult::Revert(_) => {
+                // EIP-8037 StateDiff: child state_diff is dropped (not merged) on revert/error
+                // — its mutations and cancellations are discarded.
+                // (Implicit drop when executed_call_frame goes out of scope.)
+
                 // EIP-8037 `incorporate_child_on_error`:
                 //   parent.state_gas_left += child.state_gas_used + child.state_gas_left - child.state_gas_refund
                 // Translated into our shared-reservoir model with split spill counters:
@@ -1237,6 +1246,7 @@ impl<'a> VM<'a> {
             state_gas_spill_outstanding_snapshot,
             state_gas_credit_against_drain_snapshot,
             stack,
+            state_diff: child_state_diff,
             ..
         } = executed_call_frame;
 
@@ -1264,8 +1274,16 @@ impl<'a> VM<'a> {
                     let pending = mem::replace(&mut self.state_gas_refund_pending, 0);
                     self.credit_state_gas_refund(pending)?;
                 }
+
+                // EIP-8037 StateDiff: merge child's diff into parent.
+                // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
+                self.merge_child_state_diff(child_state_diff);
             }
             TxResult::Revert(err) => {
+                // EIP-8037 StateDiff: child state_diff is dropped (not merged) on revert/error
+                // — its mutations and cancellations are discarded.
+                // (Implicit drop when executed_call_frame goes out of scope.)
+
                 // EIP-8037 `incorporate_child_on_error` (same logic as handle_return_call).
                 let outstanding_delta = self
                     .state_gas_spill_outstanding
