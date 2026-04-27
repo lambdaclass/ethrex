@@ -143,19 +143,50 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
+        // EIP-8037 state-diff Phase 3: Settle state_diff_finalized.
+        //
+        // Collision and non-success paths: only intrinsic state gas stays charged,
+        // so reset finalized diff to the pre-execution intrinsic seed.
+        // Success path: snapshot the top frame's accumulated diff (which already
+        // contains intrinsic + execution records from merge_child_state_diff calls),
+        // then apply same-tx-selfdestruct cancellations to remove accounts that
+        // were created and then destroyed in the same tx.
+        //
+        // Ordering matters: this sweep must run BEFORE apply_same_tx_selfdestruct_state_refund
+        // operates on legacy fields, but since the sweep only touches state_diff_finalized
+        // (not legacy fields), the two operations are independent. We run the sweep here
+        // at the top so the diff is settled before any assertions below.
+        if vm.env.config.fork >= Fork::Amsterdam {
+            if ctx_result.is_success() {
+                // Snapshot the top frame's diff (intrinsic + execution records).
+                vm.state_diff_finalized = vm.current_call_frame.state_diff.clone();
+                // Apply same-tx-selfdestruct cancellations: for each account that was
+                // both created and selfdestructed in this tx, cancel it from the diff.
+                // This mirrors the iteration logic of apply_same_tx_selfdestruct_state_refund.
+                let selfdestruct_addrs: Vec<Address> =
+                    vm.substate.iter_selfdestruct().copied().collect();
+                for addr in selfdestruct_addrs {
+                    if vm.substate.is_account_created(&addr) {
+                        vm.state_diff_finalized.cancel_new_account(addr);
+                    }
+                }
+            } else {
+                // Revert, exceptional halt, or collision: only intrinsic events charged.
+                vm.state_diff_finalized = vm.state_diff_intrinsic_seed.clone();
+            }
+        }
+
         // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
         // Per EELS, collision at process_message_call level returns
         // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
         // The user pays tx.gas (everything), but block accounting only sees
         // intrinsic gas (no execution gas was consumed).
-        // TODO(eip-8037-state-diff): mirror parity assertion in Phase 3.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
             // Block accounting: gas_used = intrinsic_regular + intrinsic_state.
             // state_gas_used already = intrinsic_state (no execution state gas).
             // Per EELS, `tx_env.intrinsic_state_gas` is immutable — any auth refund
             // goes to the reservoir, not to block-accounted state_gas.
-            // TODO(eip-8037-state-diff): switched to state_diff_finalized.bytes() in Phase 3.
             let state_gas = vm.state_gas_used;
             let floor = vm.get_min_gas_used()?;
             // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
@@ -175,6 +206,22 @@ impl Hook for DefaultHook {
                 .ok_or(InternalError::Overflow)?;
             // User pays everything (gas_left=0, state_gas_left=0)
             ctx_result.gas_spent = gas_limit;
+            // EIP-8037 state-diff Phase 3: parity assertion for collision path.
+            // On collision, only intrinsic state gas is charged; the finalized diff is
+            // the intrinsic seed (set above). Legacy state_gas = vm.state_gas_used (no
+            // execution portion accumulated). Parity: seed.bytes() * cpsb == state_gas.
+            #[cfg(debug_assertions)]
+            {
+                let eip8037_state_gas = vm
+                    .state_diff_finalized
+                    .bytes()
+                    .saturating_mul(vm.cost_per_state_byte);
+                debug_assert_eq!(
+                    state_gas, eip8037_state_gas,
+                    "EIP-8037 state-diff parity break (collision): legacy={} eip8037={} diff={:?}",
+                    state_gas, eip8037_state_gas, vm.state_diff_finalized,
+                );
+            }
             // Coinbase gets paid on what user pays
             pay_coinbase(vm, gas_limit)?;
             // Return 0 gas to sender (they lose everything)
@@ -185,7 +232,9 @@ impl Hook for DefaultHook {
         // created accounts that were SELFDESTRUCTed — NEW_ACCOUNT + SSTORE
         // state gas for created slots + code_length * cpsb. Must run BEFORE
         // the reservoir subtraction so sender gets the refund.
-        // TODO(eip-8037-state-diff): replaced by Phase 3.2 cancellation sweep on state_diff_finalized.
+        // NOTE(eip-8037-state-diff): The state_diff_finalized selfdestruct cancellation
+        // sweep (Task 3.2, above) runs independently and does NOT replace this legacy
+        // refund — both coexist until Phase 5 deletes the legacy machinery.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_success() {
             apply_same_tx_selfdestruct_state_refund(vm)?;
         }
@@ -266,11 +315,59 @@ pub fn refund_sender(
         // reservoir (pre-consumed from gas_remaining in add_intrinsic_gas), and any
         // state-gas spills that reduced gas_remaining (EELS charge_state_gas spills
         // don't count as regular_gas_used).
-        // TODO(eip-8037-state-diff): switched to state_diff_finalized.bytes() in Phase 3.
         let execution_state_gas_refund = vm
             .state_gas_refund_absorbed
             .saturating_add(vm.state_gas_refund_pending);
         let state_gas = vm.state_gas_used.saturating_sub(execution_state_gas_refund);
+
+        // EIP-8037 state-diff Phase 3: parity assertion (success + revert/halt paths).
+        //
+        // The legacy net state_gas (above) and the new state_diff_finalized-derived gas
+        // must agree. Mismatch means a missing recording site, missing cancellation, or an
+        // asymmetry in the intrinsic seed that hasn't been compensated. This assertion is
+        // debug-only; it fires in `cargo test` (debug profile) to catch regressions early.
+        // Phase 4 will run the full ef_tests sweep against it before Phase 5 deletes the
+        // legacy state-gas machinery.
+        #[cfg(debug_assertions)]
+        {
+            let eip8037_state_gas = vm
+                .state_diff_finalized
+                .bytes()
+                .saturating_mul(vm.cost_per_state_byte);
+            debug_assert_eq!(
+                state_gas, eip8037_state_gas,
+                "EIP-8037 state-diff parity break: legacy={} eip8037={} diff={:?}",
+                state_gas, eip8037_state_gas, vm.state_diff_finalized,
+            );
+        }
+
+        // EIP-8037 state-diff Phase 3: set-soundness assertions.
+        // No entry should appear in both its "new" set and its "cancellations" set.
+        // Unresolved cancellations are only present if the cancel target wasn't found
+        // anywhere in the frame hierarchy — after merge they either resolved or propagated.
+        // Auth_total and auth_only are mutually exclusive (downgrade is monotonic).
+        #[cfg(debug_assertions)]
+        {
+            for addr in &vm.state_diff_finalized.cancellations_account {
+                debug_assert!(
+                    !vm.state_diff_finalized.new_accounts.contains(addr),
+                    "EIP-8037 state-diff: account {addr:?} in both new_accounts and cancellations_account",
+                );
+            }
+            for slot in &vm.state_diff_finalized.cancellations_storage {
+                debug_assert!(
+                    !vm.state_diff_finalized.new_storage_slots.contains(slot),
+                    "EIP-8037 state-diff: slot {slot:?} in both new_storage_slots and cancellations_storage",
+                );
+            }
+            for addr in &vm.state_diff_finalized.auth_only {
+                debug_assert!(
+                    !vm.state_diff_finalized.auth_total.contains(addr),
+                    "EIP-8037 state-diff: authority {addr:?} in both auth_total and auth_only",
+                );
+            }
+        }
+
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.
