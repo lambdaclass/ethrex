@@ -70,7 +70,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -1438,12 +1438,18 @@ async fn handle_incoming_message(
                     let hash = *hash;
                     let blockchain = state.blockchain.clone();
                     let peer_handle = self_handle.clone();
+                    let peer_table = state.peer_table.clone();
                     tokio::spawn(async move {
-                        let peer_conn = PeerConnection {
+                        let primary = PeerConnection {
                             handle: peer_handle,
                         };
-                        let outcome =
-                            fetch_and_import_bsc_block(peer_conn, hash, blockchain.clone()).await;
+                        let outcome = fetch_and_import_bsc_block(
+                            primary,
+                            peer_table,
+                            hash,
+                            blockchain.clone(),
+                        )
+                        .await;
                         if let Err(e) = outcome {
                             debug!(%hash, "BSC direct fetch/import failed: {e}");
                         }
@@ -1494,8 +1500,19 @@ async fn handle_incoming_message(
                     // arrivals are handled transparently. `add_block_pipeline`
                     // internally serializes BSC callers on `bsc_import_lock`.
                     let blockchain = state.blockchain.clone();
+                    let block_number = block.header.number;
                     tokio::task::spawn_blocking(move || {
-                        let _ = blockchain.add_block_pipeline(block, None);
+                        if blockchain.add_block_pipeline(block, None).is_ok() {
+                            // Match the direct-fetch path: advance the
+                            // canonical head so RPC reflects the new tip
+                            // and forward_sync skips this block on its
+                            // next pass.
+                            tokio::runtime::Handle::current().block_on(async {
+                                let _ = blockchain
+                                    .advance_canonical_head(block_number, block_hash)
+                                    .await;
+                            });
+                        }
                     });
                 }
                 // Wake the sync bridge so any newly-pending blocks get
@@ -1829,61 +1846,155 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
     Ok(())
 }
 
-/// Fetch a single block (header + body, in parallel) by hash from `peer_conn`
-/// and submit it to `add_block_pipeline`.  Used by the BSC `NewBlockHashes`
-/// fast-path.  Errors are non-fatal (sync bridge fallback covers them).
+/// Fetch a single block by hash for the BSC `NewBlockHashes` fast-path and
+/// submit it to `add_block_pipeline`.
+///
+/// `primary` is the announcing peer; we also pull the top-N highest-scored
+/// eth-capable peers from the peer table and race the fetches across all of
+/// them. The first peer to deliver a valid (header, body) pair wins; the
+/// rest are dropped (their orphan responses are tolerated by the existing
+/// `current_requests` plumbing). Errors are non-fatal — the sync bridge
+/// fallback covers any block that drops on the floor.
 async fn fetch_and_import_bsc_block(
-    peer_conn: PeerConnection,
+    primary: PeerConnection,
+    peer_table: PeerTable,
     hash: H256,
     blockchain: Arc<Blockchain>,
 ) -> Result<(), String> {
     use ethrex_common::types::Block;
     const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
-    let header_req = Message::GetBlockHeaders(GetBlockHeaders {
-        id: rand::random(),
-        startblock: HashOrNumber::Hash(hash),
-        limit: 1,
-        skip: 0,
-        reverse: false,
-    });
-    let body_req = Message::GetBlockBodies(GetBlockBodies {
-        id: rand::random(),
-        block_hashes: vec![hash],
-    });
-    let mut hdr_conn = peer_conn.clone();
-    let mut body_conn = peer_conn;
-    let (hdr_result, body_result) = tokio::join!(
-        hdr_conn.outgoing_request(header_req, FETCH_TIMEOUT),
-        body_conn.outgoing_request(body_req, FETCH_TIMEOUT),
-    );
-    let header = match hdr_result.map_err(|e| format!("header: {e}"))? {
-        Message::BlockHeaders(BlockHeaders { block_headers, .. }) => block_headers
-            .into_iter()
-            .find(|h| h.hash() == hash)
-            .ok_or_else(|| "header hash mismatch".to_string())?,
-        other => return Err(format!("unexpected header response: {other}")),
+    /// Hedge across top-N highest-scored peers (plus the announcer).
+    /// 5 brings P(all-slow) below ~0.5% under the observed RTT
+    /// distribution while keeping bandwidth bounded.
+    const FANOUT: usize = 5;
+
+    // Build the candidate list: announcer (slot 0, no peer_id known here)
+    // + LRU "proven-fast" peers + top-scored peers, deduped, up to FANOUT.
+    // peer_ids[i] is None for the announcer and Some(_) for everyone else,
+    // so we can record only non-announcer winners back into the LRU.
+    let mut peer_ids: Vec<Option<H256>> = vec![None];
+    let mut peers: Vec<PeerConnection> = vec![primary];
+    let mut excluded: Vec<H256> = Vec::new();
+
+    // LRU pass: insert any LRU peer that's still connected and eth-capable.
+    let lru_ids = blockchain.bsc_block_winners_snapshot();
+    if !lru_ids.is_empty() {
+        let connected = peer_table
+            .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await
+            .unwrap_or_default();
+        let connected_map: std::collections::HashMap<H256, PeerConnection> =
+            connected.into_iter().collect();
+        for id in lru_ids {
+            if peers.len() >= FANOUT {
+                break;
+            }
+            if let Some(conn) = connected_map.get(&id) {
+                peers.push(conn.clone());
+                peer_ids.push(Some(id));
+                excluded.push(id);
+            }
+        }
+    }
+
+    // Fill remaining slots with top-scored peers (excluding LRU peers we
+    // already added).
+    while peers.len() < FANOUT {
+        match peer_table
+            .get_best_peer_excluding(SUPPORTED_ETH_CAPABILITIES.to_vec(), excluded.clone())
+            .await
+        {
+            Ok(Some((id, conn))) => {
+                excluded.push(id);
+                peers.push(conn);
+                peer_ids.push(Some(id));
+            }
+            _ => break,
+        }
+    }
+
+    let fetch_start = std::time::Instant::now();
+    let mut set = tokio::task::JoinSet::new();
+    for (i, conn) in peers.into_iter().enumerate() {
+        set.spawn(async move {
+            let header_req = Message::GetBlockHeaders(GetBlockHeaders {
+                id: rand::random(),
+                startblock: HashOrNumber::Hash(hash),
+                limit: 1,
+                skip: 0,
+                reverse: false,
+            });
+            let body_req = Message::GetBlockBodies(GetBlockBodies {
+                id: rand::random(),
+                block_hashes: vec![hash],
+            });
+            let mut hdr_conn = conn.clone();
+            let mut body_conn = conn;
+            let (h, b) = tokio::join!(
+                hdr_conn.outgoing_request(header_req, FETCH_TIMEOUT),
+                body_conn.outgoing_request(body_req, FETCH_TIMEOUT),
+            );
+            let header = match h.map_err(|e| format!("header: {e}"))? {
+                Message::BlockHeaders(BlockHeaders { block_headers, .. }) => block_headers
+                    .into_iter()
+                    .find(|h| h.hash() == hash)
+                    .ok_or_else(|| "header hash mismatch".to_string())?,
+                other => return Err(format!("unexpected header response: {other}")),
+            };
+            let body = match b.map_err(|e| format!("body: {e}"))? {
+                Message::BlockBodies(BlockBodies { block_bodies, .. }) => block_bodies
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "empty body response".to_string())?,
+                other => return Err(format!("unexpected body response: {other}")),
+            };
+            Ok::<_, String>((i, header, body))
+        });
+    }
+
+    // Take the first peer to deliver a valid pair; abort the rest.
+    let mut last_err = String::from("no peers");
+    let (winner_i, header, body) = loop {
+        match set.join_next().await {
+            Some(Ok(Ok(v))) => break v,
+            Some(Ok(Err(e))) => last_err = e,
+            Some(Err(e)) => last_err = format!("join: {e}"),
+            None => return Err(format!("all peers failed: {last_err}")),
+        }
     };
-    let body = match body_result.map_err(|e| format!("body: {e}"))? {
-        Message::BlockBodies(BlockBodies { block_bodies, .. }) => block_bodies
-            .into_iter()
-            .next()
-            .ok_or_else(|| "empty body response".to_string())?,
-        other => return Err(format!("unexpected body response: {other}")),
-    };
+    set.abort_all();
+    let fetch_ms = fetch_start.elapsed().as_millis() as u64;
+
+    // Record non-announcer winners to the LRU. The announcer (winner_i == 0)
+    // wins most races by default (propagation head start), so recording it
+    // adds no signal — the LRU's purpose is to surface peers that can
+    // actually outrace the announcer for the slow-announcer cases.
+    if let Some(Some(winner_id)) = peer_ids.get(winner_i).copied() {
+        blockchain.bsc_record_block_winner(winner_id);
+    }
+
     let block = Block { header, body };
     let number = block.header.number;
     let block_hash = block.hash();
     let blockchain_ref = blockchain.clone();
+    let pipeline_start = std::time::Instant::now();
     tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
         .await
         .map_err(|e| format!("join: {e}"))?
         .map_err(|e| format!("pipeline: {e}"))?;
-    // Advance the canonical head so `eth_blockNumber` reflects the new tip
-    // and forward_sync's next `latest+1` request skips this block rather
-    // than re-downloading it.
+    let pipeline_done = std::time::Instant::now();
     blockchain
         .advance_canonical_head(number, block_hash)
         .await
         .map_err(|e| format!("forkchoice: {e}"))?;
+    let head_done = std::time::Instant::now();
+    info!(
+        block = number,
+        winner = winner_i,
+        fetch_ms,
+        pipeline_ms = pipeline_done.duration_since(pipeline_start).as_millis() as u64,
+        forkchoice_ms = head_done.duration_since(pipeline_done).as_millis() as u64,
+        "BSC direct-fetch import"
+    );
     Ok(())
 }

@@ -238,6 +238,12 @@ pub struct Blockchain {
     /// or timeout sweep). Prevents N peers that all announced the same hash
     /// from each issuing redundant fetches.
     pub fetching_blocks: std::sync::Mutex<std::collections::HashSet<H256>>,
+    /// Peers that have recently outraced the announcer in a hedged direct
+    /// fetch. The hedge always includes the announcer (which usually wins
+    /// because it has a propagation head start), so this LRU only collects
+    /// peers proven to beat that head start — exactly the set worth
+    /// prioritizing for the slow-announcer cases. Front = most recent.
+    pub bsc_block_winners_lru: std::sync::Mutex<std::collections::VecDeque<H256>>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
@@ -372,6 +378,7 @@ impl Blockchain {
             bsc_pivot_header: std::sync::Mutex::new(None),
             bsc_import_lock: std::sync::Mutex::new(()),
             fetching_blocks: std::sync::Mutex::new(std::collections::HashSet::new()),
+            bsc_block_winners_lru: std::sync::Mutex::new(std::collections::VecDeque::new()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -390,6 +397,7 @@ impl Blockchain {
             bsc_pivot_header: std::sync::Mutex::new(None),
             bsc_import_lock: std::sync::Mutex::new(()),
             fetching_blocks: std::sync::Mutex::new(std::collections::HashSet::new()),
+            bsc_block_winners_lru: std::sync::Mutex::new(std::collections::VecDeque::new()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -1849,6 +1857,34 @@ impl Blockchain {
             );
         }
         result
+    }
+
+    /// Snapshot of the BSC direct-fetch winners LRU (most-recent first).
+    /// Used by the hedge candidate-selection logic to bias toward peers
+    /// that have proven they can outrace the announcer.
+    pub fn bsc_block_winners_snapshot(&self) -> Vec<H256> {
+        self.bsc_block_winners_lru
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    /// Record that `peer_id` outraced the announcer in a hedged direct fetch.
+    /// Bounded to `MAX` entries (most recent kept).
+    pub fn bsc_record_block_winner(&self, peer_id: H256) {
+        const MAX: usize = 8;
+        let mut lru = self
+            .bsc_block_winners_lru
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // Remove existing entry to bring it to the front (LRU semantics).
+        lru.retain(|p| *p != peer_id);
+        lru.push_front(peer_id);
+        while lru.len() > MAX {
+            lru.pop_back();
+        }
     }
 
     /// Advance the canonical head pointer to a block we've already stored.
