@@ -100,8 +100,10 @@ const SENDER: u64 = 0x1000;
 const CONTRACT_A: u64 = 0x2000;
 const CONTRACT_B: u64 = 0x3000;
 // GAS_LIMIT large enough for execution but not so large that cpsb becomes significant.
-// block_gas_limit = GAS_LIMIT * 2 = 1_000_000; cost_per_state_byte(1_000_000) = 1
-// state_gas_storage_set = STATE_BYTES_PER_STORAGE_SET(32) * 1 = 32
+// block_gas_limit = GAS_LIMIT * 2 = 1_000_000.
+// NOTE (bal-devnet-4 CPSB pin): cost_per_state_byte is currently fixed at 1174.
+// With the dynamic formula, cost_per_state_byte(1_000_000) = 1 → state_gas_storage_set = 32.
+// These tests compute amounts via the live function so they pass either way.
 const GAS_LIMIT: u64 = 500_000;
 
 // ==================== Bytecode helpers ====================
@@ -278,8 +280,10 @@ impl TestRunner {
 
 // ==================== Helper: compute expected state gas per storage set ====================
 
-/// For block_gas_limit = GAS_LIMIT * 2 = 1_000_000, cost_per_state_byte = 1.
-/// state_gas_storage_set = STATE_BYTES_PER_STORAGE_SET * 1 = 32.
+/// For block_gas_limit = GAS_LIMIT * 2 = 1_000_000:
+/// - With the dynamic formula: cost_per_state_byte = 1, state_gas_storage_set = 32.
+/// - With the bal-devnet-4 CPSB pin: cost_per_state_byte = 1174, state_gas_storage_set = 37_568.
+/// The function computes the value live so callers stay correct under both regimes.
 fn state_gas_storage_set() -> u64 {
     let cpsb = cost_per_state_byte(GAS_LIMIT * 2);
     STATE_BYTES_PER_STORAGE_SET * cpsb
@@ -567,7 +571,9 @@ fn test_subcall_failure_does_not_zero_top_level_state_gas() {
 ///   reservoir = 19_979_000 - 16_756_216 = 3_222_784  (> sstore_state_gas for any cpsb)
 ///
 /// block_gas_limit = 40_000_000 (≥ tx_gas_limit) to satisfy the tx < block limit validation.
-/// cpsb(40_000_000) = 150 → sstore_state = 32 * 150 = 4_800 << reservoir (3.2M) ✓
+/// Dynamic formula: cpsb(40_000_000) = 150 → sstore_state = 32 * 150 = 4_800.
+/// bal-devnet-4 CPSB pin: cpsb = 1174 → sstore_state = 32 * 1174 = 37_568.
+/// Both << reservoir (3.2M), so the test holds under either regime. ✓
 ///
 /// The SSTORE state gas is fully drawn from the reservoir — no spill. On REVERT,
 /// the execution portion (including the reservoir-drawn amount) must be wiped to zero.

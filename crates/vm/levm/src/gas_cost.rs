@@ -173,28 +173,14 @@ pub const CPSB_SIGNIFICANT_BITS: u32 = 5;
 pub const CPSB_OFFSET: u64 = 9578;
 
 /// Compute cost_per_state_byte from the block gas limit (EIP-8037, execution-specs#2687).
-/// Sanity check: cost_per_state_byte(120_000_000) == 1174.
-#[expect(
-    clippy::as_conversions,
-    reason = "u64→u128 widening casts and final narrowing from proven-bounded u128 are safe"
-)]
-#[expect(
-    clippy::arithmetic_side_effects,
-    reason = "arithmetic is safe: u64 fits in u128; subtraction guarded by if-condition"
-)]
-pub fn cost_per_state_byte(block_gas_limit: u64) -> u64 {
-    let num = (block_gas_limit as u128) * (BLOCKS_PER_YEAR as u128);
-    let denom = 2u128 * (TARGET_STATE_GROWTH_PER_YEAR as u128);
-    let raw = num.div_ceil(denom);
-    let shifted = raw + (CPSB_OFFSET as u128);
-    let bit_length = 128 - shifted.leading_zeros();
-    let shift = bit_length.saturating_sub(CPSB_SIGNIFICANT_BITS);
-    let quantized = (shifted >> shift) << shift;
-    if quantized > CPSB_OFFSET as u128 {
-        (quantized - (CPSB_OFFSET as u128)) as u64
-    } else {
-        1
-    }
+///
+/// TEMPORARY for bal-devnet-4: returns the fixed value 1174 used by bal-devnet-3
+/// regardless of `block_gas_limit`. The dynamic formula (BLOCKS_PER_YEAR /
+/// TARGET_STATE_GROWTH_PER_YEAR / CPSB_SIGNIFICANT_BITS / CPSB_OFFSET) is preserved
+/// in the consts above so this commit can be reverted with a single `git revert` to
+/// restore the formula body. See execution-specs#2687.
+pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
+    1174
 }
 
 pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam
