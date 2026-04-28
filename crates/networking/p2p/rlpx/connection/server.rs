@@ -1963,14 +1963,19 @@ async fn fetch_and_import_bsc_block(
     let mut excluded: Vec<H256> = Vec::new();
 
     // LRU pass: insert any LRU peer that's still connected and eth-capable.
+    // Note: we drop the permits immediately because NewBlock broadcast doesn't
+    // need to reserve a slot for a response — it's fire-and-forget.
     let lru_ids = blockchain.bsc_block_winners_snapshot();
     if !lru_ids.is_empty() {
         let connected = peer_table
-            .get_peer_connections(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .get_peers_with_capabilities()
             .await
             .unwrap_or_default();
-        let connected_map: std::collections::HashMap<H256, PeerConnection> =
-            connected.into_iter().collect();
+        let connected_map: std::collections::HashMap<H256, PeerConnection> = connected
+            .into_iter()
+            .filter(|(_, _, caps)| caps.iter().any(|c| SUPPORTED_ETH_CAPABILITIES.contains(c)))
+            .map(|(id, conn, _)| (id, conn))
+            .collect();
         for id in lru_ids {
             if peers.len() >= FANOUT {
                 break;
@@ -1984,13 +1989,14 @@ async fn fetch_and_import_bsc_block(
     }
 
     // Fill remaining slots with top-scored peers (excluding LRU peers we
-    // already added).
+    // already added). Drop permits immediately — broadcast is fire-and-forget.
     while peers.len() < FANOUT {
         match peer_table
             .get_best_peer_excluding(SUPPORTED_ETH_CAPABILITIES.to_vec(), excluded.clone())
             .await
         {
-            Ok(Some((id, conn))) => {
+            Ok(Some((id, conn, permit))) => {
+                drop(permit);
                 excluded.push(id);
                 peers.push(conn);
                 peer_ids.push(Some(id));

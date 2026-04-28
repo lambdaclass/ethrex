@@ -505,11 +505,9 @@ async fn request_forward_headers(
                 // the case where the announcement is missed (dropped
                 // connection, peer switch) so we don't hang.
                 warn!(failures, "Forward sync: request failed, retrying...");
-                let _ = tokio::time::timeout(
-                    Duration::from_millis(500),
-                    new_head_notify.notified(),
-                )
-                .await;
+                let _ =
+                    tokio::time::timeout(Duration::from_millis(500), new_head_notify.notified())
+                        .await;
             }
         }
     }
