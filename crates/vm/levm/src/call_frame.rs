@@ -495,11 +495,7 @@ impl<'a> VM<'a> {
 
     #[inline(always)]
     pub fn advance_pc(&mut self, count: usize) {
-        // wrapping_add is safe: bytecode is at most 24 KB so pc can never
-        // reach usize::MAX.  Avoids a branch + Result chain per opcode.
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .wrapping_add(count);
+        // Bytecode can never be usize::MAX bytes; overflow is unreachable.
+        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(count);
     }
 }
