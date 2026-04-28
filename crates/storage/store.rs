@@ -52,6 +52,8 @@ use std::{
     },
     thread::JoinHandle,
 };
+#[cfg(feature = "rocksdb")]
+use tracing::warn;
 use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
@@ -3264,18 +3266,58 @@ pub fn has_valid_db(path: &Path) -> bool {
 /// store initialization. Returns `None` if the database doesn't exist or
 /// the chain config can't be read. Always returns `None` when compiled
 /// without the `rocksdb` feature.
+///
+/// Each failure mode logs a warning so callers (and operators) can diagnose
+/// why an existing database was not usable — previously every error was
+/// silently swallowed by `.ok()?`.
 pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     if !has_valid_db(path) {
         return None;
     }
     #[cfg(feature = "rocksdb")]
     {
-        let backend = RocksDBBackend::open(path).ok()?;
-        let read = backend.begin_read().ok()?;
+        let backend = match RocksDBBackend::open(path) {
+            Ok(backend) => backend,
+            Err(e) => {
+                warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
+                return None;
+            }
+        };
+        let read = match backend.begin_read() {
+            Ok(read) => read,
+            Err(e) => {
+                warn!("Failed to begin read transaction at {path:?}: {e}");
+                return None;
+            }
+        };
         let key = chain_data_key(ChainDataIndex::ChainConfig);
-        let bytes = read.get(CHAIN_DATA, &key).ok()??;
-        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
-        Some(config.chain_id)
+        let bytes = match read.get(CHAIN_DATA, &key) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                warn!("Chain config entry not found in database at {path:?}");
+                return None;
+            }
+            Err(e) => {
+                warn!("Failed to read chain config from database at {path:?}: {e}");
+                return None;
+            }
+        };
+        // Only extract chain_id here: the stored `ChainConfig` JSON may include
+        // fields whose serialization changed across releases (e.g. pre-v10 wrote
+        // `terminal_total_difficulty` as a plain number, v10 expects hex string).
+        // Deserializing the full struct would reject otherwise-migratable v9 data.
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ChainIdOnly {
+            chain_id: u64,
+        }
+        match serde_json::from_slice::<ChainIdOnly>(&bytes) {
+            Ok(partial) => Some(partial.chain_id),
+            Err(e) => {
+                warn!("Failed to deserialize chain ID from database at {path:?}: {e}");
+                None
+            }
+        }
     }
     #[cfg(not(feature = "rocksdb"))]
     {
