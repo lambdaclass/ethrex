@@ -166,11 +166,6 @@ pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
 pub const STATE_BYTES_PER_AUTH_BASE: u64 = 23;
 
-// EIP-8037: Per-system-call upper bound on new storage slots written. Matches
-// MAX_WITHDRAWAL_REQUESTS_PER_BLOCK (EIP-7002), the largest per-block bound across
-// the existing system contracts.
-pub const SYSTEM_MAX_SSTORES_PER_CALL: u64 = 16;
-
 /// Cost per state byte for EIP-8037 (ethereum/EIPs#11573).
 ///
 /// Pinned at 1174, the value derived from a 100 GiB/year state-growth target at a
