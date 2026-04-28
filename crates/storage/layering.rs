@@ -49,7 +49,10 @@ pub struct TrieLayerCache {
     ///
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: AtomicBloomFilter<FxBuildHasher>,
+    ///
+    /// Held behind an Arc so that the RCU clone of TrieLayerCache only increments a
+    /// reference count instead of deep-copying the ~1 MB bit array every block.
+    bloom: Arc<AtomicBloomFilter<FxBuildHasher>>,
 }
 
 impl fmt::Debug for TrieLayerCache {
@@ -88,10 +91,12 @@ impl TrieLayerCache {
         }
     }
 
-    fn create_filter(expected_items: usize) -> AtomicBloomFilter<FxBuildHasher> {
-        AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
-            .hasher(FxBuildHasher)
-            .expected_items(expected_items.max(BLOOM_SIZE))
+    fn create_filter(expected_items: usize) -> Arc<AtomicBloomFilter<FxBuildHasher>> {
+        Arc::new(
+            AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
+                .hasher(FxBuildHasher)
+                .expected_items(expected_items.max(BLOOM_SIZE)),
+        )
     }
 
     /// Looks up a trie node `key` starting from the layer identified by `state_root`,
@@ -228,7 +233,7 @@ impl TrieLayerCache {
             }
         });
 
-        self.bloom = filter;
+        self.bloom = filter;  // replace the Arc, leaving old filter intact for concurrent readers
     }
 
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
