@@ -453,7 +453,7 @@ pub async fn snap_sync(
             .await?
             {
                 continue;
-            };
+            }
 
             info!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
