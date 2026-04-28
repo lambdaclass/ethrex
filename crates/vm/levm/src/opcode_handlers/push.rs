@@ -32,7 +32,8 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let literal_offset = vm.current_call_frame.pc;
-        // PC overflow is impossible: contracts are capped at 24 576 bytes by EIP-170.
+        // PC overflow is impossible: contracts are capped at 24 576 bytes by EIP-170
+        // (initcode at 2× that by EIP-3860), so wrapping_add is always safe here.
         vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(N);
 
         vm.current_call_frame
