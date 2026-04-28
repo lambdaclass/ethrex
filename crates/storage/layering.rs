@@ -6,7 +6,7 @@ use std::{fmt, sync::Arc};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
-const BLOOM_SIZE: usize = 1_000_000;
+const BLOOM_SIZE: usize = 32_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
