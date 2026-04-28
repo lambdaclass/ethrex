@@ -70,19 +70,17 @@ impl Memory {
     /// Note: new_memory_size is increased to the next 32 byte multiple.
     #[inline(always)]
     pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
-        if new_memory_size == 0 {
+        // Fast path: memory already covers the request.  self.len is always a
+        // multiple of WORD_SIZE_IN_BYTES_USIZE, so if the raw (unrounded)
+        // new_memory_size already fits, the rounded size does too — skip the
+        // rounding arithmetic on the common (no-expansion) path.
+        if new_memory_size <= self.len {
             return Ok(());
         }
 
         let new_memory_size = new_memory_size
             .checked_next_multiple_of(WORD_SIZE_IN_BYTES_USIZE)
             .ok_or(OutOfBounds)?;
-
-        let current_len = self.len();
-
-        if new_memory_size <= current_len {
-            return Ok(());
-        }
 
         self.len = new_memory_size;
 
@@ -129,7 +127,7 @@ impl Memory {
         let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        let true_offset = offset.wrapping_add(self.current_base);
+        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
 
         let buf = self.buffer.borrow();
         // SAFETY: resize already makes sure bounds are correct.
