@@ -400,27 +400,35 @@ impl OpCodeFn {
     }
 }
 
-impl<'a> VM<'a> {
-    /// Setups the opcode lookup function pointer table, configured according the given fork.
-    ///
-    /// This is faster than a conventional match.
-    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
-        if fork >= Fork::Amsterdam {
-            &OPCODE_TABLE_AMSTERDAM
-        } else if fork >= Fork::Osaka {
-            &OPCODE_TABLE_OSAKA
-        } else if fork >= Fork::Cancun {
-            &OPCODE_TABLE_PRE_OSAKA
-        } else if fork >= Fork::Shanghai {
-            &OPCODE_TABLE_PRE_CANCUN
-        } else {
-            &OPCODE_TABLE_PRE_SHANGHAI
-        }
+/// Returns a reference to the shared static opcode table for the given fork.
+///
+/// The tables are initialized once at program start and shared across all VM instances,
+/// avoiding a 2 KB per-transaction copy into each VM struct.
+pub(crate) fn get_opcode_table_ref(fork: Fork) -> &'static [OpCodeFn; 256] {
+    if fork >= Fork::Amsterdam {
+        &OPCODE_TABLE_AMSTERDAM
+    } else if fork >= Fork::Osaka {
+        &OPCODE_TABLE_OSAKA
+    } else if fork >= Fork::Cancun {
+        &OPCODE_TABLE_PRE_OSAKA
+    } else if fork >= Fork::Shanghai {
+        &OPCODE_TABLE_PRE_CANCUN
+    } else {
+        &OPCODE_TABLE_PRE_SHANGHAI
     }
+}
 
-    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_shanghai() -> [OpCodeFn; 256] {
+// Pre-computed static opcode tables — one per supported fork, shared across all VM instances.
+// Each table is 256 × 8 bytes = 2 KB; storing a &'static reference (8 bytes) in VM instead of
+// an owned copy reduces VM struct size and eliminates per-transaction memcpy overhead.
+static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] = build_opcode_table_pre_shanghai();
+static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] = build_opcode_table_pre_cancun();
+static OPCODE_TABLE_PRE_OSAKA: [OpCodeFn; 256] = build_opcode_table_pre_osaka();
+static OPCODE_TABLE_OSAKA: [OpCodeFn; 256] = build_opcode_table_osaka();
+static OPCODE_TABLE_AMSTERDAM: [OpCodeFn; 256] = build_opcode_table_amsterdam();
+
+#[allow(clippy::as_conversions, clippy::indexing_slicing)]
+const fn build_opcode_table_pre_shanghai() -> [OpCodeFn; 256] {
         let mut opcode_table: [OpCodeFn; 256] = [OpCodeFn::new::<OpInvalidHandler>(); 256];
 
         opcode_table[Opcode::STOP as usize] = OpCodeFn::new::<OpStopHandler>();
@@ -573,9 +581,9 @@ impl<'a> VM<'a> {
         opcode_table
     }
 
-    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_cancun() -> [OpCodeFn; 256] {
-        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_shanghai();
+#[allow(clippy::as_conversions, clippy::indexing_slicing)]
+const fn build_opcode_table_pre_cancun() -> [OpCodeFn; 256] {
+    let mut opcode_table: [OpCodeFn; 256] = build_opcode_table_pre_shanghai();
 
         // [EIP-3855] - PUSH0 is only available from SHANGHAI
         opcode_table[Opcode::PUSH0 as usize] = OpCodeFn::new::<OpPush0Handler>();
@@ -583,10 +591,10 @@ impl<'a> VM<'a> {
         opcode_table
     }
 
-    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_pre_osaka() -> [OpCodeFn; 256] {
-        const {
-            let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_cancun();
+#[allow(clippy::as_conversions, clippy::indexing_slicing)]
+const fn build_opcode_table_pre_osaka() -> [OpCodeFn; 256] {
+    const {
+        let mut opcode_table: [OpCodeFn; 256] = build_opcode_table_pre_cancun();
 
             // [EIP-5656] - MCOPY is only available from CANCUN
             opcode_table[Opcode::MCOPY as usize] = OpCodeFn::new::<OpMCopyHandler>();
@@ -604,18 +612,18 @@ impl<'a> VM<'a> {
         }
     }
 
-    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_osaka() -> [OpCodeFn; 256] {
-        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_pre_osaka();
+#[allow(clippy::as_conversions, clippy::indexing_slicing)]
+const fn build_opcode_table_osaka() -> [OpCodeFn; 256] {
+    let mut opcode_table: [OpCodeFn; 256] = build_opcode_table_pre_osaka();
 
         opcode_table[Opcode::CLZ as usize] = OpCodeFn::new::<OpClzHandler>();
 
         opcode_table
     }
 
-    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
-    const fn build_opcode_table_amsterdam() -> [OpCodeFn; 256] {
-        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_osaka();
+#[expect(clippy::as_conversions, clippy::indexing_slicing)]
+const fn build_opcode_table_amsterdam() -> [OpCodeFn; 256] {
+    let mut opcode_table: [OpCodeFn; 256] = build_opcode_table_osaka();
 
         // EIP-8024 opcodes
         opcode_table[Opcode::DUPN as usize] = OpCodeFn::new::<OpDupNHandler>();
@@ -625,14 +633,3 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn::new::<OpSlotNumHandler>();
         opcode_table
     }
-}
-
-static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
-    VM::<'static>::build_opcode_table_pre_shanghai();
-static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] =
-    VM::<'static>::build_opcode_table_pre_cancun();
-static OPCODE_TABLE_PRE_OSAKA: [OpCodeFn; 256] =
-    VM::<'static>::build_opcode_table_pre_osaka();
-static OPCODE_TABLE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
-static OPCODE_TABLE_AMSTERDAM: [OpCodeFn; 256] =
-    VM::<'static>::build_opcode_table_amsterdam();

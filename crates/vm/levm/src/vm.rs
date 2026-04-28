@@ -449,8 +449,9 @@ pub struct VM<'a> {
     /// are found during set_delegation. Tracked separately because state_gas_used
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
-    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Build dynamically according to the given fork config.
+    /// Reference to the shared static opcode table for the current fork.
+    /// Stored as a reference (8 bytes) rather than a copy (2 KB) to avoid per-transaction
+    /// initialization cost and to keep the VM struct cache-friendly.
     pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
@@ -505,7 +506,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: crate::opcodes::get_opcode_table_ref(fork),
             crypto,
         };
 
@@ -722,11 +723,9 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        let hooks = std::mem::take(&mut self.hooks);
-        for hook in &hooks {
+        for hook in self.hooks.clone() {
             hook.borrow_mut().prepare_execution(self)?;
         }
-        self.hooks = hooks;
 
         Ok(())
     }
@@ -735,12 +734,10 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        let hooks = std::mem::take(&mut self.hooks);
-        for hook in &hooks {
+        for hook in self.hooks.clone() {
             hook.borrow_mut()
                 .finalize_execution(self, &mut ctx_result)?;
         }
-        self.hooks = hooks;
 
         self.tracer.exit_context(&ctx_result, true)?;
 
