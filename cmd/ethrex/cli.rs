@@ -941,13 +941,12 @@ pub async fn import_blocks_bench(
                     _ => warn!("Failed to add block {number} with hash {hash:#x}"),
                 })?;
 
-            // TODO: replace this
-            // This sleep is because we have a background process writing to disk the last layer
-            // And until it's done we can't execute the new block
-            // Because this wants to compare against running a real node in terms of reported performance
-            // It takes less than 500ms, so this is good enough, but we should report the performance
-            // without taking into account that wait.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            // TODO: replace this with an explicit "wait for persistence idle" call.
+            // The previous block's Phase 2 (disk write of bottom-most diff layer) runs in
+            // a background thread; we sleep so its completion doesn't bleed into the next
+            // block's per-block timer. 100ms is comfortably above Phase 2 cost on SSD for
+            // small blocks; raise if metrics get noisy.
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         // Make head canonical and label all special blocks correctly.

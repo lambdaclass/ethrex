@@ -355,8 +355,20 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
+        // Threshold below which the BAL parallel-execution path's constants
+        // (validation index, system_seed clone, per-tx db setup, rayon scheduling,
+        // bal_to_account_updates) outweigh any exec-side parallelism gain. Reth uses
+        // 5 for the same reason. Below threshold we fall through to sequential exec
+        // which produces a BAL during execution; blockchain.rs hash-compares it
+        // against the header BAL (validate_block_access_list_hash) — same correctness
+        // guarantees, no parallel constants.
+        const BAL_PARALLEL_TX_THRESHOLD: usize = 5;
+
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
-        if let Some(bal) = header_bal {
+        // for blocks large enough to amortize the parallel path's constant overhead.
+        if let Some(bal) = header_bal
+            && block.body.transactions.len() >= BAL_PARALLEL_TX_THRESHOLD
+        {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
             // Note: size cap validation is deferred until after transaction processing
@@ -404,6 +416,7 @@ impl LEVM {
                             bal,
                             last_tx_idx,
                             &validation_index.accounts_by_min_index,
+                            None,
                         )
                         .is_ok()
                             && let VMType::L1 = vm_type
@@ -426,6 +439,7 @@ impl LEVM {
                 bal,
                 last_tx_idx,
                 &validation_index.accounts_by_min_index,
+                None,
             )?;
 
             // Order must match geth: requests (system calls) BEFORE withdrawals.
@@ -748,31 +762,9 @@ impl LEVM {
                 continue;
             }
 
-            // Load pre-state for unchanged fields (cache hit after prefetch)
-            let prestate = store
-                .get_account_state(addr)
-                .map_err(|e| EvmError::Custom(format!("bal_to_account_updates: {e}")))?;
-
-            // Final balance: last entry (highest index) or prestate
-            let balance = acct_changes
-                .balance_changes
-                .last()
-                .map(|c| c.post_balance)
-                .unwrap_or(prestate.balance);
-
-            // Final nonce: last entry or prestate
-            let nonce = acct_changes
-                .nonce_changes
-                .last()
-                .map(|c| c.post_nonce)
-                .unwrap_or(prestate.nonce);
-
-            // Final code: last entry or prestate
-            let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
-                Self::code_from_bal(&c.new_code)
-            } else {
-                (prestate.code_hash, None)
-            };
+            let last_balance = acct_changes.balance_changes.last().map(|c| c.post_balance);
+            let last_nonce = acct_changes.nonce_changes.last().map(|c| c.post_nonce);
+            let last_code_change = acct_changes.code_changes.last();
 
             // Storage: per slot, last entry (highest index)
             let mut added_storage = FxHashMap::with_capacity_and_hasher(
@@ -786,6 +778,72 @@ impl LEVM {
                 }
             }
 
+            let has_info_changes =
+                last_balance.is_some() || last_nonce.is_some() || last_code_change.is_some();
+
+            // Fast path 1: storage-only update. No info changes, can't be a removal
+            // (BAL only records actual modifications, so prestate fields are unchanged →
+            // post non-empty unless prestate was already empty, in which case removed=false
+            // by definition). Skip prestate fetch entirely.
+            if !has_info_changes {
+                updates.push(AccountUpdate {
+                    address: addr,
+                    removed: false,
+                    info: None,
+                    code: None,
+                    added_storage,
+                    removed_storage: false,
+                });
+                continue;
+            }
+
+            // Compute would-be post-state info for the fast-path test.
+            let post_balance_zero = last_balance.is_some_and(|b| b.is_zero());
+            let post_nonce_zero = last_nonce.is_some_and(|n| n == 0);
+            let post_code_empty = last_code_change.is_some_and(|c| c.new_code.is_empty());
+            let post_could_be_empty = post_balance_zero && post_nonce_zero && post_code_empty;
+            let has_full_info_coverage =
+                last_balance.is_some() && last_nonce.is_some() && last_code_change.is_some();
+
+            // Fast path 2: BAL fully specifies post-state info AND post is non-empty.
+            // No prestate needed: removal is impossible (post non-empty), and post-state
+            // info comes entirely from BAL.
+            if has_full_info_coverage && !post_could_be_empty {
+                let (code_hash, code) = Self::code_from_bal(
+                    &last_code_change
+                        .expect("checked by has_full_info_coverage")
+                        .new_code,
+                );
+                let info = AccountInfo {
+                    code_hash,
+                    balance: last_balance.expect("checked by has_full_info_coverage"),
+                    nonce: last_nonce.expect("checked by has_full_info_coverage"),
+                };
+                updates.push(AccountUpdate {
+                    address: addr,
+                    removed: false,
+                    info: Some(info),
+                    code,
+                    added_storage,
+                    removed_storage: false,
+                });
+                continue;
+            }
+
+            // Slow path: partial info coverage OR post-state may be empty (removal check).
+            // Load pre-state for unchanged fields / removal detection (cache hit after prefetch).
+            let prestate = store
+                .get_account_state(addr)
+                .map_err(|e| EvmError::Custom(format!("bal_to_account_updates: {e}")))?;
+
+            let balance = last_balance.unwrap_or(prestate.balance);
+            let nonce = last_nonce.unwrap_or(prestate.nonce);
+            let (code_hash, code) = if let Some(c) = last_code_change {
+                Self::code_from_bal(&c.new_code)
+            } else {
+                (prestate.code_hash, None)
+            };
+
             // Detect account removal (EIP-161): post-state empty but pre-state existed
             let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCACK_HASH;
             let pre_empty = prestate.balance.is_zero()
@@ -793,15 +851,9 @@ impl LEVM {
                 && prestate.code_hash == *EMPTY_KECCACK_HASH;
             let removed = post_empty && !pre_empty;
 
-            let balance_changed = acct_changes
-                .balance_changes
-                .last()
-                .is_some_and(|c| c.post_balance != prestate.balance);
-            let nonce_changed = acct_changes
-                .nonce_changes
-                .last()
-                .is_some_and(|c| c.post_nonce != prestate.nonce);
-            let code_changed = acct_changes.code_changes.last().is_some();
+            let balance_changed = last_balance.is_some_and(|b| b != prestate.balance);
+            let nonce_changed = last_nonce.is_some_and(|n| n != prestate.nonce);
+            let code_changed = last_code_change.is_some();
             let acc_info_updated = balance_changed || nonce_changed || code_changed;
 
             if !removed && !acc_info_updated && added_storage.is_empty() {
@@ -818,7 +870,7 @@ impl LEVM {
                 None
             };
 
-            let update = AccountUpdate {
+            updates.push(AccountUpdate {
                 address: addr,
                 removed,
                 info,
@@ -831,8 +883,7 @@ impl LEVM {
                 // so `added_storage` already contains those zeroed entries and
                 // the trie update is correct without setting removed_storage.
                 removed_storage: false,
-            };
-            updates.push(update);
+            });
         }
 
         Ok(updates)
@@ -853,6 +904,7 @@ impl LEVM {
         bal: &BlockAccessList,
         max_idx: u32,
         accounts_by_min_index: &[(u32, usize)],
+        code_cache: Option<&[Vec<(H256, Option<Code>)>]>,
     ) -> Result<(), EvmError> {
         // Only visit accounts whose minimum change index <= max_idx.
         let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
@@ -885,11 +937,18 @@ impl LEVM {
             }
 
             // Compute code update before borrowing acc (borrow checker: can't access
-            // db.codes while acc holds a mutable borrow of db)
+            // db.codes while acc holds a mutable borrow of db).
+            // Cache hit avoids redundant keccak + jump-target scan when the same code
+            // change is replayed across multiple txs in the parallel loop.
             let code_update = if code_pos > 0 {
-                Some(Self::code_from_bal(
-                    &acct_changes.code_changes[code_pos - 1].new_code,
-                ))
+                let code_idx = code_pos - 1;
+                if let Some(cache) = code_cache {
+                    Some(cache[acct_idx][code_idx].clone())
+                } else {
+                    Some(Self::code_from_bal(
+                        &acct_changes.code_changes[code_idx].new_code,
+                    ))
+                }
             } else {
                 None
             };
@@ -1059,31 +1118,57 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Pre-compute capacity hint for per-tx DBs from BAL account count.
-        let bal_account_count = bal.accounts().len();
+        // Pre-compute Code objects (hash + jump_targets) once per BAL code change.
+        // Without this, every tx that re-applies the same code change in seed_db_from_bal
+        // re-keccaks and re-scans the same bytecode. Stress blocks have 10-30 code changes
+        // and 200-500 txs, so the savings compound. Outer Vec indexed by BAL account index;
+        // inner indexed by code_change position. `Code` clone is cheap relative to recompute
+        // (Bytes is refcounted; only jump_targets Vec<u32> heap-clones).
+        let code_cache: Vec<Vec<(H256, Option<Code>)>> = bal
+            .accounts()
+            .iter()
+            .map(|ac| {
+                ac.code_changes
+                    .iter()
+                    .map(|c| Self::code_from_bal(&c.new_code))
+                    .collect()
+            })
+            .collect();
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
-        //    BAL validation is deferred to after the gas limit check (step 3) so that
-        //    blocks exceeding gas limit produce GAS_USED_OVERFLOW before BAL mismatch.
+        //    Per-tx BAL validation runs INSIDE the closure (alongside exec) so the
+        //    serial post-loop only handles gas accounting and shared-set bookkeeping.
+        //    The `validation_error` field carries any per-tx BAL validation failure;
+        //    it is surfaced AFTER the gas-limit check so that GAS_USED_OVERFLOW takes
+        //    priority over BAL mismatch errors (the BAL is built assuming rejected
+        //    txs; the miner balance in the BAL won't match execution that ran all txs).
+        //
+        //    `current_state` and `codes` are dropped inside the closure after
+        //    validation runs, so they don't need to traverse the rayon boundary.
+        //    Per-tx reduction summaries (`destroyed_addresses`, `read_keys`) are
+        //    pre-computed for the post-loop's `unread_storage_reads` cleanup.
         type TxExecResult = (
             usize,
             TxType,
             ExecutionReport,
-            FxHashMap<Address, LevmAccount>,
-            FxHashMap<H256, ethrex_common::types::Code>,
             FxHashSet<Address>,   // accessed_accounts tracker (coarse)
-            Vec<Address>,         // shadow recorder touched_addresses (EIP-7928 exact)
-            Vec<(Address, U256)>, // shadow recorder storage_reads (EIP-7928 exact)
+            Vec<Address>,         // destroyed addresses (clear all reads for these)
+            Vec<(Address, H256)>, // read keys (specific entries to clear)
+            Option<EvmError>,     // deferred BAL validation error (gas check first)
         );
 
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
+                // Per-tx capacity hint: most txs touch <10 accounts. Sizing to the full
+                // BAL account count (often 100s on stress blocks) inflates per-task allocator
+                // pressure × n_rayon_workers. Use a small constant; HashMap grows on demand.
+                const PER_TX_DB_CAPACITY: usize = 32;
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
-                    bal_account_count,
+                    PER_TX_DB_CAPACITY,
                 );
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
@@ -1098,6 +1183,7 @@ impl LEVM {
                     bal,
                     u32::try_from(tx_idx).unwrap_or(u32::MAX),
                     &validation_index.accounts_by_min_index,
+                    Some(&code_cache),
                 )?;
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
@@ -1139,28 +1225,103 @@ impl LEVM {
                     .take()
                     .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
                     .unwrap_or_default();
+
+                // Pre-compute per-tx summaries for the post-loop's unread_storage_reads
+                // cleanup, then drop current_state/codes (they don't cross the rayon
+                // boundary). Destroyed accounts clear ALL their reads; non-destroyed
+                // accounts clear only the slots they actually loaded.
+                let mut destroyed_addresses: Vec<Address> = Vec::new();
+                let mut read_keys: Vec<(Address, H256)> = Vec::new();
+                for (addr, acct) in &current_state {
+                    if matches!(
+                        acct.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                    ) {
+                        destroyed_addresses.push(*addr);
+                    } else {
+                        for key in acct.storage.keys() {
+                            read_keys.push((*addr, *key));
+                        }
+                    }
+                }
+
+                // Run BAL validation inside the closure. Errors are deferred to the
+                // serial post-loop so the gas-limit check can take priority.
+                let bal_idx = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                let seed_idx = u32::try_from(tx_idx).unwrap_or(u32::MAX);
+                let validation_error: Option<EvmError> = (|| {
+                    Self::validate_tx_execution(
+                        bal_idx,
+                        seed_idx,
+                        &current_state,
+                        &codes,
+                        bal,
+                        validation_index,
+                        &system_seed,
+                        &store,
+                    )
+                    .map_err(|e| {
+                        EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                    })?;
+
+                    // EIP-7928 (Group B): missing-account check.
+                    for addr in &shadow_touched {
+                        if !validation_index.addr_to_idx.contains_key(addr) {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for tx {tx_idx}: account {addr:?} was \
+                                 accessed during execution but is missing from BAL"
+                            )));
+                        }
+                    }
+                    // EIP-7928 (Group B): missing storage_read check.
+                    for (addr, slot) in &shadow_reads {
+                        let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
+                            // Already caught by the touched-address check above.
+                            continue;
+                        };
+                        let acct = &bal.accounts()[bal_acct_idx];
+                        let in_changes = acct
+                            .storage_changes
+                            .binary_search_by(|sc| sc.slot.cmp(slot))
+                            .is_ok();
+                        let in_reads = acct.storage_reads.contains(slot);
+                        if !in_changes && !in_reads {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
+                                 account {addr:?} was read during execution but is missing from \
+                                 BAL (no storage_changes or storage_reads entry)"
+                            )));
+                        }
+                    }
+                    Ok(())
+                })()
+                .err();
+
+                drop(current_state);
+                drop(codes);
+
                 Ok((
                     tx_idx,
                     tx.tx_type(),
                     report,
-                    current_state,
-                    codes,
                     tracked,
-                    shadow_touched,
-                    shadow_reads,
+                    destroyed_addresses,
+                    read_keys,
+                    validation_error,
                 ))
             })
             .collect();
 
         let mut exec_results = exec_results?;
 
-        // Sort so gas accounting and validation happen in tx order.
-        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _, _)| *idx);
+        // Sort so gas accounting and validation surfacing happen in tx order.
+        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _)| *idx);
 
-        // 3. Gas limit check — must happen BEFORE BAL validation so that blocks
-        //    exceeding the gas limit produce GAS_USED_OVERFLOW instead of a BAL
-        //    mismatch error (the BAL is built assuming rejected txs, so the miner
-        //    balance in the BAL won't match execution that ran all txs).
+        // 3. Gas limit check — must happen BEFORE surfacing any BAL validation
+        //    error so that blocks exceeding the gas limit produce
+        //    GAS_USED_OVERFLOW instead of a BAL mismatch error (the BAL is
+        //    built assuming rejected txs, so the miner balance in the BAL won't
+        //    match execution that ran all txs).
         //
         //    EIP-8037 PR #2703: also enforce the per-tx 2D inclusion check
         //    against running block totals. A tx whose worst-case regular or
@@ -1168,7 +1329,7 @@ impl LEVM {
         //    position invalidates the block with GAS_ALLOWANCE_EXCEEDED.
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        for (tx_idx, _, report, _, _, _, _, _) in &exec_results {
+        for (tx_idx, _, report, _, _, _, _) in &exec_results {
             let (tx, _) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
@@ -1197,95 +1358,42 @@ impl LEVM {
             )));
         }
 
-        // 4. Per-tx BAL validation — now safe to run after gas limit is confirmed OK.
-        //    Also mark off storage_reads that appear in per-tx execution state.
-        for (tx_idx, _, _, current_state, codes, tracked_accounts, shadow_touched, shadow_reads) in
-            &exec_results
-        {
-            let bal_idx = u32::try_from(*tx_idx + 1).unwrap_or(u32::MAX);
-            let seed_idx = u32::try_from(*tx_idx).unwrap_or(u32::MAX);
-            Self::validate_tx_execution(
-                bal_idx,
-                seed_idx,
-                current_state,
-                codes,
-                bal,
-                validation_index,
-                &system_seed,
-                &store,
-            )
-            .map_err(|e| EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}")))?;
+        // 4. Surface earliest deferred BAL validation error (post gas check).
+        for (_, _, _, _, _, _, val_err) in &mut exec_results {
+            if let Some(err) = val_err.take() {
+                return Err(err);
+            }
+        }
 
-            // Mark storage_reads that were actually loaded during this tx.
-            // storage_reads slots are NOT in storage_changes (conflict check ensures this),
-            // so they're not seeded. If a slot appears in the per-tx state's storage,
-            // the tx genuinely read it via SLOAD.
-            // Special case: selfdestruct clears storage from the final state, so reads
-            // that happened before destruction are no longer visible. For destroyed
-            // accounts, mark ALL their BAL storage_reads as satisfied.
-            if !unread_storage_reads.is_empty() {
-                for (addr, acct) in current_state {
-                    if matches!(
-                        acct.status,
-                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
-                    ) {
-                        unread_storage_reads.retain(|&(a, _)| a != *addr);
-                    } else {
-                        for key in acct.storage.keys() {
-                            unread_storage_reads.remove(&(*addr, *key));
-                        }
-                    }
+        // 5. Apply per-tx summaries to the shared `unread_storage_reads` and
+        //    `unaccessed_pure_accounts` checklists. The per-tx closures
+        //    pre-computed these from `current_state` before dropping it.
+        if !unread_storage_reads.is_empty() {
+            for (_, _, _, _, destroyed, read_keys, _) in &exec_results {
+                for addr in destroyed {
+                    unread_storage_reads.retain(|&(a, _)| a != *addr);
+                }
+                for entry in read_keys {
+                    unread_storage_reads.remove(entry);
                 }
             }
-
-            // Mark pure-access accounts that were accessed during this tx.
+        }
+        if !unaccessed_pure_accounts.is_empty() {
             // The coinbase is always accessed during fee finalization (geth's
             // readerTracker records it), even when the miner fee is zero and
             // ethrex skips the load_account call.
-            if !unaccessed_pure_accounts.is_empty() {
-                unaccessed_pure_accounts.remove(&header.coinbase);
+            unaccessed_pure_accounts.remove(&header.coinbase);
+            for (_, _, _, tracked_accounts, _, _, _) in &exec_results {
                 for addr in tracked_accounts {
                     unaccessed_pure_accounts.remove(addr);
                 }
             }
-
-            // EIP-7928 (Group B): missing-access detection using the shadow recorder.
-            // For each address the per-tx shadow recorder marked as touched, the header
-            // BAL must contain an entry for it. For each storage read, the header BAL
-            // must carry the slot either in storage_changes or storage_reads.
-            for addr in shadow_touched {
-                if !validation_index.addr_to_idx.contains_key(addr) {
-                    return Err(EvmError::Custom(format!(
-                        "BAL validation failed for tx {tx_idx}: account {addr:?} was \
-                         accessed during execution but is missing from BAL"
-                    )));
-                }
-            }
-            for (addr, slot) in shadow_reads {
-                let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
-                    // Already caught by the touched-address check above.
-                    continue;
-                };
-                let acct = &bal.accounts()[bal_acct_idx];
-                let in_changes = acct
-                    .storage_changes
-                    .binary_search_by(|sc| sc.slot.cmp(slot))
-                    .is_ok();
-                let in_reads = acct.storage_reads.contains(slot);
-                if !in_changes && !in_reads {
-                    return Err(EvmError::Custom(format!(
-                        "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
-                         account {addr:?} was read during execution but is missing from \
-                         BAL (no storage_changes or storage_reads entry)"
-                    )));
-                }
-            }
         }
 
-        // 5. Build receipts in tx order.
+        // 6. Build receipts in tx order.
         let mut receipts = Vec::with_capacity(n_txs);
         let mut cumulative_gas_used = 0_u64;
-        for (_, tx_type, report, _, _, _, _, _) in exec_results {
+        for (_, tx_type, report, _, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
             let receipt = Receipt::new(
                 tx_type,
