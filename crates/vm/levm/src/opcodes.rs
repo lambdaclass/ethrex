@@ -401,28 +401,20 @@ impl OpCodeFn {
 }
 
 impl<'a> VM<'a> {
-    /// Returns a reference to the static opcode dispatch table for the given fork.
+    /// Setups the opcode lookup function pointer table, configured according the given fork.
     ///
-    /// Tables are computed once per fork on first use and cached in static storage,
-    /// avoiding the 2KB array copy that would otherwise happen on every VM::new() call.
-    pub(crate) fn get_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
-        use std::sync::OnceLock;
-        static TABLE_PRE_SHANGHAI: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
-        static TABLE_PRE_CANCUN: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
-        static TABLE_PRE_OSAKA: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
-        static TABLE_OSAKA: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
-        static TABLE_AMSTERDAM: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
-
+    /// This is faster than a conventional match.
+    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
         if fork >= Fork::Amsterdam {
-            TABLE_AMSTERDAM.get_or_init(Self::build_opcode_table_amsterdam)
+            &OPCODE_TABLE_AMSTERDAM
         } else if fork >= Fork::Osaka {
-            TABLE_OSAKA.get_or_init(Self::build_opcode_table_osaka)
+            &OPCODE_TABLE_OSAKA
         } else if fork >= Fork::Cancun {
-            TABLE_PRE_OSAKA.get_or_init(Self::build_opcode_table_pre_osaka)
+            &OPCODE_TABLE_PRE_OSAKA
         } else if fork >= Fork::Shanghai {
-            TABLE_PRE_CANCUN.get_or_init(Self::build_opcode_table_pre_cancun)
+            &OPCODE_TABLE_PRE_CANCUN
         } else {
-            TABLE_PRE_SHANGHAI.get_or_init(Self::build_opcode_table_pre_shanghai)
+            &OPCODE_TABLE_PRE_SHANGHAI
         }
     }
 
@@ -633,3 +625,15 @@ impl<'a> VM<'a> {
         opcode_table
     }
 }
+
+// Pre-computed static opcode dispatch tables — one per fork bracket.
+// Initialized at program start from the const fn builders above,
+// so VM::new() can take a reference instead of copying 2KB per transaction.
+static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
+    VM::<'static>::build_opcode_table_pre_shanghai();
+static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] =
+    VM::<'static>::build_opcode_table_pre_cancun();
+static OPCODE_TABLE_PRE_OSAKA: [OpCodeFn; 256] =
+    VM::<'static>::build_opcode_table_pre_osaka();
+static OPCODE_TABLE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
+static OPCODE_TABLE_AMSTERDAM: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_amsterdam();
