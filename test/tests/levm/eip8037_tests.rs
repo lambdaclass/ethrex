@@ -1,4 +1,9 @@
-//! EIP-8037: Dynamic cost_per_state_byte Tests
+//! EIP-8037: cost_per_state_byte (CPSB) tests.
+//!
+//! Per ethereum/EIPs#11573, CPSB is a fixed constant (1174). The original draft
+//! defined a dynamic, block-gas-limit-dependent formula with quantization; that
+//! mechanism has been removed from the spec, so we only assert the fixed value
+//! here.
 //!
 //! Also covers parity between the standalone `intrinsic_gas_dimensions`
 //! helper (used by mempool / payload builder) and `VM::get_intrinsic_gas`
@@ -26,58 +31,27 @@ use ethrex_levm::{
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
-/// Sanity check: cost_per_state_byte(120_000_000) == 1174
-/// (matches the legacy hardcoded COST_PER_STATE_BYTE constant)
+/// CPSB is a fixed constant of 1174 (ethereum/EIPs#11573). The block-gas-limit
+/// argument is retained in the function signature for forward-compatibility but
+/// must not influence the result.
 #[test]
-fn test_cpsb_120m() {
-    assert_eq!(cost_per_state_byte(120_000_000), 1174);
-}
-
-/// gas_limit = 30_000_000
-/// num = 30_000_000 * 2_628_000 = 78_840_000_000_000
-/// denom = 2 * 100 * 2^30 = 214_748_364_800
-/// raw = ceil(78_840_000_000_000 / 214_748_364_800) = 368
-/// shifted = 368 + 9578 = 9946
-/// bit_length = 14, shift = 9
-/// quantized = (9946 >> 9) << 9 = 19 * 512 = 9728
-/// result = 9728 - 9578 = 150
-#[test]
-#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
-fn test_cpsb_30m() {
-    assert_eq!(cost_per_state_byte(30_000_000), 150);
-}
-
-/// gas_limit = 500_000_000
-/// raw = ceil(500_000_000 * 2_628_000 / 214_748_364_800) = 6119
-/// shifted = 6119 + 9578 = 15697
-/// bit_length = 14, shift = 9
-/// quantized = (15697 >> 9) << 9 = 30 * 512 = 15360
-/// result = 15360 - 9578 = 5782
-#[test]
-#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
-fn test_cpsb_500m() {
-    assert_eq!(cost_per_state_byte(500_000_000), 5782);
-}
-
-/// Low-end clamp: formula produces `quantized <= CPSB_OFFSET`, so the function
-/// returns 1 (the minimum viable cost). Guard against an off-by-one in the
-/// `if quantized > CPSB_OFFSET` branch.
-#[test]
-#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
-fn test_cpsb_clamp_to_one_for_tiny_gas_limit() {
-    assert_eq!(cost_per_state_byte(1), 1);
-    assert_eq!(cost_per_state_byte(5_000_000), 1);
-}
-
-/// Upper boundary of the 30M quantization bin — `cpsb(14_999_999)` must not
-/// jump across the next bin's value just because `raw` changes by 1. All
-/// gas_limits in the 5M–30M range quantize to 150.
-#[test]
-#[ignore = "bal-devnet-4: cost_per_state_byte temporarily fixed to 1174; re-enable when dynamic formula is restored"]
-fn test_cpsb_30m_bin_boundary() {
-    assert_eq!(cost_per_state_byte(14_999_999), 150);
-    assert_eq!(cost_per_state_byte(15_000_000), 150);
-    assert_eq!(cost_per_state_byte(29_999_999), 150);
+fn test_cpsb_is_fixed_at_1174() {
+    for gas_limit in [
+        1u64,
+        5_000_000,
+        29_999_999,
+        30_000_000,
+        96_000_000,
+        120_000_000,
+        500_000_000,
+        u64::MAX,
+    ] {
+        assert_eq!(
+            cost_per_state_byte(gas_limit),
+            1174,
+            "CPSB must be fixed at 1174 regardless of block gas limit (input: {gas_limit})",
+        );
+    }
 }
 
 // ==================== intrinsic_gas_dimensions parity ====================

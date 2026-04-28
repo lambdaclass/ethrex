@@ -16,9 +16,12 @@ pub struct StateDiff {
     pub new_storage_slots: FxHashSet<(Address, H256)>,
     /// Per-address deployed-code byte counts (charged at code-deposit step in CREATE).
     pub code_deposits: FxHashMap<Address, u64>,
-    /// EIP-7702 auth-total entries: authority address → 135 bytes (full new-account+auth charge).
+    /// EIP-7702 auth-total entries: authority address →
+    /// `STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE` bytes
+    /// (full new-account + auth-base charge, authority did not pre-exist).
     pub auth_total: FxHashSet<Address>,
-    /// EIP-7702 auth-only entries: authority address → 23 bytes (downgraded — authority pre-existed).
+    /// EIP-7702 auth-only entries: authority address → `STATE_BYTES_PER_AUTH_BASE` bytes
+    /// (downgraded — authority pre-existed).
     pub auth_only: FxHashSet<Address>,
 
     /// Cross-frame cancellations: storage slots cleared (N→0) but created in an ancestor.
@@ -37,9 +40,13 @@ impl StateDiff {
     )]
     pub fn bytes(&self) -> u64 {
         use crate::gas_cost::{
-            STATE_BYTES_PER_AUTH_ONLY, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
-            STATE_BYTES_PER_STORAGE_SET,
+            STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
         };
+        // EIP-8037 ethereum/EIPs#11573: a fresh 7702 authorization charges
+        // STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE; an authority that
+        // pre-existed downgrades to STATE_BYTES_PER_AUTH_BASE alone.
+        let auth_total_bytes =
+            STATE_BYTES_PER_NEW_ACCOUNT.saturating_add(STATE_BYTES_PER_AUTH_BASE);
 
         (self.new_accounts.len() as u64)
             .saturating_mul(STATE_BYTES_PER_NEW_ACCOUNT)
@@ -52,10 +59,8 @@ impl StateDiff {
                     .copied()
                     .fold(0u64, u64::saturating_add),
             )
-            .saturating_add(
-                (self.auth_total.len() as u64).saturating_mul(STATE_BYTES_PER_AUTH_TOTAL),
-            )
-            .saturating_add((self.auth_only.len() as u64).saturating_mul(STATE_BYTES_PER_AUTH_ONLY))
+            .saturating_add((self.auth_total.len() as u64).saturating_mul(auth_total_bytes))
+            .saturating_add((self.auth_only.len() as u64).saturating_mul(STATE_BYTES_PER_AUTH_BASE))
     }
 
     // -------------------------------------------------------------------------

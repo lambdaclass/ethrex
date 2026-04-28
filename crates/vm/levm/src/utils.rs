@@ -8,7 +8,7 @@ use crate::{
     gas_cost::{
         self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
         COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST,
-        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, WARM_ADDRESS_ACCESS_COST,
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, WARM_ADDRESS_ACCESS_COST,
         cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token,
     },
     vm::{Substate, VM},
@@ -284,8 +284,9 @@ impl<'a> VM<'a> {
         // or any other validation in this function never reach the
         // `record_auth_downgrade_to_only` call below. They remain in `auth_total` in
         // state_diff_intrinsic_seed (seeded by add_intrinsic_gas), matching legacy behavior
-        // where invalid tuples still cost the full STATE_BYTES_PER_AUTH_TOTAL (135 bytes)
-        // intrinsic state gas.
+        // where invalid tuples still cost the full new-account + auth-base charge
+        // (STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE = 135 bytes) of intrinsic
+        // state gas.
         let mut refunded_gas: u64 = 0;
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
@@ -451,14 +452,25 @@ impl<'a> VM<'a> {
         // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much
         // regular execution gas is allowed (capped at TX_MAX_GAS_LIMIT_AMSTERDAM); the difference becomes
         // the reservoir for drawing state gas without consuming regular gas_remaining.
+        //
+        // System calls (EIPs 2935, 4788, 7002, 7251) bypass EIP-7825's TX_MAX_GAS_LIMIT cap and
+        // instead receive a fixed split per ethereum/EIPs#11573:
+        //   gas_left           = SYS_CALL_GAS_LIMIT (the legacy 30M execution budget)
+        //   state_gas_reservoir = STATE_BYTES_PER_STORAGE_SET * CPSB * SYSTEM_MAX_SSTORES_PER_CALL
+        // The caller (`generic_system_contract_levm`) sets `env.gas_limit` to the sum of both
+        // plus TX_BASE_COST, so we just split `execution_gas` here.
         if self.env.config.fork >= Fork::Amsterdam {
             let gas_limit = self.tx.gas_limit();
             let execution_gas = gas_limit.saturating_sub(total_gas);
-            let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-            let gas_left = regular_gas_budget.min(execution_gas);
-            let reservoir = execution_gas.saturating_sub(gas_left);
+            let reservoir = if self.env.is_system_call {
+                execution_gas.saturating_sub(SYS_CALL_GAS_LIMIT)
+            } else {
+                let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
+                let gas_left = regular_gas_budget.min(execution_gas);
+                execution_gas.saturating_sub(gas_left)
+            };
             if reservoir > 0 {
-                // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
+                // Pre-consume reservoir from gas_remaining so GAS opcode returns gas_left only.
                 let reservoir_i64 =
                     i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
                 self.current_call_frame.gas_remaining = self
@@ -568,14 +580,17 @@ impl<'a> VM<'a> {
         };
 
         if fork >= Fork::Amsterdam {
-            // EIP-8037: per-auth regular cost is PER_AUTH_BASE_COST, state is STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte
+            // EIP-8037 (ethereum/EIPs#11573): per-auth regular cost is PER_AUTH_BASE_COST;
+            // state cost assumes account creation, i.e.
+            // (STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE) * cost_per_state_byte.
             let regular_auth_cost = PER_AUTH_BASE_COST
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
             #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-            let auth_total_state_gas =
-                gas_cost::STATE_BYTES_PER_AUTH_TOTAL * self.cost_per_state_byte;
+            let auth_total_state_gas = (gas_cost::STATE_BYTES_PER_NEW_ACCOUNT
+                + gas_cost::STATE_BYTES_PER_AUTH_BASE)
+                * self.cost_per_state_byte;
             let state_auth_cost = auth_total_state_gas
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
@@ -689,14 +704,19 @@ pub fn intrinsic_gas_dimensions(
 
     let (state_gas_new_account, state_gas_auth_total) = if fork >= Fork::Amsterdam {
         let cpsb = cost_per_state_byte(block_gas_limit);
-        (
-            STATE_BYTES_PER_NEW_ACCOUNT
-                .checked_mul(cpsb)
-                .ok_or(InternalError::Overflow)?,
-            STATE_BYTES_PER_AUTH_TOTAL
-                .checked_mul(cpsb)
-                .ok_or(InternalError::Overflow)?,
-        )
+        let state_gas_new_account = STATE_BYTES_PER_NEW_ACCOUNT
+            .checked_mul(cpsb)
+            .ok_or(InternalError::Overflow)?;
+        // EIP-8037 (ethereum/EIPs#11573): a fresh authorization charges
+        // STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE bytes; the
+        // per-byte cost is the same constant CPSB.
+        let auth_total_bytes = STATE_BYTES_PER_NEW_ACCOUNT
+            .checked_add(STATE_BYTES_PER_AUTH_BASE)
+            .ok_or(InternalError::Overflow)?;
+        let state_gas_auth_total = auth_total_bytes
+            .checked_mul(cpsb)
+            .ok_or(InternalError::Overflow)?;
+        (state_gas_new_account, state_gas_auth_total)
     } else {
         (0, 0)
     };
