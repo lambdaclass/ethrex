@@ -837,36 +837,40 @@ impl Blockchain {
         const NUM_WORKERS: usize = 16;
         let parent_state_root = parent_header.state_root;
 
-        // === Stage A: Drain + accumulate all AccountUpdates ===
-        // BAL guarantees completeness, so we block until execution finishes.
-        let mut all_updates: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
-        for updates in rx {
-            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
-            *max_queue_length = current_length.max(*max_queue_length);
-            for update in updates {
-                match all_updates.entry(update.address) {
-                    Entry::Vacant(e) => {
-                        e.insert(update);
-                    }
-                    Entry::Occupied(mut e) => {
-                        e.get_mut().merge(update);
-                    }
-                }
+        // === Stage A: receive the single BAL-derived batch ===
+        // execute_block_parallel calls bal_to_account_updates BEFORE the rayon tx
+        // loop and sends exactly one Vec<AccountUpdate>. Receiving once (instead of
+        // draining until channel close = exec end) lets Stage B's parallel storage
+        // roots overlap with parallel exec instead of serializing after it.
+        //
+        // BAL accounts are unique by address (one entry per touched address), so
+        // no merge step is needed — skip the FxHashMap detour entirely.
+        let updates: Vec<AccountUpdate> = match rx.recv() {
+            Ok(updates) => {
+                let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+                *max_queue_length = current_length.max(*max_queue_length);
+                updates
             }
-        }
+            Err(_) => {
+                // Channel closed without a message — execution failed before
+                // bal_to_account_updates ran. Return empty work so the exec
+                // error surfaces in execution_result rather than being masked.
+                Vec::new()
+            }
+        };
 
-        // Extract witness accumulator before consuming updates
+        // Witness accumulator (clone since we move `updates` into Stage B below).
         let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
+            Some(updates.clone())
         } else {
             None
         };
 
-        // Extract code updates and build work items with pre-hashed addresses
+        // Build work items with pre-hashed addresses + extract code updates.
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
-        let mut accounts: Vec<(H256, AccountUpdate)> = Vec::with_capacity(all_updates.len());
-        for (addr, update) in all_updates {
-            let hashed = keccak(addr);
+        let mut accounts: Vec<(H256, AccountUpdate)> = Vec::with_capacity(updates.len());
+        for update in updates {
+            let hashed = keccak(update.address);
             if let Some(info) = &update.info
                 && let Some(code) = &update.code
             {
