@@ -17,7 +17,7 @@
 //!   - `SAR`
 
 use crate::{
-    errors::{OpcodeResult, VMError},
+    errors::{ExceptionalHalt, OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::OpcodeHandler,
     vm::VM,
@@ -131,11 +131,18 @@ impl OpcodeHandler for OpIsZeroHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::ISZERO)?;
 
-        let value = vm.current_call_frame.stack.pop1()?;
+        // In-place 1→1: modify top element without pop/push cycle (saves 2 bounds checks).
+        let stack = &mut vm.current_call_frame.stack;
+        let top = stack
+            .values
+            .get_mut(stack.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
         #[expect(clippy::as_conversions, reason = "safe")]
-        vm.current_call_frame
-            .stack
-            .push((value.is_zero() as u64).into())?;
+        let is_zero = top.is_zero() as u64;
+        top.0[0] = is_zero;
+        top.0[1] = 0;
+        top.0[2] = 0;
+        top.0[3] = 0;
 
         Ok(OpcodeResult::Continue)
     }
@@ -190,8 +197,13 @@ impl OpcodeHandler for OpNotHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
 
-        let value = vm.current_call_frame.stack.pop1()?;
-        vm.current_call_frame.stack.push(!value)?;
+        // In-place 1→1: modify top element without pop/push cycle (saves 2 bounds checks).
+        let stack = &mut vm.current_call_frame.stack;
+        let top = stack
+            .values
+            .get_mut(stack.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)?;
+        *top = !*top;
 
         Ok(OpcodeResult::Continue)
     }
