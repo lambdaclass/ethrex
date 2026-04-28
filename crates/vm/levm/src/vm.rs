@@ -450,8 +450,8 @@ pub struct VM<'a> {
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// A reference to a per-fork static table; avoids copying 2KB per transaction.
-    pub(crate) opcode_table: &'static [OpCodeFn; 256],
+    /// Build dynamically according to the given fork config.
+    pub(crate) opcode_table: [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
 }
@@ -798,11 +798,12 @@ impl Substate {
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.
-        for (address, keys) in tx.access_list().clone() {
-            initial_accessed_addresses.insert(address);
+        // Iterate by reference to avoid cloning Vec<H256> entries (saves allocations for DeFi txs).
+        for (address, keys) in tx.access_list() {
+            initial_accessed_addresses.insert(*address);
             // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
-            for slot in keys {
+            let warm_slots = initial_accessed_storage_slots.entry(*address).or_default();
+            for &slot in keys {
                 warm_slots.insert(slot);
             }
         }
