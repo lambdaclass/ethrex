@@ -281,7 +281,7 @@ async fn heal_state_trie(
                             .unwrap_or_default(),
                         longest_path_seen,
                     );
-                    let Some((peer_id, connection)) = peers
+                    let Some((peer_id, connection, permit)) = peers
                         .peer_table
                         .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                         .await
@@ -309,17 +309,11 @@ async fn heal_state_trie(
                     inflight_tasks += 1;
 
                     let batch_len = batch.len();
-                    let peer_table = peers.peer_table.clone();
                     tokio::spawn(async move {
                         debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
-                        let response = request_state_trienodes(
-                            peer_id,
-                            connection,
-                            peer_table,
-                            state_root,
-                            batch.clone(),
-                        )
-                        .await;
+                        let response =
+                            request_state_trienodes(connection, permit, state_root, batch.clone())
+                                .await;
                         debug!(
                             "HEAL WORKER returned: peer={peer_id} ok={} err={:?}",
                             response.is_ok(),

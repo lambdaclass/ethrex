@@ -787,6 +787,13 @@ pub fn migrate_datadir_if_needed(
 
     // Verify chain IDs match.
     let Some(db_chain_id) = read_chain_id_from_db(base_datadir) else {
+        warn!(
+            "Found a database at {base_datadir:?} with valid store metadata but could not \
+             read its chain ID. Skipping automatic migration to {network_datadir:?}. \
+             If this is a pre-v10 database you intend to reuse, stop ethrex and move its \
+             contents into {network_datadir:?} manually before restarting. See the logs \
+             above for the specific error from the storage layer."
+        );
         return;
     };
     let expected_chain_id = match network.get_genesis() {
