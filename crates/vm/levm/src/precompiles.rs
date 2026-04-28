@@ -324,7 +324,7 @@ pub fn execute_precompile(
     #[cfg(feature = "bsc")]
     if matches!(vm_type, VMType::Bsc) && ethrex_bsc::precompiles::is_bsc_precompile(&address) {
         let gas_limit = *gas_remaining;
-        match ethrex_bsc::precompiles::run_bsc_precompile(&address, calldata, gas_limit) {
+        match ethrex_bsc::precompiles::run_bsc_precompile(&address, calldata, gas_limit, fork) {
             Ok((gas_used, output)) => {
                 increase_precompile_consumed_gas(gas_used, gas_remaining)?;
                 return Ok(Bytes::from(output));

@@ -1,7 +1,9 @@
 //! 0x0100 — p256Verify (secp256r1 / P-256 signature verification)
 //!
-//! Equivalent to EIP-7212.  BSC gas cost: 3450 (see params.P256VerifyGas in
-//! the BSC reference implementation core/vm/contracts.go).
+//! Equivalent to EIP-7212. BSC gas cost depends on fork:
+//!   - Pre-Osaka:  3450  (BSC `P256VerifyGasBeforeOsaka`)
+//!   - Post-Osaka: 6900  (BSC `params.P256VerifyGas`, EIP-7951)
+//! Reference: `core/vm/contracts.go::p256Verify::RequiredGas` in bsc-geth.
 //!
 //! Input layout (160 bytes):
 //! | message_hash (32) | r (32) | s (32) | pk_x (32) | pk_y (32) |
@@ -9,14 +11,25 @@
 //! Output: 32-byte big-endian `1` on success, empty slice on failure.
 
 use super::PrecompileError;
+use ethrex_common::types::Fork;
 use p256::{
     EncodedPoint,
     ecdsa::{Signature as P256Signature, signature::hazmat::PrehashVerifier},
 };
 
-/// Gas cost for p256Verify.  Matches `params.P256VerifyGas` in the BSC
-/// reference implementation (`core/vm/contracts.go`).
-pub const P256_VERIFY_GAS: u64 = 3450;
+/// Pre-Osaka P256 verify gas cost (BSC `P256VerifyGasBeforeOsaka`).
+pub const P256_VERIFY_GAS_PRE_OSAKA: u64 = 3450;
+/// Post-Osaka (EIP-7951) P256 verify gas cost (BSC `params.P256VerifyGas`).
+pub const P256_VERIFY_GAS_OSAKA: u64 = 6900;
+
+#[inline]
+pub fn p256_verify_gas(fork: Fork) -> u64 {
+    if fork >= Fork::Osaka {
+        P256_VERIFY_GAS_OSAKA
+    } else {
+        P256_VERIFY_GAS_PRE_OSAKA
+    }
+}
 
 /// Input must be exactly this many bytes.
 const INPUT_LENGTH: usize = 160;
@@ -33,14 +46,15 @@ const SUCCESS_RESULT: [u8; 32] = {
 /// Returns `(gas_used, output)` where `output` is:
 /// - `SUCCESS_RESULT` (32 bytes) when the signature is valid.
 /// - empty `Vec` when the signature is invalid (wrong length, bad point, etc.).
-pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileError> {
-    if gas_limit < P256_VERIFY_GAS {
+pub fn run(input: &[u8], gas_limit: u64, fork: Fork) -> Result<(u64, Vec<u8>), PrecompileError> {
+    let gas_cost = p256_verify_gas(fork);
+    if gas_limit < gas_cost {
         return Err(PrecompileError::NotEnoughGas);
     }
 
     // Wrong input length → return empty (not a hard revert).
     if input.len() != INPUT_LENGTH {
-        return Ok((P256_VERIFY_GAS, vec![]));
+        return Ok((gas_cost, vec![]));
     }
 
     // Safety: length is checked above.
@@ -52,9 +66,9 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
 
     let success = verify_p256(msg, r, s, pk_x, pk_y);
     if success {
-        Ok((P256_VERIFY_GAS, SUCCESS_RESULT.to_vec()))
+        Ok((gas_cost, SUCCESS_RESULT.to_vec()))
     } else {
-        Ok((P256_VERIFY_GAS, vec![]))
+        Ok((gas_cost, vec![]))
     }
 }
 

@@ -1,5 +1,5 @@
 use ethereum_types::H160;
-use ethrex_common::Address;
+use ethrex_common::{Address, types::Fork};
 
 pub mod bls_verify;
 pub mod cometbft_validate;
@@ -81,6 +81,7 @@ pub fn run_bsc_precompile(
     address: &Address,
     input: &[u8],
     gas_limit: u64,
+    fork: Fork,
 ) -> Result<(u64, Vec<u8>), PrecompileError> {
     match address_to_u64(address) {
         0x64 => tm_header_validate::run(input, gas_limit),
@@ -89,7 +90,7 @@ pub fn run_bsc_precompile(
         0x67 => cometbft_validate::run(input, gas_limit),
         0x68 => double_sign::run(input, gas_limit),
         0x69 => secp256k1_recover::run(input, gas_limit),
-        0x100 => p256_verify::run(input, gas_limit),
+        0x100 => p256_verify::run(input, gas_limit, fork),
         _ => Err(PrecompileError::NotAPrecompile),
     }
 }
