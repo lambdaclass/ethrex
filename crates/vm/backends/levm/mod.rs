@@ -1834,7 +1834,8 @@ impl LEVM {
             })?;
 
         // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> =
+            FxHashMap::with_capacity_and_hasher(txs_with_sender.len(), Default::default());
         for (tx, sender) in &txs_with_sender {
             sender_groups.entry(*sender).or_default().push(tx);
         }
