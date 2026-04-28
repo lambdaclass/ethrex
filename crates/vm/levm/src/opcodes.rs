@@ -400,31 +400,29 @@ impl OpCodeFn {
     }
 }
 
-// Pre-computed static opcode tables — one per fork variant.
-// Avoids rebuilding the 256-entry function-pointer array on every VM::new() call.
-static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
-    VM::build_opcode_table_pre_shanghai();
-static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] = VM::build_opcode_table_pre_cancun();
-static OPCODE_TABLE_PRE_OSAKA: [OpCodeFn; 256] = VM::build_opcode_table_pre_osaka();
-static OPCODE_TABLE_OSAKA: [OpCodeFn; 256] = VM::build_opcode_table_osaka();
-static OPCODE_TABLE_AMSTERDAM: [OpCodeFn; 256] = VM::build_opcode_table_amsterdam();
-
 impl<'a> VM<'a> {
-    /// Returns a reference to the static opcode lookup table for the given fork.
+    /// Returns a reference to the static opcode dispatch table for the given fork.
     ///
-    /// This is faster than a conventional match.
-    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+    /// Tables are computed once per fork on first use and cached in static storage,
+    /// avoiding the 2KB array copy that would otherwise happen on every VM::new() call.
+    pub(crate) fn get_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+        use std::sync::OnceLock;
+        static TABLE_PRE_SHANGHAI: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_PRE_CANCUN: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_PRE_OSAKA: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_OSAKA: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_AMSTERDAM: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+
         if fork >= Fork::Amsterdam {
-            &OPCODE_TABLE_AMSTERDAM
+            TABLE_AMSTERDAM.get_or_init(Self::build_opcode_table_amsterdam)
         } else if fork >= Fork::Osaka {
-            &OPCODE_TABLE_OSAKA
+            TABLE_OSAKA.get_or_init(Self::build_opcode_table_osaka)
         } else if fork >= Fork::Cancun {
-            &OPCODE_TABLE_PRE_OSAKA
+            TABLE_PRE_OSAKA.get_or_init(Self::build_opcode_table_pre_osaka)
         } else if fork >= Fork::Shanghai {
-            &OPCODE_TABLE_PRE_CANCUN
+            TABLE_PRE_CANCUN.get_or_init(Self::build_opcode_table_pre_cancun)
         } else {
-            &OPCODE_TABLE_PRE_SHANGHAI
+            TABLE_PRE_SHANGHAI.get_or_init(Self::build_opcode_table_pre_shanghai)
         }
     }
 
