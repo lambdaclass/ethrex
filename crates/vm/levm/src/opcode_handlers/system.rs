@@ -875,6 +875,7 @@ impl<'a> VM<'a> {
         // Store BAL checkpoint in the call frame's backup for restoration on revert
         new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
         new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
+        new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
 
         self.add_callframe(new_call_frame);
 
@@ -1093,6 +1094,7 @@ impl<'a> VM<'a> {
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
             new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
+            new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
 
             self.add_callframe(new_call_frame);
 
@@ -1160,6 +1162,7 @@ impl<'a> VM<'a> {
             ret_size,
             memory: old_callframe_memory,
             state_gas_reservoir_snapshot,
+            state_gas_spill_snapshot,
             call_frame_backup,
             stack,
             state_diff: child_state_diff,
@@ -1209,10 +1212,12 @@ impl<'a> VM<'a> {
                 // — its mutations and cancellations are discarded.
                 // (Implicit drop when executed_call_frame goes out of scope.)
 
-                // On revert, restore the reservoir to its pre-child snapshot. Any gas
-                // drawn from the reservoir inside the child (for new-account, SSTORE, etc.)
-                // is returned because the child's state mutations are rolled back.
+                // On revert, restore the reservoir AND spill counter to their pre-child
+                // snapshots. State gas drawn from the reservoir or spilled to the child's
+                // gas_remaining is returned/forgotten because the child's state mutations
+                // are rolled back.
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
+                self.state_gas_spill = state_gas_spill_snapshot;
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1239,6 +1244,7 @@ impl<'a> VM<'a> {
             call_frame_backup,
             memory: old_callframe_memory,
             state_gas_reservoir_snapshot,
+            state_gas_spill_snapshot,
             stack,
             state_diff: child_state_diff,
             ..
@@ -1271,8 +1277,11 @@ impl<'a> VM<'a> {
                 // — its mutations and cancellations are discarded.
                 // (Implicit drop when executed_call_frame goes out of scope.)
 
-                // On revert, restore the reservoir to its pre-child snapshot.
+                // On revert, restore the reservoir AND spill counter to their pre-child
+                // snapshots. The CREATE-account state gas refund below adds back the
+                // 112-byte charge that was drawn before the child frame began.
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
+                self.state_gas_spill = state_gas_spill_snapshot;
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it to the reservoir.

@@ -16,13 +16,18 @@ pub struct StateDiff {
     pub new_storage_slots: FxHashSet<(Address, H256)>,
     /// Per-address deployed-code byte counts (charged at code-deposit step in CREATE).
     pub code_deposits: FxHashMap<Address, u64>,
-    /// EIP-7702 auth-total entries: authority address →
-    /// `STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE` bytes
-    /// (full new-account + auth-base charge, authority did not pre-exist).
-    pub auth_total: FxHashSet<Address>,
+    /// EIP-7702 auth-total entries: one entry per auth tuple that passed ecrecover.
+    /// Each charges `STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE` bytes
+    /// (worst-case full new-account + auth-base). Duplicates are intentional: EIP-8037
+    /// block accounting charges per tuple, even when multiple tuples share an authority.
+    /// User-side refunds (pre-existing authority, etc.) are applied via `state_gas_reservoir`,
+    /// not by removing entries here.
+    pub auth_total: Vec<Address>,
     /// EIP-7702 auth-only entries: authority address → `STATE_BYTES_PER_AUTH_BASE` bytes
-    /// (downgraded — authority pre-existed).
-    pub auth_only: FxHashSet<Address>,
+    /// (downgraded — authority pre-existed). Currently unused in production code; the
+    /// downgrade is handled via `state_gas_reservoir` so block accounting stays at the
+    /// worst case. Kept for the unit-test coverage of `record_auth_downgrade_to_only`.
+    pub auth_only: Vec<Address>,
 
     /// Cross-frame cancellations: storage slots cleared (N→0) but created in an ancestor.
     /// Resolved on merge_from_child by removing from parent/ancestor's new_storage_slots.
@@ -43,8 +48,9 @@ impl StateDiff {
             STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
         };
         // EIP-8037 ethereum/EIPs#11573: a fresh 7702 authorization charges
-        // STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE; an authority that
-        // pre-existed downgrades to STATE_BYTES_PER_AUTH_BASE alone.
+        // STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE per tuple. The block
+        // header reports this worst-case sum; user-side refunds flow via
+        // `state_gas_reservoir` rather than by removing entries here.
         let auth_total_bytes =
             STATE_BYTES_PER_NEW_ACCOUNT.saturating_add(STATE_BYTES_PER_AUTH_BASE);
 
@@ -83,15 +89,15 @@ impl StateDiff {
     }
 
     pub fn record_auth_total(&mut self, authority: Address) {
-        self.auth_total.insert(authority);
+        self.auth_total.push(authority);
     }
 
-    /// Move authority from auth_total to auth_only (authority pre-existed → downgrade).
+    /// Move one occurrence of `authority` from `auth_total` to `auth_only`.
     pub fn record_auth_downgrade_to_only(&mut self, authority: Address) {
-        if self.auth_total.remove(&authority) {
-            self.auth_only.insert(authority);
+        if let Some(idx) = self.auth_total.iter().position(|a| *a == authority) {
+            self.auth_total.swap_remove(idx);
+            self.auth_only.push(authority);
         }
-        // If not in auth_total, this is a no-op (sanity: should not happen in legitimate flow).
     }
 
     // -------------------------------------------------------------------------
@@ -175,15 +181,17 @@ impl StateDiff {
             }
         }
 
-        // 2. Set-union
+        // 2. Set-union for HashSets, Vec-extend for auth lists (per-tuple worst case).
         self.new_accounts.extend(child.new_accounts);
         self.new_storage_slots.extend(child.new_storage_slots);
         self.auth_total.extend(child.auth_total);
         self.auth_only.extend(child.auth_only);
-        // Enforce mutual exclusion: auth_only takes precedence (downgrade is monotonic).
-        // Without this, an authority appearing in both sets would be double-counted in bytes().
-        for addr in self.auth_only.iter() {
-            self.auth_total.remove(addr);
+        // Mutual-exclusion sweep: for each occurrence in `auth_only`, drop one matching
+        // occurrence from `auth_total` so a downgrade isn't double-counted.
+        for addr in self.auth_only.clone() {
+            if let Some(idx) = self.auth_total.iter().position(|a| *a == addr) {
+                self.auth_total.swap_remove(idx);
+            }
         }
 
         // 3. Sum-merge code_deposits

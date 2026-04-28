@@ -189,8 +189,20 @@ impl Hook for DefaultHook {
         // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
         // Per EELS, state_gas_left is preserved even on exceptional halt — only
         // regular gas_left is burned.  The user does NOT pay for unspent reservoir.
+        // On top-level failure (revert/halt/oog), execution-time state-gas draws
+        // (both from reservoir and spilled to gas_remaining) are refunded too,
+        // since the corresponding state operations were rolled back. The
+        // post-setup snapshot captures the reservoir balance after intrinsic +
+        // auth processing; the spill counter tracks gas_remaining bytes that
+        // would otherwise be charged to the user for now-rolled-back state ops.
         if vm.env.config.fork >= Fork::Amsterdam {
-            ctx_result.gas_used = ctx_result.gas_used.saturating_sub(vm.state_gas_reservoir);
+            let to_subtract = if ctx_result.is_success() {
+                vm.state_gas_reservoir
+            } else {
+                vm.state_gas_reservoir_post_setup
+                    .saturating_add(vm.state_gas_spill)
+            };
+            ctx_result.gas_used = ctx_result.gas_used.saturating_sub(to_subtract);
         }
 
         // Save pre-refund gas for EIP-7778 block accounting

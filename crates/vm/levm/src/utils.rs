@@ -362,13 +362,6 @@ impl<'a> VM<'a> {
                         .state_gas_reservoir
                         .checked_add(new_account_state_gas)
                         .ok_or(InternalError::Overflow)?;
-                    // EIP-8037 StateDiff: downgrade auth_total → auth_only for pre-existing authority.
-                    // The seed snapshot (from add_intrinsic_gas) has the full auth_total (135 bytes);
-                    // after this downgrade the live diff reflects 23 bytes. On top-level revert
-                    // state_diff_finalized is reset to the seed → counts 135 bytes.
-                    self.current_call_frame
-                        .state_diff
-                        .record_auth_downgrade_to_only(authority_address);
                 } else {
                     refunded_gas = refunded_gas
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)

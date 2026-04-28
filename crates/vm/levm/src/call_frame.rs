@@ -291,6 +291,10 @@ pub struct CallFrame {
     /// EIP-8037: snapshot of VM.state_gas_reservoir at the start of this frame. Restored on
     /// revert so mid-child charges and refund refills are both undone atomically.
     pub state_gas_reservoir_snapshot: u64,
+    /// EIP-8037: snapshot of VM.state_gas_spill at the start of this frame. Restored on
+    /// revert so spill counter doesn't carry forward gas attributed to state operations
+    /// that were rolled back along with the child frame.
+    pub state_gas_spill_snapshot: u64,
     /// EIP-8037 state-diff journal: tracks state-growth events in this frame.
     /// Merged into parent on success; dropped on revert.
     pub state_diff: StateDiff,
@@ -389,6 +393,7 @@ impl CallFrame {
             pc: 0,
             sub_return_data: Bytes::default(),
             state_gas_reservoir_snapshot: 0,
+            state_gas_spill_snapshot: 0,
             state_diff: StateDiff::default(),
         }
     }

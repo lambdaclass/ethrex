@@ -449,6 +449,11 @@ pub struct VM<'a> {
     /// add_intrinsic_gas so block-dimensional regular gas can be computed
     /// independently of mid-tx reservoir activity.
     pub state_gas_reservoir_initial: u64,
+    /// EIP-8037: Reservoir balance captured immediately after `prepare_execution`
+    /// (intrinsic + auth-processing refunds applied, no execution-time draws yet).
+    /// Used on top-level failure to undo execution-time state-gas draws so the user
+    /// is refunded for state operations that were rolled back.
+    pub state_gas_reservoir_post_setup: u64,
     /// EIP-8037: Cumulative state gas that spilled to regular gas during execution
     /// (when reservoir was insufficient). Subtracted when computing dimensional
     /// regular gas for block accounting — EELS charge_state_gas spills don't
@@ -505,6 +510,7 @@ impl<'a> VM<'a> {
             vm_type,
             state_gas_reservoir: 0,
             state_gas_reservoir_initial: 0,
+            state_gas_reservoir_post_setup: 0,
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
             state_diff_finalized: StateDiff::default(),
@@ -580,27 +586,38 @@ impl<'a> VM<'a> {
         // Safe: from_reservoir <= gas
         let spill = gas - from_reservoir;
         if spill > 0 {
-            // Charge spill from gas_remaining first — if OOG, return early
-            // without mutating reservoir (matches EELS behavior).
+            // Account the spill BEFORE the OOG-able charge so that the regular-gas
+            // dimension stays in sync when `increase_consumed_gas` short-circuits.
+            // Use the available portion (clipped by the current `gas_remaining`) so
+            // the spill counter reflects what was actually drawn from gas_remaining
+            // rather than what was attempted.
+            #[expect(
+                clippy::as_conversions,
+                reason = "gas_remaining max(0) fits in u64"
+            )]
+            let gas_remaining_before = self.current_call_frame.gas_remaining.max(0) as u64;
+            let spill_actual = spill.min(gas_remaining_before);
+            self.state_gas_spill = self
+                .state_gas_spill
+                .checked_add(spill_actual)
+                .ok_or(InternalError::Overflow)?;
+            // Charge the requested spill against gas_remaining; OOG short-circuits
+            // and the reservoir stays untouched (matches EELS behaviour).
             self.current_call_frame.increase_consumed_gas(spill)?;
         }
         // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
         self.state_gas_reservoir -= from_reservoir;
-        // Track the spill amount for block-accounting: EELS charge_state_gas spills
-        // don't count toward regular_gas_used for the regular dimension.
-        self.state_gas_spill = self
-            .state_gas_spill
-            .checked_add(spill)
-            .ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
-    /// EIP-8037: Refund `amount` of state gas back to the reservoir.
+    /// EIP-8037: Refund `amount` of state gas back to the user.
     ///
     /// Called when a state-creating operation is reversed (e.g. SSTORE 0→N→0, CREATE
-    /// collision, CREATE revert). Refills the reservoir so the sender can reclaim gas
-    /// that was pre-drawn. Block-level accounting is handled by the StateDiff cancel_*
-    /// methods; this function only manages the reservoir budget.
+    /// collision, CREATE revert). The original draw may have been satisfied from the
+    /// reservoir, from gas_remaining (spill), or both; refunds must be applied in the
+    /// inverse order so the user's regular gas budget is restored before extra reservoir
+    /// is grown. Block-level accounting is handled by the StateDiff cancel_* methods;
+    /// this function only manages the reservoir / spill budgets.
     ///
     /// Must only be called for Amsterdam+ forks.
     pub fn refund_state_gas_to_reservoir(&mut self, amount: u64) -> Result<(), VMError> {
@@ -608,12 +625,36 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "refund_state_gas_to_reservoir called pre-Amsterdam"
         );
-        // Refill the reservoir so subsequent charges can draw from it and the sender
-        // gets the unused portion back via the reservoir subtraction in refund_sender.
-        self.state_gas_reservoir = self
-            .state_gas_reservoir
-            .checked_add(amount)
-            .ok_or(InternalError::Overflow)?;
+        // First absorb any outstanding spill: a prior draw that exceeded the reservoir
+        // charged the overflow against gas_remaining. Returning that portion to the
+        // user means crediting gas_remaining and decrementing the spill counter so the
+        // block-dimensional regular gas computation isn't off.
+        let spill_refund = self.state_gas_spill.min(amount);
+        if spill_refund > 0 {
+            #[expect(
+                clippy::as_conversions,
+                reason = "spill_refund <= state_gas_spill <= u64::MAX/2 in any practical scenario"
+            )]
+            let spill_i64 =
+                i64::try_from(spill_refund).map_err(|_| InternalError::Overflow)?;
+            self.current_call_frame.gas_remaining = self
+                .current_call_frame
+                .gas_remaining
+                .checked_add(spill_i64)
+                .ok_or(InternalError::Overflow)?;
+            self.state_gas_spill = self
+                .state_gas_spill
+                .checked_sub(spill_refund)
+                .ok_or(InternalError::Underflow)?;
+        }
+        // Whatever remains goes back to the reservoir for re-use or end-of-tx return.
+        let reservoir_refund = amount.saturating_sub(spill_refund);
+        if reservoir_refund > 0 {
+            self.state_gas_reservoir = self
+                .state_gas_reservoir
+                .checked_add(reservoir_refund)
+                .ok_or(InternalError::Overflow)?;
+        }
         Ok(())
     }
 
@@ -623,6 +664,13 @@ impl<'a> VM<'a> {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
             return Err(e);
+        }
+
+        // EIP-8037: snapshot the reservoir balance after intrinsic + auth processing.
+        // This is the value to restore on top-level failure so execution-time draws
+        // are refunded to the user (state ops were rolled back).
+        if self.env.config.fork >= Fork::Amsterdam {
+            self.state_gas_reservoir_post_setup = self.state_gas_reservoir;
         }
 
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
