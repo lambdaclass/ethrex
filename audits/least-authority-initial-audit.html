@@ -1,0 +1,612 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Least Authority Initial Audit (v9.0.0) - Ethrex</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="shortcut icon" href="../favicon.png">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="highlight-css" href="../highlight.css">
+        <link rel="stylesheet" id="tomorrow-night-css" href="../tomorrow-night.css">
+        <link rel="stylesheet" id="ayu-highlight-css" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "light";
+            const default_dark_theme = "navy";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">Ethrex</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/lambdaclass/ethrex" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css">
+<style>
+.mdbook-alerts {
+  padding: 8px 16px;
+  margin-bottom: 16px;
+  border-left: 0.25em solid var(--mdbook-alerts-color);
+}
+
+.mdbook-alerts > *:first-child {
+  margin-top: 0;
+}
+
+.mdbook-alerts > *:last-child {
+  margin-bottom: 0;
+}
+
+.mdbook-alerts-title {
+  display: flex;
+  font-weight: 600;
+  align-items: center;
+  line-height: 1;
+  color: var(--mdbook-alerts-color);
+  text-transform: capitalize;
+}
+
+.mdbook-alerts-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-right: 0.2em;
+  background-color: currentColor;
+  -webkit-mask: no-repeat center / 100%;
+  mask: no-repeat center / 100%;
+  -webkit-mask-image: var(--mdbook-alerts-icon);
+  mask-image: var(--mdbook-alerts-icon);
+}
+
+.mdbook-alerts-note {
+  --mdbook-alerts-color: rgb(9, 105, 218);
+  /* https://icon-sets.iconify.design/material-symbols/info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16v-4q0-.425-.288-.712T12 11q-.425 0-.712.288T11 12v4q0 .425.288.713T12 17m0-8q.425 0 .713-.288T13 8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8q0 .425.288.713T12 9m0 13q-2.075 0-3.9-.788t-3.175-2.137q-1.35-1.35-2.137-3.175T2 12q0-2.075.788-3.9t2.137-3.175q1.35-1.35 3.175-2.137T12 2q2.075 0 3.9.788t3.175 2.137q1.35 1.35 2.138 3.175T22 12q0 2.075-.788 3.9t-2.137 3.175q-1.35 1.35-3.175 2.138T12 22m0-2q3.35 0 5.675-2.325T20 12q0-3.35-2.325-5.675T12 4Q8.65 4 6.325 6.325T4 12q0 3.35 2.325 5.675T12 20m0-8"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-tip {
+  --mdbook-alerts-color: rgb(26, 127, 55);
+  /* https://icon-sets.iconify.design/material-symbols/lightbulb-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 22q-.825 0-1.412-.587T10 20h4q0 .825-.587 1.413T12 22m-3-3q-.425 0-.712-.288T8 18q0-.425.288-.712T9 17h6q.425 0 .713.288T16 18q0 .425-.288.713T15 19zm-.75-3q-1.725-1.025-2.738-2.75T4.5 9.5q0-3.125 2.188-5.312T12 2q3.125 0 5.313 2.188T19.5 9.5q0 2.025-1.012 3.75T15.75 16zm.6-2h6.3q1.125-.8 1.738-1.975T17.5 9.5q0-2.3-1.6-3.9T12 4Q9.7 4 8.1 5.6T6.5 9.5q0 1.35.613 2.525T8.85 14M12 14"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-important {
+  --mdbook-alerts-color: rgb(130, 80, 223);
+  /* https://icon-sets.iconify.design/material-symbols/chat-info-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 7q.425 0 .713-.288T13 6q0-.425-.288-.712T12 5q-.425 0-.712.288T11 6q0 .425.288.713T12 7m0 8q.425 0 .713-.288T13 14v-4q0-.425-.288-.712T12 9q-.425 0-.712.288T11 10v4q0 .425.288.713T12 15m-6 3l-2.3 2.3q-.475.475-1.088.213T2 19.575V4q0-.825.588-1.412T4 2h16q.825 0 1.413.588T22 4v12q0 .825-.587 1.413T20 18zm-.85-2H20V4H4v13.125zM4 16V4z"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-warning {
+  --mdbook-alerts-color: rgb(154, 103, 0);
+  /* https://icon-sets.iconify.design/material-symbols/warning-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M2.725 21q-.275 0-.5-.137t-.35-.363q-.125-.225-.137-.488t.137-.512l9.25-16q.15-.25.388-.375T12 3q.25 0 .488.125t.387.375l9.25 16q.15.25.138.513t-.138.487q-.125.225-.35.363t-.5.137zm1.725-2h15.1L12 6zM12 18q.425 0 .713-.288T13 17q0-.425-.288-.712T12 16q-.425 0-.712.288T11 17q0 .425.288.713T12 18m0-3q.425 0 .713-.288T13 14v-3q0-.425-.288-.712T12 10q-.425 0-.712.288T11 11v3q0 .425.288.713T12 15m0-2.5"%2F%3E%3C%2Fsvg%3E');
+}
+
+.mdbook-alerts-caution {
+  --mdbook-alerts-color: rgb(207, 34, 46);
+  /* https://icon-sets.iconify.design/material-symbols/brightness-alert-outline-rounded/ */
+  --mdbook-alerts-icon: url('data:image/svg+xml,%3Csvg xmlns="http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg" width="24" height="24" viewBox="0 0 24 24"%3E%3Cpath fill="currentColor" d="M12 17q.425 0 .713-.288T13 16q0-.425-.288-.712T12 15q-.425 0-.712.288T11 16q0 .425.288.713T12 17m0-4q.425 0 .713-.288T13 12V8q0-.425-.288-.712T12 7q-.425 0-.712.288T11 8v4q0 .425.288.713T12 13m-3.35 7H6q-.825 0-1.412-.587T4 18v-2.65L2.075 13.4q-.275-.3-.425-.662T1.5 12q0-.375.15-.737t.425-.663L4 8.65V6q0-.825.588-1.412T6 4h2.65l1.95-1.925q.3-.275.663-.425T12 1.5q.375 0 .738.15t.662.425L15.35 4H18q.825 0 1.413.588T20 6v2.65l1.925 1.95q.275.3.425.663t.15.737q0 .375-.15.738t-.425.662L20 15.35V18q0 .825-.587 1.413T18 20h-2.65l-1.95 1.925q-.3.275-.662.425T12 22.5q-.375 0-.737-.15t-.663-.425zm.85-2l2.5 2.5l2.5-2.5H18v-3.5l2.5-2.5L18 9.5V6h-3.5L12 3.5L9.5 6H6v3.5L3.5 12L6 14.5V18zm2.5-6"%2F%3E%3C%2Fsvg%3E');
+}
+
+</style>
+<h1 id="least-authority-security-audit----verification-response"><a class="header" href="#least-authority-security-audit----verification-response">Least Authority Security Audit -- Verification Response</a></h1>
+<p><strong>Project:</strong> ethrex
+<strong>Audit date:</strong> January 12 -- January 30, 2026
+<strong>Audit report delivered:</strong> February 3, 2026
+<strong>Audit revision:</strong> <code>e88175e2d49f1192cc9f2fdeae6fde1392d0759d</code>
+<strong>Response date:</strong> April 6, 2026
+<strong>Original report:</strong> <a href="https://github.com/lambdaclass/ethrex/blob/main/audits/ethrex_v9.0.0_e88175e2/Least%20Authority%20-%20LambdaClass%20Ethrex%20Initial%20Audit%20Report.pdf">Least Authority - LambdaClass Ethrex Initial Audit Report (PDF)</a></p>
+<hr />
+<h2 id="summary"><a class="header" href="#summary">Summary</a></h2>
+<p>The audit identified 20 issues (A--T) and 8 suggestions (1--8). Each finding is addressed below with links to the relevant PRs.</p>
+<div class="table-wrapper"><table><thead><tr><th>Category</th><th>Count</th></tr></thead><tbody>
+<tr><td>Fixed (with PR)</td><td>20 issues + 5 suggestions</td></tr>
+<tr><td>Not applicable</td><td>3 issues + 1 suggestion</td></tr>
+<tr><td>Acknowledged (ongoing)</td><td>2 suggestions</td></tr>
+<tr><td>Remaining (latent, zero impact)</td><td>1 issue (partial)</td></tr>
+</tbody></table>
+</div>
+<hr />
+<h2 id="issues"><a class="header" href="#issues">Issues</a></h2>
+<h3 id="issue-a-aligned-layer-service-interruptions-can-result-in-denial-of-service"><a class="header" href="#issue-a-aligned-layer-service-interruptions-can-result-in-denial-of-service">Issue A: Aligned Layer Service Interruptions Can Result in Denial of Service</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PRs</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6313">#6313</a>, <a href="https://github.com/lambdaclass/ethrex/pull/5869">#5869</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> When running in aligned-mode, the sequencer advanced its proof cursor upon sending to Aligned Layer rather than upon on-chain confirmation. A proof lost by Aligned would never be resent, stalling batch verification indefinitely.</p>
+<p><strong>Resolution:</strong> PR #6313 introduces a dual-cursor architecture:</p>
+<ul>
+<li><code>latest_sent_to_aligned</code> -- tracks what was dispatched to the Aligned gateway (written by <code>L1ProofSender</code>).</li>
+<li><code>latest_verified_batch_proof</code> -- tracks what was confirmed on-chain (written only by <code>L1ProofVerifier</code> after on-chain verification succeeds).</li>
+</ul>
+<p>A configurable <code>--aligned.resubmission-timeout</code> triggers automatic resend when aggregation is not observed within the timeout window, resetting the aligned cursor to <code>last_verified_batch + 1</code>. Checkpoint directories are only cleaned after on-chain verification.</p>
+<p>PR #5869 adds operator-facing documentation covering 5 failure scenarios (temporary outage, lost proof, permanent shutdown, insufficient balance, invalid proof) with recovery procedures.</p>
+<hr />
+<h3 id="issue-b-intrinsic-gas-error-can-result-in-loss-of-funds"><a class="header" href="#issue-b-intrinsic-gas-error-can-result-in-loss-of-funds">Issue B: Intrinsic Gas Error Can Result in Loss of Funds</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6324">#6324</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> In <code>prepare_execution_privileged</code> (<code>l2_hook.rs</code>), the sender's balance was debited via <code>decrease_account_balance</code> before <code>add_intrinsic_gas()</code> validation completed. If that check failed, <code>msg_value</code> was zeroed, making <code>undo_value_transfer</code> a no-op and permanently burning the sender's funds.</p>
+<p><strong>Resolution:</strong> The balance debit is now deferred to after all <code>tx_should_fail</code> checks complete (including <code>add_intrinsic_gas</code>). A regression test (<code>privileged_tx_intrinsic_gas_failure_preserves_sender_balance</code>) confirms that a privileged tx with insufficient gas preserves the sender's full balance.</p>
+<hr />
+<h3 id="issue-c-nonatomic-finalization-can-lead-to-inconsistent-state"><a class="header" href="#issue-c-nonatomic-finalization-can-lead-to-inconsistent-state">Issue C: Nonatomic Finalization Can Lead to Inconsistent State</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6330">#6330</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>finalize_non_privileged_execution</code> applied sequential state mutations and returned early on error, leaving partial mutations committed without rollback.</p>
+<p><strong>Resolution:</strong> The function now has two phases:</p>
+<ol>
+<li><strong>Phase 1 (fallible computations):</strong> All operations that can fail (e.g., <code>get_fee_token_ratio</code>) run before any state mutations.</li>
+<li><strong>Phase 2 (state mutations with rollback):</strong> All mutations are grouped in <code>apply_finalize_mutations</code>. If any step fails, <code>restore_cache_state()</code> reverts all partial mutations.</li>
+</ol>
+<p><code>transfer_fee_token</code> now backs up original storage slot values before overwriting, and <code>restore_cache_state</code> also restores <code>status</code> and <code>has_storage</code> fields. Regression tests cover arithmetic overflow and contract revert failure modes.</p>
+<hr />
+<h3 id="issue-d-erc-20-assetdiffs-omitted-in-balancediff-aggregation"><a class="header" href="#issue-d-erc-20-assetdiffs-omitted-in-balancediff-aggregation">Issue D: ERC-20 AssetDiffs Omitted in BalanceDiff Aggregation</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/5882">#5882</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> In <code>get_balance_diffs</code> (<code>messages.rs</code>), decoded ERC-20 <code>AssetDiff</code> entries were never inserted into the <code>value_per_token</code> vector when no matching entry existed, leaving it empty.</p>
+<p><strong>Resolution:</strong> The aggregation logic now uses <code>find()</code> to locate an existing matching entry. If found, the value is incremented; otherwise, the decoded <code>AssetDiff</code> is pushed into the vector via an <code>else</code> branch. An integration test verifies L1 deposit accounting for ERC-20 cross-chain transfers.</p>
+<hr />
+<h3 id="issue-e-permissionless-privileged-message-parameters-can-stall-verification"><a class="header" href="#issue-e-permissionless-privileged-message-parameters-can-stall-verification">Issue E: Permissionless Privileged Message Parameters Can Stall Verification</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6442">#6442</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> The <code>sendToL2</code> function in <code>CommonBridge.sol</code> accepts user-controlled <code>gasLimit</code> and <code>data</code> without validation against L2 inclusion constraints. A malicious actor could create non-includable privileged transactions that expire and block verification.</p>
+<p><strong>Existing mitigation:</strong> <code>_burnGas(sendValues.gasLimit)</code> on L1 caps the effective <code>gasLimit</code> to approximately the L1 block gas limit (~30M gas per EIP-7825), providing economic deterrence.</p>
+<p><strong>Resolution:</strong> PR #6442 adds an <code>l2GasLimit</code> storage variable to <code>CommonBridge</code>, set via an <code>initialize()</code> parameter (deployer default: 30,000,000) and updatable post-deployment by the owner via <code>setL2GasLimit()</code>. <code>_sendToL2()</code> enforces <code>sendValues.gasLimit &lt;= l2GasLimit</code>, rejecting privileged transactions that exceed the limit. The <code>--block-producer.block-gas-limit</code> CLI flag is removed; the sequencer now fetches <code>l2GasLimit</code> from the contract on startup, keeping the on-chain constraint and sequencer limit in sync.</p>
+<hr />
+<h3 id="issue-f-underflow-and-off-by-one-in-regenerate_state-target-handling"><a class="header" href="#issue-f-underflow-and-off-by-one-in-regenerate_state-target-handling">Issue F: Underflow and Off-by-One in <code>regenerate_state</code> Target Handling</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6331">#6331</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> In <code>regenerate_state</code> (<code>l1_committer.rs</code>), <code>target_block_number - 1</code> underflows when target is 0, and always shifts the replay range by one block.</p>
+<p><strong>Resolution:</strong> The function now uses a <code>match</code> expression with an explicit <code>Some(0)</code> arm that returns <code>Ok(())</code> early, preventing the underflow. Documentation was updated to clarify the semantics: <code>Some(n)</code> regenerates state up to block <code>n - 1</code> (exclusive), <code>None</code> regenerates up to the latest block (inclusive).</p>
+<hr />
+<h3 id="issue-g-stateless-l1-validation-omits-transactions-root-check"><a class="header" href="#issue-g-stateless-l1-validation-omits-transactions-root-check">Issue G: Stateless L1 Validation Omits Transactions Root Check</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/5608">#5608</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> The prover's <code>stateless_validation_l1</code> validated block headers without verifying that the header's transactions root commits to the provided block body.</p>
+<p><strong>Resolution:</strong> A new <code>validate_block_body</code> function runs in the guest program before <code>validate_block_pre_execution</code>. It computes the transactions root from <code>block_body.transactions</code> and compares it to <code>block_header.transactions_root</code>, and validates the withdrawals root and ommers emptiness. <code>validate_block</code> was renamed to <code>validate_block_pre_execution</code> for clarity.</p>
+<hr />
+<h3 id="issue-h-incomplete-gas-used-validation-allows-nonzero-gas-in-empty-blocks"><a class="header" href="#issue-h-incomplete-gas-used-validation-allows-nonzero-gas-in-empty-blocks">Issue H: Incomplete Gas Used Validation Allows Nonzero Gas in Empty Blocks</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/5996">#5996</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>validate_gas_used</code> relied on <code>receipts.last().cumulative_gas_used</code>. When the receipts list was empty (no transactions), the function returned <code>Ok(())</code> without verifying that <code>block_header.gas_used</code> was 0.</p>
+<p><strong>Resolution:</strong> As part of the EIP-7778 implementation, <code>validate_gas_used</code> was redesigned to take <code>block_gas_used: u64</code> directly from the VM execution result, rather than deriving it from receipts. The comparison <code>block_gas_used != block_header.gas_used</code> is now unconditional, so empty blocks with nonzero <code>gas_used</code> headers are correctly rejected.</p>
+<hr />
+<h3 id="issue-i-missing-domain-separation-on-guest-output-digest"><a class="header" href="#issue-i-missing-domain-separation-on-guest-output-digest">Issue I: Missing Domain Separation on Guest Output Digest</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>High</td></tr>
+<tr><td>Status</td><td><strong>Not applicable</strong></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> Guest programs (OpenVM, ZisK) hash <code>ProgramOutput::encode()</code> without a domain-separation tag, potentially allowing cross-context replay of output digests.</p>
+<p><strong>Response:</strong> The zkVM verification key (<code>vkey</code>) already provides domain separation. The <code>vkey</code> is a cryptographic commitment to the exact guest program binary, and the on-chain verifier binds each proof to a pinned <code>vkey</code> stored in <code>OnChainProposer</code>. A replayed output from a different program version would have a different <code>vkey</code> and be rejected. Adding an explicit domain tag would be redundant with this binding.</p>
+<hr />
+<h3 id="issue-j-privileged-transaction-failure-path-can-be-bypassed"><a class="header" href="#issue-j-privileged-transaction-failure-path-can-be-bypassed">Issue J: Privileged Transaction Failure Path Can Be Bypassed</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6044">#6044</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> Privileged transactions forced to fail via INVALID opcode injection could still execute successfully when the destination was a precompile (which bypasses bytecode interpretation). Additionally, negative <code>gas_remaining</code> was cast to <code>u64</code> via wrapping conversion, giving an effectively unbounded gas allowance.</p>
+<p><strong>Resolution:</strong> An early check at the top of <code>run_execution()</code> in <code>vm.rs</code> returns an <code>OutOfGas</code> revert when <code>gas_remaining &lt; 0</code>, consuming the full gas limit. This fires before the precompile dispatch branch, preventing negative gas from reaching the <code>as u64</code> cast. Three regression tests cover the failure and success paths.</p>
+<hr />
+<h3 id="issue-k-privileged-transaction-inclusion-not-guaranteed-in-aligned_mode"><a class="header" href="#issue-k-privileged-transaction-inclusion-not-guaranteed-in-aligned_mode">Issue K: Privileged Transaction Inclusion Not Guaranteed in ALIGNED_MODE</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6332">#6332</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>verifyBatchesAligned()</code> did not enforce the privileged transaction inclusion deadline, unlike <code>verifyBatch()</code>.</p>
+<p><strong>Resolution:</strong> The same <code>ExpiredPrivilegedTransactionDeadline</code> check was added inside the <code>verifyBatchesAligned()</code> per-batch loop, mirroring <code>verifyBatch()</code>. Every batch in a multi-batch aligned verification is individually checked.</p>
+<hr />
+<h3 id="issue-l-fee-token-fees-can-be-locked-for-transactions-that-fail-validation"><a class="header" href="#issue-l-fee-token-fees-can-be-locked-for-transactions-that-fail-validation">Issue L: Fee-Token Fees Can Be Locked for Transactions That Fail Validation</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PRs</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6330">#6330</a>, <a href="https://github.com/lambdaclass/ethrex/pull/6333">#6333</a>, <a href="https://github.com/lambdaclass/ethrex/pull/6417">#6417</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> Fee-token deduction via <code>db.get_account_mut</code> bypassed the call-frame backup mechanism. If later validation failed, the fee-token lock persisted for the rejected transaction.</p>
+<p><strong>Resolution:</strong> The core fix (PR #6330) restructures finalization into two phases (see Issue C). <code>transfer_fee_token</code> now backs up changed storage slots via <code>backup_storage_slot()</code>, enabling rollback through <code>restore_cache_state()</code>. PRs #6333 and #6417 add regression tests verifying that fee-token storage slots revert when validation fails (nonce mismatch, priority fee exceeds max fee).</p>
+<hr />
+<h3 id="issue-m-unvalidated-proof-persistence-halts-liveness"><a class="header" href="#issue-m-unvalidated-proof-persistence-halts-liveness">Issue M: Unvalidated Proof Persistence Halts Liveness</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Not applicable (mitigated at contract level)</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6334">#6334</a> (documentation)</td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> The proof coordinator stores submitted proofs without validation, potentially allowing a corrupted proof to be "sticky" and halt rollup progression.</p>
+<p><strong>Response:</strong> On-chain verification handles this. <code>_verifyBatchInternal</code> in <code>OnChainProposer.sol</code> wraps each verifier call in try/catch -- invalid proofs revert with <code>InvalidRisc0Proof</code>, <code>InvalidSp1Proof</code>, or <code>InvalidTdxProof</code>. <code>L1ProofSender</code> has fallback logic (<code>try_delete_invalid_proof</code>) that detects invalid proofs from RPC error data, deletes them, and triggers re-proving.</p>
+<p>An invalid proof wastes one L1 transaction and causes a delay, but cannot produce an invalid state transition or permanently halt liveness. PR #6334 documents this behavior.</p>
+<hr />
+<h3 id="issue-n-l1-watcher-cursor-advances-before-processing-dropping-privileged-logs"><a class="header" href="#issue-n-l1-watcher-cursor-advances-before-processing-dropping-privileged-logs">Issue N: L1 Watcher Cursor Advances Before Processing, Dropping Privileged Logs</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6335">#6335</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>get_logs_l1()</code> advanced <code>last_block_fetched_l1</code> before processing logs. Failed <code>add_transaction_to_pool</code> calls were silently skipped via <code>continue</code>, permanently dropping those privileged transactions.</p>
+<p><strong>Resolution:</strong> <code>get_logs_l1()</code> now returns <code>(new_cursor, logs)</code> instead of setting the cursor immediately. The cursor is only assigned after <code>process_privileged_transactions(logs)</code> succeeds. Failed <code>add_transaction_to_pool</code> calls now propagate the error (<code>map_err</code> + <code>?</code> instead of <code>inspect_err</code> + <code>continue</code>), so the batch retries from the same cursor. The <code>privileged_transaction_already_processed</code> check prevents duplicates on retry.</p>
+<hr />
+<h3 id="issue-o-unbounded-read-and-nonatomic-write-in-write_elf_file-enables-local-dos"><a class="header" href="#issue-o-unbounded-read-and-nonatomic-write-in-write_elf_file-enables-local-dos">Issue O: Unbounded Read and Nonatomic Write in <code>write_elf_file</code> Enables Local DoS</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6441">#6441</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>write_elf_file</code> reads the entire ELF file and writes it non-atomically via <code>std::fs::write</code>. A local attacker with control of <code>ELF_PATH</code> could cause resource exhaustion or file corruption.</p>
+<p><strong>Resolution:</strong> PR #6441 replaces the direct write with atomic write-to-temp-then-rename: the ELF is written to <code>{ELF_PATH}.tmp</code>, then <code>std::fs::rename()</code> swaps it into place. A metadata size check before reading prevents unbounded I/O on tampered files.</p>
+<hr />
+<h3 id="issue-p-block-execution-pre-rejects-transactions-based-on-declared-gas-limit"><a class="header" href="#issue-p-block-execution-pre-rejects-transactions-based-on-declared-gas-limit">Issue P: Block Execution Pre-Rejects Transactions Based on Declared Gas Limit</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Medium</td></tr>
+<tr><td>Status</td><td><strong>Not applicable</strong></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> The executor rejects transactions when <code>cumulative_gas_used + tx.gas_limit()</code> exceeds the block gas limit, even if actual gas usage would fit.</p>
+<p><strong>Response:</strong> This matches Ethereum consensus rules. Both the <a href="https://github.com/ethereum/execution-specs/blob/b7fe32567fbeb33ec5d2a73b2b28a339c891df51/src/ethereum/forks/prague/fork.py#L449-L453">execution specs</a> and geth enforce <code>cumulative_gas_used + tx.gas_limit &lt;= block.gas_limit</code> as a block validity condition. The auditor's example of two 30M-limit transactions in a 30M block is also rejected by geth.</p>
+<hr />
+<h3 id="issue-q-fee-token-ratio-fetched-in-both-prepare-and-finalize"><a class="header" href="#issue-q-fee-token-ratio-fetched-in-both-prepare-and-finalize">Issue Q: Fee-Token Ratio Fetched in Both Prepare and Finalize</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Low</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6351">#6351</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>fee_token_ratio</code> was fetched separately during transaction preparation and finalization. If the ratio changed during execution, lock and settlement amounts would be inconsistent.</p>
+<p><strong>Resolution:</strong> A <code>cached_fee_token_ratio: Option&lt;U256&gt;</code> field was added to <code>L2Hook</code>. The ratio is fetched once during <code>prepare_execution_fee_token</code> and reused in finalization. A regression test deploys a contract that modifies the ratio mid-execution and verifies the cached value is used.</p>
+<hr />
+<h3 id="issue-r-unsanitized-boolean-leads-to-nearby-memory-blake2b-oracle"><a class="header" href="#issue-r-unsanitized-boolean-leads-to-nearby-memory-blake2b-oracle">Issue R: Unsanitized Boolean Leads to Nearby-Memory Blake2b Oracle</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Low</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6439">#6439</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> The x86_64 Blake2b assembly does not sanitize the <code>f</code> (finalization flag) parameter. If <code>f</code> contains garbage in upper bits, a large offset could cause a read from nearby memory.</p>
+<p><strong>Existing mitigation:</strong> The Rust precompile code (<code>precompiles.rs:893-897</code>) validates <code>f</code> before calling the assembly. <code>f</code> is a Rust <code>bool</code> (guaranteed 0 or 1), and the function is <code>unsafe</code> and private.</p>
+<p><strong>Resolution:</strong> PR #6439 adds <code>movzx r8d, r8b</code> in the assembly to zero-extend the boolean parameter, clearing any garbage in upper bits. Defense-in-depth: the assembly is now safe regardless of caller validation.</p>
+<hr />
+<h3 id="issue-s-zero-length-leads-to-buffer-overflow-write-in-sha3-squeeze"><a class="header" href="#issue-s-zero-length-leads-to-buffer-overflow-write-in-sha3-squeeze">Issue S: Zero Length Leads to Buffer Overflow Write in SHA3 Squeeze</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Low</td></tr>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6440">#6440</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>SHA3_squeeze</code> and <code>SHA3_squeeze_cext</code> write out of bounds if the length passed is zero.</p>
+<p><strong>Existing mitigation:</strong> The Rust wrapper handles zero-length at the call site. <code>SHA3_squeeze</code> is only called with <code>len = 32</code>, and the function is <code>unsafe</code> and private.</p>
+<p><strong>Resolution:</strong> PR #6440 adds <code>cbz</code> early-exit instructions at the beginning of both <code>SHA3_squeeze</code> and <code>SHA3_squeeze_cext</code>, branching to the epilogue when output length is zero. Defense-in-depth: the assembly is now safe regardless of caller.</p>
+<hr />
+<h3 id="issue-t-usage-of-vulnerable-dependencies"><a class="header" href="#issue-t-usage-of-vulnerable-dependencies">Issue T: Usage of Vulnerable Dependencies</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Severity</td><td>Undetermined</td></tr>
+<tr><td>Status</td><td><strong>Fixed (5/6), 1 remaining (zero impact)</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6352">#6352</a> and dependency updates</td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> Six vulnerable crates were identified: protobuf, ring, rkyv, rsa, ruint, tracing-subscriber.</p>
+<p><strong>Resolution:</strong></p>
+<div class="table-wrapper"><table><thead><tr><th>Crate</th><th>Vulnerable Version</th><th>Current Version</th><th>Status</th></tr></thead><tbody>
+<tr><td>protobuf</td><td>2.28.0</td><td>3.7.2</td><td>Fixed (PR #6352, prometheus bump)</td></tr>
+<tr><td>ring</td><td>0.16.20</td><td>0.17.14</td><td>Fixed (dependency update)</td></tr>
+<tr><td>rkyv</td><td>0.8.12</td><td>0.8.14</td><td>Fixed (dependency update)</td></tr>
+<tr><td>rsa</td><td>0.9.9</td><td>0.9.10</td><td>Fixed (dependency update)</td></tr>
+<tr><td>ruint</td><td>1.17.0</td><td>1.17.2</td><td>Fixed (dependency update)</td></tr>
+<tr><td>tracing-subscriber</td><td>0.2.25</td><td>0.2.25</td><td><strong>Remaining</strong> (transitive)</td></tr>
+</tbody></table>
+</div>
+<p><strong>Remaining:</strong> <code>tracing-subscriber</code> v0.2.25 is a transitive dependency via <code>ark-relations</code> 0.5.1. The advisory concerns ANSI escape injection in logged user input; <code>ark-relations</code> only logs static compile-time metadata, never attacker-controlled text. Zero impact. Cannot update without an upstream <code>ark-relations</code> release.</p>
+<hr />
+<h2 id="suggestions"><a class="header" href="#suggestions">Suggestions</a></h2>
+<h3 id="suggestion-1-verify-that-tokens-match-in-withdrawerc20"><a class="header" href="#suggestion-1-verify-that-tokens-match-in-withdrawerc20">Suggestion 1: Verify That Tokens Match in WithdrawERC20</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6003">#6003</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>withdrawERC20</code> accepts both <code>tokenL1</code> and <code>tokenL2</code> but does not verify they correspond. Users could lock their L2 funds with an unclaimable withdrawal proof.</p>
+<p><strong>Resolution:</strong> PR #6003 adds <code>require(token.l1Address() == tokenL1, "CommonBridgeL2: L1 address mismatch")</code> to <code>withdrawERC20</code>.</p>
+<hr />
+<h3 id="suggestion-2-add-router-only-access-control-to-receiveethfromsharedbridge"><a class="header" href="#suggestion-2-add-router-only-access-control-to-receiveethfromsharedbridge">Suggestion 2: Add Router-Only Access Control to <code>receiveETHFromSharedBridge</code></a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6002">#6002</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>receiveETHFromSharedBridge</code> accepted ETH from any caller, unlike the ERC-20 counterpart which restricted calls to <code>SHARED_BRIDGE_ROUTER</code>.</p>
+<p><strong>Resolution:</strong> Added <code>require(msg.sender == SHARED_BRIDGE_ROUTER)</code> to <code>receiveETHFromSharedBridge</code>, mirroring the access control in <code>receiveERC20FromSharedBridge</code>.</p>
+<hr />
+<h3 id="suggestion-3-accumulate-the-substate-property-instead-of-overwriting-it"><a class="header" href="#suggestion-3-accumulate-the-substate-property-instead-of-overwriting-it">Suggestion 3: Accumulate the Substate Property Instead of Overwriting It</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6037">#6037</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> <code>eip7702_set_access_code</code> assigned <code>substate.refunded_gas</code> directly instead of accumulating, risking silent overwrite if execution order changed.</p>
+<p><strong>Resolution:</strong> Changed from direct assignment to <code>checked_add</code> with overflow protection:</p>
+<pre><pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>self.substate.refunded_gas = self.substate.refunded_gas
+    .checked_add(refunded_gas)
+    .ok_or(InternalError::Overflow)?;
+<span class="boring">}</span></code></pre></pre>
+<hr />
+<h3 id="suggestion-4-remove-deprecated-state-diffs-feature"><a class="header" href="#suggestion-4-remove-deprecated-state-diffs-feature">Suggestion 4: Remove Deprecated "State Diffs" Feature</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/5135">#5135</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> The prover maintained a <code>HashMap</code> of accounts modified by each transaction block, updated in <code>stateless_validation_l1</code> and <code>execute_stateless</code>, as part of the deprecated "state diffs" feature.</p>
+<p><strong>Resolution:</strong> PR #5135 changed data availability from state diffs to full block commits. The <code>StateDiff</code> module (including <code>modified_accounts: BTreeMap&lt;Address, AccountStateDiff&gt;</code>) and the <code>account_updates</code> HashMap in <code>StatelessResult</code> were deleted. Blobs now carry RLP-encoded blocks instead of state diffs.</p>
+<hr />
+<h3 id="suggestion-5-improve-prover-code-quality"><a class="header" href="#suggestion-5-improve-prover-code-quality">Suggestion 5: Improve Prover Code Quality</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Partially fixed</strong></td></tr>
+<tr><td>PR</td><td><a href="https://github.com/lambdaclass/ethrex/pull/6355">#6355</a></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> Three code quality items: (1) incorrect error message in <code>request_new_input</code>, (2) redundant l2 feature flag check, (3) comment mismatch in <code>to_calldata</code>.</p>
+<p><strong>Resolution:</strong> PR #6355 corrects the error messages (item 1). The <code>l2</code> feature check (item 2) is intentional -- it guards against misconfiguration where the prover binary is built without L2 support. Item 3 was not found in the current code (likely resolved in a prior refactor).</p>
+<hr />
+<h3 id="suggestion-6-improve-test-coverage"><a class="header" href="#suggestion-6-improve-test-coverage">Suggestion 6: Improve Test Coverage</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Acknowledged</strong></td></tr>
+</tbody></table>
+</div>
+<p>Ongoing effort. The audit fix PRs include regression tests for the found vulnerabilities. We continue expanding coverage, particularly for VM edge cases and contract invariants.</p>
+<hr />
+<h3 id="suggestion-7-improve-code-comments"><a class="header" href="#suggestion-7-improve-code-comments">Suggestion 7: Improve Code Comments</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Acknowledged</strong></td></tr>
+</tbody></table>
+</div>
+<p>Ongoing effort; too broad to attribute to a single PR.</p>
+<hr />
+<h3 id="suggestion-8-improve-blake2b-implementation"><a class="header" href="#suggestion-8-improve-blake2b-implementation">Suggestion 8: Improve Blake2b Implementation</a></h3>
+<div class="table-wrapper"><table><thead><tr><th>Field</th><th>Value</th></tr></thead><tbody>
+<tr><td>Status</td><td><strong>Not applicable</strong></td></tr>
+</tbody></table>
+</div>
+<p><strong>Finding:</strong> Three items: (1) clamp rounds <code>r</code> to 0..12, (2) sanitize <code>r=0</code> edge case, (3) zeroize shuffle buffer for keyed mode.</p>
+<p><strong>Response:</strong></p>
+<ol>
+<li><strong>Rounds clamping:</strong> The rounds parameter <code>r</code> can be arbitrarily large in the Ethereum Blake2 precompile (<a href="https://eips.ethereum.org/EIPS/eip-152">EIP-152</a>). The gas cost scales linearly with <code>r</code> (<code>rounds * 1 gas</code>), and <code>r</code> is parsed as a <code>u32</code> from calldata. Clamping to 0..12 would break spec compliance.</li>
+<li><strong><code>r=0</code> handling:</strong> The assembly handles <code>r=0</code> correctly: <code>sub rdi, 0x01</code> wraps, the carry flag jumps to exit, skipping all rounds. The final merge still executes, which is correct (Blake2 with 0 rounds still performs initialization and finalization).</li>
+<li><strong>Shuffle buffer zeroization:</strong> We do not use Blake2b in keyed mode. The Ethereum precompile takes <code>h</code>, <code>m</code>, <code>t</code>, <code>f</code>, and <code>rounds</code> as inputs -- there is no key material. The first block never contains a key because keyed Blake2b is not part of the EIP-152 interface.</li>
+</ol>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../audits/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+
+                            <a rel="next prefetch" href="../CONTRIBUTING_DOCS.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../audits/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+
+                    <a rel="next prefetch" href="../CONTRIBUTING_DOCS.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
+            </nav>
+
+        </div>
+
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr.min.js"></script>
+        <script src="../mark.min.js"></script>
+        <script src="../searcher.js"></script>
+
+        <script src="../clipboard.min.js"></script>
+        <script src="../highlight.js"></script>
+        <script src="../book.js"></script>
+
+        <!-- Custom JS scripts -->
+        <script src="../mermaid.min.js"></script>
+        <script src="../mermaid-init.js"></script>
+
+
+    </div>
+    </body>
+</html>
