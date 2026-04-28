@@ -20,6 +20,27 @@ pub const MEMORY_EXPANSION_QUOTIENT: u64 = 512;
 // Dedicated gas limit for system calls according to EIPs 2935, 4788, 7002 and 7251
 pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
 
+// EIP-8037 (ethereum/EIPs#11573): per-system-call upper bound on new storage slots
+// written. Matches MAX_WITHDRAWAL_REQUESTS_PER_BLOCK (EIP-7002), the largest per-block
+// bound across the existing system contracts.
+pub const SYSTEM_MAX_SSTORES_PER_CALL: u64 = 16;
+
+// EIP-8037: extra state-gas budget reserved for system contracts that perform up to
+// SYSTEM_MAX_SSTORES_PER_CALL new SSTOREs per invocation. Derived symbolically from
+// the EIP-8037 byte constant so the bound stays in lockstep with
+// SYSTEM_MAX_SSTORES_PER_CALL. The CPSB factor (1174) is inlined here because
+// `cost_per_state_byte` is a runtime fn; if CPSB ever changes, this constant and
+// `cost_per_state_byte` must move together.
+pub const SYS_CALL_STATE_GAS_RESERVOIR: u64 =
+    crate::gas_cost::STATE_BYTES_PER_STORAGE_SET * 1174 * SYSTEM_MAX_SSTORES_PER_CALL;
+
+// EIP-8037: From Amsterdam, system calls receive the legacy 30M execution budget plus
+// SYS_CALL_STATE_GAS_RESERVOIR placed in `state_gas_reservoir`. This preserves the
+// existing 30M execution margin under the higher state-creation costs.
+//
+// 30_000_000 + 32 * 1174 * 16 = 30_601_088
+pub const SYS_CALL_GAS_LIMIT_AMSTERDAM: u64 = SYS_CALL_GAS_LIMIT + SYS_CALL_STATE_GAS_RESERVOIR;
+
 // Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
 
