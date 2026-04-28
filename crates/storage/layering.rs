@@ -95,6 +95,11 @@ impl TrieLayerCache {
             .expected_items(expected_items.max(BLOOM_SIZE))
     }
 
+    /// Returns `true` if the cache has no layers.
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
+    }
+
     /// Looks up a trie node `key` starting from the layer identified by `state_root`,
     /// walking the parent chain toward older layers.
     ///
@@ -261,6 +266,33 @@ impl TrieLayerCache {
             .collect();
         Some(nodes_to_commit)
     }
+
+    /// Removes ALL layers from the cache and returns their merged trie node diffs
+    /// (newest layer's values win for duplicate keys).
+    ///
+    /// Used to force-flush the entire cache to disk before batch mode starts,
+    /// ensuring no stale in-memory layers can shadow fresher on-disk data.
+    pub fn drain_all(&mut self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        // Collect all layers sorted oldest-first so newer values overwrite older ones.
+        let mut all_layers: Vec<TrieLayer> = self
+            .layers
+            .drain()
+            .map(|(_, arc)| Arc::unwrap_or_clone(arc))
+            .collect();
+        all_layers.sort_by_key(|l| l.id);
+
+        // Merge: older entries first, newer entries overwrite.
+        let mut merged: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+        for layer in all_layers {
+            merged.extend(layer.nodes);
+        }
+
+        // Reset state.
+        self.last_id = 0;
+        self.bloom = Self::create_filter(BLOOM_SIZE);
+
+        merged.into_iter().collect()
+    }
 }
 
 /// Default capacity for the flat LRU trie cache used during full sync batch mode.
@@ -358,10 +390,6 @@ pub enum TrieCacheRef {
     /// Simple LRU cache for full sync batch mode. Uses `Arc<std::sync::Mutex<_>>` because
     /// `LruCache::get` requires `&mut self`.
     Flat(Arc<std::sync::Mutex<FlatTrieCache>>),
-    /// Flat LRU cache with a layered-cache fallback. Used when batch mode is active
-    /// so that uncommitted layers from a previous normal-path run (e.g. after a
-    /// `StateRootMismatch` fallback to single-block pipeline) remain accessible.
-    FlatWithFallback(Arc<std::sync::Mutex<FlatTrieCache>>, Arc<TrieLayerCache>),
 }
 
 impl fmt::Debug for TrieCacheRef {
@@ -369,9 +397,6 @@ impl fmt::Debug for TrieCacheRef {
         match self {
             Self::Layered(c) => write!(f, "TrieCacheRef::Layered({c:?})"),
             Self::Flat(c) => write!(f, "TrieCacheRef::Flat({c:?})"),
-            Self::FlatWithFallback(c, l) => {
-                write!(f, "TrieCacheRef::FlatWithFallback({c:?}, {l:?})")
-            }
         }
     }
 }
@@ -382,12 +407,6 @@ impl TrieCacheRef {
         match self {
             Self::Layered(cache) => cache.get(state_root, key),
             Self::Flat(cache) => cache.lock().ok()?.get(key),
-            Self::FlatWithFallback(flat, layered) => {
-                if let Some(v) = flat.lock().ok()?.get(key) {
-                    return Some(v);
-                }
-                layered.get(state_root, key)
-            }
         }
     }
 }

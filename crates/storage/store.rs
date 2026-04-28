@@ -2539,7 +2539,75 @@ impl Store {
     /// flat LRU cache instead of the layered diff-chain cache, and
     /// `apply_trie_updates` will write directly to disk + LRU instead of
     /// building layer chains.
+    ///
+    /// Before enabling, any uncommitted layers in the layered cache are
+    /// flushed to disk. This prevents stale in-memory data from shadowing
+    /// fresher on-disk values after a previous pipeline-fallback wrote to
+    /// the layered cache but batch mode wrote updates only to disk.
     pub fn enable_batch_trie_cache(&self) -> Result<(), StoreError> {
+        // Flush all uncommitted layered-cache layers to disk so that
+        // subsequent batch-mode reads (which bypass the layered cache)
+        // see up-to-date data on disk.
+        {
+            let trie_cache = self
+                .trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .clone();
+            if !trie_cache.is_empty() {
+                let mut trie_mut = (*trie_cache).clone();
+                let nodes = trie_mut.drain_all();
+                if !nodes.is_empty() {
+                    // Pause the FKV generator while we write trie nodes.
+                    let _ = self
+                        .flatkeyvalue_control_tx
+                        .send(FKVGeneratorControlMessage::Stop);
+
+                    let last_written = self
+                        .backend
+                        .begin_read()?
+                        .get(MISC_VALUES, "last_written".as_bytes())?
+                        .unwrap_or_default();
+
+                    let mut write_tx = self.backend.begin_write()?;
+                    for (key, value) in nodes {
+                        let is_leaf = key.len() == 65 || key.len() == 131;
+                        let is_account = key.len() <= 65;
+
+                        if is_leaf && key > last_written {
+                            continue;
+                        }
+                        let table = if is_leaf {
+                            if is_account {
+                                &ACCOUNT_FLATKEYVALUE
+                            } else {
+                                &STORAGE_FLATKEYVALUE
+                            }
+                        } else if is_account {
+                            &ACCOUNT_TRIE_NODES
+                        } else {
+                            &STORAGE_TRIE_NODES
+                        };
+                        if value.is_empty() {
+                            write_tx.delete(table, &key)?;
+                        } else {
+                            write_tx.put(table, &key, &value)?;
+                        }
+                    }
+                    write_tx.commit()?;
+
+                    let _ = self
+                        .flatkeyvalue_control_tx
+                        .send(FKVGeneratorControlMessage::Continue);
+                }
+                // Replace the layered cache with a fresh empty one.
+                *self
+                    .trie_cache
+                    .write()
+                    .map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+            }
+        }
+
         let cache = Arc::new(Mutex::new(FlatTrieCache::default()));
         *self
             .batch_trie_cache
@@ -2559,28 +2627,18 @@ impl Store {
 
     /// Returns the appropriate [`TrieCacheRef`] for trie opens.
     ///
-    /// If batch mode is active, returns the flat LRU cache with a layered-cache
-    /// fallback. The fallback is necessary because a previous normal-path run
-    /// (e.g. after a `StateRootMismatch` triggered a single-block pipeline
-    /// fallback) may have left trie nodes only in the layered cache's
-    /// uncommitted top layers, not yet on disk. Without the fallback,
-    /// `has_state_root` would miss these nodes and fail.
+    /// If batch mode is active, returns the flat LRU cache (the layered cache
+    /// was flushed to disk when batch mode was enabled, so all data is reachable
+    /// via flat LRU + disk). Otherwise returns the layered diff-chain cache.
     fn trie_cache_ref(&self) -> Result<TrieCacheRef, StoreError> {
-        // Check batch cache first
         if let Some(flat) = self
             .batch_trie_cache
             .read()
             .map_err(|_| StoreError::LockError)?
             .as_ref()
         {
-            let layered = self
-                .trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone();
-            return Ok(TrieCacheRef::FlatWithFallback(flat.clone(), layered));
+            return Ok(TrieCacheRef::Flat(flat.clone()));
         }
-        // Fall back to layered cache
         Ok(TrieCacheRef::Layered(
             self.trie_cache
                 .read()
