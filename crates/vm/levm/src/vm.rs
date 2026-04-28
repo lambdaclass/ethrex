@@ -449,9 +449,8 @@ pub struct VM<'a> {
     /// are found during set_delegation. Tracked separately because state_gas_used
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
-    /// Reference to the shared static opcode table for the current fork.
-    /// Stored as a reference (8 bytes) rather than a copy (2 KB) to avoid per-transaction
-    /// initialization cost and to keep the VM struct cache-friendly.
+    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
+    /// A reference to a per-fork static table; avoids copying 2KB per transaction.
     pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
@@ -506,7 +505,7 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: crate::opcodes::get_opcode_table_ref(fork),
+            opcode_table: VM::build_opcode_table(fork),
             crypto,
         };
 
