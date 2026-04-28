@@ -129,7 +129,7 @@ impl Memory {
         let new_size = offset.checked_add(N).ok_or(OutOfBounds)?;
         self.resize(new_size)?;
 
-        let true_offset = offset.checked_add(self.current_base).ok_or(OutOfBounds)?;
+        let true_offset = offset.wrapping_add(self.current_base);
 
         let buf = self.buffer.borrow();
         // SAFETY: resize already makes sure bounds are correct.
