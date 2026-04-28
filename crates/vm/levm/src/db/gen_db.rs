@@ -410,7 +410,7 @@ impl GeneralizedDatabase {
     }
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
+        let mut account_updates: Vec<AccountUpdate> = Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.drain() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
@@ -465,7 +465,7 @@ impl GeneralizedDatabase {
             let removed_storage = was_destroyed && initial_state_account.has_storage;
 
             // 2. Storage has been updated if the current value is different from the one before execution.
-            let mut added_storage: FxHashMap<_, _> = Default::default();
+            let mut added_storage: FxHashMap<_, _> = FxHashMap::with_capacity_and_hasher(new_state_account.storage.len(), Default::default());
 
             for (key, new_value) in &new_state_account.storage {
                 let old_value = if !was_destroyed {

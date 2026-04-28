@@ -109,14 +109,6 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
-        let mut receipts = Vec::new();
-        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
-        let mut cumulative_gas_used = 0_u64;
-        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
-        let mut block_gas_used = 0_u64;
-        // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
-        let mut block_regular_gas_used = 0_u64;
-        let mut block_state_gas_used = 0_u64;
         let transactions_with_sender =
             block
                 .body
@@ -124,6 +116,15 @@ impl LEVM {
                 .map_err(|error| {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
+
+        let mut receipts = Vec::with_capacity(transactions_with_sender.len());
+        // Cumulative gas for receipts (POST-REFUND per EIP-7778)
+        let mut cumulative_gas_used = 0_u64;
+        // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
+        let mut block_gas_used = 0_u64;
+        // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
+        let mut block_regular_gas_used = 0_u64;
+        let mut block_state_gas_used = 0_u64;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
@@ -431,7 +432,7 @@ impl LEVM {
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
-        let mut receipts = Vec::new();
+        let mut receipts = Vec::with_capacity(transactions_with_sender.len());
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
