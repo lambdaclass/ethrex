@@ -114,6 +114,12 @@ impl BlockIdentifierOrHash {
         // EIP-1898 object form: {"blockHash": "0x.."} or {"blockNumber": "0x.." | tag}.
         // `requireCanonical` is accepted but not enforced (matches geth's permissive behavior).
         if let Value::Object(map) = &serde_value {
+            if map.contains_key("blockHash") && map.contains_key("blockNumber") {
+                return Err(RpcErr::BadParams(
+                    "EIP-1898 block identifier cannot specify both `blockHash` and `blockNumber`"
+                        .to_string(),
+                ));
+            }
             if let Some(hash_value) = map.get("blockHash") {
                 let hex_str = serde_json::from_value::<String>(hash_value.clone())
                     .map_err(|e| RpcErr::BadParams(e.to_string()))?;
@@ -251,6 +257,16 @@ mod tests {
     #[test]
     fn parse_eip1898_object_missing_keys_fails() {
         let err = BlockIdentifierOrHash::parse(json!({}), 0).unwrap_err();
+        assert!(matches!(err, RpcErr::BadParams(_)));
+    }
+
+    #[test]
+    fn parse_eip1898_object_both_keys_fails() {
+        let value = json!({
+            "blockHash": "0x32a2b8016bfefb8a25030cbc6636a833584bd6ae0db2e2db7176f27a431c5563",
+            "blockNumber": "0x10",
+        });
+        let err = BlockIdentifierOrHash::parse(value, 0).unwrap_err();
         assert!(matches!(err, RpcErr::BadParams(_)));
     }
 
