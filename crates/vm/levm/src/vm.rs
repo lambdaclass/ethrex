@@ -450,8 +450,7 @@ pub struct VM<'a> {
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Points to a pre-computed static table selected by fork, avoiding a
-    /// 2 KB copy on every VM construction.
+    /// Points to a `'static` array — no per-VM copy needed.
     pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
