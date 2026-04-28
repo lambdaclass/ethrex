@@ -429,15 +429,6 @@ impl Blockchain {
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
-        // Recover transaction senders (ECRECOVER) before starting the timer so the
-        // cost is excluded from the block-execution metric.  Both the warmer and the
-        // executor need this data, so computing it once here also eliminates the
-        // duplicate rayon work that previously occurred concurrently in both threads.
-        let txs_with_sender = block
-            .body
-            .get_transactions_with_sender(&NativeCrypto)
-            .map_err(|e| ChainError::Custom(format!("Failed to recover tx senders: {e}")))?;
-
         let start_instant = Instant::now();
 
         let chain_config = self.storage.get_chain_config();
@@ -463,8 +454,20 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
-        // Borrow as a slice so both closures can capture the same reference (slices are Copy).
-        let txs_slice: &[(&Transaction, Address)] = &txs_with_sender;
+
+        // Pre-compute transaction senders once — avoids duplicate parallel ECRECOVER
+        // in both the warmer thread and the execution thread.
+        let tx_senders: Vec<Address> = {
+            use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+            block
+                .body
+                .transactions
+                .par_iter()
+                .map(|tx| tx.sender(&NativeCrypto))
+                .collect::<Result<Vec<Address>, _>>()
+                .map_err(|e| ChainError::Custom(format!("Couldn't recover tx sender: {e}")))?
+        };
+        let tx_senders_ref = &tx_senders;
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
@@ -487,9 +490,9 @@ impl Blockchain {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
                             if let Err(e) = LEVM::warm_block(
                                 block,
-                                txs_slice,
                                 caching_store,
                                 vm_type,
+                                tx_senders_ref,
                                 &NativeCrypto,
                                 cancelled_ref,
                             ) {
@@ -506,7 +509,8 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let result = vm.execute_block_pipeline(block, txs_slice, tx, queue_length_ref, bal);
+                        let result =
+                            vm.execute_block_pipeline(block, tx, queue_length_ref, bal, tx_senders_ref);
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 

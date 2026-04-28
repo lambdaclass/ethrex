@@ -106,23 +106,23 @@ impl Evm {
         skip_all,
         fields(namespace = "block_execution")
     )]
-    pub fn execute_block_pipeline<'blk>(
+    pub fn execute_block_pipeline(
         &mut self,
-        block: &'blk Block,
-        txs_with_sender: &[(&'blk Transaction, Address)],
+        block: &Block,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         bal: Option<&BlockAccessList>,
+        tx_senders: &[Address],
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(
             block,
-            txs_with_sender,
             &mut self.db,
             self.vm_type,
             merkleizer,
             queue_length,
             self.crypto.as_ref(),
             bal,
+            tx_senders,
         )
     }
 

@@ -251,18 +251,26 @@ impl LEVM {
         ))
     }
 
-    pub fn execute_block_pipeline<'blk>(
-        block: &'blk Block,
-        txs_with_sender: &[(&'blk Transaction, Address)],
+    pub fn execute_block_pipeline(
+        block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
+        tx_senders: &[Address],
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+
+        // Build (tx, sender) pairs from pre-computed senders — avoids redundant ECRECOVER.
+        let transactions_with_sender: Vec<(&Transaction, Address)> = block
+            .body
+            .transactions
+            .iter()
+            .zip(tx_senders.iter().copied())
+            .collect();
 
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
@@ -286,7 +294,7 @@ impl LEVM {
 
             let parallel_result = Self::execute_block_parallel(
                 block,
-                txs_with_sender,
+                &transactions_with_sender,
                 db,
                 vm_type,
                 bal,
@@ -422,11 +430,6 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
-        // Pre-compute per-block constants once to avoid N redundant computations per tx.
-        let block_evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-        let block_base_blob_fee =
-            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &block_evm_config)?;
-
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
@@ -441,7 +444,7 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx_idx, (tx, tx_sender)) in txs_with_sender.iter().copied().enumerate() {
+        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
@@ -475,8 +478,6 @@ impl LEVM {
                 &mut shared_stack_pool,
                 false,
                 crypto,
-                block_evm_config.clone(),
-                block_base_blob_fee,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -897,12 +898,6 @@ impl LEVM {
         let header = &block.header;
         let n_txs = txs_with_sender.len();
 
-        // Pre-compute per-block constants once; cloned cheaply into each parallel task.
-        let chain_config = db.store.get_chain_config()?;
-        let par_evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
-        let par_base_blob_fee =
-            get_base_fee_per_blob_gas(header.excess_blob_gas, &par_evm_config)?;
-
         // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
         //    This covers ALL state changes: system calls, txs, withdrawals.
         let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
@@ -998,8 +993,6 @@ impl LEVM {
                     &mut stack_pool,
                     false,
                     crypto,
-                    par_evm_config.clone(),
-                    par_base_blob_fee,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1827,31 +1820,25 @@ impl LEVM {
     /// be used by the sequential execution phase.
     pub fn warm_block(
         block: &Block,
-        txs_with_sender: &[(&Transaction, Address)],
         store: Arc<dyn Database>,
         vm_type: VMType,
+        tx_senders: &[Address],
         crypto: &dyn Crypto,
         cancelled: &AtomicBool,
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        // Pre-compute per-block constants once — shared read-only across parallel workers.
-        let chain_config = db.store.get_chain_config()?;
-        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
-        let base_blob_fee =
-            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
-
-        // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: FxHashMap<Address, Vec<(&Transaction, Address)>> =
-            FxHashMap::default();
-        for &(tx, sender) in txs_with_sender {
-            sender_groups.entry(sender).or_default().push((tx, sender));
+        // Group transactions by sender for sequential execution within groups.
+        // Use pre-computed senders to avoid redundant ECRECOVER work.
+        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
+        for (tx, &sender) in block.body.transactions.iter().zip(tx_senders.iter()) {
+            sender_groups.entry(sender).or_default().push(tx);
         }
 
         // Parallel across sender groups, sequential within each group
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (_sender, txs)| {
+            |stack_pool, (sender, txs)| {
                 if cancelled.load(Ordering::Relaxed) {
                     return;
                 }
@@ -1859,7 +1846,7 @@ impl LEVM {
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 // Execute transactions sequentially within sender group
                 // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                for (tx, sender) in txs {
+                for tx in txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
                         sender,
@@ -1869,8 +1856,6 @@ impl LEVM {
                         stack_pool,
                         true,
                         crypto,
-                        evm_config.clone(),
-                        base_blob_fee,
                     );
                 }
             },
@@ -1986,8 +1971,6 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
-        evm_config: EVMConfig,
-        base_blob_fee: U256,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = calculate_gas_price_for_tx(
@@ -1996,10 +1979,12 @@ impl LEVM {
             &vm_type,
         )?;
 
+        let block_excess_blob_gas = block_header.excess_blob_gas;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
-            config: evm_config,
+            config,
             block_number: block_header.number,
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp,
@@ -2010,9 +1995,9 @@ impl LEVM {
                 .unwrap_or(U256::zero()),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: base_blob_fee,
+            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
-            block_excess_blob_gas: block_header.excess_blob_gas,
+            block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
             tx_blob_hashes: tx.blob_versioned_hashes(),
             tx_max_priority_fee_per_gas: tx.max_priority_fee().map(U256::from),
@@ -2040,18 +2025,13 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
-        let chain_config = db.store.get_chain_config()?;
-        let evm_config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-        let base_blob_fee =
-            get_base_fee_per_blob_gas(block_header.excess_blob_gas, &evm_config)?;
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, evm_config, base_blob_fee)?;
+        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool, and accepts pre-computed
-    // per-block constants to avoid redundant work inside the hot loop.
+    // Like execute_tx but allows reusing the stack pool
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
@@ -2065,10 +2045,8 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
-        evm_config: EVMConfig,
-        base_blob_fee: U256,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type, evm_config, base_blob_fee)?;
+        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
