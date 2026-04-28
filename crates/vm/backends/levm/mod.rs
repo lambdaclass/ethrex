@@ -31,8 +31,8 @@ use ethrex_levm::EVMConfig;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
-    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
-    TX_MAX_GAS_LIMIT_AMSTERDAM,
+    POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, SYS_CALL_GAS_LIMIT_AMSTERDAM,
+    TX_BASE_COST, TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::Database;
 use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
@@ -2526,11 +2526,22 @@ pub fn generic_system_contract_levm(
         .current_accounts_state
         .get(&block_header.coinbase)
         .cloned();
+    // EIPs 2935, 4788, 7002 and 7251 give system calls a fixed 30M execution budget
+    // and they do not pay intrinsic gas. From Amsterdam, EIP-8037 (ethereum/EIPs#11573)
+    // additionally reserves `STATE_BYTES_PER_STORAGE_SET × CPSB × SYSTEM_MAX_SSTORES_PER_CALL`
+    // for state-creation in `state_gas_reservoir`, lifting the total budget to
+    // `SYS_CALL_GAS_LIMIT_AMSTERDAM`. The reservoir split is performed in
+    // `prepare_execution` keyed on `is_system_call`.
+    let sys_call_gas_limit = if config.fork >= Fork::Amsterdam {
+        SYS_CALL_GAS_LIMIT_AMSTERDAM
+    } else {
+        SYS_CALL_GAS_LIMIT
+    };
     let env = Environment {
         origin: system_address,
-        // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
-        // So we add the base cost that will be taken in the execution.
-        gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
+        // We add TX_BASE_COST because intrinsic gas (which includes it) is consumed
+        // during execution.
+        gas_limit: sys_call_gas_limit + TX_BASE_COST,
         block_number: block_header.number,
         coinbase: block_header.coinbase,
         timestamp: block_header.timestamp,

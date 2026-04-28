@@ -164,22 +164,20 @@ pub const CREATE_BASE_COST: u64 = 32000;
 // EIP-8037: Multidimensional gas for state creation (Amsterdam only)
 pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
-pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
-pub const STATE_BYTES_PER_AUTH_ONLY: u64 = 23; // auth-specific delta when authority pre-existed (downgrade)
+pub const STATE_BYTES_PER_AUTH_BASE: u64 = 23;
 
-// EIP-8037: Dynamic cost_per_state_byte formula constants (execution-specs#2687)
-pub const BLOCKS_PER_YEAR: u64 = 2_628_000;
-pub const TARGET_STATE_GROWTH_PER_YEAR: u64 = 100 * (1u64 << 30); // 100 GiB
-pub const CPSB_SIGNIFICANT_BITS: u32 = 5;
-pub const CPSB_OFFSET: u64 = 9578;
+// EIP-8037: Per-system-call upper bound on new storage slots written. Matches
+// MAX_WITHDRAWAL_REQUESTS_PER_BLOCK (EIP-7002), the largest per-block bound across
+// the existing system contracts.
+pub const SYSTEM_MAX_SSTORES_PER_CALL: u64 = 16;
 
-/// Compute cost_per_state_byte from the block gas limit (EIP-8037, execution-specs#2687).
+/// Cost per state byte for EIP-8037 (ethereum/EIPs#11573).
 ///
-/// TEMPORARY for bal-devnet-4: returns the fixed value 1174 used by bal-devnet-3
-/// regardless of `block_gas_limit`. The dynamic formula (BLOCKS_PER_YEAR /
-/// TARGET_STATE_GROWTH_PER_YEAR / CPSB_SIGNIFICANT_BITS / CPSB_OFFSET) is preserved
-/// in the consts above so this commit can be reverted with a single `git revert` to
-/// restore the formula body. See execution-specs#2687.
+/// Pinned at 1174, the value derived from a 100 GiB/year state-growth target at a
+/// 96M-gas reference block limit. The original draft computed this dynamically from
+/// the block gas limit; PR 11573 collapses that to a single fixed constant, so
+/// `block_gas_limit` is no longer an input. The argument is retained to keep call
+/// sites stable; if a future EIP re-derives CPSB, change the body.
 pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
     1174
 }
