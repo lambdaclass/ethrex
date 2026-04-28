@@ -450,8 +450,8 @@ pub struct VM<'a> {
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Build dynamically according to the given fork config.
-    pub(crate) opcode_table: [OpCodeFn; 256],
+    /// A reference to a per-fork static table; avoids copying 2 KB per transaction.
+    pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
 }
@@ -648,7 +648,7 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1);
+            self.advance_pc(1)?;
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();

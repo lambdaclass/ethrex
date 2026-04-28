@@ -401,9 +401,10 @@ impl OpCodeFn {
 }
 
 impl<'a> VM<'a> {
-    /// Setups the opcode lookup function pointer table, configured according the given fork.
+    /// Returns a reference to the per-fork static opcode dispatch table.
     ///
-    /// This is faster than a conventional match.
+    /// Using a static reference avoids copying 2 KB (256 × 8-byte fn pointers)
+    /// on every VM::new call, which happens once per transaction.
     pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
         if fork >= Fork::Amsterdam {
             &OPCODE_TABLE_AMSTERDAM
@@ -626,9 +627,10 @@ impl<'a> VM<'a> {
     }
 }
 
+
 // Pre-computed static opcode dispatch tables — one per fork bracket.
-// Initialized at program start from the const fn builders above,
-// so VM::new() can take a reference instead of copying 2KB per transaction.
+// Initialized at program start from the const fn builders, so VM::new()
+// takes a reference instead of copying 2 KB per transaction.
 static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
     VM::<'static>::build_opcode_table_pre_shanghai();
 static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] =
