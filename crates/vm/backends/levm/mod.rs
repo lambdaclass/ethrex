@@ -422,6 +422,13 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Pre-compute per-block constants to avoid redundant computation per transaction.
+        // EVMConfig (fork detection) and base_blob_fee_per_gas (fake_exponential) are
+        // identical for all transactions in the same block.
+        let block_evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let block_base_blob_fee =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &block_evm_config)?;
+
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
         let mut receipts = Vec::new();
@@ -470,6 +477,8 @@ impl LEVM {
                 &mut shared_stack_pool,
                 false,
                 crypto,
+                block_evm_config,
+                block_base_blob_fee,
             )?;
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -890,6 +899,12 @@ impl LEVM {
         let header = &block.header;
         let n_txs = txs_with_sender.len();
 
+        // Pre-compute per-block constants once for all parallel tx executions.
+        let chain_config = db.store.get_chain_config()?;
+        let block_evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let block_base_blob_fee =
+            get_base_fee_per_blob_gas(header.excess_blob_gas, &block_evm_config)?;
+
         // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
         //    This covers ALL state changes: system calls, txs, withdrawals.
         let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
@@ -985,6 +1000,8 @@ impl LEVM {
                     &mut stack_pool,
                     false,
                     crypto,
+                    block_evm_config,
+                    block_base_blob_fee,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1820,6 +1837,12 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
+        // Pre-compute per-block constants once for all parallel tx executions.
+        let chain_config = db.store.get_chain_config()?;
+        let block_evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let block_base_blob_fee =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &block_evm_config)?;
+
         // Group transactions by sender for sequential execution within groups
         let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
         for (tx, sender) in txs_with_sender {
@@ -1847,6 +1870,8 @@ impl LEVM {
                         stack_pool,
                         true,
                         crypto,
+                        block_evm_config,
+                        block_base_blob_fee,
                     );
                 }
             },
@@ -1962,6 +1987,8 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &GeneralizedDatabase,
         vm_type: VMType,
+        evm_config: EVMConfig,
+        base_blob_fee_per_gas: U256,
     ) -> Result<Environment, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let gas_price: U256 = calculate_gas_price_for_tx(
@@ -1971,11 +1998,10 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
-            config,
+            config: evm_config,
             block_number: block_header.number,
             coinbase: block_header.coinbase,
             timestamp: block_header.timestamp,
@@ -1986,7 +2012,7 @@ impl LEVM {
                 .unwrap_or(U256::zero()),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+            base_blob_fee_per_gas,
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
@@ -2016,13 +2042,25 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<ExecutionReport, EvmError> {
-        let env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let chain_config = db.store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block_header.excess_blob_gas, &evm_config)?;
+        let env = Self::setup_env(
+            tx,
+            tx_sender,
+            block_header,
+            db,
+            vm_type,
+            evm_config,
+            base_blob_fee_per_gas,
+        )?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool
+    // Like execute_tx but allows reusing the stack pool and accepts pre-computed per-block values
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
@@ -2036,8 +2074,18 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
+        evm_config: EVMConfig,
+        base_blob_fee_per_gas: U256,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env = Self::setup_env(
+            tx,
+            tx_sender,
+            block_header,
+            db,
+            vm_type,
+            evm_config,
+            base_blob_fee_per_gas,
+        )?;
         env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
