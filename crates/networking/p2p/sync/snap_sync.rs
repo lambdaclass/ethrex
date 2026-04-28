@@ -407,13 +407,9 @@ pub async fn snap_sync(
                 )
                 .await?;
             }
-            // heal_state_trie_wrap returns false if we ran out of time before
-            // fully healing the trie. On chains with short peer retention
-            // (BSC: ~57s), heal almost always stales out before completing;
-            // skipping storage ranges in that case starves it entirely. The
-            // storage_root map is updated by heal as it progresses, so even
-            // a partial heal leaves storage ranges with usable data.
-            let _heal_done = heal_state_trie_wrap(
+            // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
+            // We just need to update the pivot and start again
+            if !heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
@@ -422,7 +418,10 @@ pub async fn snap_sync(
                 &mut storage_accounts,
                 &mut code_hash_collector,
             )
-            .await?;
+            .await?
+            {
+                continue;
+            };
 
             info!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
