@@ -24,7 +24,7 @@ use crate::{
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
-        message::EthCapVersion,
+        message::{EthCapVersion, SnapCapVersion},
         p2p::{
             self, Capability, DisconnectMessage, DisconnectReason, PingMessage, PongMessage,
             SUPPORTED_ETH_CAPABILITIES, SUPPORTED_SNAP_CAPABILITIES,
@@ -287,16 +287,23 @@ pub struct PeerConnectionServer {
 impl PeerConnectionServer {
     #[started]
     async fn started(&mut self, ctx: &Context<Self>) {
-        // Set a default eth version that we can update after we negotiate peer capabilities
-        // This eth version will only be used to encode & decode the initial `Hello` messages.
+        // Set a default eth/snap version that we can update after we negotiate peer capabilities.
+        // These versions will only be used to encode & decode the initial `Hello` messages.
         let eth_version = Arc::new(RwLock::new(EthCapVersion::default()));
+        let snap_version = Arc::new(RwLock::new(SnapCapVersion::default()));
         // Take ownership of the state, replacing with HandshakeFailed as placeholder
         let state = std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed);
-        match handshake::perform(state, eth_version.clone()).await {
+        match handshake::perform(state, eth_version.clone(), snap_version.clone()).await {
             Ok((mut established_state, stream)) => {
                 trace!(peer=%established_state.node, "Starting RLPx connection");
-                if let Err(reason) =
-                    initialize_connection(ctx, &mut established_state, stream, eth_version).await
+                if let Err(reason) = initialize_connection(
+                    ctx,
+                    &mut established_state,
+                    stream,
+                    eth_version,
+                    snap_version,
+                )
+                .await
                 {
                     match &reason {
                         PeerConnectionError::NoMatchingCapabilities
@@ -648,6 +655,7 @@ async fn initialize_connection<S>(
     state: &mut Established,
     mut stream: S,
     eth_version: Arc<RwLock<EthCapVersion>>,
+    snap_version: Arc<RwLock<SnapCapVersion>>,
 ) -> Result<(), PeerConnectionError>
 where
     S: Unpin + Send + Stream<Item = Result<Message, PeerConnectionError>> + 'static,
@@ -668,6 +676,15 @@ where
     *eth_version
         .write()
         .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = version;
+
+    // Update snap capability version to the negotiated version
+    let snap_v = match &state.negotiated_snap_capability {
+        Some(cap) if cap == &Capability::snap(2) => SnapCapVersion::V2,
+        _ => SnapCapVersion::V1,
+    };
+    *snap_version
+        .write()
+        .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = snap_v;
 
     init_capabilities(state, &mut stream).await?;
 

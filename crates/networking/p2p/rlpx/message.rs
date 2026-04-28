@@ -3,8 +3,8 @@ use ethrex_rlp::error::{RLPDecodeError, RLPEncodeError};
 use std::fmt::Display;
 
 use crate::rlpx::snap::{
-    AccountRange, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges, GetTrieNodes,
-    StorageRanges, TrieNodes,
+    AccountRange, BlockAccessLists, ByteCodes, GetAccountRange, GetBlockAccessLists, GetByteCodes,
+    GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
 };
 
 use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
@@ -35,6 +35,13 @@ const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
 
+/// snap/2 max message id (offset-relative) is 0x09. The snap_capability_offset for
+/// each eth version + 0x09 must be strictly less than that eth version's
+/// based_capability_offset. Citation: constants above.
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_68 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_68);
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_69 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_69);
+const _: () = assert!(SNAP_CAPABILITY_OFFSET_ETH_70 + 0x09 < BASED_CAPABILITY_OFFSET_ETH_70);
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
     #[default]
@@ -61,6 +68,28 @@ impl EthCapVersion {
             EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
+        }
+    }
+}
+
+/// Negotiated snap sub-protocol version for a connection.
+///
+/// Note: `SnapCapVersion` does NOT carry a `snap_capability_offset` method.
+/// The base offset depends only on the eth version and stays on `EthCapVersion`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SnapCapVersion {
+    #[default]
+    V1,
+    V2,
+}
+
+impl SnapCapVersion {
+    /// Valid local snap message codes (offset removed) for this version.
+    /// Used in `Message::decode` to reject cross-version codes.
+    pub const fn valid_msg_codes(&self) -> &'static [u8] {
+        match self {
+            SnapCapVersion::V1 => &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07],
+            SnapCapVersion::V2 => &[0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x08, 0x09],
         }
     }
 }
@@ -108,6 +137,9 @@ pub enum Message {
     ByteCodes(ByteCodes),
     GetTrieNodes(GetTrieNodes),
     TrieNodes(TrieNodes),
+    // snap/2 capability (EIP-8189)
+    GetBlockAccessLists(GetBlockAccessLists),
+    BlockAccessLists(BlockAccessLists),
     // based capability
     #[cfg(feature = "l2")]
     L2(messages::L2Message),
@@ -165,6 +197,12 @@ impl Message {
             Message::ByteCodes(_) => eth_version.snap_capability_offset() + ByteCodes::CODE,
             Message::GetTrieNodes(_) => eth_version.snap_capability_offset() + GetTrieNodes::CODE,
             Message::TrieNodes(_) => eth_version.snap_capability_offset() + TrieNodes::CODE,
+            Message::GetBlockAccessLists(_) => {
+                eth_version.snap_capability_offset() + GetBlockAccessLists::CODE
+            }
+            Message::BlockAccessLists(_) => {
+                eth_version.snap_capability_offset() + BlockAccessLists::CODE
+            }
 
             #[cfg(feature = "l2")]
             // based capability
@@ -182,6 +220,7 @@ impl Message {
         msg_id: u8,
         data: &[u8],
         eth_version: EthCapVersion,
+        snap_version: SnapCapVersion,
     ) -> Result<Message, RLPDecodeError> {
         if msg_id < eth_version.eth_capability_offset() {
             match msg_id {
@@ -245,21 +284,49 @@ impl Message {
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
-            // snap capability
-            match msg_id - eth_version.snap_capability_offset() {
-                GetAccountRange::CODE => {
-                    Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
-                }
-                AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
-                GetStorageRanges::CODE => {
-                    Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
-                }
-                StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
-                GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
-                ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
-                GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
-                TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
-                _ => Err(RLPDecodeError::MalformedData),
+            // snap capability — dispatch depends on negotiated snap version
+            let local_code = msg_id - eth_version.snap_capability_offset();
+            match snap_version {
+                SnapCapVersion::V1 => match local_code {
+                    GetAccountRange::CODE => {
+                        Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
+                    }
+                    AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
+                    GetStorageRanges::CODE => {
+                        Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
+                    }
+                    StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
+                    GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
+                    ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+                    GetTrieNodes::CODE => Ok(Message::GetTrieNodes(GetTrieNodes::decode(data)?)),
+                    TrieNodes::CODE => Ok(Message::TrieNodes(TrieNodes::decode(data)?)),
+                    // snap/2-only codes are invalid under snap/1
+                    GetBlockAccessLists::CODE | BlockAccessLists::CODE => {
+                        Err(RLPDecodeError::MalformedData)
+                    }
+                    _ => Err(RLPDecodeError::MalformedData),
+                },
+                SnapCapVersion::V2 => match local_code {
+                    GetAccountRange::CODE => {
+                        Ok(Message::GetAccountRange(GetAccountRange::decode(data)?))
+                    }
+                    AccountRange::CODE => Ok(Message::AccountRange(AccountRange::decode(data)?)),
+                    GetStorageRanges::CODE => {
+                        Ok(Message::GetStorageRanges(GetStorageRanges::decode(data)?))
+                    }
+                    StorageRanges::CODE => Ok(Message::StorageRanges(StorageRanges::decode(data)?)),
+                    GetByteCodes::CODE => Ok(Message::GetByteCodes(GetByteCodes::decode(data)?)),
+                    ByteCodes::CODE => Ok(Message::ByteCodes(ByteCodes::decode(data)?)),
+                    // snap/1-only codes are rejected under snap/2
+                    GetTrieNodes::CODE | TrieNodes::CODE => Err(RLPDecodeError::MalformedData),
+                    GetBlockAccessLists::CODE => Ok(Message::GetBlockAccessLists(
+                        GetBlockAccessLists::decode(data)?,
+                    )),
+                    BlockAccessLists::CODE => {
+                        Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
+                    }
+                    _ => Err(RLPDecodeError::MalformedData),
+                },
             }
         } else {
             // based capability
@@ -287,7 +354,27 @@ impl Message {
         &self,
         buf: &mut dyn BufMut,
         eth_version: EthCapVersion,
+        snap_version: SnapCapVersion,
     ) -> Result<(), RLPEncodeError> {
+        // Reject cross-version snap messages at encode time.
+        match (self, snap_version) {
+            (Message::GetTrieNodes(_) | Message::TrieNodes(_), SnapCapVersion::V2) => {
+                return Err(RLPEncodeError::Custom(
+                    "snap message wrong version: GetTrieNodes/TrieNodes not valid in snap/2"
+                        .to_string(),
+                ));
+            }
+            (
+                Message::GetBlockAccessLists(_) | Message::BlockAccessLists(_),
+                SnapCapVersion::V1,
+            ) => {
+                return Err(RLPEncodeError::Custom(
+                    "snap message wrong version: GetBlockAccessLists/BlockAccessLists not valid in snap/1"
+                        .to_string(),
+                ));
+            }
+            _ => {}
+        }
         self.code(eth_version).encode(buf);
         match self {
             Message::Hello(msg) => msg.encode(buf),
@@ -320,6 +407,8 @@ impl Message {
             Message::ByteCodes(msg) => msg.encode(buf),
             Message::GetTrieNodes(msg) => msg.encode(buf),
             Message::TrieNodes(msg) => msg.encode(buf),
+            Message::GetBlockAccessLists(msg) => msg.encode(buf),
+            Message::BlockAccessLists(msg) => msg.encode(buf),
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(msg) => msg.encode(buf),
@@ -350,6 +439,8 @@ impl Message {
             Message::StorageRanges(message) => Some(message.id),
             Message::ByteCodes(message) => Some(message.id),
             Message::TrieNodes(message) => Some(message.id),
+            Message::GetBlockAccessLists(message) => Some(message.id),
+            Message::BlockAccessLists(message) => Some(message.id),
             // The rest of the message types does not have a request id.
             Message::Hello(_)
             | Message::Disconnect(_)
@@ -401,6 +492,8 @@ impl Message {
             Message::ByteCodes(_) => "ByteCodes",
             Message::GetTrieNodes(_) => "GetTrieNodes",
             Message::TrieNodes(_) => "TrieNodes",
+            Message::GetBlockAccessLists(_) => "snap:GetBlockAccessLists",
+            Message::BlockAccessLists(_) => "snap:BlockAccessLists",
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::NewBlock(_) => "L2NewBlock",
@@ -443,6 +536,8 @@ impl Display for Message {
             Message::ByteCodes(_) => "snap:ByteCodes".fmt(f),
             Message::GetTrieNodes(_) => "snap:GetTrieNodes".fmt(f),
             Message::TrieNodes(_) => "snap:TrieNodes".fmt(f),
+            Message::GetBlockAccessLists(_) => "snap:GetBlockAccessLists".fmt(f),
+            Message::BlockAccessLists(_) => "snap:BlockAccessLists".fmt(f),
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::BatchSealed(_) => "based:BatchSealed".fmt(f),

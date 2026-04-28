@@ -354,7 +354,14 @@ impl Blockchain {
     fn execute_block(
         &self,
         block: &Block,
-    ) -> Result<(BlockExecutionResult, Vec<AccountUpdate>), ChainError> {
+    ) -> Result<
+        (
+            BlockExecutionResult,
+            Vec<AccountUpdate>,
+            Option<BlockAccessList>,
+        ),
+        ChainError,
+    > {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -386,7 +393,7 @@ impl Blockchain {
             )?;
         }
 
-        Ok((execution_result, account_updates))
+        Ok((execution_result, account_updates, bal))
     }
 
     /// Generates Block Access List by re-executing a block.
@@ -1131,14 +1138,15 @@ impl Blockchain {
         collapse_root_node(&self.storage, parent_header.state_root, prefix, root)
     }
 
-    /// Executes a block from a given vm instance an does not clear its state
+    /// Executes a block from a given vm instance and does not clear its state.
+    /// Returns the execution result and the produced BAL (validated), if any.
     fn execute_block_from_state(
         &self,
         parent_header: &BlockHeader,
         block: &Block,
         chain_config: &ChainConfig,
         vm: &mut Evm,
-    ) -> Result<BlockExecutionResult, ChainError> {
+    ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), ChainError> {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
@@ -1155,7 +1163,7 @@ impl Blockchain {
             )?;
         }
 
-        Ok(execution_result)
+        Ok((execution_result, bal))
     }
 
     pub async fn generate_witness_for_blocks(
@@ -1353,7 +1361,8 @@ impl Blockchain {
             // We cannot ensure that the users of this function have the necessary
             // state stored, so in order for it to not assume anything, we update
             // the storage with the new state after re-execution
-            self.store_block(block.clone(), account_updates_list, execution_result)?;
+            // BAL is not available in the witness re-execution path (pre-dates BAL production).
+            self.store_block(block.clone(), None, account_updates_list, execution_result)?;
 
             for (address, (witness, _storage_trie)) in storage_tries_after_update {
                 let mut witness = witness.lock().map_err(|_| {
@@ -1728,6 +1737,11 @@ impl Blockchain {
         })
     }
 
+    /// Persists a fully-executed block and its state to storage.
+    ///
+    /// Callers are responsible for validating the BAL hash before invoking this
+    /// function (e.g. via `validate_block_access_list_hash`). No re-validation
+    /// is performed here.
     #[instrument(
         level = "trace",
         name = "Block DB update",
@@ -1737,16 +1751,24 @@ impl Blockchain {
     pub fn store_block(
         &self,
         block: Block,
+        bal: Option<&BlockAccessList>,
         account_updates_list: AccountUpdatesList,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
         // Check state root matches the one in block header
         validate_state_root(&block.header, account_updates_list.state_trie_hash)?;
 
+        let block_hash = block.hash();
+
+        // Persist BAL for post-Amsterdam blocks (pre-Amsterdam: block_access_list_hash == None).
+        if let Some(bal) = bal {
+            self.storage.store_block_access_list(block_hash, bal)?;
+        }
+
         let update_batch = UpdateBatch {
             account_updates: account_updates_list.state_updates,
             storage_updates: account_updates_list.storage_updates,
-            receipts: vec![(block.hash(), execution_result.receipts)],
+            receipts: vec![(block_hash, execution_result.receipts)],
             blocks: vec![block],
             code_updates: account_updates_list.code_updates,
             batch_mode: false,
@@ -1759,7 +1781,7 @@ impl Blockchain {
 
     pub fn add_block(&self, block: Block) -> Result<(), ChainError> {
         let since = Instant::now();
-        let (res, updates) = self.execute_block(&block)?;
+        let (res, updates, produced_bal) = self.execute_block(&block)?;
         let executed = Instant::now();
 
         // Apply the account updates over the last block's state and compute the new state root
@@ -1776,7 +1798,7 @@ impl Blockchain {
         );
 
         let merkleized = Instant::now();
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, produced_bal.as_ref(), account_updates_list, res);
         let stored = Instant::now();
 
         if self.options.perf_logs_enabled {
@@ -1896,7 +1918,7 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let result = self.store_block(block, account_updates_list, res);
+        let result = self.store_block(block, produced_bal.as_ref(), account_updates_list, res);
 
         let stored = Instant::now();
 
@@ -2185,6 +2207,9 @@ impl Blockchain {
 
         let blocks_len = blocks.len();
         let mut all_receipts: Vec<(BlockHash, Vec<Receipt>)> = Vec::with_capacity(blocks_len);
+        // Collect produced BALs keyed by block hash for persistence after state update.
+        // Validation has already happened inside execute_block_from_state.
+        let mut all_bals: Vec<(BlockHash, BlockAccessList)> = Vec::new();
         let mut total_gas_used = 0;
         let mut transactions_count = 0;
 
@@ -2210,7 +2235,7 @@ impl Blockchain {
                 blocks[i - 1].header.clone()
             };
 
-            let BlockExecutionResult { receipts, .. } = self
+            let (BlockExecutionResult { receipts, .. }, produced_bal) = self
                 .execute_block_from_state(&parent_header, block, &chain_config, &mut vm)
                 .map_err(|err| {
                     (
@@ -2222,10 +2247,16 @@ impl Blockchain {
                     )
                 })?;
             debug!("Executed block with hash {}", block.hash());
-            last_valid_hash = block.hash();
+            let block_hash = block.hash();
+            last_valid_hash = block_hash;
             total_gas_used += block.header.gas_used;
             transactions_count += block.body.transactions.len();
-            all_receipts.push((block.hash(), receipts));
+            all_receipts.push((block_hash, receipts));
+            // Persist BAL for post-Amsterdam blocks that produced one.
+            // Pre-Amsterdam blocks have block_access_list_hash == None and produced_bal == None.
+            if let Some(bal) = produced_bal {
+                all_bals.push((block_hash, bal));
+            }
 
             // Conversion is safe because EXECUTE_BATCH_SIZE=1024
             log_batch_progress(blocks_len as u32, i as u32);
@@ -2270,6 +2301,14 @@ impl Blockchain {
         self.storage
             .store_block_updates(update_batch)
             .map_err(|e| (e.into(), None))?;
+
+        // Persist BALs for all post-Amsterdam blocks in the batch.
+        // BAL hashes were already validated inside execute_block_from_state.
+        for (block_hash, bal) in &all_bals {
+            self.storage
+                .store_block_access_list(*block_hash, bal)
+                .map_err(|e| (ChainError::StoreError(e), None))?;
+        }
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {

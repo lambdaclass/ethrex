@@ -294,3 +294,142 @@ async fn batch_single_block_selfdestruct() {
         result.err()
     );
 }
+
+/// Load the execution-api genesis with Amsterdam activated at time 0,
+/// inject `sender` with a large balance, and return an in-memory store together
+/// with the chain id.
+async fn setup_amsterdam_store(sender: Address) -> (Store, u64) {
+    let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
+        .expect("Failed to open genesis file");
+    let reader = BufReader::new(file);
+    let mut genesis: ethrex_common::types::Genesis =
+        serde_json::from_reader(reader).expect("Failed to deserialize genesis file");
+
+    // Enable Amsterdam from genesis so every block carries a block_access_list_hash.
+    genesis.config.amsterdam_time = Some(0);
+
+    let chain_id = genesis.config.chain_id;
+
+    genesis.alloc.insert(
+        sender,
+        GenesisAccount {
+            balance: U256::from(10).pow(U256::from(20)),
+            code: Bytes::new(),
+            storage: Default::default(),
+            nonce: 0,
+        },
+    );
+
+    let mut store =
+        Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("Failed to add genesis state");
+
+    (store, chain_id)
+}
+
+/// Verifies that `add_blocks_in_batch` persists the BAL for every post-Amsterdam
+/// block, so that the snap/2 server can serve `GetBlockAccessLists` for them.
+///
+/// Flow:
+/// 1. Build two Amsterdam blocks on store A via the single-block path.
+/// 2. Re-import the same two blocks on store B via `add_blocks_in_batch`.
+/// 3. Assert `get_block_access_list` returns `Some` for each block on store B.
+#[tokio::test]
+async fn batch_import_persists_bal() {
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+
+    // --- Store A: build and validate blocks one by one ---
+    let (store_a, chain_id) = setup_amsterdam_store(sender).await;
+    let blockchain_a = Blockchain::default_with_store(store_a.clone());
+    let genesis_header = store_a.get_block_header(0).unwrap().unwrap();
+
+    // Tx for block 1: simple transfer to a fresh address.
+    let beneficiary = Address::from_low_u64_be(0xABCD);
+    let mut tx1 = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Call(beneficiary),
+        value: U256::from(1u64),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+    tx1.sign_inplace(&signer).await.unwrap();
+    blockchain_a.add_transaction_to_pool(tx1).await.unwrap();
+
+    let block1 = build_block(&store_a, &blockchain_a, &genesis_header).await;
+    // Amsterdam blocks must carry a BAL hash in their header.
+    assert!(
+        block1.header.block_access_list_hash.is_some(),
+        "block1 must have block_access_list_hash (Amsterdam)"
+    );
+    blockchain_a
+        .add_block(block1.clone())
+        .expect("block1 valid");
+    store_a
+        .forkchoice_update(vec![], 1, block1.hash(), None, None)
+        .await
+        .unwrap();
+    blockchain_a
+        .remove_block_transactions_from_pool(&block1)
+        .unwrap();
+
+    // Tx for block 2: another transfer.
+    let mut tx2 = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 1,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Call(beneficiary),
+        value: U256::from(1u64),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+    tx2.sign_inplace(&signer).await.unwrap();
+    blockchain_a.add_transaction_to_pool(tx2).await.unwrap();
+
+    let block2 = build_block(&store_a, &blockchain_a, &block1.header).await;
+    assert!(
+        block2.header.block_access_list_hash.is_some(),
+        "block2 must have block_access_list_hash (Amsterdam)"
+    );
+    blockchain_a
+        .add_block(block2.clone())
+        .expect("block2 valid");
+
+    // --- Store B: batch import and assert BAL persisted ---
+    let (store_b, _) = setup_amsterdam_store(sender).await;
+    let blockchain_b = Blockchain::default_with_store(store_b.clone());
+
+    let hash1 = block1.hash();
+    let hash2 = block2.hash();
+
+    blockchain_b
+        .add_blocks_in_batch(vec![block1, block2], CancellationToken::new())
+        .await
+        .expect("add_blocks_in_batch should succeed");
+
+    let bal1 = store_b
+        .get_block_access_list(hash1)
+        .expect("store lookup must not fail");
+    let bal2 = store_b
+        .get_block_access_list(hash2)
+        .expect("store lookup must not fail");
+
+    assert!(
+        bal1.is_some(),
+        "block1 BAL must be persisted after batch import"
+    );
+    assert!(
+        bal2.is_some(),
+        "block2 BAL must be persisted after batch import"
+    );
+}

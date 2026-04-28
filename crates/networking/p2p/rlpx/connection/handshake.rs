@@ -8,7 +8,7 @@ use crate::{
     rlpx::{
         connection::server::{ConnectionState, Established},
         error::PeerConnectionError,
-        message::EthCapVersion,
+        message::{EthCapVersion, SnapCapVersion},
         utils::{compress_pubkey, decompress_pubkey, ecdh_xchng, kdf, sha256, sha256_hmac},
     },
     types::Node,
@@ -61,6 +61,7 @@ pub(crate) struct LocalState {
 pub(crate) async fn perform(
     state: ConnectionState,
     eth_version: Arc<RwLock<EthCapVersion>>,
+    snap_version: Arc<RwLock<SnapCapVersion>>,
 ) -> Result<(Established, SplitStream<Framed<TcpStream, RLPxCodec>>), PeerConnectionError> {
     let (context, node, framed) = match state {
         ConnectionState::Initiator(Initiator { context, node }) => {
@@ -79,7 +80,13 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 keccak_hash([remote_state.nonce.0, local_state.nonce.0].concat());
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
+            let codec = RLPxCodec::new(
+                &local_state,
+                &remote_state,
+                hashed_nonces,
+                eth_version,
+                snap_version,
+            )?;
             trace!(peer=%node, "Completed handshake as initiator");
             (context, node, Framed::new(stream, codec))
         }
@@ -99,7 +106,13 @@ pub(crate) async fn perform(
             // keccak256(nonce || initiator-nonce)
             let hashed_nonces: [u8; 32] =
                 keccak_hash([local_state.nonce.0, remote_state.nonce.0].concat());
-            let codec = RLPxCodec::new(&local_state, &remote_state, hashed_nonces, eth_version)?;
+            let codec = RLPxCodec::new(
+                &local_state,
+                &remote_state,
+                hashed_nonces,
+                eth_version,
+                snap_version,
+            )?;
             let node = Node::new(
                 peer_addr.ip(),
                 peer_addr.port(),

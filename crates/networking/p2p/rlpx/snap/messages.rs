@@ -2,9 +2,29 @@
 //!
 //! This module contains the message types used in the snap sync protocol.
 //! Each message type implements RLPxMessage for encoding/decoding.
+//!
+//! # snap/2 wire layout decision (Task 2.0 — EIP-8189 §"BlockAccessLists")
+//!
+//! EIP-8189 does not mandate a specific encoding for unavailable (pruned or
+//! unknown) BAL slots in the response. The plan default is adopted:
+//!
+//!   `BlockAccessLists.bals: Vec<Option<BlockAccessList>>`
+//!
+//! Each slot corresponds positionally to the matching entry in the request's
+//! `block_hashes`. A `None` slot means the BAL is unavailable (block unknown
+//! or pruned). This preserves position correspondence and simplifies callers
+//! (they do not need to maintain separate "which slots were filled" metadata).
+//!
+//! On the wire, `None` is encoded as an RLP empty byte string (`0x80`) and
+//! `Some(bal)` is encoded as the RLP-encoded `BlockAccessList` list.
+//! Citation: EIP-8189 §"BlockAccessLists" response, implementation-defined
+//! for unavailable entries.
 
 use bytes::Bytes;
-use ethrex_common::{H256, U256, types::AccountState};
+use ethrex_common::{
+    H256, U256,
+    types::{AccountState, block_access_list::BlockAccessList},
+};
 
 // =============================================================================
 // REQUEST MESSAGES
@@ -109,6 +129,39 @@ pub struct TrieNodes {
     pub id: u64,
     /// Trie nodes
     pub nodes: Vec<Bytes>,
+}
+
+// =============================================================================
+// snap/2 REQUEST / RESPONSE MESSAGES (EIP-8189)
+// =============================================================================
+
+/// snap/2 request: fetch block access lists by block hash.
+///
+/// Code = 0x08 (offset-relative). Replaces `GetTrieNodes` (0x06) in snap/2.
+#[derive(Debug, Clone)]
+pub struct GetBlockAccessLists {
+    /// Request ID — the responding peer must mirror this value.
+    pub id: u64,
+    /// Ordered list of block hashes whose BALs are requested.
+    pub block_hashes: Vec<H256>,
+    /// Soft cap on the response size in bytes.
+    pub response_bytes: u64,
+}
+
+/// snap/2 response: block access lists corresponding to a `GetBlockAccessLists` request.
+///
+/// Code = 0x09 (offset-relative). Replaces `TrieNodes` (0x07) in snap/2.
+///
+/// Wire shape: `Vec<Option<BlockAccessList>>` — position-correspondent with
+/// the request's `block_hashes`. A `None` entry means the BAL is unavailable
+/// (block unknown or pruned). See module-level doc for the encoding decision.
+#[derive(Debug, Clone)]
+pub struct BlockAccessLists {
+    /// Request ID — mirrors the value from the request.
+    pub id: u64,
+    /// BALs in the same order as the request's `block_hashes`.
+    /// `None` = unavailable (block unknown or BAL pruned).
+    pub bals: Vec<Option<BlockAccessList>>,
 }
 
 // =============================================================================

@@ -932,6 +932,7 @@ impl L1Committer {
                     ))?;
                 checkpoint_blockchain.store_block(
                     potential_batch_block.clone(),
+                    None,
                     account_updates_list,
                     BlockExecutionResult {
                         receipts,

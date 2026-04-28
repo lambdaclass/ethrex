@@ -19,7 +19,8 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 3] = [
     Capability::eth(69),
     Capability::eth(70),
 ];
-pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+// Highest version first per devp2p preference rule.
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 2] = [Capability::snap(2), Capability::snap(1)];
 
 /// The version of the base P2P protocol we support.
 /// This is sent at the start of the Hello message instead of the capabilities list.
