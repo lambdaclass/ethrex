@@ -151,7 +151,7 @@ impl RpcExecutionWitness {
             ));
         }
 
-        // §Tolerance: skip headers that fail to decode, then pick parent by number.
+        // Skip headers that fail to decode, then pick parent by number.
         let initial_state_root = self
             .headers
             .iter()
@@ -165,8 +165,8 @@ impl RpcExecutionWitness {
                 ))
             })?;
 
-        // EIP-8025 §Tolerance: drop entries that don't decode. They can't be looked
-        // up by hash anyway; if execution needs them, the trie walk fails there.
+        // EIP-8025: drop entries that don't decode. They can't be looked up by
+        // hash anyway; if execution needs them, the trie walk fails there.
         // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L37-L42
         let nodes: BTreeMap<H256, Node> = self
             .state
@@ -320,8 +320,8 @@ impl GuestProgramState {
         value: ExecutionWitness,
         crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
-        // EIP-8025 §Completeness: headers must form a contiguous chain in list order
-        // (each `parent_hash` matches keccak of the previous header bytes). Reordered
+        // EIP-8025: headers must form a contiguous chain in list order (each
+        // `parent_hash` matches keccak of the previous header bytes). Reordered
         // or fragmented chains are invalid even if by-number lookup would resolve.
         // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
         let mut block_headers: BTreeMap<u64, BlockHeader> = BTreeMap::new();
@@ -594,7 +594,7 @@ impl GuestProgramState {
         Ok(self.chain_config)
     }
 
-    /// Retrieves bytecode by code hash. Errors if missing — EIP-8025 §Completeness.
+    /// Retrieves bytecode by code hash. Errors if missing — EIP-8025.
     ///
     /// Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L204-L212
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
@@ -610,6 +610,7 @@ impl GuestProgramState {
     }
 
     /// Code length by hash. Errors on miss, like `get_account_code`.
+    /// This is an optimized path for EXTCODESIZE opcode.
     pub fn get_code_metadata(
         &self,
         code_hash: H256,
