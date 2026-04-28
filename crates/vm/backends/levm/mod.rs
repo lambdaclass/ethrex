@@ -251,8 +251,9 @@ impl LEVM {
         ))
     }
 
-    pub fn execute_block_pipeline(
-        block: &Block,
+    pub fn execute_block_pipeline<'blk>(
+        block: &'blk Block,
+        txs_with_sender: &[(&'blk Transaction, Address)],
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         merkleizer: Sender<Vec<AccountUpdate>>,
@@ -262,14 +263,6 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
-
-        let transactions_with_sender =
-            block
-                .body
-                .get_transactions_with_sender(crypto)
-                .map_err(|error| {
-                    EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-                })?;
 
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
@@ -293,7 +286,7 @@ impl LEVM {
 
             let parallel_result = Self::execute_block_parallel(
                 block,
-                &transactions_with_sender,
+                txs_with_sender,
                 db,
                 vm_type,
                 bal,
@@ -443,7 +436,7 @@ impl LEVM {
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
-        for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+        for (tx_idx, (tx, tx_sender)) in txs_with_sender.iter().copied().enumerate() {
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
@@ -1818,6 +1811,7 @@ impl LEVM {
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
     pub fn warm_block(
+        txs_with_sender: &[(&Transaction, Address)],
         block: &Block,
         store: Arc<dyn Database>,
         vm_type: VMType,
@@ -1826,16 +1820,9 @@ impl LEVM {
     ) -> Result<(), EvmError> {
         let mut db = GeneralizedDatabase::new(store.clone());
 
-        let txs_with_sender = block
-            .body
-            .get_transactions_with_sender(crypto)
-            .map_err(|error| {
-                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
-            })?;
-
         // Group transactions by sender for sequential execution within groups
         let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
-        for (tx, sender) in &txs_with_sender {
+        for (tx, sender) in txs_with_sender {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 

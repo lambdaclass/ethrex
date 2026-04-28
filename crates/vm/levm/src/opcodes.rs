@@ -400,22 +400,31 @@ impl OpCodeFn {
     }
 }
 
+// Pre-computed static opcode tables — one per fork variant.
+// Avoids rebuilding the 256-entry function-pointer array on every VM::new() call.
+static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
+    VM::build_opcode_table_pre_shanghai();
+static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] = VM::build_opcode_table_pre_cancun();
+static OPCODE_TABLE_PRE_OSAKA: [OpCodeFn; 256] = VM::build_opcode_table_pre_osaka();
+static OPCODE_TABLE_OSAKA: [OpCodeFn; 256] = VM::build_opcode_table_osaka();
+static OPCODE_TABLE_AMSTERDAM: [OpCodeFn; 256] = VM::build_opcode_table_amsterdam();
+
 impl<'a> VM<'a> {
-    /// Setups the opcode lookup function pointer table, configured according the given fork.
+    /// Returns a reference to the static opcode lookup table for the given fork.
     ///
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn; 256] {
+    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
         if fork >= Fork::Amsterdam {
-            Self::build_opcode_table_amsterdam()
+            &OPCODE_TABLE_AMSTERDAM
         } else if fork >= Fork::Osaka {
-            Self::build_opcode_table_osaka()
+            &OPCODE_TABLE_OSAKA
         } else if fork >= Fork::Cancun {
-            Self::build_opcode_table_pre_osaka()
+            &OPCODE_TABLE_PRE_OSAKA
         } else if fork >= Fork::Shanghai {
-            Self::build_opcode_table_pre_cancun()
+            &OPCODE_TABLE_PRE_CANCUN
         } else {
-            Self::build_opcode_table_pre_shanghai()
+            &OPCODE_TABLE_PRE_SHANGHAI
         }
     }
 

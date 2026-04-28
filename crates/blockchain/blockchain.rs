@@ -453,6 +453,18 @@ impl Blockchain {
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
 
+        // Pre-compute transaction senders once before spawning threads.
+        // Both the warmer and executor need sender addresses; computing them here
+        // avoids duplicate parallel work and eliminates rayon pool contention
+        // between the two threads during their concurrent startup.
+        let txs_with_sender = block
+            .body
+            .get_transactions_with_sender(&NativeCrypto)
+            .map_err(|e| {
+                ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(e.to_string()))
+            })?;
+        let txs_with_sender_ref = txs_with_sender.as_slice();
+
         let cancelled = AtomicBool::new(false);
 
         let (execution_result, merkleization_result, warmer_duration) =
@@ -475,6 +487,7 @@ impl Blockchain {
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
                             if let Err(e) = LEVM::warm_block(
+                                txs_with_sender_ref,
                                 block,
                                 caching_store,
                                 vm_type,
@@ -494,7 +507,7 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
+                        let result = vm.execute_block_pipeline(block, txs_with_sender_ref, tx, queue_length_ref, bal);
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 
