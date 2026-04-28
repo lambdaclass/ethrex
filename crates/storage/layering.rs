@@ -192,15 +192,14 @@ impl TrieLayerCache {
             return;
         }
 
-        // Add keys to the global bloom filter
-        for (p, _) in &key_values {
-            self.bloom.insert(p.as_ref());
+        // Single pass: insert into bloom filter and build nodes map simultaneously,
+        // avoiding a second iteration over key_values.
+        let mut nodes =
+            FxHashMap::with_capacity_and_hasher(key_values.len(), FxBuildHasher::default());
+        for (path, value) in key_values {
+            self.bloom.insert(path.as_ref());
+            nodes.insert(path.into_vec(), value);
         }
-
-        let nodes: FxHashMap<Vec<u8>, Vec<u8>> = key_values
-            .into_iter()
-            .map(|(path, value)| (path.into_vec(), value))
-            .collect();
 
         self.last_id += 1;
         let entry = TrieLayer {
@@ -299,9 +298,10 @@ impl TrieWrapper {
 /// key-value namespace. Returns the path unchanged if `prefix` is `None` (state trie).
 pub fn apply_prefix(prefix: Option<H256>, path: Nibbles) -> Nibbles {
     match prefix {
-        Some(prefix) => Nibbles::from_bytes(prefix.as_bytes())
-            .append_new(17)
-            .concat(&path),
+        // Single allocation: expand prefix bytes to nibbles, append separator 17, then suffix.
+        // Replaces the three-allocation chain:
+        //   from_bytes(prefix) → append_new(17) → concat(&path)
+        Some(prefix) => Nibbles::from_prefix_with_suffix(prefix.as_bytes(), 17, path.as_ref()),
         None => path,
     }
 }

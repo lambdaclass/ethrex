@@ -457,6 +457,34 @@ impl Nibbles {
         Self::from_raw(bytes, true)
     }
 
+    /// Expands `prefix_bytes` to nibbles, appends `separator`, then appends `suffix` nibbles,
+    /// all in a single allocation.
+    ///
+    /// This is equivalent to:
+    /// ```ignore
+    /// Nibbles::from_raw(prefix_bytes, false).append_new(separator).concat(suffix)
+    /// ```
+    /// but avoids the two intermediate Vec allocations of that chain.
+    #[allow(unsafe_code)]
+    pub fn from_prefix_with_suffix(prefix_bytes: &[u8], separator: u8, suffix: &[u8]) -> Self {
+        let prefix_nibbles_len = prefix_bytes.len() * 2;
+        let total = prefix_nibbles_len + 1 + suffix.len();
+        let mut data = Vec::with_capacity(total);
+        // SAFETY: `expand_bytes_to_nibbles` writes exactly `prefix_bytes.len() * 2` bytes
+        // starting at `data.as_mut_ptr()`.  We allocated at least that much capacity above,
+        // and `set_len` exposes only the initialised range.
+        unsafe {
+            expand_bytes_to_nibbles(prefix_bytes, data.as_mut_ptr());
+            data.set_len(prefix_nibbles_len);
+        }
+        data.push(separator);
+        data.extend_from_slice(suffix);
+        Self {
+            data,
+            already_consumed: vec![],
+        }
+    }
+
     /// Splits incoming bytes into nibbles and appends the leaf flag (a 16 nibble at the end) if is_leaf is true
     pub fn from_raw(bytes: &[u8], is_leaf: bool) -> Self {
         let extra = usize::from(is_leaf);
