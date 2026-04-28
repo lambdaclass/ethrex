@@ -324,6 +324,16 @@ impl BlockBody {
         &self,
         crypto: &dyn Crypto,
     ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
+        // For small blocks, sequential recovery avoids rayon thread-pool
+        // scheduling overhead that dominates when there are few transactions.
+        const PAR_THRESHOLD: usize = 16;
+        if self.transactions.len() <= PAR_THRESHOLD {
+            return self
+                .transactions
+                .iter()
+                .map(|tx| Ok((tx, tx.sender(crypto)?)))
+                .collect();
+        }
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
         self.transactions
