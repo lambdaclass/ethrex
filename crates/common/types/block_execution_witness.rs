@@ -332,12 +332,12 @@ impl GuestProgramState {
                 prev_hash = None;
                 continue;
             };
-            if let Some(expected_parent) = prev_hash {
-                if header.parent_hash != expected_parent {
-                    return Err(GuestProgramStateError::Custom(
-                        "witness headers are not contiguous".to_string(),
-                    ));
-                }
+            if let Some(expected_parent) = prev_hash
+                && header.parent_hash != expected_parent
+            {
+                return Err(GuestProgramStateError::Custom(
+                    "witness headers are not contiguous".to_string(),
+                ));
             }
             prev_hash = Some(H256(crypto.keccak256(bytes)));
             block_headers.insert(header.number, header);
