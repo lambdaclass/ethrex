@@ -1,10 +1,12 @@
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
+use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, sync::Arc};
+use std::{fmt, num::NonZeroUsize, sync::{Arc, Mutex}};
 
-use ethrex_trie::{Nibbles, TrieDB, TrieError};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
 
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
@@ -15,6 +17,10 @@ struct TrieLayer {
     parent: H256,
     id: usize,
 }
+
+// LRU capacity for the decoded node cache. Covers the top ~12 levels of a 16-ary trie
+// (2^12 = 4096 nodes) while keeping memory overhead small (~1-2 MB).
+const DECODED_CACHE_CAP: usize = 4096;
 
 /// In-memory cache of trie diff-layers, one per block (or per batch of blocks in full sync).
 ///
@@ -50,6 +56,16 @@ pub struct TrieLayerCache {
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
     bloom: AtomicBloomFilter<FxBuildHasher>,
+    /// LRU cache of pre-decoded trie nodes, keyed by raw RLP bytes.
+    ///
+    /// Trie node decoding (RLP → `Node` struct) is pure and content-addressed:
+    /// the same raw bytes always produce the same node.  The upper levels of the
+    /// state trie (root, depth-1 branches, …) are read by every parallel shard
+    /// worker on every block; caching the decoded form here avoids 16× redundant
+    /// `Node::decode` calls per block for those hot nodes.
+    ///
+    /// Shared across all shard workers via `Arc<TrieLayerCache>`.
+    pub decoded_cache: Arc<Mutex<LruCache<Vec<u8>, Arc<Node>>>>,
 }
 
 impl fmt::Debug for TrieLayerCache {
@@ -71,6 +87,9 @@ impl Default for TrieLayerCache {
             layers: Default::default(),
             // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
             commit_threshold: 128,
+            decoded_cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(DECODED_CACHE_CAP).expect("non-zero"),
+            ))),
         }
     }
 }
@@ -85,6 +104,9 @@ impl TrieLayerCache {
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
+            decoded_cache: Arc::new(Mutex::new(LruCache::new(
+                NonZeroUsize::new(DECODED_CACHE_CAP).expect("non-zero"),
+            ))),
         }
     }
 
@@ -326,6 +348,29 @@ impl TrieDB for TrieWrapper {
             return Ok(Some(value));
         }
         self.db.get(key)
+    }
+
+    /// Returns a pre-decoded `Arc<Node>` for the given path, using an LRU cache of
+    /// decoded trie nodes shared across all parallel shard workers.
+    ///
+    /// The cache is keyed by raw RLP bytes (content-addressed), so entries are
+    /// immutable and never go stale.  Hot nodes at the upper levels of the state trie
+    /// (root, depth-1 branches, …) are decoded once and then served from the cache for
+    /// all subsequent shard workers in the same block — and across blocks.
+    fn get_decoded(&self, key: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
+        let Some(raw_rlp) = self.get(key)?.filter(|rlp| !rlp.is_empty()) else {
+            return Ok(None);
+        };
+        if let Ok(mut cache) = self.inner.decoded_cache.lock() {
+            if let Some(node) = cache.get(&raw_rlp) {
+                return Ok(Some(node.clone()));
+            }
+            let node = Arc::new(Node::decode(&raw_rlp)?);
+            cache.put(raw_rlp, node.clone());
+            return Ok(Some(node));
+        }
+        // Lock poisoned: decode without caching.
+        Ok(Some(Arc::new(Node::decode(&raw_rlp)?)))
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

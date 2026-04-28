@@ -60,11 +60,7 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(_) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
-                .transpose(),
+            NodeRef::Hash(_) => db.get_decoded(path),
         }
     }
 

@@ -20,7 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
 
@@ -334,13 +334,20 @@ impl BlockBody {
 }
 
 pub fn compute_transactions_root(transactions: &[Transaction], crypto: &dyn Crypto) -> H256 {
-    let iter = transactions.iter().enumerate().map(|(idx, tx)| {
-        // Key: RLP(tx_index)
-        // Value: tx_type || RLP(tx)  if tx_type != 0
-        //                   RLP(tx)  else
-        (idx.encode_to_vec(), tx.encode_canonical_to_vec())
-    });
-    Trie::compute_hash_from_unsorted_iter(iter, crypto)
+    // Pre-encode all transactions in parallel (pure CPU, no shared state), then build
+    // the trie sequentially from the collected pairs.  For large blocks the parallel
+    // encoding step dominates the serial trie-insert step.
+    let pairs: Vec<(Vec<u8>, Vec<u8>)> = transactions
+        .par_iter()
+        .enumerate()
+        .map(|(idx, tx)| {
+            // Key: RLP(tx_index)
+            // Value: tx_type || RLP(tx)  if tx_type != 0
+            //                   RLP(tx)  else
+            (idx.encode_to_vec(), tx.encode_canonical_to_vec())
+        })
+        .collect();
+    Trie::compute_hash_from_unsorted_iter(pairs.into_iter(), crypto)
 }
 
 pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 {
