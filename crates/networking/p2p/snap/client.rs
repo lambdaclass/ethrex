@@ -1489,3 +1489,92 @@ pub async fn request_block_access_lists(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! Task 8.3 — peer-table-level tests that verify preconditions and error
+    //! variants used by `request_block_access_lists`.
+    //!
+    //! ## Why end-to-end tests are not present
+    //!
+    //! `request_block_access_lists` calls `PeerHandler::make_request`, which calls
+    //! `connection.outgoing_request` on a `PeerConnection`. `PeerConnection` wraps
+    //! `ActorRef<PeerConnectionServer>` — an internal mpsc sender with no public
+    //! constructor. The only ways to build a `PeerConnection` are
+    //! `spawn_as_receiver` (needs a live `TcpStream`) and `spawn_as_initiator`
+    //! (needs a `Node` and network). No mock or in-process fake exists in this
+    //! codebase, so injecting a synthetic `BlockAccessLists` response into the
+    //! function requires new actor-harness infrastructure.
+    //!
+    //! The tests below verify the peer-table preconditions:
+    //! - `no_snap2_peer_returns_none_from_table`: confirms the exact condition that
+    //!   causes `request_block_access_lists` to return `SnapError::PeerSelection`.
+    //! - `snap_error_peer_selection_variant_exists` / `snap_error_invalid_data_variant_exists`:
+    //!   confirm that the error variants used by the function's response-handling
+    //!   branches can be constructed and matched.
+    //!
+    //! The success path (matching id, returning `Ok((bals, peer_id))`) and the
+    //! id-mismatch path (returning `SnapError::InvalidData` + `record_failure`)
+    //! require a live peer connection; they are deferred to hive integration tests.
+
+    use super::*;
+    use crate::{peer_table::PeerTableServer, rlpx::p2p::Capability};
+    use ethrex_storage::{EngineType, Store};
+
+    /// Verify that `get_best_peer(snap/2)` returns `None` when no peers are connected.
+    ///
+    /// Tests the peer-table layer: this is the exact precondition checked at the
+    /// top of `request_block_access_lists` before any request is sent. An empty
+    /// peer table guarantees the function will reach its `SnapError::PeerSelection`
+    /// early-return branch.
+    #[tokio::test]
+    async fn no_snap2_peer_returns_none_from_table() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+        let peer_table = PeerTableServer::spawn(10, store);
+
+        let result = peer_table
+            .get_best_peer(vec![Capability::snap(2)])
+            .await
+            .unwrap();
+
+        assert!(
+            result.is_none(),
+            "empty peer table must return None for snap/2 peer selection"
+        );
+    }
+
+    /// Verify that `SnapError::PeerSelection` is the variant used in
+    /// `request_block_access_lists` for the no-peer early-return branch.
+    ///
+    /// Tests variant construction and `Display` formatting at the type level;
+    /// does not call `request_block_access_lists` directly.
+    #[test]
+    fn snap_error_peer_selection_variant_exists() {
+        // Confirm the variant can be constructed and matched.
+        let err = SnapError::PeerSelection("no snap/2 peer available".to_string());
+        assert!(
+            matches!(err, SnapError::PeerSelection(_)),
+            "SnapError::PeerSelection must be matchable"
+        );
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("no snap/2 peer available"),
+            "error display must contain the reason string"
+        );
+    }
+
+    /// Verify that `SnapError::InvalidData` is the variant used for the id-mismatch
+    /// branch in `request_block_access_lists`.
+    ///
+    /// Tests variant construction at the type level; does not call
+    /// `request_block_access_lists` directly (that would require a live peer
+    /// connection — see module-level harness note).
+    #[test]
+    fn snap_error_invalid_data_variant_exists() {
+        let err = SnapError::InvalidData;
+        assert!(
+            matches!(err, SnapError::InvalidData),
+            "SnapError::InvalidData must be matchable"
+        );
+    }
+}

@@ -426,6 +426,99 @@ pub mod tests {
         assert_eq!(stored_code.unwrap().bytecode, bytecode);
     }
 
+    // Task 8.4 — pre-state coverage gap:
+    // A BAL writes to a storage slot that does NOT exist in the local trie.
+    // The slot should be treated as zero (fresh creation) and the post-value written.
+    #[test]
+    fn apply_bal_storage_slot_fresh_creation() {
+        let store = empty_store();
+        let addr = Address::from([0x06u8; 20]);
+
+        // Pre-insert account with no storage (storage_root = EMPTY_TRIE_HASH).
+        let mut pre_acct = AccountState::default();
+        pre_acct.balance = U256::from(10u64); // keep alive
+        let pre_root = insert_account_into_store(&store, addr, &pre_acct);
+
+        let slot = U256::from(777u64);
+        let post_value = U256::from(42u64);
+
+        // BAL: write to a slot that has no pre-state (fresh creation).
+        let mut slot_change = SlotChange::new(slot);
+        slot_change.add_change(StorageChange::new(0, post_value));
+        let mut changes = AccountChanges::new(addr);
+        changes.add_storage_change(slot_change);
+        let mut bal = BlockAccessList::new();
+        bal.add_account_changes(changes);
+
+        // Build expected root: account with one storage slot.
+        let hashed_addr = hash_address(&addr);
+        let hashed_addr_h256 = H256::from_slice(&hashed_addr);
+        let slot_key = hash_key(&H256::from(slot.to_big_endian()));
+
+        let storage_root = insert_storage_slot(
+            &store,
+            hashed_addr_h256,
+            slot_key,
+            post_value.encode_to_vec(),
+        );
+        let mut expected_acct = pre_acct;
+        expected_acct.storage_root = storage_root;
+
+        let mut expected_state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
+        expected_state_trie
+            .insert(hashed_addr, expected_acct.encode_to_vec())
+            .unwrap();
+        let (expected_root, _) = expected_state_trie.collect_changes_since_last_hash(&NativeCrypto);
+
+        let header = header_with_root(expected_root);
+        let new_root = apply_bal(&store, pre_root, &bal, &header).unwrap();
+        assert_eq!(
+            new_root, expected_root,
+            "fresh storage slot write should produce correct root"
+        );
+
+        // Verify the slot is readable after apply.
+        let trie_after = store.open_state_trie(new_root).unwrap();
+        let encoded = trie_after.get(&hash_address(&addr)).unwrap().unwrap();
+        let acct_after = AccountState::decode(&encoded).unwrap();
+        assert_ne!(
+            acct_after.storage_root, *EMPTY_TRIE_HASH,
+            "storage_root should be non-empty after fresh slot write"
+        );
+    }
+
+    // Task 8.7 — malicious peer detection:
+    // `apply_bal` returns `SyncError::StateRootMismatch` when the BAL, after being
+    // applied, yields a state root different from the block header's state_root.
+    // In `advance_state_via_bals`, this triggers `record_failure` on the sending peer.
+    // Here we test the detection mechanism in isolation.
+    //
+    // Note: the full retry chain (StateRootMismatch → record_failure inside
+    // `advance_state_via_bals`) is not covered by this test; that path requires
+    // integration test infrastructure deferred to hive.
+    #[test]
+    fn apply_bal_detects_bad_state_root() {
+        let store = empty_store();
+        let addr = Address::from([0xBAu8; 20]);
+
+        // Build a BAL that creates an account.
+        let mut changes = AccountChanges::new(addr);
+        changes.add_balance_change(BalanceChange::new(0, U256::from(999u64)));
+        let mut bal = BlockAccessList::new();
+        bal.add_account_changes(changes);
+
+        // Provide a header with an INCORRECT state root — simulating a malicious peer
+        // that sends a BAL which, when applied, does not produce the claimed root.
+        let bad_root = H256::from([0xFFu8; 32]); // deliberately wrong
+        let header = header_with_root(bad_root);
+
+        let result = apply_bal(&store, *EMPTY_TRIE_HASH, &bal, &header);
+        assert!(
+            matches!(result, Err(SyncError::StateRootMismatch(_, _))),
+            "apply_bal must return StateRootMismatch when header root doesn't match computed root"
+        );
+    }
+
     // Task 6.7: EIP-7702 delegation clear — code_hash becomes EMPTY_KECCAK_HASH.
     #[test]
     fn apply_bal_delegation_clear() {

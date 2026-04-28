@@ -324,3 +324,58 @@ Whenever an account is downloaded or healed we check if the code is not empty. I
 ### Forkchoice update
 
 Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from `snap` to `full`, and we do an `apply_forkchoice` to mark the last pivot as the last block.
+
+## snap/2 (EIP-8189) — BAL-based state healing
+
+### Overview
+
+snap/2 is a second version of the snap subprotocol, negotiated independently alongside snap/1. It is active only post-Amsterdam fork (`is_amsterdam_activated(header.timestamp)`). The account-range and storage-range download phases are unchanged; only the **state healing** phase differs.
+
+Instead of downloading missing trie nodes (`GetTrieNodes`/`TrieNodes`), snap/2 replaces the healing step with **BAL (Block Access List) replay**: the node downloads the sequence of `BlockAccessList` diffs produced by EIP-7928 and applies them block-by-block to advance the pivot state root to the current chain head.
+
+### Capability negotiation
+
+Both `snap/1` and `snap/2` are advertised in the Hello capability list:
+
+```
+SUPPORTED_SNAP_CAPABILITIES = [Capability::snap(2), Capability::snap(1)]
+```
+
+The highest mutually supported version is used per connection. The negotiated version is stored in `SnapCapVersion` (threaded through `RLPxCodec`) and checked at message-decode time.
+
+### Wire messages (snap/2 only)
+
+| Code | Message | Direction |
+|------|---------|-----------|
+| 0x08 | `GetBlockAccessLists` | requester → server |
+| 0x09 | `BlockAccessLists` | server → requester |
+
+`GetBlockAccessLists` carries `{ id, block_hashes: Vec<H256>, response_bytes }`. The server responds with `BlockAccessLists { id, bals: Vec<Option<BlockAccessList>> }` where each slot is positionally correspondent: `None` means the BAL is unavailable (block unknown or pruned). The response is capped at `min(request.response_bytes, 2 MiB)`; the first BAL is always included even if it alone exceeds the cap.
+
+`GetTrieNodes`/`TrieNodes` (0x06/0x07) are rejected on snap/2 connections. `GetBlockAccessLists`/`BlockAccessLists` (0x08/0x09) are rejected on snap/1 connections. Both rejections are enforced in `Message::decode`.
+
+### BAL-replay algorithm (`advance_state_via_bals`)
+
+Located in `crates/networking/p2p/sync/bal_healing/`.
+
+1. Load all block headers from `pivot+1` to `target_block`.
+2. Fetch BALs in batches of 64 hashes (`BAL_REQUEST_BATCH_SIZE`) via `request_block_access_lists`.
+3. For each returned BAL:
+   - Verify `bal.compute_hash() == header.block_access_list_hash`.
+   - Apply via `apply_bal(store, current_root, bal, header)` and verify per-block state root matches `header.state_root`.
+   - Persist the BAL to the store (so this node can serve it to others later).
+4. On hash mismatch, state-root mismatch, or ordering failure: call `record_failure` on the peer; retry from a different peer. After `BAL_MAX_RETRIES_PER_BLOCK = 3` failures per block, call `record_critical_failure`. If all snap/2 peers are exhausted, fall back to snap/1 trie-node healing.
+5. Before applying each BAL, verify `header.parent_hash == hash(previous_header)` to detect reorgs.
+
+### `apply_bal`
+
+Applies a single `BlockAccessList` to the state trie:
+- For each `AccountChanges`: apply balance, nonce, code, and storage post-values.
+- Missing accounts/slots are treated as freshly created (pre-state coverage rule).
+- Zero post-value storage slots are deleted from the trie.
+- If the resulting account has zero balance, zero nonce, empty code, and empty storage, it is deleted (implicit-empty destruction rule from EIP-7928).
+- Returns the new state root; errors if it does not match `block_header.state_root`.
+
+### snap/1 fallback
+
+If the syncing node has no snap/2 peers (or exhausts retries), the inner healing loop falls back to `heal_state_trie_wrap` (snap/1 trie-node healing). The outer staleness loop (pivot selection and bulk download) is unchanged for both versions.
