@@ -460,7 +460,18 @@ impl<'a> VM<'a> {
         // The caller (`generic_system_contract_levm`) sets `env.gas_limit` to the sum of both
         // plus TX_BASE_COST, so we just split `execution_gas` here.
         if self.env.config.fork >= Fork::Amsterdam {
-            let gas_limit = self.tx.gas_limit();
+            // System calls have `tx.gas_limit() == 0` (the tx is built from
+            // `EIP1559Transaction::default()` in `generic_system_contract_levm`); their
+            // budget lives in `env.gas_limit` instead. For ordinary user txs the two
+            // agree (set together at the env-builder), but for `eth_call`/simulation
+            // paths `env.gas_limit` may default to the block max while the wrapping
+            // `tx` has `gas_limit = 0`. So we read whichever source carries the budget
+            // for the path we're on.
+            let gas_limit = if self.env.is_system_call {
+                self.env.gas_limit
+            } else {
+                self.tx.gas_limit()
+            };
             let execution_gas = gas_limit.saturating_sub(total_gas);
             let reservoir = if self.env.is_system_call {
                 execution_gas.saturating_sub(SYS_CALL_GAS_LIMIT)
