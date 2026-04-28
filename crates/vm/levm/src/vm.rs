@@ -648,7 +648,7 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1)?;
+            self.advance_pc(1);
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
@@ -798,12 +798,11 @@ impl Substate {
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.
-        // Iterate by reference to avoid cloning Vec<H256> entries (saves allocations for DeFi txs).
-        for (address, keys) in tx.access_list() {
-            initial_accessed_addresses.insert(*address);
+        for (address, keys) in tx.access_list().clone() {
+            initial_accessed_addresses.insert(address);
             // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(*address).or_default();
-            for &slot in keys {
+            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
+            for slot in keys {
                 warm_slots.insert(slot);
             }
         }

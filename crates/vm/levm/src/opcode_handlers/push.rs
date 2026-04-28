@@ -5,7 +5,7 @@
 //!   - `PUSH1` to `PUSH32`
 
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
+    errors::{OpcodeResult, VMError},
     gas_cost,
     opcode_handlers::OpcodeHandler,
     vm::VM,
@@ -32,11 +32,8 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         let literal_offset = vm.current_call_frame.pc;
-        vm.current_call_frame.pc = vm
-            .current_call_frame
-            .pc
-            .checked_add(N)
-            .ok_or(InternalError::Overflow)?;
+        // PC overflow is impossible: contracts are capped at 24 576 bytes by EIP-170.
+        vm.current_call_frame.pc = vm.current_call_frame.pc.wrapping_add(N);
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
