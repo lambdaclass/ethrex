@@ -70,10 +70,9 @@ impl Memory {
     /// Note: new_memory_size is increased to the next 32 byte multiple.
     #[inline(always)]
     pub fn resize(&mut self, new_memory_size: usize) -> Result<(), VMError> {
-        // Fast path: memory already covers the request.  self.len is always a
-        // multiple of WORD_SIZE_IN_BYTES_USIZE, so if the raw (unrounded)
-        // new_memory_size already fits, the rounded size does too — skip the
-        // rounding arithmetic on the common (no-expansion) path.
+        // Fast path: self.len is always a 32-byte multiple, so if the raw
+        // (un-rounded) new_memory_size already fits, the rounded value also
+        // fits — skip the division entirely on the common no-expand path.
         if new_memory_size <= self.len {
             return Ok(());
         }
