@@ -236,6 +236,48 @@ pub enum ContactValidation {
     IpMismatch,
 }
 
+/// Reservation handle for a peer request slot.
+///
+/// **Contract:** when a `RequestPermit` exists, the `requests` counter for
+/// its peer has been incremented by one. Dropping the permit releases the
+/// slot via a fire-and-forget `DecRequests` message. The handler that
+/// returns the permit also bumps the counter atomically under `&mut self`,
+/// so selection and reservation cannot be observed out of order.
+///
+/// The permit must travel with whatever code owns the outstanding request —
+/// move it into spawned tasks, send it through channels alongside results,
+/// etc. Dropping early releases the slot early.
+#[must_use = "dropping this permit immediately releases the peer's request slot"]
+pub struct RequestPermit {
+    peer_table: PeerTable,
+    peer_id: H256,
+}
+
+impl RequestPermit {
+    pub(crate) fn new(peer_table: PeerTable, peer_id: H256) -> Self {
+        Self {
+            peer_table,
+            peer_id,
+        }
+    }
+}
+
+impl std::fmt::Debug for RequestPermit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestPermit")
+            .field("peer_id", &self.peer_id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Drop for RequestPermit {
+    fn drop(&mut self) {
+        // Fire-and-forget. If the actor mailbox is closed, p2p is already
+        // shutting down — the lost decrement is a non-issue.
+        let _ = self.peer_table.dec_requests(self.peer_id);
+    }
+}
+
 #[protocol]
 pub trait PeerTableServerProtocol: Send + Sync {
     // Send (cast) methods
@@ -258,7 +300,6 @@ pub trait PeerTableServerProtocol: Send + Sync {
     ) -> Result<(), ActorError>;
     fn set_session_info(&self, node_id: H256, session: Session) -> Result<(), ActorError>;
     fn remove_peer(&self, node_id: H256) -> Result<(), ActorError>;
-    fn inc_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_is_fork_id_valid(&self, node_id: H256, valid: bool) -> Result<(), ActorError>;
@@ -299,20 +340,24 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_best_peer(
         &self,
         capabilities: Vec<Capability>,
-    ) -> Response<Option<(H256, PeerConnection)>>;
+    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_best_peer_excluding(
         &self,
         capabilities: Vec<Capability>,
         excluded: Vec<H256>,
-    ) -> Response<Option<(H256, PeerConnection)>>;
+    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
+    fn get_best_n_peers(
+        &self,
+        capabilities: Vec<Capability>,
+        n: usize,
+    ) -> Response<Vec<(H256, PeerConnection, RequestPermit)>>;
+    /// Read-only predicate: is there any eligible peer matching `capabilities`?
+    /// Does not reserve a slot; use for capacity/rotation probes only.
+    fn has_eligible_peer(&self, capabilities: Vec<Capability>) -> Response<bool>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
     -> Response<Vec<(H256, PeerConnection, Vec<Capability>)>>;
-    fn get_peer_connections(
-        &self,
-        capabilities: Vec<Capability>,
-    ) -> Response<Vec<(H256, PeerConnection)>>;
     fn insert_if_new(&self, node: Node, protocol: DiscoveryProtocol) -> Response<bool>;
     fn validate_contact(&self, node_id: H256, sender_ip: IpAddr) -> Response<ContactValidation>;
     fn get_closest_nodes(&self, node_id: H256) -> Response<Vec<Node>>;
@@ -325,7 +370,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_random_peer(
         &self,
         capabilities: Vec<Capability>,
-    ) -> Response<Option<(H256, PeerConnection)>>;
+    ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
 }
@@ -427,25 +472,24 @@ impl PeerTableServer {
     }
 
     #[send_handler]
-    async fn handle_inc_requests(
-        &mut self,
-        msg: peer_table_server_protocol::IncRequests,
-        _ctx: &Context<Self>,
-    ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.requests += 1);
-    }
-
-    #[send_handler]
     async fn handle_dec_requests(
         &mut self,
         msg: peer_table_server_protocol::DecRequests,
         _ctx: &Context<Self>,
     ) {
-        self.peers
-            .entry(msg.node_id)
-            .and_modify(|peer_data| peer_data.requests = peer_data.requests.saturating_sub(1));
+        self.peers.entry(msg.node_id).and_modify(|peer_data| {
+            if peer_data.requests <= 0 {
+                // Expected under the reconnect race (stale permit fires
+                // after remove_peer + new_connected_peer), self-heals.
+                // Otherwise points to a bookkeeping bug worth chasing.
+                tracing::debug!(
+                    peer_id = ?msg.node_id,
+                    requests = peer_data.requests,
+                    "dec_requests with counter already <= 0",
+                );
+            }
+            peer_data.requests = peer_data.requests.saturating_sub(1).max(0)
+        });
     }
 
     #[send_handler]
@@ -706,18 +750,62 @@ impl PeerTableServer {
     async fn handle_get_best_peer(
         &mut self,
         msg: peer_table_server_protocol::GetBestPeer,
-        _ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection)> {
-        self.do_get_best_peer(&msg.capabilities)
+        ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection, RequestPermit)> {
+        let (peer_id, conn) = self.do_get_best_peer(&msg.capabilities)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_best_peer must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
     }
 
     #[request_handler]
     async fn handle_get_best_peer_excluding(
         &mut self,
         msg: peer_table_server_protocol::GetBestPeerExcluding,
+        ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection, RequestPermit)> {
+        let (peer_id, conn) = self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_best_peer_excluding must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
+    }
+
+    #[request_handler]
+    async fn handle_get_best_n_peers(
+        &mut self,
+        msg: peer_table_server_protocol::GetBestNPeers,
+        ctx: &Context<Self>,
+    ) -> Vec<(H256, PeerConnection, RequestPermit)> {
+        let picks = self.do_get_best_n_peers(&msg.capabilities, msg.n);
+        let mut out = Vec::with_capacity(picks.len());
+        for (peer_id, conn) in picks {
+            self.peers
+                .get_mut(&peer_id)
+                .expect("peer returned by do_get_best_n_peers must be present in self.peers")
+                .requests += 1;
+            out.push((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)));
+        }
+        out
+    }
+
+    #[request_handler]
+    async fn handle_has_eligible_peer(
+        &mut self,
+        msg: peer_table_server_protocol::HasEligiblePeer,
         _ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection)> {
-        self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)
+    ) -> bool {
+        self.peers.values().any(|peer_data| {
+            peer_data.connection.is_some()
+                && self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                && msg
+                    .capabilities
+                    .iter()
+                    .any(|cap| peer_data.supported_capabilities.contains(cap))
+        })
     }
 
     #[request_handler]
@@ -762,15 +850,6 @@ impl PeerTableServer {
                 })
             })
             .collect()
-    }
-
-    #[request_handler]
-    async fn handle_get_peer_connections(
-        &mut self,
-        msg: peer_table_server_protocol::GetPeerConnections,
-        _ctx: &Context<Self>,
-    ) -> Vec<(H256, PeerConnection)> {
-        self.do_get_peer_connections(msg.capabilities)
     }
 
     #[request_handler]
@@ -829,9 +908,14 @@ impl PeerTableServer {
     async fn handle_get_random_peer(
         &mut self,
         msg: peer_table_server_protocol::GetRandomPeer,
-        _ctx: &Context<Self>,
-    ) -> Option<(H256, PeerConnection)> {
-        self.do_get_random_peer(msg.capabilities)
+        ctx: &Context<Self>,
+    ) -> Option<(H256, PeerConnection, RequestPermit)> {
+        let (peer_id, conn) = self.do_get_random_peer(msg.capabilities)?;
+        self.peers
+            .get_mut(&peer_id)
+            .expect("peer returned by do_get_random_peer must be present in self.peers")
+            .requests += 1;
+        Some((peer_id, conn, RequestPermit::new(ctx.actor_ref(), peer_id)))
     }
 
     #[request_handler]
@@ -920,6 +1004,41 @@ impl PeerTableServer {
             })
             .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
             .map(|(k, _, _, v)| (k, v))
+    }
+
+    /// Returns up to `n` best peers with capability overlap, sorted by weight
+    /// descending. Excludes peers at capacity. Does NOT mutate state — caller
+    /// is responsible for incrementing `requests` on each returned peer. The
+    /// sort uses a pre-increment snapshot: later picks don't see earlier
+    /// picks' bumps, which is fine for small `n`.
+    fn do_get_best_n_peers(
+        &self,
+        capabilities: &[Capability],
+        n: usize,
+    ) -> Vec<(H256, PeerConnection)> {
+        let mut candidates: Vec<(H256, i64, i64, PeerConnection)> = self
+            .peers
+            .iter()
+            .filter_map(|(id, peer_data)| {
+                if !self.can_try_more_requests(&peer_data.score, &peer_data.requests)
+                    || !capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+                {
+                    None
+                } else {
+                    let connection = peer_data.connection.clone()?;
+                    Some((*id, peer_data.score, peer_data.requests, connection))
+                }
+            })
+            .collect();
+
+        candidates.sort_by_key(|(_, score, reqs, _)| -self.weight_peer(score, reqs));
+        candidates
+            .into_iter()
+            .take(n)
+            .map(|(id, _, _, conn)| (id, conn))
+            .collect()
     }
 
     fn prune(&mut self) {
@@ -1168,27 +1287,6 @@ impl PeerTableServer {
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
             })
             .count()
-    }
-
-    fn do_get_peer_connections(
-        &self,
-        capabilities: Vec<Capability>,
-    ) -> Vec<(H256, PeerConnection)> {
-        self.peers
-            .iter()
-            .filter_map(|(peer_id, peer_data)| {
-                if !capabilities
-                    .iter()
-                    .any(|cap| peer_data.supported_capabilities.contains(cap))
-                {
-                    return None;
-                }
-                peer_data
-                    .connection
-                    .clone()
-                    .map(|connection| (*peer_id, connection))
-            })
-            .collect()
     }
 
     fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
