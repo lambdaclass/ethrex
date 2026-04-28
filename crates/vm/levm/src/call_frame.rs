@@ -203,15 +203,8 @@ impl Stack {
 
 impl Default for Stack {
     fn default() -> Self {
-        // SAFETY: The stack only ever reads values at positions that have been
-        // explicitly pushed (indices in [offset, STACK_LIMIT)). The offset starts
-        // at STACK_LIMIT (empty stack), so no uninitialized memory is ever read.
-        // U256 has no invariants that must hold for uninitialized values — it is
-        // just four u64s.
-        #[expect(unsafe_code)]
-        let values = unsafe { Box::<[U256; STACK_LIMIT]>::new_uninit().assume_init() };
         Self {
-            values,
+            values: Box::new([U256::zero(); STACK_LIMIT]),
             offset: STACK_LIMIT,
         }
     }
@@ -260,6 +253,9 @@ pub struct CallFrame {
     pub gas_remaining: i64,
     /// Program Counter
     pub pc: usize,
+    /// Stack is placed here (after pc) to keep hot fields gas_remaining, pc, and stack
+    /// within the first cache line, reducing cache misses on every opcode dispatch.
+    pub stack: Stack,
     /// Address of the account that sent the message
     pub msg_sender: Address,
     /// Address of the recipient of the message
@@ -272,7 +268,6 @@ pub struct CallFrame {
     pub bytecode: Code,
     /// Value sent along the transaction
     pub msg_value: U256,
-    pub stack: Stack,
     pub memory: Memory,
     /// Data sent along the transaction. Empty in CREATE transactions.
     pub calldata: Bytes,
