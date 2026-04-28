@@ -601,20 +601,19 @@ pub fn selfdestruct(
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
     // This cost applies both for call and create
-    // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: u64 = 0;
-    for byte in calldata {
-        calldata_cost = if *byte != 0 {
-            calldata_cost
-                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        } else {
-            calldata_cost
-                .checked_add(CALLDATA_COST_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        }
-    }
-    Ok(calldata_cost)
+    // 4 gas for each zero byte in the transaction data, 16 gas for each non-zero byte.
+    // Separating zero/nonzero counts lets LLVM autovectorize the counting loop via SIMD.
+    let zero_count = calldata.iter().filter(|&&b| b == 0).count();
+    let nonzero_count = calldata.len() - zero_count;
+    let zero_cost = u64::try_from(zero_count)
+        .ok()
+        .and_then(|z| z.checked_mul(CALLDATA_COST_ZERO_BYTE))
+        .ok_or(OutOfGas)?;
+    let nonzero_cost = u64::try_from(nonzero_count)
+        .ok()
+        .and_then(|nz| nz.checked_mul(CALLDATA_COST_NON_ZERO_BYTE))
+        .ok_or(OutOfGas)?;
+    zero_cost.checked_add(nonzero_cost).ok_or(OutOfGas.into())
 }
 
 fn address_access_cost(
