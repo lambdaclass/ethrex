@@ -23,7 +23,6 @@ use crate::{
     gas_cost::{self, SSTORE_STIPEND, STATE_GAS_STORAGE_SET},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
-    opcodes::Opcode,
     utils::{size_offset_to_usize, u256_to_usize},
     vm::VM,
 };
@@ -414,25 +413,10 @@ impl OpcodeHandler for OpJumpIHandler {
 }
 
 fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
-    // Check target address validity.
-    //   - Target bytecode has to be a JUMPDEST.
-    //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
-    #[expect(clippy::as_conversions, reason = "safe")]
-    if vm
-        .current_call_frame
-        .bytecode
-        .bytecode
-        .get(target)
-        .is_some_and(|&value| {
-            value == Opcode::JUMPDEST as u8
-                && vm
-                    .current_call_frame
-                    .bytecode
-                    .jump_targets
-                    .binary_search(&(target as u32))
-                    .is_ok()
-        })
-    {
+    // Check target address validity using O(1) bitset lookup.
+    // The bitset has bit `i` set iff position `i` is a valid JUMPDEST opcode
+    // (not embedded in PUSH data), so a single check suffices.
+    if vm.current_call_frame.bytecode.is_valid_jump_target(target) {
         // Update PC and skip the JUMPDEST instruction.
         vm.current_call_frame.pc = target.wrapping_add(1);
         vm.current_call_frame

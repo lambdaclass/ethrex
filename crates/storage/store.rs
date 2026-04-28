@@ -705,10 +705,13 @@ impl Store {
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
         let bytecode = bytes.slice_ref(bytecode_slice);
 
+        let jump_targets: Vec<u32> = <Vec<_>>::decode(targets)?;
+        let jump_table = Code::build_jump_table(&jump_targets, bytecode.len());
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets,
+            jump_table,
         };
 
         // insert into cache and evict if needed

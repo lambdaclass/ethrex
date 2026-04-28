@@ -17,7 +17,7 @@ use ethrex_rlp::{
 use super::GenesisAccount;
 use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
     // or with the CODEHASH opcode, which needs an account address as argument and
@@ -31,6 +31,28 @@ pub struct Code {
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
     pub jump_targets: Vec<u32>,
+    /// Bitset for O(1) JUMP target validation. Bit `i` is set iff position `i` is a
+    /// valid JUMPDEST opcode (not part of PUSH data). Derived from `jump_targets`.
+    #[serde(skip)]
+    pub jump_table: Box<[u64]>,
+}
+
+impl PartialEq for Code {
+    fn eq(&self, other: &Self) -> bool {
+        self.hash == other.hash
+            && self.bytecode == other.bytecode
+            && self.jump_targets == other.jump_targets
+    }
+}
+
+impl Eq for Code {}
+
+impl std::hash::Hash for Code {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.hash.hash(state);
+        self.bytecode.hash(state);
+        self.jump_targets.hash(state);
+    }
 }
 
 impl Code {
@@ -39,20 +61,50 @@ impl Code {
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let jump_table = Self::build_jump_table(&jump_targets, code.len());
         Self {
             hash,
             bytecode: code,
             jump_targets,
+            jump_table,
         }
     }
 
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let jump_table = Self::build_jump_table(&jump_targets, code.len());
         Self {
             hash: H256(crypto.keccak256(code.as_ref())),
             bytecode: code,
             jump_targets,
+            jump_table,
         }
+    }
+
+    /// Build a jump table from already-computed jump_targets and bytecode length.
+    /// Used when loading Code from storage where jump_targets are already decoded.
+    pub fn build_jump_table(targets: &[u32], bytecode_len: usize) -> Box<[u64]> {
+        if bytecode_len == 0 {
+            return Box::new([]);
+        }
+        let num_words = (bytecode_len + 63) / 64;
+        let mut table = vec![0u64; num_words];
+        for &pos in targets {
+            let pos = pos as usize;
+            if pos < bytecode_len {
+                table[pos / 64] |= 1u64 << (pos % 64);
+            }
+        }
+        table.into_boxed_slice()
+    }
+
+    /// Returns true iff `pos` is a valid JUMPDEST (not inside PUSH data).
+    #[inline(always)]
+    pub fn is_valid_jump_target(&self, pos: usize) -> bool {
+        let word = pos / 64;
+        let bit = 1u64 << (pos % 64);
+        // SAFETY: bounds checked via get()
+        self.jump_table.get(word).is_some_and(|&w| w & bit != 0)
     }
 
     fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
@@ -90,7 +142,9 @@ impl Code {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
         let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
-        hash_size + bytes_size + vec_size
+        let table_size =
+            size_of::<Box<[u64]>>() + self.jump_table.len() * size_of::<u64>();
+        hash_size + bytes_size + vec_size + table_size
     }
 }
 
@@ -164,6 +218,7 @@ impl Default for Code {
             bytecode: Bytes::new(),
             hash: *EMPTY_KECCACK_HASH,
             jump_targets: Vec::new(),
+            jump_table: Box::new([]),
         }
     }
 }
