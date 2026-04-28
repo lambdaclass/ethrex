@@ -9,6 +9,7 @@ use crate::{
 };
 use ethrex_common::types::Fork;
 use std::cell::OnceCell;
+use std::sync::OnceLock;
 use strum::EnumString;
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, EnumString, Hash)]
@@ -404,18 +405,25 @@ impl<'a> VM<'a> {
     /// Setups the opcode lookup function pointer table, configured according the given fork.
     ///
     /// This is faster than a conventional match.
+    /// Returns a reference to a shared static table to avoid copying 2KB per transaction.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn; 256] {
+    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+        static TABLE_AMSTERDAM: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_OSAKA: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_CANCUN: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_SHANGHAI: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+        static TABLE_PRE_SHANGHAI: OnceLock<[OpCodeFn; 256]> = OnceLock::new();
+
         if fork >= Fork::Amsterdam {
-            Self::build_opcode_table_amsterdam()
+            TABLE_AMSTERDAM.get_or_init(|| Self::build_opcode_table_amsterdam())
         } else if fork >= Fork::Osaka {
-            Self::build_opcode_table_osaka()
+            TABLE_OSAKA.get_or_init(|| Self::build_opcode_table_osaka())
         } else if fork >= Fork::Cancun {
-            Self::build_opcode_table_pre_osaka()
+            TABLE_CANCUN.get_or_init(|| Self::build_opcode_table_pre_osaka())
         } else if fork >= Fork::Shanghai {
-            Self::build_opcode_table_pre_cancun()
+            TABLE_SHANGHAI.get_or_init(|| Self::build_opcode_table_pre_cancun())
         } else {
-            Self::build_opcode_table_pre_shanghai()
+            TABLE_PRE_SHANGHAI.get_or_init(|| Self::build_opcode_table_pre_shanghai())
         }
     }
 
