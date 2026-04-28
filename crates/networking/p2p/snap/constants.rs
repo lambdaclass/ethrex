@@ -48,10 +48,14 @@ pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64;
 pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 
 /// Number of storage accounts to process per batch during state healing.
-pub const STORAGE_BATCH_SIZE: usize = 300;
+/// geth/bsc-geth caps the response by `softResponseLimit` (bytes), not by
+/// account count, so we can request the max it'll process. Geth's handler
+/// uses 1024 as the practical upper bound.
+pub const STORAGE_BATCH_SIZE: usize = 1024;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 512;
+/// Same reasoning as STORAGE_BATCH_SIZE — bounded by response bytes, not count.
+pub const NODE_BATCH_SIZE: usize = 1024;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
