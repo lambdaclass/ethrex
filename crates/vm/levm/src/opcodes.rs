@@ -403,33 +403,18 @@ impl OpCodeFn {
 impl<'a> VM<'a> {
     /// Setups the opcode lookup function pointer table, configured according the given fork.
     ///
-    /// Returns a reference to a per-fork static table to avoid copying 2KB per transaction.
     /// This is faster than a conventional match.
     pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
-        #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-        static TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
-            VM::<'static>::build_opcode_table_pre_shanghai();
-        #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-        static TABLE_PRE_CANCUN: [OpCodeFn; 256] =
-            VM::<'static>::build_opcode_table_pre_cancun();
-        #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-        static TABLE_PRE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_osaka();
-        #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-        static TABLE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
-        #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-        static TABLE_AMSTERDAM: [OpCodeFn; 256] =
-            VM::<'static>::build_opcode_table_amsterdam();
-
         if fork >= Fork::Amsterdam {
-            &TABLE_AMSTERDAM
+            &OPCODE_TABLE_AMSTERDAM
         } else if fork >= Fork::Osaka {
-            &TABLE_OSAKA
+            &OPCODE_TABLE_OSAKA
         } else if fork >= Fork::Cancun {
-            &TABLE_PRE_OSAKA
+            &OPCODE_TABLE_PRE_OSAKA
         } else if fork >= Fork::Shanghai {
-            &TABLE_PRE_CANCUN
+            &OPCODE_TABLE_PRE_CANCUN
         } else {
-            &TABLE_PRE_SHANGHAI
+            &OPCODE_TABLE_PRE_SHANGHAI
         }
     }
 
@@ -640,3 +625,15 @@ impl<'a> VM<'a> {
         opcode_table
     }
 }
+
+// Pre-computed static opcode dispatch tables — one per fork bracket.
+// Initialized at program start from the const fn builders above,
+// so VM::new() can take a reference instead of copying 2KB per transaction.
+static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
+    VM::<'static>::build_opcode_table_pre_shanghai();
+static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] =
+    VM::<'static>::build_opcode_table_pre_cancun();
+static OPCODE_TABLE_PRE_OSAKA: [OpCodeFn; 256] =
+    VM::<'static>::build_opcode_table_pre_osaka();
+static OPCODE_TABLE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
+static OPCODE_TABLE_AMSTERDAM: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_amsterdam();
