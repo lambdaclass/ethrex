@@ -26,7 +26,7 @@ use tracing::{debug, error, info, warn};
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
 use crate::peer_table::PeerTableServerProtocol as _;
-use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
+use crate::rlpx::p2p::{Capability, SUPPORTED_ETH_CAPABILITIES};
 use crate::snap::{
     constants::{
         BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
@@ -34,6 +34,7 @@ use crate::snap::{
     },
     request_account_range, request_bytecodes, request_storage_ranges,
 };
+use crate::sync::bal_healing::advance_state_via_bals;
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
 use crate::utils::{
@@ -286,6 +287,9 @@ pub async fn snap_sync(
         .get_block_header_by_hash(*pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
+    // Task 7.3: Outer staleness loop — behavior unchanged for both snap/1 and snap/2.
+    // BAL-replay only replaces the inner healing loop below; pivot selection and bulk
+    // state download always restart from scratch when the pivot is too far behind.
     while block_is_stale(&pivot_header) {
         pivot_header = update_pivot(
             pivot_header.number,
@@ -512,29 +516,69 @@ pub async fn snap_sync(
             )
             .await?;
         }
-        healing_done = heal_state_trie_wrap(
-            pivot_header.state_root,
-            store.clone(),
-            peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
-            &mut global_state_leafs_healed,
-            &mut storage_accounts,
-            &mut code_hash_collector,
-        )
-        .await?;
-        if !healing_done {
-            continue;
+
+        // Task 7.1: Branch the inner healing loop between snap/2 (BAL replay) and
+        // snap/1 (trie-node healing). Inline the capability check per plan (no helper).
+        let has_snap2_peer = peers
+            .peer_table
+            .get_best_peer(vec![Capability::snap(2)])
+            .await
+            .ok()
+            .flatten()
+            .is_some();
+
+        if has_snap2_peer {
+            // Fetch the latest canonical head as the BAL-replay target.
+            let latest_head_hash = store
+                .get_latest_canonical_block_hash()
+                .await?
+                .ok_or(SyncError::NoLatestCanonical)?;
+
+            let final_applied_root =
+                advance_state_via_bals(store, peers, pivot_header.clone(), latest_head_hash)
+                    .await?;
+
+            // Task 7.2: Belt-and-braces final state-root check (V2 branch only).
+            // `advance_state_via_bals` verifies each block's root internally (step 3b),
+            // but we compare the returned root against the header here to catch any gap
+            // in the snap/1 fallback path which may not have advanced the root to the
+            // canonical head.
+            let final_header = store
+                .get_block_header_by_hash(latest_head_hash)?
+                .ok_or(SyncError::CorruptDB)?;
+            if final_applied_root != final_header.state_root {
+                return Err(SyncError::StateRootMismatch(
+                    final_header.state_root,
+                    final_applied_root,
+                ));
+            }
+
+            healing_done = true;
+        } else {
+            healing_done = heal_state_trie_wrap(
+                pivot_header.state_root,
+                store.clone(),
+                peers,
+                calculate_staleness_timestamp(pivot_header.timestamp),
+                &mut global_state_leafs_healed,
+                &mut storage_accounts,
+                &mut code_hash_collector,
+            )
+            .await?;
+            if !healing_done {
+                continue;
+            }
+            healing_done = heal_storage_trie(
+                pivot_header.state_root,
+                &storage_accounts,
+                peers,
+                store.clone(),
+                HashMap::new(),
+                calculate_staleness_timestamp(pivot_header.timestamp),
+                &mut global_storage_leafs_healed,
+            )
+            .await?;
         }
-        healing_done = heal_storage_trie(
-            pivot_header.state_root,
-            &storage_accounts,
-            peers,
-            store.clone(),
-            HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
-            &mut global_storage_leafs_healed,
-        )
-        .await?;
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 

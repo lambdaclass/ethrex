@@ -4,6 +4,7 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+pub mod bal_healing;
 mod code_collector;
 mod full;
 mod healing;
@@ -313,6 +314,12 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    /// State root after BAL replay does not match the block header's state root.
+    #[error("State root mismatch after BAL replay: expected {0:?}, got {1:?}")]
+    StateRootMismatch(H256, H256),
+    /// No block header found for the given hash during BAL replay.
+    #[error("No block header for hash {0:?} during BAL replay")]
+    MissingHeaderForBal(H256),
 }
 
 impl SyncError {
@@ -343,7 +350,10 @@ impl SyncError {
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
-            | SyncError::FileSystem(_) => false,
+            | SyncError::FileSystem(_)
+            // Non-recoverable: correctness faults — caller must reselect pivot.
+            | SyncError::StateRootMismatch(_, _)
+            | SyncError::MissingHeaderForBal(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

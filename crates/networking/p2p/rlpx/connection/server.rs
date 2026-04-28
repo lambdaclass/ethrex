@@ -32,8 +32,8 @@ use crate::{
         snap::TrieNodes,
     },
     snap::{
-        process_account_range_request, process_byte_codes_request, process_storage_ranges_request,
-        process_trie_nodes_request,
+        process_account_range_request, process_block_access_lists_request,
+        process_byte_codes_request, process_storage_ranges_request, process_trie_nodes_request,
     },
     tx_broadcaster::{TxBroadcaster, TxBroadcasterProtocol as _, send_tx_hashes},
     types::Node,
@@ -1116,6 +1116,7 @@ async fn handle_incoming_message(
             | Message::GetStorageRanges(_)
             | Message::GetByteCodes(_)
             | Message::GetTrieNodes(_)
+            | Message::GetBlockAccessLists(_)
     );
     if is_data_request && !check_serve_request_rate(state) {
         warn!(
@@ -1450,6 +1451,24 @@ async fn handle_incoming_message(
                 Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
             }
         }
+        // snap/2 (EIP-8189): Message::decode already rejects GetBlockAccessLists
+        // on snap/1 connections, so this arm is only reachable under snap/2.
+        Message::GetBlockAccessLists(req) => {
+            let id = req.id;
+            match process_block_access_lists_request(req, state.storage.clone()).await {
+                Ok(response) => send(state, Message::BlockAccessLists(response)).await?,
+                Err(_) => {
+                    send(
+                        state,
+                        Message::BlockAccessLists(crate::rlpx::snap::BlockAccessLists {
+                            id,
+                            bals: vec![],
+                        }),
+                    )
+                    .await?
+                }
+            }
+        }
         #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
@@ -1459,6 +1478,7 @@ async fn handle_incoming_message(
         | message @ Message::StorageRanges(_)
         | message @ Message::ByteCodes(_)
         | message @ Message::TrieNodes(_)
+        | message @ Message::BlockAccessLists(_)
         | message @ Message::BlockBodies(_)
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)

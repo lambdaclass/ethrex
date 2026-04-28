@@ -121,3 +121,23 @@ pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
 
 /// Interval between progress reports during healing operations.
 pub const SHOW_PROGRESS_INTERVAL_DURATION: Duration = Duration::from_secs(2);
+
+// =============================================================================
+// snap/2 (EIP-8189) CONFIGURATION
+// =============================================================================
+
+/// Cumulative soft cap on `BlockAccessLists` response size (2 MiB).
+///
+/// After this threshold is crossed the server stops adding new BALs and
+/// returns `None` for all remaining slots (preserving position
+/// correspondence). The first BAL is always included even if it alone
+/// exceeds this cap (soft cap).
+pub const BAL_RESPONSE_SOFT_CAP_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Maximum retries per block before downgrading a snap/2 peer via
+/// `record_critical_failure`.
+pub const BAL_MAX_RETRIES_PER_BLOCK: u32 = 3;
+
+/// Number of block hashes to request per `GetBlockAccessLists` batch in
+/// `advance_state_via_bals`.
+pub const BAL_REQUEST_BATCH_SIZE: usize = 64;

@@ -10,10 +10,11 @@ use crate::{
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        p2p::SUPPORTED_SNAP_CAPABILITIES,
+        p2p::{Capability, SUPPORTED_SNAP_CAPABILITIES},
         snap::{
-            AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes,
-            GetStorageRanges, GetTrieNodes, StorageRanges, TrieNodes,
+            AccountRange, AccountRangeUnit, BlockAccessLists, ByteCodes, GetAccountRange,
+            GetBlockAccessLists, GetByteCodes, GetStorageRanges, GetTrieNodes, StorageRanges,
+            TrieNodes,
         },
     },
     snap::{constants::*, encodable_to_proof, error::SnapError},
@@ -1413,4 +1414,78 @@ async fn request_storage_ranges_worker(
     tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
+}
+
+/// Requests block access lists for the given block hashes from the best available snap/2 peer.
+///
+/// Returns the BAL list and the peer id that served the response. The BAL list is in the same
+/// order as `block_hashes`; a `None` slot means the peer did not have that BAL available.
+/// On any response error the peer is penalised via `record_failure`. Promotion to
+/// `record_critical_failure` is handled by the caller after repeated per-block failures.
+///
+/// Returns `Err(SnapError::PeerSelection("no snap/2 peer"))` when no snap/2 peer is available
+/// so the caller can fall back to snap/1 healing.
+pub async fn request_block_access_lists(
+    peers: &PeerHandler,
+    block_hashes: &[H256],
+) -> Result<
+    (
+        Vec<Option<ethrex_common::types::block_access_list::BlockAccessList>>,
+        H256,
+    ),
+    SnapError,
+> {
+    // Task 5.2: no snap/2 peer → return error so caller can fall back.
+    let Some((peer_id, mut connection)) = peers
+        .peer_table
+        .get_best_peer(vec![Capability::snap(2)])
+        .await
+        .inspect_err(|err| warn!(%err, "Error requesting a snap/2 peer for BALs"))
+        .unwrap_or(None)
+    else {
+        return Err(SnapError::PeerSelection(
+            "no snap/2 peer available".to_string(),
+        ));
+    };
+
+    let request_id: u64 = rand::random();
+    let request = RLPxMessage::GetBlockAccessLists(GetBlockAccessLists {
+        id: request_id,
+        block_hashes: block_hashes.to_vec(),
+        response_bytes: BAL_RESPONSE_SOFT_CAP_BYTES,
+    });
+
+    // Task 5.3: track failures using the existing peer-table APIs.
+    let result = PeerHandler::make_request(
+        &peers.peer_table,
+        peer_id,
+        &mut connection,
+        request,
+        PEER_REPLY_TIMEOUT,
+    )
+    .await;
+
+    match result {
+        Ok(RLPxMessage::BlockAccessLists(BlockAccessLists { id, bals })) => {
+            if id != request_id {
+                // ID mismatch — treat as bad response.
+                peers.peer_table.record_failure(peer_id)?;
+                return Err(SnapError::InvalidData);
+            }
+            Ok((bals, peer_id))
+        }
+        Ok(other_msg) => {
+            peers.peer_table.record_failure(peer_id)?;
+            Err(SnapError::Protocol(
+                PeerConnectionError::UnexpectedResponse(
+                    "BlockAccessLists".to_string(),
+                    other_msg.to_string(),
+                ),
+            ))
+        }
+        Err(e) => {
+            peers.peer_table.record_failure(peer_id)?;
+            Err(SnapError::Protocol(e))
+        }
+    }
 }
