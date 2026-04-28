@@ -1,0 +1,61 @@
+participants:
+- cl_type: lighthouse
+  cl_image: ethpandaops/lighthouse:bal-devnet-4
+  el_type: ethrex
+  el_image: ethrex:local
+  el_extra_params:
+  - --mempool.maxsize=100000
+  - --syncmode=full
+  count: 1
+  supernode: true
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:6.0.2
+global_log_level: debug
+network_params:
+  preset: minimal
+  seconds_per_slot: 3
+  genesis_delay: 30
+  fulu_fork_epoch: 0
+  gloas_fork_epoch: 2
+  # Mainnet gas limit as of 2026
+  genesis_gaslimit: 60000000
+  gas_limit: 60000000
+snooper_enabled: false
+additional_services: [dora, spamoor]
+dora_params:
+  image: ethpandaops/dora:eip7928-support
+spamoor_params:
+  image: ethpandaops/spamoor:master
+  spammers:
+  # ~70% simple transfers (dominant on mainnet)
+  - scenario: eoatx
+    config:
+      funding_gas_limit: 100000
+      throughput: 280
+      max_pending: 5000
+      max_wallets: 1000
+  # ~15% ERC20 token transfers
+  - scenario: erc20tx
+    config:
+      funding_gas_limit: 100000
+      throughput: 60
+      max_pending: 2000
+      max_wallets: 400
+  # ~10% DEX swaps
+  - scenario: uniswap-swaps
+    config:
+      funding_gas_limit: 100000
+      throughput: 40
+      max_pending: 1500
+      max_wallets: 200
+  # ~5% contract deploys
+  - scenario: deploytx
+    config:
+      funding_gas_limit: 100000
+      throughput: 20
+      max_pending: 500
+      max_wallets: 100
+port_publisher:
+  additional_services:
+    enabled: true
+    public_port_start: 64400
