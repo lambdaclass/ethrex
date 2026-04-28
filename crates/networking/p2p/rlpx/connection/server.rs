@@ -676,6 +676,26 @@ where
 
     init_capabilities(state, &mut stream).await?;
 
+    // Cap non-snap peers. Snap-capable peers are precious (BSC has few),
+    // so once non-snap fills MAX_NON_SNAP_PEERS we reject incoming non-snap
+    // peers and free slots for the discoverer to find snap-capable ones.
+    const MAX_NON_SNAP_PEERS: usize = 30;
+    let peer_has_snap = SUPPORTED_SNAP_CAPABILITIES
+        .iter()
+        .any(|cap| state.capabilities.contains(cap));
+    if !peer_has_snap {
+        let total = state.peer_table.peer_count().await?;
+        let snap_count = state
+            .peer_table
+            .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .await?;
+        let non_snap_count = total.saturating_sub(snap_count);
+        if non_snap_count >= MAX_NON_SNAP_PEERS {
+            debug!(peer=%state.node, "Rejecting non-snap peer: cap of {MAX_NON_SNAP_PEERS} reached.");
+            return Err(PeerConnectionError::TooManyPeers);
+        }
+    }
+
     let mut connection = PeerConnection {
         handle: ctx.actor_ref(),
     };
