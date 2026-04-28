@@ -1,9 +1,10 @@
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{tracing::CallTrace, types::BlockHeader};
 use ethrex_crypto::Crypto;
+use ethrex_levm::EVMConfig;
+use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
-use ethrex_levm::{EVMConfig, utils::get_base_fee_per_blob_gas};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -56,7 +57,7 @@ impl LEVM {
     ) -> Result<CallTrace, EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-        let base_blob_fee_per_gas =
+        let base_blob_fee =
             get_base_fee_per_blob_gas(block_header.excess_blob_gas, &evm_config)?;
         let env = Self::setup_env(
             tx,
@@ -67,7 +68,7 @@ impl LEVM {
             db,
             vm_type,
             evm_config,
-            base_blob_fee_per_gas,
+            base_blob_fee,
         )?;
         let mut vm = VM::new(
             env,
