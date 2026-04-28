@@ -3,7 +3,7 @@ use fastbloom::AtomicBloomFilter;
 use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, num::NonZeroUsize, sync::Arc};
+use std::{fmt, num::NonZeroUsize, sync::Arc, sync::atomic::AtomicU64};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -297,10 +297,10 @@ impl TrieLayerCache {
 
 /// Default capacity for the flat LRU trie cache used during full sync batch mode.
 ///
-/// 2 million entries covers the hot working set of ~1024 blocks comfortably.
+/// 4 million entries covers the hot working set of ~1024 blocks comfortably.
 /// Each entry is a trie node path (typically 33-131 bytes) plus its RLP value,
-/// so 2M entries ≈ 300-600 MB depending on average node size.
-const FLAT_CACHE_DEFAULT_CAPACITY: usize = 2_000_000;
+/// so 4M entries ≈ 600 MB–1.2 GB depending on average node size.
+const FLAT_CACHE_DEFAULT_CAPACITY: usize = 4_000_000;
 
 /// Simple LRU-based trie node cache for full sync batch mode.
 ///
@@ -313,6 +313,10 @@ const FLAT_CACHE_DEFAULT_CAPACITY: usize = 2_000_000;
 /// CL block processing continues to use `TrieLayerCache`.
 pub struct FlatTrieCache {
     cache: LruCache<Vec<u8>, Vec<u8>, FxBuildHasher>,
+    hits: u64,
+    misses: u64,
+    inserts: u64,
+    evictions: u64,
 }
 
 impl fmt::Debug for FlatTrieCache {
@@ -336,6 +340,10 @@ impl Clone for FlatTrieCache {
                 NonZeroUsize::new(cap.into()).unwrap_or(NonZeroUsize::MIN),
                 FxBuildHasher,
             ),
+            hits: 0,
+            misses: 0,
+            inserts: 0,
+            evictions: 0,
         }
     }
 }
@@ -354,24 +362,39 @@ impl FlatTrieCache {
                 NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::MIN),
                 FxBuildHasher,
             ),
+            hits: 0,
+            misses: 0,
+            inserts: 0,
+            evictions: 0,
         }
     }
 
     /// Look up a trie node by its path key. Returns `Some(value)` if cached.
     pub fn get(&mut self, key: &[u8]) -> Option<Vec<u8>> {
-        self.cache.get(key).cloned()
+        let result = self.cache.get(key).cloned();
+        if result.is_some() {
+            self.hits += 1;
+        } else {
+            self.misses += 1;
+        }
+        result
     }
 
     /// Insert a trie node into the cache. If the cache is full, the least
     /// recently used entry is evicted.
     pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        let was_full = self.cache.len() == usize::from(self.cache.cap());
         self.cache.put(key, value);
+        self.inserts += 1;
+        if was_full {
+            self.evictions += 1;
+        }
     }
 
     /// Insert a batch of trie nodes into the cache.
     pub fn put_batch(&mut self, key_values: Vec<(Vec<u8>, Vec<u8>)>) {
         for (key, value) in key_values {
-            self.cache.put(key, value);
+            self.put(key, value);
         }
     }
 
@@ -379,7 +402,51 @@ impl FlatTrieCache {
     pub fn clear(&mut self) {
         self.cache.clear();
     }
+
+    /// Returns cache statistics: (hits, misses, inserts, evictions, len, cap).
+    pub fn stats(&self) -> FlatCacheStats {
+        FlatCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            inserts: self.inserts,
+            evictions: self.evictions,
+            len: self.cache.len(),
+            cap: usize::from(self.cache.cap()),
+        }
+    }
 }
+
+/// Snapshot of [`FlatTrieCache`] statistics for logging.
+pub struct FlatCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub inserts: u64,
+    pub evictions: u64,
+    pub len: usize,
+    pub cap: usize,
+}
+
+impl fmt::Display for FlatCacheStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let total = self.hits + self.misses;
+        let hit_rate = if total > 0 {
+            self.hits as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+        write!(
+            f,
+            "hits={} misses={} hit_rate={:.1}% inserts={} evictions={} fill={}/{}",
+            self.hits, self.misses, hit_rate, self.inserts, self.evictions, self.len, self.cap
+        )
+    }
+}
+
+/// Global accumulator for flat cache stats across all batches.
+pub static FLAT_CACHE_TOTAL_HITS: AtomicU64 = AtomicU64::new(0);
+pub static FLAT_CACHE_TOTAL_MISSES: AtomicU64 = AtomicU64::new(0);
+pub static FLAT_CACHE_TOTAL_INSERTS: AtomicU64 = AtomicU64::new(0);
+pub static FLAT_CACHE_TOTAL_EVICTIONS: AtomicU64 = AtomicU64::new(0);
 
 /// Enum that lets [`TrieWrapper`] use either the layered cache (normal block processing)
 /// or the flat LRU cache (full sync batch mode) without requiring separate wrapper types.

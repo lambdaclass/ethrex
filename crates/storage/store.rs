@@ -2617,7 +2617,47 @@ impl Store {
     }
 
     /// Deactivate the flat LRU trie cache, reverting to the layered cache.
+    /// Logs per-batch and cumulative cache statistics before dropping the cache.
     pub fn disable_batch_trie_cache(&self) -> Result<(), StoreError> {
+        // Log stats before dropping the cache.
+        if let Some(flat) = self
+            .batch_trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .as_ref()
+        {
+            if let Ok(cache) = flat.lock() {
+                let stats = cache.stats();
+                info!("[FLAT_CACHE] batch stats: {stats}");
+                // Accumulate into globals.
+                use crate::layering::{
+                    FLAT_CACHE_TOTAL_EVICTIONS, FLAT_CACHE_TOTAL_HITS, FLAT_CACHE_TOTAL_INSERTS,
+                    FLAT_CACHE_TOTAL_MISSES,
+                };
+                use std::sync::atomic::Ordering;
+                let total_hits =
+                    FLAT_CACHE_TOTAL_HITS.fetch_add(stats.hits, Ordering::Relaxed) + stats.hits;
+                let total_misses =
+                    FLAT_CACHE_TOTAL_MISSES.fetch_add(stats.misses, Ordering::Relaxed)
+                        + stats.misses;
+                let total_inserts =
+                    FLAT_CACHE_TOTAL_INSERTS.fetch_add(stats.inserts, Ordering::Relaxed)
+                        + stats.inserts;
+                let total_evictions =
+                    FLAT_CACHE_TOTAL_EVICTIONS.fetch_add(stats.evictions, Ordering::Relaxed)
+                        + stats.evictions;
+                let total_lookups = total_hits + total_misses;
+                let hit_rate = if total_lookups > 0 {
+                    total_hits as f64 / total_lookups as f64 * 100.0
+                } else {
+                    0.0
+                };
+                info!(
+                    "[FLAT_CACHE] cumulative: hits={total_hits} misses={total_misses} \
+                     hit_rate={hit_rate:.1}% inserts={total_inserts} evictions={total_evictions}"
+                );
+            }
+        }
         *self
             .batch_trie_cache
             .write()
