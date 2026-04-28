@@ -1,0 +1,65 @@
+participants:
+- cl_type: lodestar
+  cl_image: ethpandaops/lodestar:bal-devnet-3
+  el_type: ethrex
+  el_image: ethrex:local
+  el_extra_params:
+  - --mempool.maxsize=50000
+  - --syncmode=full
+  count: 1
+  supernode: true
+ethereum_genesis_generator_params:
+  image: ethpandaops/ethereum-genesis-generator:5.3.1
+global_log_level: debug
+network_params:
+  preset: minimal
+  seconds_per_slot: 6
+  genesis_delay: 30
+  fulu_fork_epoch: 0
+  gloas_fork_epoch: 2
+  # Elevated gas limit to stress-fill blocks
+  gas_limit: 100000000
+snooper_enabled: false
+additional_services: [dora, spamoor]
+dora_params:
+  image: ethpandaops/dora:eip7928-support
+spamoor_params:
+  image: ethpandaops/spamoor:latest
+  spammers:
+  # --- Balance-only workload (small BAL, easy to parallelize) ---
+  - scenario: eoatx
+    config:
+      throughput: 20
+      max_pending: 500
+      max_wallets: 200
+  # --- Heavy compute (large gas per tx) ---
+  - scenario: gasburnertx
+    config:
+      throughput: 5
+      max_pending: 200
+      gas_units: 500000
+  # --- Storage spam (many SSTORE/SLOAD per tx, wide BAL) ---
+  - scenario: storagespam
+    config:
+      throughput: 5
+      max_pending: 200
+  # --- ERC20 token transfers (shared contract = contention between txs) ---
+  - scenario: erc20tx
+    config:
+      throughput: 10
+      max_pending: 300
+      max_wallets: 100
+  # --- Contract creation (code changes in BAL) ---
+  - scenario: deploytx
+    config:
+      throughput: 2
+      max_pending: 100
+  # --- Uniswap swaps (realistic DeFi, heavy storage + contention) ---
+  - scenario: uniswap-swaps
+    config:
+      throughput: 3
+      max_pending: 100
+port_publisher:
+  additional_services:
+    enabled: true
+    public_port_start: 64400
