@@ -203,8 +203,15 @@ impl Stack {
 
 impl Default for Stack {
     fn default() -> Self {
+        // SAFETY: The stack only ever reads values at positions that have been
+        // explicitly pushed (indices in [offset, STACK_LIMIT)). The offset starts
+        // at STACK_LIMIT (empty stack), so no uninitialized memory is ever read.
+        // U256 has no invariants that must hold for uninitialized values — it is
+        // just four u64s.
+        #[expect(unsafe_code)]
+        let values = unsafe { Box::<[U256; STACK_LIMIT]>::new_uninit().assume_init() };
         Self {
-            values: Box::new([U256::zero(); STACK_LIMIT]),
+            values,
             offset: STACK_LIMIT,
         }
     }
@@ -494,8 +501,12 @@ impl<'a> VM<'a> {
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) {
-        // Bytecode can never be usize::MAX bytes; overflow is unreachable.
-        self.current_call_frame.pc = self.current_call_frame.pc.wrapping_add(count);
+    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
+        self.current_call_frame.pc = self
+            .current_call_frame
+            .pc
+            .checked_add(count)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
     }
 }
