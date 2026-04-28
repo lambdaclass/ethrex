@@ -17,7 +17,9 @@ use crate::{
         },
     },
     snap::{constants::*, encodable_to_proof, error::SnapError},
-    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
+    sync::{
+        AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot, update_pivot_bsc,
+    },
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -97,6 +99,8 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    blockchain: std::sync::Arc<ethrex_blockchain::Blockchain>,
+    chain_id: u64,
     diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
@@ -248,17 +252,29 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, chain_id) {
             info!("request_account_range became stale, updating pivot");
-            *pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-                diagnostics,
-            )
-            .await
-            .expect("Should be able to update pivot")
+            *pivot_header = if chain_id == 56 || chain_id == 97 {
+                update_pivot_bsc(
+                    pivot_header,
+                    peers,
+                    &blockchain,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await
+                .expect("Should be able to update pivot (bsc)")
+            } else {
+                update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    peers,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await
+                .expect("Should be able to update pivot")
+            };
         }
 
         tokio::spawn(request_account_range_worker(
@@ -521,6 +537,7 @@ pub async fn request_storage_ranges(
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
+    chain_id: u64,
 ) -> Result<u64, SnapError> {
     METRICS
         .current_step
@@ -987,7 +1004,7 @@ pub async fn request_storage_ranges(
             }
         }
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, chain_id) {
             info!("request_storage_ranges became stale, breaking");
             break;
         }

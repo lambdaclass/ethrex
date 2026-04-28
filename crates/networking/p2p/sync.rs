@@ -34,7 +34,7 @@ use tracing::{debug, error, info};
 // Re-export types used by submodules
 pub use snap_sync::{
     SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, update_pivot,
-    validate_bytecodes, validate_state_root, validate_storage_root,
+    update_pivot_bsc, validate_bytecodes, validate_state_root, validate_storage_root,
 };
 
 #[cfg(feature = "sync-test")]
