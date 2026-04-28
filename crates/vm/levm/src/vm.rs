@@ -450,9 +450,8 @@ pub struct VM<'a> {
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Points to a pre-computed static table selected by fork, avoiding a
-    /// 2 KB copy on every VM construction.
-    pub(crate) opcode_table: &'static [OpCodeFn; 256],
+    /// Build dynamically according to the given fork config.
+    pub(crate) opcode_table: [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
 }
@@ -649,7 +648,7 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1)?;
+            self.advance_pc(1);
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
@@ -768,26 +767,10 @@ impl<'a> VM<'a> {
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
-        // Add precompiled contracts addresses to accessed accounts.
-        let max_precompile_address = match env.config.fork {
-            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(InternalError::InvalidFork.into()),
-        };
-
-        // Pre-size to avoid rehashing: precompiles + origin + coinbase (Shanghai+) + P256 (Osaka+)
-        // plus the tx access list length to cover EIP-2930 txs without any resize.
-        let access_list_len = tx.access_list().len();
-        let base_addresses = (max_precompile_address as usize)
-            + 1 // origin
-            + usize::from(env.config.fork >= Fork::Shanghai) // coinbase
-            + usize::from(env.config.fork >= Fork::Osaka); // P256 (0x100)
-        let capacity = base_addresses + access_list_len;
-        let mut initial_accessed_addresses =
-            FxHashSet::with_capacity_and_hasher(capacity, Default::default());
+        // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
+        let mut initial_accessed_addresses = FxHashSet::default();
         let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
-            FxHashMap::with_capacity_and_hasher(access_list_len, Default::default());
+            FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
@@ -796,6 +779,14 @@ impl Substate {
         if env.config.fork >= Fork::Shanghai {
             initial_accessed_addresses.insert(env.coinbase);
         }
+
+        // Add precompiled contracts addresses to accessed accounts.
+        let max_precompile_address = match env.config.fork {
+            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
+            _ => return Err(InternalError::InvalidFork.into()),
+        };
 
         for i in 1..=max_precompile_address {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));

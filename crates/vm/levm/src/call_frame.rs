@@ -11,7 +11,6 @@ use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
 use rustc_hash::FxHashMap;
 use std::{
-    alloc::{Layout, alloc, handle_alloc_error},
     fmt,
     hash::{Hash, Hasher},
     hint::assert_unchecked,
@@ -204,21 +203,8 @@ impl Stack {
 
 impl Default for Stack {
     fn default() -> Self {
-        // Allocate without zeroing. Stack maintains the invariant that values at
-        // [offset, STACK_LIMIT) are always written before read, and offset starts
-        // at STACK_LIMIT (empty), so no uninitialized byte is ever accessed.
-        // U256 has no Drop impl, so uninitialized elements are never destructed.
-        #[expect(unsafe_code)]
-        let values = unsafe {
-            let layout = Layout::new::<[U256; STACK_LIMIT]>();
-            let ptr = alloc(layout) as *mut [U256; STACK_LIMIT];
-            if ptr.is_null() {
-                handle_alloc_error(layout);
-            }
-            Box::from_raw(ptr)
-        };
         Self {
-            values,
+            values: Box::new([U256::zero(); STACK_LIMIT]),
             offset: STACK_LIMIT,
         }
     }
@@ -508,12 +494,12 @@ impl<'a> VM<'a> {
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
+    pub fn advance_pc(&mut self, count: usize) {
+        // wrapping_add is safe: bytecode is at most 24 KB so pc can never
+        // reach usize::MAX.  Avoids a branch + Result chain per opcode.
         self.current_call_frame.pc = self
             .current_call_frame
             .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+            .wrapping_add(count);
     }
 }
