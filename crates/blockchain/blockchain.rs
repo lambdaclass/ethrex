@@ -1436,6 +1436,9 @@ impl Blockchain {
 
             block_headers_bytes.push(current_header.encode_to_vec());
         }
+        // EELS expects ascending order; we walked the chain backward, so reverse.
+        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
+        block_headers_bytes.reverse();
 
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
@@ -1670,6 +1673,9 @@ impl Blockchain {
 
             block_headers_bytes.push(current_header.encode_to_vec());
         }
+        // EELS expects ascending order; we walked the chain backward, so reverse.
+        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
+        block_headers_bytes.reverse();
 
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
