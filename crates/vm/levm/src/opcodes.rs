@@ -404,8 +404,6 @@ impl<'a> VM<'a> {
     /// Setups the opcode lookup function pointer table, configured according the given fork.
     ///
     /// This is faster than a conventional match.
-    /// Returns a reference to a `'static` opcode table for the given fork.
-    /// Avoids copying 2 KB of function-pointer data into every `VM` instance.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
     pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
         if fork >= Fork::Amsterdam {
@@ -629,9 +627,6 @@ impl<'a> VM<'a> {
     }
 }
 
-// Pre-computed static opcode tables — one per fork boundary.
-// VM::new() borrows one of these instead of copying 2 KB of function pointers
-// per transaction.
 static OPCODE_TABLE_PRE_SHANGHAI: [OpCodeFn; 256] =
     VM::<'static>::build_opcode_table_pre_shanghai();
 static OPCODE_TABLE_PRE_CANCUN: [OpCodeFn; 256] =

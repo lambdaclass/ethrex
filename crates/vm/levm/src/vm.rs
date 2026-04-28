@@ -450,7 +450,7 @@ pub struct VM<'a> {
     /// must not be reduced (it would inflate regular_gas in block accounting).
     pub intrinsic_state_gas_refund: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Points to a `'static` array — no per-VM copy needed.
+    /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
@@ -722,9 +722,11 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        for hook in self.hooks.clone() {
+        let hooks = std::mem::take(&mut self.hooks);
+        for hook in &hooks {
             hook.borrow_mut().prepare_execution(self)?;
         }
+        self.hooks = hooks;
 
         Ok(())
     }
@@ -733,10 +735,12 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        for hook in self.hooks.clone() {
+        let hooks = std::mem::take(&mut self.hooks);
+        for hook in &hooks {
             hook.borrow_mut()
                 .finalize_execution(self, &mut ctx_result)?;
         }
+        self.hooks = hooks;
 
         self.tracer.exit_context(&ctx_result, true)?;
 
