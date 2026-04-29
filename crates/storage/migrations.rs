@@ -2,8 +2,13 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::api::StorageBackend;
+use crate::api::tables::RECEIPTS;
 use crate::error::StoreError;
+use crate::store::receipt_key;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
+
+use ethrex_common::H256;
+use ethrex_rlp::decode::RLPDecode;
 
 use super::store::StoreMetadata;
 
@@ -22,10 +27,7 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[
-    // Currently empty — no migrations exist yet.
-    // When STORE_SCHEMA_VERSION is bumped to 2, add migrate_1_to_2 here.
-];
+pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -90,6 +92,79 @@ fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError
     file.sync_all()?;
     std::fs::rename(&tmp_path, &metadata_path)?;
 
+    Ok(())
+}
+
+/// Migrates the RECEIPTS table key format from RLP-encoded `(BlockHash, u64)`
+/// to raw `block_hash (32B) || index (8B big-endian u64)`.
+///
+/// This enables efficient cursor-based prefix iteration by block hash.
+///
+/// Crash safety: if interrupted mid-migration, metadata still says v1,
+/// so the migration restarts from scratch on next boot. Keys that fail
+/// RLP decode are assumed to be already migrated and are skipped.
+fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    const BATCH_SIZE: usize = 10_000;
+
+    let txn = backend.begin_read()?;
+    let iter = txn.prefix_iterator(RECEIPTS, &[])?;
+
+    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+    let mut delete_keys: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
+    let mut migrated: u64 = 0;
+
+    for result in iter {
+        let (old_key, value) = result?;
+
+        // If this key is already 40 bytes (32B hash + 8B index), it's already
+        // in the new format — skip it. This handles crash-restart scenarios.
+        if old_key.len() == 40 {
+            continue;
+        }
+
+        // Try to decode the old RLP key as (H256, u64)
+        let (block_hash, index) = match <(H256, u64)>::decode(old_key.as_ref()) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                // If RLP decode fails, skip — could be corrupted or already migrated
+                tracing::warn!(
+                    "Skipping RECEIPTS key that failed RLP decode (len={})",
+                    old_key.len()
+                );
+                continue;
+            }
+        };
+
+        let new_key = receipt_key(&block_hash, index);
+        batch.push((new_key, value.to_vec()));
+        delete_keys.push(old_key.to_vec());
+
+        if batch.len() >= BATCH_SIZE {
+            let mut tx = backend.begin_write()?;
+            tx.put_batch(RECEIPTS, batch.clone())?;
+            for dk in &delete_keys {
+                tx.delete(RECEIPTS, dk)?;
+            }
+            tx.commit()?;
+            migrated += batch.len() as u64;
+            tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
+            batch.clear();
+            delete_keys.clear();
+        }
+    }
+
+    // Flush remaining entries
+    if !batch.is_empty() {
+        let mut tx = backend.begin_write()?;
+        tx.put_batch(RECEIPTS, batch.clone())?;
+        for dk in &delete_keys {
+            tx.delete(RECEIPTS, dk)?;
+        }
+        tx.commit()?;
+        migrated += batch.len() as u64;
+    }
+
+    tracing::info!("Migration v1→v2 complete: migrated {migrated} RECEIPTS entries total");
     Ok(())
 }
 
