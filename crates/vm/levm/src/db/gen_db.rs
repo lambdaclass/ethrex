@@ -534,13 +534,20 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
-        let account = self.db.get_account_mut(address)?;
-
-        self.current_call_frame
-            .call_frame_backup
-            .backup_account_info(address, account)?;
-
-        Ok(account)
+        // Snapshot the pre-modification state before `mark_modified` runs.
+        // `mark_modified` flips `exists` to true and bumps `status`; capturing
+        // afterwards would record the modified state, so a later
+        // `restore_cache_state` would fail to roll the account back to its
+        // pre-frame state. EIP-8037's `target_existed_at_tx_entry` check in
+        // `generic_create` reads `exists`, so an unrolled `exists=true` makes a
+        // sibling-revert+CREATE skip the NEW_ACCOUNT record.
+        {
+            let account = self.db.get_account(address)?;
+            self.current_call_frame
+                .call_frame_backup
+                .backup_account_info(address, account)?;
+        }
+        self.db.get_account_mut(address)
     }
 
     pub fn increase_account_balance(

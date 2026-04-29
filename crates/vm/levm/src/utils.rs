@@ -82,6 +82,7 @@ pub fn restore_cache_state(
             current_account.info = account.info;
             current_account.status = account.status;
             current_account.has_storage = account.has_storage;
+            current_account.exists = account.exists;
         }
     }
 
