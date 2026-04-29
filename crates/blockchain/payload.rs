@@ -14,8 +14,9 @@ use ethrex_common::{
         TX_MAX_GAS_LIMIT_AMSTERDAM,
     },
     types::{
-        AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        AccountUpdate, BASE_FEE_MAX_CHANGE_DENOMINATOR, BlobsBundle, Block, BlockBody, BlockHash,
+        BlockHeader, BlockNumber, ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind,
+        TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -164,6 +165,8 @@ pub fn create_payload(
             parent_block.gas_used,
             parent_block.base_fee_per_gas.unwrap_or_default(),
             args.elasticity_multiplier,
+            BASE_FEE_MAX_CHANGE_DENOMINATOR,
+            None,
         ),
         withdrawals_root: chain_config
             .is_shanghai_activated(args.timestamp)

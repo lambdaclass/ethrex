@@ -94,13 +94,20 @@ impl RLPEncode for Capability {
 
 impl RLPDecode for Capability {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        let (protocol_name, rest) = String::decode_unfinished(&rlp[1..])?;
-        if protocol_name.len() > CAPABILITY_NAME_MAX_LENGTH {
-            return Err(RLPDecodeError::InvalidLength);
+        // Properly parse the RLP list header so `rest` aligns with the
+        // list boundary — this handles multi-byte headers and capabilities
+        // with extra trailing fields we don't care about.
+        let (is_list, payload, rest) = decode_rlp_item(rlp)?;
+        if !is_list {
+            return Err(RLPDecodeError::MalformedData);
         }
-        let (version, rest) = u8::decode_unfinished(rest)?;
+        let (protocol_name, payload_rest) = String::decode_unfinished(payload)?;
+        let (version, _) = u8::decode_unfinished(payload_rest)?;
         let mut protocol = [0; CAPABILITY_NAME_MAX_LENGTH];
-        protocol[..protocol_name.len()].copy_from_slice(protocol_name.as_bytes());
+        // Truncate names longer than CAPABILITY_NAME_MAX_LENGTH — they won't
+        // match any supported capability and will be ignored in negotiation.
+        let copy_len = protocol_name.len().min(CAPABILITY_NAME_MAX_LENGTH);
+        protocol[..copy_len].copy_from_slice(&protocol_name.as_bytes()[..copy_len]);
         Ok((Capability { protocol, version }, rest))
     }
 }
@@ -149,9 +156,11 @@ impl RLPxMessage for HelloMessage {
         let decoder = Decoder::new(msg_data)?;
         let (protocol_version, decoder): (u64, _) = decoder.decode_field("protocolVersion")?;
 
-        if protocol_version != SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
+        // Accept P2P versions 4 and 5 — both are widely used in the wild
+        // (e.g. some Bor nodes advertise v4). The Hello format is identical.
+        if protocol_version < 4 || protocol_version > SUPPORTED_P2P_CAPABILITY_VERSION as u64 {
             return Err(RLPDecodeError::IncompatibleProtocol(format!(
-                "Received message is encoded in p2p version {} when negotiated p2p version was {} ",
+                "Received message is encoded in p2p version {} when supported range is 4..={} ",
                 protocol_version, SUPPORTED_P2P_CAPABILITY_VERSION
             )));
         }

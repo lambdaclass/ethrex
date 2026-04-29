@@ -67,6 +67,7 @@ pub enum Transaction {
     EIP7702Transaction(EIP7702Transaction),
     PrivilegedL2Transaction(PrivilegedL2Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
+    StateSyncTransaction(StateSyncTransaction),
 }
 
 /// The same as a Transaction enum, only that blob transactions are in wrapped format, including
@@ -374,6 +375,8 @@ pub enum TxType {
     // We take the same approach as Optimism to define the privileged tx prefix
     // https://github.com/ethereum-optimism/specs/blob/c6903a3b2cad575653e1f5ef472debb573d83805/specs/protocol/deposits.md#the-deposited-transaction-type
     Privileged = 0x7e,
+    // Bor state sync transaction type (consensus-only, never in pool/gossip)
+    StateSync = 0x7f,
 }
 
 impl From<TxType> for u8 {
@@ -386,6 +389,7 @@ impl From<TxType> for u8 {
             TxType::EIP7702 => 0x04,
             TxType::FeeToken => 0x7d,
             TxType::Privileged => 0x7e,
+            TxType::StateSync => 0x7f,
         }
     }
 }
@@ -400,6 +404,7 @@ impl Display for TxType {
             TxType::EIP7702 => write!(f, "EIP7702"),
             TxType::Privileged => write!(f, "Privileged"),
             TxType::FeeToken => write!(f, "FeeToken"),
+            TxType::StateSync => write!(f, "StateSync"),
         }
     }
 }
@@ -414,6 +419,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => TxType::EIP7702,
             Transaction::FeeTokenTransaction(_) => TxType::FeeToken,
             Transaction::PrivilegedL2Transaction(_) => TxType::Privileged,
+            Transaction::StateSyncTransaction(_) => TxType::StateSync,
         }
     }
 
@@ -438,6 +444,7 @@ impl Transaction {
             TxType::EIP7702 => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::FeeToken => self.calc_effective_gas_price(base_fee_per_gas),
             TxType::Privileged => Some(self.gas_price()),
+            TxType::StateSync => Some(U256::zero()),
         }
     }
 
@@ -450,6 +457,7 @@ impl Transaction {
             TxType::EIP7702 => U256::from(self.max_fee_per_gas()?),
             TxType::FeeToken => U256::from(self.max_fee_per_gas()?),
             TxType::Privileged => self.gas_price(),
+            TxType::StateSync => return Some(U256::zero()),
         };
 
         Some(U256::saturating_add(
@@ -477,6 +485,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(t) => Some(&t.cached_canonical),
             Transaction::PrivilegedL2Transaction(t) => Some(&t.cached_canonical),
             Transaction::FeeTokenTransaction(t) => Some(&t.cached_canonical),
+            Transaction::StateSyncTransaction(_) => None,
         }
     }
 }
@@ -489,6 +498,11 @@ impl RLPEncode for Transaction {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
         match self {
             Transaction::LegacyTransaction(t) => t.encode(buf),
+            Transaction::StateSyncTransaction(_) => {
+                // StateSyncTx encodes as: type_byte || RLP([]StateSyncData)
+                let canonical = self.encode_canonical_to_vec();
+                <[u8] as RLPEncode>::encode(canonical.as_slice(), buf)
+            }
             _ => {
                 let canonical = self.encode_canonical_to_vec();
                 <[u8] as RLPEncode>::encode(canonical.as_slice(), buf)
@@ -530,6 +544,9 @@ impl RLPDecode for Transaction {
                 // PrivilegedL2
                 0x7e => PrivilegedL2Transaction::decode(tx_encoding)
                     .map(|tx| (Transaction::PrivilegedL2Transaction(tx), remainder)),
+                // StateSyncTx (Bor)
+                0x7f => StateSyncTransaction::decode(tx_encoding)
+                    .map(|tx| (Transaction::StateSyncTransaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -710,6 +727,7 @@ impl PayloadRLPEncode for Transaction {
             Transaction::EIP7702Transaction(tx) => tx.encode_payload(buf),
             Transaction::PrivilegedL2Transaction(tx) => tx.encode_payload(buf),
             Transaction::FeeTokenTransaction(tx) => tx.encode_payload(buf),
+            Transaction::StateSyncTransaction(tx) => tx.encode(buf),
         }
     }
 }
@@ -1116,6 +1134,8 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.sender_cache,
             Transaction::PrivilegedL2Transaction(tx) => &tx.sender_cache,
             Transaction::FeeTokenTransaction(tx) => &tx.sender_cache,
+            // StateSyncTx is a system tx with no sender
+            Transaction::StateSyncTransaction(_) => return Ok(Address::zero()),
         };
         sender_cache
             .get_or_try_init(|| {
@@ -1255,6 +1275,7 @@ impl Transaction {
                 (buf, sig)
             }
             Transaction::PrivilegedL2Transaction(tx) => return Ok(tx.from),
+            Transaction::StateSyncTransaction(_) => return Ok(Address::zero()),
             Transaction::FeeTokenTransaction(tx) => {
                 let mut buf = vec![self.tx_type() as u8];
                 Encoder::new(&mut buf)
@@ -1289,6 +1310,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => tx.gas,
             Transaction::PrivilegedL2Transaction(tx) => tx.gas_limit,
             Transaction::FeeTokenTransaction(tx) => tx.gas_limit,
+            Transaction::StateSyncTransaction(_) => 0,
         }
     }
 
@@ -1302,6 +1324,7 @@ impl Transaction {
             Transaction::EIP4844Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => U256::from(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => U256::from(tx.max_fee_per_gas),
+            Transaction::StateSyncTransaction(_) => U256::zero(),
         }
     }
 
@@ -1314,6 +1337,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => TxKind::Call(tx.to),
             Transaction::PrivilegedL2Transaction(tx) => tx.to.clone(),
             Transaction::FeeTokenTransaction(tx) => tx.to.clone(),
+            Transaction::StateSyncTransaction(_) => TxKind::Call(Address::zero()),
         }
     }
 
@@ -1326,6 +1350,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.value,
             Transaction::PrivilegedL2Transaction(tx) => tx.value,
             Transaction::FeeTokenTransaction(tx) => tx.value,
+            Transaction::StateSyncTransaction(_) => U256::zero(),
         }
     }
 
@@ -1338,6 +1363,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_priority_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => Some(tx.max_priority_fee_per_gas),
+            Transaction::StateSyncTransaction(_) => None,
         }
     }
 
@@ -1350,6 +1376,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.chain_id),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.chain_id),
             Transaction::FeeTokenTransaction(tx) => Some(tx.chain_id),
+            Transaction::StateSyncTransaction(_) => None,
         }
     }
 
@@ -1363,6 +1390,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.access_list,
             Transaction::PrivilegedL2Transaction(tx) => &tx.access_list,
             Transaction::FeeTokenTransaction(tx) => &tx.access_list,
+            Transaction::StateSyncTransaction(_) => &EMPTY_ACCESS_LIST,
         }
     }
     pub fn authorization_list(&self) -> Option<&AuthorizationList> {
@@ -1374,6 +1402,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(&tx.authorization_list),
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
+            Transaction::StateSyncTransaction(_) => None,
         }
     }
 
@@ -1386,6 +1415,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => tx.nonce,
             Transaction::PrivilegedL2Transaction(tx) => tx.nonce,
             Transaction::FeeTokenTransaction(tx) => tx.nonce,
+            Transaction::StateSyncTransaction(_) => 0,
         }
     }
 
@@ -1398,6 +1428,10 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.data,
             Transaction::PrivilegedL2Transaction(tx) => &tx.data,
             Transaction::FeeTokenTransaction(tx) => &tx.data,
+            Transaction::StateSyncTransaction(_) => {
+                static EMPTY_BYTES: Bytes = Bytes::new();
+                &EMPTY_BYTES
+            }
         }
     }
 
@@ -1410,6 +1444,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => Vec::new(),
             Transaction::PrivilegedL2Transaction(_) => Vec::new(),
             Transaction::FeeTokenTransaction(_) => Vec::new(),
+            Transaction::StateSyncTransaction(_) => Vec::new(),
         }
     }
 
@@ -1422,6 +1457,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => None,
             Transaction::PrivilegedL2Transaction(_) => None,
             Transaction::FeeTokenTransaction(_) => None,
+            Transaction::StateSyncTransaction(_) => None,
         }
     }
 
@@ -1434,11 +1470,15 @@ impl Transaction {
             Transaction::EIP7702Transaction(_) => false,
             Transaction::PrivilegedL2Transaction(t) => matches!(t.to, TxKind::Create),
             Transaction::FeeTokenTransaction(t) => matches!(t.to, TxKind::Create),
+            Transaction::StateSyncTransaction(_) => false,
         }
     }
 
     pub fn is_privileged(&self) -> bool {
-        matches!(self, Transaction::PrivilegedL2Transaction(_))
+        matches!(
+            self,
+            Transaction::PrivilegedL2Transaction(_) | Transaction::StateSyncTransaction(_)
+        )
     }
 
     pub fn max_fee_per_gas(&self) -> Option<u64> {
@@ -1450,12 +1490,19 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::PrivilegedL2Transaction(tx) => Some(tx.max_fee_per_gas),
             Transaction::FeeTokenTransaction(tx) => Some(tx.max_fee_per_gas),
+            Transaction::StateSyncTransaction(_) => None,
         }
     }
 
     fn compute_hash(&self) -> H256 {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
+        }
+        if let Transaction::StateSyncTransaction(tx) = self {
+            // StateSyncTx hash = keccak256(0x7f || RLP([]StateSyncData))
+            let mut buf = vec![0x7fu8];
+            tx.state_sync_data.encode(&mut buf);
+            return crate::utils::keccak(buf);
         }
         crate::utils::keccak(self.encode_canonical_to_vec())
     }
@@ -1469,6 +1516,7 @@ impl Transaction {
             Transaction::EIP7702Transaction(tx) => &tx.inner_hash,
             Transaction::PrivilegedL2Transaction(tx) => &tx.inner_hash,
             Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
+            Transaction::StateSyncTransaction(tx) => &tx.inner_hash,
         };
 
         *inner_hash.get_or_init(|| self.compute_hash())
@@ -1532,6 +1580,7 @@ impl TxType {
             0x04 => Some(Self::EIP7702),
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
+            0x7f => Some(Self::StateSync),
             _ => None,
         }
     }
@@ -1599,6 +1648,84 @@ pub struct FeeTokenTransaction {
     pub cached_canonical: OnceCell<Vec<u8>>,
 }
 
+/// A single state sync event from Heimdall (L1 -> Polygon).
+///
+/// Reference: bor/core/types/state_data.go `StateSyncData`
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
+pub struct StateSyncData {
+    pub id: u64,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub contract: Address,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub data: Bytes,
+    #[rkyv(with=crate::rkyv_utils::H256Wrapper)]
+    pub tx_hash: H256,
+}
+
+impl RLPEncode for StateSyncData {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.id)
+            .encode_field(&self.contract)
+            .encode_field(&self.data)
+            .encode_field(&self.tx_hash)
+            .finish();
+    }
+}
+
+impl RLPDecode for StateSyncData {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (id, decoder) = decoder.decode_field("id")?;
+        let (contract, decoder) = decoder.decode_field("contract")?;
+        let (data, decoder) = decoder.decode_field("data")?;
+        let (tx_hash, decoder) = decoder.decode_field("tx_hash")?;
+        Ok((
+            StateSyncData {
+                id,
+                contract,
+                data,
+                tx_hash,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
+/// Bor state sync transaction (type 0x7F).
+///
+/// Consensus-only: never enters the pool or gossip.
+/// Included in transaction/receipt root calculations.
+///
+/// Reference: bor/core/types/tx_state_sync.go `StateSyncTx`
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, RSerialize, RDeserialize, Archive)]
+pub struct StateSyncTransaction {
+    pub state_sync_data: Vec<StateSyncData>,
+    #[serde(skip)]
+    #[rkyv(with=rkyv::with::Skip)]
+    pub inner_hash: OnceCell<H256>,
+}
+
+impl RLPEncode for StateSyncTransaction {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        // In Bor, StateSyncTx encodes its StateSyncData list directly (not wrapped in a struct).
+        self.state_sync_data.encode(buf);
+    }
+}
+
+impl RLPDecode for StateSyncTransaction {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let (state_sync_data, rest) = Vec::<StateSyncData>::decode_unfinished(rlp)?;
+        Ok((
+            StateSyncTransaction {
+                state_sync_data,
+                inner_hash: OnceCell::new(),
+            },
+            rest,
+        ))
+    }
+}
+
 /// Canonical Transaction Encoding
 /// Based on [EIP-2718]
 /// Transactions can be encoded in the following formats:
@@ -1617,7 +1744,7 @@ mod canonic_encoding {
             // Look at the first byte to check if it corresponds to a TransactionType
             match bytes.first() {
                 // First byte is a valid TransactionType
-                Some(tx_type) if *tx_type < 0x7f => {
+                Some(tx_type) if *tx_type <= 0x7f => {
                     // Decode tx based on type
                     let tx_bytes = &bytes[1..];
                     match *tx_type {
@@ -1643,6 +1770,9 @@ mod canonic_encoding {
                         // PrivilegedL2Transaction
                         0x7e => PrivilegedL2Transaction::decode(tx_bytes)
                             .map(Transaction::PrivilegedL2Transaction),
+                        // StateSyncTransaction (Bor)
+                        0x7f => StateSyncTransaction::decode(tx_bytes)
+                            .map(Transaction::StateSyncTransaction),
                         ty => Err(RLPDecodeError::Custom(format!(
                             "Invalid transaction type: {ty}"
                         ))),
@@ -1672,6 +1802,7 @@ mod canonic_encoding {
                 Transaction::EIP7702Transaction(t) => t.encode(buf),
                 Transaction::FeeTokenTransaction(t) => t.encode(buf),
                 Transaction::PrivilegedL2Transaction(t) => t.encode(buf),
+                Transaction::StateSyncTransaction(t) => t.encode(buf),
             };
         }
 
@@ -2205,6 +2336,9 @@ mod serde_impl {
                             serde::de::Error::custom(format!("Couldn't Deserialize FeeToken {e}"))
                         })
                 }
+                TxType::StateSync => Err(serde::de::Error::custom(
+                    "StateSyncTransaction cannot be deserialized from JSON",
+                )),
             }
         }
     }
@@ -2999,6 +3133,7 @@ mod serde_impl {
                 Transaction::EIP7702Transaction(tx) => tx.into(),
                 Transaction::PrivilegedL2Transaction(tx) => tx.into(),
                 Transaction::FeeTokenTransaction(tx) => tx.into(),
+                Transaction::StateSyncTransaction(_) => GenericTransaction::default(),
             }
         }
     }
@@ -3716,5 +3851,132 @@ mod tests {
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
         assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
+    }
+
+    // ---- StateSyncTransaction (Bor) tests ----
+
+    #[test]
+    fn test_state_sync_tx_rlp_roundtrip_empty() {
+        let tx = StateSyncTransaction::default();
+        let encoded = StateSyncTransaction::encode_to_vec(&tx);
+        let decoded = StateSyncTransaction::decode(&encoded).expect("decode should succeed");
+        assert_eq!(tx, decoded);
+    }
+
+    #[test]
+    fn test_state_sync_tx_rlp_roundtrip_with_data() {
+        let tx = StateSyncTransaction {
+            state_sync_data: vec![
+                StateSyncData {
+                    id: 1,
+                    contract: Address::from_low_u64_be(0x1001),
+                    data: Bytes::from(vec![0xAA, 0xBB]),
+                    tx_hash: H256::from_low_u64_be(0xdead),
+                },
+                StateSyncData {
+                    id: 2,
+                    contract: Address::from_low_u64_be(0x2002),
+                    data: Bytes::from(vec![0xCC]),
+                    tx_hash: H256::from_low_u64_be(0xbeef),
+                },
+            ],
+            inner_hash: OnceCell::new(),
+        };
+        let encoded = StateSyncTransaction::encode_to_vec(&tx);
+        let decoded = StateSyncTransaction::decode(&encoded).expect("decode should succeed");
+        assert_eq!(tx.state_sync_data, decoded.state_sync_data);
+    }
+
+    #[test]
+    fn test_state_sync_tx_type_is_0x7f() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        assert_eq!(tx.tx_type(), TxType::StateSync);
+        assert_eq!(u8::from(TxType::StateSync), 0x7f);
+    }
+
+    #[test]
+    fn test_state_sync_tx_gas_limit_zero() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        assert_eq!(tx.gas_limit(), 0);
+    }
+
+    #[test]
+    fn test_state_sync_tx_gas_price_zero() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        assert_eq!(tx.gas_price(), U256::zero());
+    }
+
+    #[test]
+    fn test_state_sync_tx_value_zero() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        assert_eq!(tx.value(), U256::zero());
+    }
+
+    #[test]
+    fn test_state_sync_tx_nonce_zero() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        assert_eq!(tx.nonce(), 0);
+    }
+
+    #[test]
+    fn test_state_sync_tx_sender_zero() {
+        use ethrex_crypto::NativeCrypto;
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        let sender = tx.sender(&NativeCrypto).expect("sender should not fail");
+        assert_eq!(sender, Address::zero());
+    }
+
+    #[test]
+    fn test_state_sync_tx_chain_id_none() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction::default());
+        assert!(tx.chain_id().is_none());
+    }
+
+    #[test]
+    fn test_state_sync_tx_hash_is_deterministic() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction {
+            state_sync_data: vec![StateSyncData {
+                id: 42,
+                contract: Address::from_low_u64_be(0x1000),
+                data: Bytes::from(vec![0x01, 0x02]),
+                tx_hash: H256::from_low_u64_be(0xface),
+            }],
+            inner_hash: OnceCell::new(),
+        });
+        let hash1 = tx.compute_hash();
+        let hash2 = tx.compute_hash();
+        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, H256::zero());
+    }
+
+    #[test]
+    fn test_state_sync_tx_canonical_encoding_starts_with_0x7f() {
+        let tx = Transaction::StateSyncTransaction(StateSyncTransaction {
+            state_sync_data: vec![StateSyncData {
+                id: 1,
+                contract: Address::zero(),
+                data: Bytes::new(),
+                tx_hash: H256::zero(),
+            }],
+            inner_hash: OnceCell::new(),
+        });
+        let canonical = tx.encode_canonical_to_vec();
+        assert_eq!(
+            canonical[0], 0x7f,
+            "canonical encoding should start with type byte 0x7f"
+        );
+    }
+
+    #[test]
+    fn test_state_sync_data_rlp_roundtrip() {
+        let data = StateSyncData {
+            id: 999,
+            contract: Address::from_low_u64_be(0xABCD),
+            data: Bytes::from(vec![1, 2, 3, 4, 5]),
+            tx_hash: H256::from_low_u64_be(0x1234),
+        };
+        let encoded = StateSyncData::encode_to_vec(&data);
+        let decoded = StateSyncData::decode(&encoded).expect("decode should succeed");
+        assert_eq!(data, decoded);
     }
 }

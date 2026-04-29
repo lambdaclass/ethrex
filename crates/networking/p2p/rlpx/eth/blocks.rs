@@ -3,7 +3,8 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
+use ethrex_common::U256;
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -341,5 +342,169 @@ impl RLPxMessage for BlockBodies {
         let (block_bodies, _): (Vec<BlockBody>, _) = decoder.decode_field("blockBodies")?;
 
         Ok(Self::new(id, block_bodies))
+    }
+}
+
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblockhashes-0x01
+// Broadcast message: announces new block hashes
+//
+// Used by Polygon PoS for block propagation (not used by Ethereum post-merge).
+#[derive(Debug, Clone)]
+pub struct NewBlockHashes {
+    pub block_hashes: Vec<(BlockHash, BlockNumber)>,
+}
+
+impl NewBlockHashes {
+    pub fn new(block_hashes: Vec<(BlockHash, BlockNumber)>) -> Self {
+        Self { block_hashes }
+    }
+}
+
+impl RLPxMessage for NewBlockHashes {
+    const CODE: u8 = 0x01;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        let mut encoder = Encoder::new(&mut encoded_data);
+        for (hash, number) in &self.block_hashes {
+            encoder = encoder.encode_field(&(*hash, *number));
+        }
+        encoder.finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        // NewBlockHashes is a flat list of [hash, number] pairs at the top level:
+        //   [[hash0, num0], [hash1, num1], ...]
+        // Decode directly as Vec — its RLPDecode impl handles the outer list.
+        let block_hashes = <Vec<(BlockHash, BlockNumber)>>::decode(&decompressed_data)?;
+        Ok(Self::new(block_hashes))
+    }
+}
+
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblock-0x07
+// Broadcast message: announces a new complete block
+//
+// Used by Polygon PoS for block propagation (not used by Ethereum post-merge).
+// Format: [[header, [txs], [uncles]], td]
+#[derive(Debug, Clone)]
+pub struct NewBlock {
+    pub block: Block,
+    pub total_difficulty: U256,
+}
+
+impl NewBlock {
+    pub fn new(block: Block, total_difficulty: U256) -> Self {
+        Self {
+            block,
+            total_difficulty,
+        }
+    }
+}
+
+impl RLPxMessage for NewBlock {
+    const CODE: u8 = 0x07;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.block)
+            .encode_field(&self.total_difficulty)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (block, decoder): (Block, _) = decoder.decode_field("block")?;
+        let (total_difficulty, _): (U256, _) = decoder.decode_field("totalDifficulty")?;
+        Ok(Self::new(block, total_difficulty))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ethrex_common::types::BlockHash;
+
+    use crate::rlpx::{
+        eth::blocks::{BlockBodies, GetBlockBodies, GetBlockHeaders},
+        message::RLPxMessage,
+    };
+
+    use super::HashOrNumber;
+
+    #[test]
+    fn get_block_headers_startblock_number_message() {
+        let get_block_bodies = GetBlockHeaders::new(1, HashOrNumber::Number(1), 0, 0, false);
+
+        let mut buf = Vec::new();
+        get_block_bodies.encode(&mut buf).unwrap();
+
+        let decoded = GetBlockHeaders::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert_eq!(decoded.startblock, HashOrNumber::Number(1));
+    }
+
+    #[test]
+    fn get_block_headers_startblock_hash_message() {
+        let get_block_bodies =
+            GetBlockHeaders::new(1, HashOrNumber::Hash(BlockHash::from([1; 32])), 0, 0, false);
+
+        let mut buf = Vec::new();
+        get_block_bodies.encode(&mut buf).unwrap();
+
+        let decoded = GetBlockHeaders::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert_eq!(
+            decoded.startblock,
+            HashOrNumber::Hash(BlockHash::from([1; 32]))
+        );
+    }
+
+    #[test]
+    fn get_block_bodies_empty_message() {
+        let blocks_hash = vec![];
+        let get_block_bodies = GetBlockBodies::new(1, blocks_hash.clone());
+
+        let mut buf = Vec::new();
+        get_block_bodies.encode(&mut buf).unwrap();
+
+        let decoded = GetBlockBodies::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert_eq!(decoded.block_hashes, blocks_hash);
+    }
+
+    #[test]
+    fn get_block_bodies_not_empty_message() {
+        let blocks_hash = vec![
+            BlockHash::from([0; 32]),
+            BlockHash::from([1; 32]),
+            BlockHash::from([2; 32]),
+        ];
+        let get_block_bodies = GetBlockBodies::new(1, blocks_hash.clone());
+
+        let mut buf = Vec::new();
+        get_block_bodies.encode(&mut buf).unwrap();
+
+        let decoded = GetBlockBodies::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert_eq!(decoded.block_hashes, blocks_hash);
+    }
+
+    #[test]
+    fn block_bodies_empty_message() {
+        let block_bodies = vec![];
+        let block_bodies = BlockBodies::new(1, block_bodies);
+
+        let mut buf = Vec::new();
+        block_bodies.encode(&mut buf).unwrap();
+
+        let decoded = BlockBodies::decode(&buf).unwrap();
+        assert_eq!(decoded.id, 1);
+        assert_eq!(decoded.block_bodies, vec![]);
     }
 }

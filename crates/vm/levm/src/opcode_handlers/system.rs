@@ -13,14 +13,17 @@
 
 use crate::{
     call_frame::CallFrame,
-    constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
+    constants::{
+        AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, POLYGON_INIT_CODE_MAX_SIZE, SUCCESS,
+    },
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost::{self, STATE_GAS_NEW_ACCOUNT},
+    hooks::polygon_hook::build_value_transfer_log,
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
     utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
-    vm::VM,
+    vm::{VM, VMType},
 };
 use bytes::Bytes;
 use ethrex_common::{Address, H256, U256, evm::calculate_create_address, types::Fork};
@@ -678,8 +681,11 @@ impl<'a> VM<'a> {
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
-        // [EIP-3860] / [EIP-7954] - Cant exceed init code max size
-        let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
+        // Validations that can cause out of gas.
+        // 1. [EIP-3860] / [EIP-7954] - Cant exceed init code max size
+        let init_code_max = if matches!(self.vm_type, VMType::Polygon(_)) {
+            POLYGON_INIT_CODE_MAX_SIZE
+        } else if self.env.config.fork >= Fork::Amsterdam {
             AMSTERDAM_INIT_CODE_MAX_SIZE
         } else {
             INIT_CODE_MAX_SIZE
@@ -826,11 +832,28 @@ impl<'a> VM<'a> {
         self.substate.push_backup();
         self.substate.add_created_account(new_address); // Mostly for SELFDESTRUCT during initcode.
 
-        // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
-        // Must be after push_backup() so the log reverts if the child context reverts
-        if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() {
-            let log = create_eth_transfer_log(deployer, new_address, value);
-            self.substate.add_log(log);
+        if !value.is_zero() {
+            // Polygon: emit Bor LogTransfer for CREATE value transfer
+            // Bor's evm.create() calls Transfer() which emits AddTransferLog.
+            if matches!(self.vm_type, VMType::Polygon(_)) {
+                let sender_bal = self.db.get_account(deployer)?.info.balance;
+                let recipient_bal = self.db.get_account(new_address)?.info.balance;
+                let log = build_value_transfer_log(
+                    deployer,
+                    new_address,
+                    value,
+                    sender_bal,
+                    recipient_bal,
+                );
+                self.substate.add_log(log);
+            }
+
+            // EIP-7708: Emit transfer log for nonzero-value CREATE/CREATE2
+            // Must be after push_backup() so the log reverts if the child context reverts
+            if self.env.config.fork >= Fork::Amsterdam {
+                let log = create_eth_transfer_log(deployer, new_address, value);
+                self.substate.add_log(log);
+            }
         }
 
         Ok(OpcodeResult::Continue)
@@ -950,6 +973,7 @@ impl<'a> VM<'a> {
                 gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.env.config.eip7883,
                 self.db.store.precompile_cache(),
                 self.crypto,
             )?;
@@ -993,11 +1017,28 @@ impl<'a> VM<'a> {
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
 
-                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
-                // Self-transfers (msg_sender == to) do NOT emit a log (includes CALLCODE)
-                if self.env.config.fork >= Fork::Amsterdam && !value.is_zero() && msg_sender != to {
-                    let log = create_eth_transfer_log(msg_sender, to, value);
-                    self.substate.add_log(log);
+                if !value.is_zero() {
+                    // Polygon: Bor's Transfer() emits LogTransfer for ALL value transfers,
+                    // including self-transfers (CALL to self) and CALLCODE.
+                    if matches!(self.vm_type, VMType::Polygon(_)) {
+                        let sender_bal = self.db.get_account(msg_sender)?.info.balance;
+                        let recipient_bal = self.db.get_account(to)?.info.balance;
+                        let log = build_value_transfer_log(
+                            msg_sender,
+                            to,
+                            value,
+                            sender_bal,
+                            recipient_bal,
+                        );
+                        self.substate.add_log(log);
+                    }
+
+                    // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                    // Self-transfers (msg_sender == to) do NOT emit a log (includes CALLCODE)
+                    if self.env.config.fork >= Fork::Amsterdam && msg_sender != to {
+                        let log = create_eth_transfer_log(msg_sender, to, value);
+                        self.substate.add_log(log);
+                    }
                 }
             }
 
@@ -1041,16 +1082,24 @@ impl<'a> VM<'a> {
 
             self.substate.push_backup();
 
-            // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
-            // Must be after push_backup() so the log reverts if the child context reverts
-            // Self-transfers (msg_sender == to) do NOT emit a log (includes CALLCODE)
-            if should_transfer_value
-                && self.env.config.fork >= Fork::Amsterdam
-                && !value.is_zero()
-                && msg_sender != to
-            {
-                let log = create_eth_transfer_log(msg_sender, to, value);
-                self.substate.add_log(log);
+            if should_transfer_value && !value.is_zero() {
+                // Polygon: Bor's Transfer() emits LogTransfer for ALL value transfers,
+                // including self-transfers (CALL to self) and CALLCODE.
+                if matches!(self.vm_type, VMType::Polygon(_)) {
+                    let sender_bal = self.db.get_account(msg_sender)?.info.balance;
+                    let recipient_bal = self.db.get_account(to)?.info.balance;
+                    let log =
+                        build_value_transfer_log(msg_sender, to, value, sender_bal, recipient_bal);
+                    self.substate.add_log(log);
+                }
+
+                // EIP-7708: Emit transfer log for nonzero-value CALL/CALLCODE
+                // Must be after push_backup() so the log reverts if the child context reverts
+                // Self-transfers (msg_sender == to) do NOT emit a log (includes CALLCODE)
+                if self.env.config.fork >= Fork::Amsterdam && msg_sender != to {
+                    let log = create_eth_transfer_log(msg_sender, to, value);
+                    self.substate.add_log(log);
+                }
             }
         }
 
@@ -1104,11 +1153,10 @@ impl<'a> VM<'a> {
         old_callframe_memory.clean_from_base();
 
         let parent_call_frame = &mut self.current_call_frame;
-
-        // Return gas left from subcontext
         let child_unused_gas = gas_limit
             .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
+
         parent_call_frame.gas_remaining = parent_call_frame
             .gas_remaining
             .checked_add(child_unused_gas as i64)

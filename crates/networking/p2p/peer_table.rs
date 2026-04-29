@@ -34,6 +34,8 @@ use std::{
     net::IpAddr,
     time::{Duration, Instant},
 };
+use thiserror::Error;
+use tracing::warn;
 
 const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
@@ -48,7 +50,7 @@ const REQUESTS_WEIGHT: i64 = 1;
 /// Max amount of ongoing requests per peer.
 const MAX_CONCURRENT_REQUESTS_PER_PEER: i64 = 100;
 /// The target number of RLPx connections to reach.
-pub const TARGET_PEERS: usize = 100;
+pub const TARGET_PEERS: usize = 200;
 /// The target number of contacts to maintain in peer_table.
 const TARGET_CONTACTS: usize = 100_000;
 /// Maximum number of ENRs to return in a FindNode response (discv4 compatible).
@@ -99,6 +101,8 @@ pub struct Contact {
     pub knows_us: bool,
     /// This is a known-bad peer (on another network, no matching capabilities, etc)
     pub unwanted: bool,
+    /// Bootnodes are never discarded — they're our lifeline for discovery.
+    pub is_bootnode: bool,
     /// Whether the last known fork ID is valid, None if unknown.
     pub is_fork_id_valid: Option<bool>,
     /// Session information for discv5 (None for discv4 contacts)
@@ -153,6 +157,7 @@ impl Contact {
             disposable: false,
             knows_us: true,
             unwanted: false,
+            is_bootnode: false,
             is_fork_id_valid: None,
             session: None,
         }
@@ -318,6 +323,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn set_disposable(&self, node_id: H256) -> Result<(), ActorError>;
     fn increment_find_node_sent(&self, node_id: H256) -> Result<(), ActorError>;
     fn mark_knows_us(&self, node_id: H256) -> Result<(), ActorError>;
+    fn mark_bootnodes(&self, node_ids: Vec<H256>) -> Result<(), ActorError>;
     fn prune_table(&self) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
 
@@ -381,6 +387,8 @@ pub struct PeerTableServer {
     peers: IndexMap<H256, PeerData>,
     already_tried_peers: FxHashSet<H256>,
     discarded_contacts: FxHashSet<H256>,
+    /// Node IDs of bootnodes — never permanently discarded.
+    bootnode_ids: FxHashSet<H256>,
     target_peers: usize,
     store: Store,
     /// Standalone session store, independent of contacts.
@@ -400,6 +408,7 @@ impl PeerTableServer {
             peers: Default::default(),
             already_tried_peers: Default::default(),
             discarded_contacts: Default::default(),
+            bootnode_ids: Default::default(),
             target_peers,
             store,
             sessions: Default::default(),
@@ -423,8 +432,19 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewContacts,
         _ctx: &Context<Self>,
     ) {
+        let count = msg.nodes.len();
+        let start = std::time::Instant::now();
         self.do_new_contacts(msg.nodes, msg.local_node_id, msg.protocol)
             .await;
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_secs(1) {
+            tracing::warn!(
+                ?elapsed,
+                count,
+                contacts = self.contacts.len(),
+                "PeerTable: handle_new_contacts slow"
+            );
+        }
     }
 
     #[send_handler]
@@ -433,8 +453,19 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::NewContactRecords,
         _ctx: &Context<Self>,
     ) {
+        let count = msg.node_records.len();
+        let start = std::time::Instant::now();
         self.do_new_contact_records(msg.node_records, msg.local_node_id)
             .await;
+        let elapsed = start.elapsed();
+        if elapsed > std::time::Duration::from_secs(1) {
+            tracing::warn!(
+                ?elapsed,
+                count,
+                contacts = self.contacts.len(),
+                "PeerTable: handle_new_contact_records slow"
+            );
+        }
     }
 
     #[send_handler]
@@ -609,9 +640,12 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::SetDisposable,
         _ctx: &Context<Self>,
     ) {
-        self.contacts
-            .entry(msg.node_id)
-            .and_modify(|contact| contact.disposable = true);
+        // Never mark bootnodes as disposable.
+        if !self.bootnode_ids.contains(&msg.node_id) {
+            self.contacts
+                .entry(msg.node_id)
+                .and_modify(|contact| contact.disposable = true);
+        }
     }
 
     #[send_handler]
@@ -634,6 +668,21 @@ impl PeerTableServer {
         self.contacts
             .entry(msg.node_id)
             .and_modify(|c| c.knows_us = true);
+    }
+
+    #[send_handler]
+    async fn handle_mark_bootnodes(
+        &mut self,
+        msg: peer_table_server_protocol::MarkBootnodes,
+        _ctx: &Context<Self>,
+    ) {
+        for node_id in &msg.node_ids {
+            self.bootnode_ids.insert(*node_id);
+            self.contacts
+                .entry(*node_id)
+                .and_modify(|contact| contact.is_bootnode = true);
+            self.discarded_contacts.remove(node_id);
+        }
     }
 
     #[send_handler]
@@ -1045,7 +1094,13 @@ impl PeerTableServer {
         let disposable_contacts = self
             .contacts
             .iter()
-            .filter_map(|(c_id, c)| c.disposable.then_some(*c_id))
+            .filter_map(|(c_id, c)| {
+                // Never discard bootnodes — they're our lifeline for discovery.
+                if c.is_bootnode {
+                    return None;
+                }
+                c.disposable.then_some(*c_id)
+            })
             .collect::<Vec<_>>();
 
         for contact_to_discard_id in disposable_contacts {
@@ -1192,7 +1247,10 @@ impl PeerTableServer {
     ) {
         for node in nodes {
             let node_id = node.node_id();
-            if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+            // Bootnodes are exempt from the discard list.
+            let is_discarded =
+                self.discarded_contacts.contains(&node_id) && !self.bootnode_ids.contains(&node_id);
+            if is_discarded || node_id == local_node_id {
                 continue;
             }
             #[cfg(feature = "metrics")]
@@ -1200,7 +1258,9 @@ impl PeerTableServer {
 
             let is_new = match self.contacts.entry(node_id) {
                 Entry::Vacant(vacant_entry) => {
-                    vacant_entry.insert(Contact::new(node, protocol));
+                    let mut contact = Contact::new(node, protocol);
+                    contact.is_bootnode = self.bootnode_ids.contains(&node_id);
+                    vacant_entry.insert(contact);
                     true
                 }
                 Entry::Occupied(mut occupied_entry) => {
@@ -1229,7 +1289,9 @@ impl PeerTableServer {
             }
             if let Ok(node) = Node::from_enr(&node_record) {
                 let node_id = node.node_id();
-                if self.discarded_contacts.contains(&node_id) || node_id == local_node_id {
+                let is_discarded = self.discarded_contacts.contains(&node_id)
+                    && !self.bootnode_ids.contains(&node_id);
+                if is_discarded || node_id == local_node_id {
                     continue;
                 }
                 match self.contacts.entry(node_id) {
@@ -1238,6 +1300,7 @@ impl PeerTableServer {
                             Self::evaluate_fork_id(&node_record, &self.store).await;
                         let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                         contact.is_fork_id_valid = is_fork_id_valid;
+                        contact.is_bootnode = self.bootnode_ids.contains(&node_id);
                         contact.record = Some(node_record);
                         vacant_entry.insert(contact);
                         METRICS.record_new_discovery().await;
@@ -1269,10 +1332,16 @@ impl PeerTableServer {
 
     async fn evaluate_fork_id(record: &NodeRecord, store: &Store) -> Option<bool> {
         if let Some(remote_fork_id) = record.get_fork_id() {
-            backend::is_fork_id_valid(store, remote_fork_id)
+            let start = std::time::Instant::now();
+            let result = backend::is_fork_id_valid(store, remote_fork_id)
                 .await
                 .ok()
-                .or(Some(false))
+                .or(Some(false));
+            let elapsed = start.elapsed();
+            if elapsed > std::time::Duration::from_millis(100) {
+                tracing::warn!(?elapsed, "PeerTable: evaluate_fork_id slow DB call");
+            }
+            result
         } else {
             Some(false)
         }
@@ -1290,6 +1359,9 @@ impl PeerTableServer {
     }
 
     fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+        let total_peers = self.peers.len();
+        let mut no_cap = 0;
+        let mut no_conn = 0;
         let peers: Vec<(H256, &PeerConnection, i64)> = self
             .peers
             .iter()
@@ -1298,15 +1370,28 @@ impl PeerTableServer {
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
                 {
+                    no_cap += 1;
                     return None;
                 }
-                peer_data
-                    .connection
-                    .as_ref()
-                    .map(|connection| (*node_id, connection, peer_data.score))
+                match peer_data.connection.as_ref() {
+                    Some(connection) => Some((*node_id, connection, peer_data.score)),
+                    None => {
+                        no_conn += 1;
+                        None
+                    }
+                }
             })
             .collect();
         if peers.is_empty() {
+            if total_peers > 0 {
+                warn!(
+                    total_peers,
+                    no_capability = no_cap,
+                    no_connection = no_conn,
+                    ?capabilities,
+                    "get_random_peer: no usable peers"
+                );
+            }
             return None;
         }
         // Weight by score: maps [-150, 50] to [1, 201] so bad peers are unlikely but not excluded

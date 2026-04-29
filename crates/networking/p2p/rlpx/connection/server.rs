@@ -15,7 +15,7 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
-            blocks::{BlockBodies, BlockHeaders},
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
@@ -350,7 +350,12 @@ impl PeerConnectionServer {
     async fn stopped(&mut self, _ctx: &Context<Self>) {
         match std::mem::replace(&mut self.state, ConnectionState::HandshakeFailed) {
             ConnectionState::Established(mut established_state) => {
-                trace!(peer=%established_state.node, "Closing connection with established peer");
+                debug!(
+                    peer=%established_state.node,
+                    is_validated=established_state.is_validated,
+                    disconnect_reason=?established_state.disconnect_reason,
+                    "Tearing down peer connection"
+                );
                 if established_state.is_validated {
                     // If its validated the peer was connected, so we record the disconnection.
                     let reason = established_state
@@ -671,6 +676,26 @@ where
 
     init_capabilities(state, &mut stream).await?;
 
+    // Cap non-snap peers. Snap-capable peers are precious (BSC has few),
+    // so once non-snap fills MAX_NON_SNAP_PEERS we reject incoming non-snap
+    // peers and free slots for the discoverer to find snap-capable ones.
+    const MAX_NON_SNAP_PEERS: usize = 30;
+    let peer_has_snap = SUPPORTED_SNAP_CAPABILITIES
+        .iter()
+        .any(|cap| state.capabilities.contains(cap));
+    if !peer_has_snap {
+        let total = state.peer_table.peer_count().await?;
+        let snap_count = state
+            .peer_table
+            .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .await?;
+        let non_snap_count = total.saturating_sub(snap_count);
+        if non_snap_count >= MAX_NON_SNAP_PEERS {
+            debug!(peer=%state.node, "Rejecting non-snap peer: cap of {MAX_NON_SNAP_PEERS} reached.");
+            return Err(PeerConnectionError::TooManyPeers);
+        }
+    }
+
     let mut connection = PeerConnection {
         handle: ctx.actor_ref(),
     };
@@ -828,8 +853,37 @@ where
     // Sending eth Status if peer supports it
     if let Some(eth) = state.negotiated_eth_capability.clone() {
         let status = match eth.version {
-            68 => Message::Status68(StatusMessage68::new(&state.storage).await?),
-            69 => Message::Status69(StatusMessage69::new(&state.storage).await?),
+            68 => {
+                let msg = StatusMessage68::new(&state.storage).await?;
+                debug!(
+                    peer=%state.node,
+                    eth_version = msg.eth_version,
+                    network_id = msg.network_id,
+                    total_difficulty = %msg.total_difficulty,
+                    block_hash = ?msg.block_hash,
+                    genesis = ?msg.genesis,
+                    fork_id_hash = ?msg.fork_id.fork_hash,
+                    fork_id_next = msg.fork_id.fork_next,
+                    "Sending Status(68)"
+                );
+                Message::Status68(msg)
+            }
+            69 => {
+                let msg = StatusMessage69::new(&state.storage).await?;
+                debug!(
+                    peer=%state.node,
+                    eth_version = msg.eth_version,
+                    network_id = msg.network_id,
+                    genesis = ?msg.genesis,
+                    fork_id_hash = ?msg.fork_id.fork_hash,
+                    fork_id_next = msg.fork_id.fork_next,
+                    earliest_block = msg.earliest_block,
+                    latest_block = msg.latest_block,
+                    latest_hash = ?msg.latest_block_hash,
+                    "Sending Status(69)"
+                );
+                Message::Status69(msg)
+            }
             70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
@@ -837,7 +891,6 @@ where
                 )));
             }
         };
-        trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
         // The next immediate message in the ETH protocol is the
         // status, reference here:
@@ -846,7 +899,7 @@ where
             Some(msg) => msg?,
             None => return Err(PeerConnectionError::Disconnected),
         };
-        match msg {
+        let remote_head = match msg {
             Message::Status68(msg_data) => {
                 trace!(peer=%state.node, "Received Status(68)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
@@ -870,6 +923,20 @@ where
                     "Expected a Status message".to_string(),
                 ));
             }
+        };
+
+        // On Polygon chains, signal the sync manager with the remote peer's head.
+        let chain_id = state.storage.get_chain_config().chain_id;
+        if ethrex_polygon::genesis::is_polygon_chain(chain_id)
+            && !remote_head.is_zero()
+            && state.blockchain.secs_since_last_block() > 4
+        {
+            debug!(
+                peer=%state.node,
+                head=?remote_head,
+                "Setting Polygon sync target from peer status"
+            );
+            state.blockchain.set_polygon_sync_head(remote_head);
         }
     }
     Ok(())
@@ -943,14 +1010,22 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
+    // Bor (Polygon) uses a non-standard eth/69 Status format that includes TD.
+    // If we negotiate eth/69, our standard Status (no TD) will be misinterpreted
+    // by Bor (genesis hash decoded as TD → BitLen > 100 → disconnect).
+    // Restrict to eth/68 for Polygon so both sides use the compatible eth/68 Status.
+    let chain_id = state.storage.get_chain_config().chain_id;
+    let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
+    let supported_eth: &[Capability] = if is_polygon {
+        &[Capability::eth(68)]
+    } else {
+        &SUPPORTED_ETH_CAPABILITIES
+    };
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
     #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
+    let mut supported_capabilities: Vec<Capability> =
+        [supported_eth, &SUPPORTED_SNAP_CAPABILITIES[..]].concat();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
@@ -984,9 +1059,7 @@ where
             for cap in &hello_message.capabilities {
                 match cap.protocol() {
                     "eth" => {
-                        if SUPPORTED_ETH_CAPABILITIES.contains(cap)
-                            && cap.version > negotiated_eth_version
-                        {
+                        if supported_eth.contains(cap) && cap.version > negotiated_eth_version {
                             negotiated_eth_version = cap.version;
                         }
                     }
@@ -1118,10 +1191,10 @@ async fn handle_incoming_message(
     match message {
         Message::Disconnect(msg_data) => {
             let reason = msg_data.reason();
-            trace!(
+            warn!(
                 peer=%state.node,
                 ?reason,
-                "Received Disconnect"
+                "Received Disconnect from peer"
             );
             state.disconnect_reason = Some(reason);
 
@@ -1138,18 +1211,18 @@ async fn handle_incoming_message(
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
-            };
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
+            }
         }
         Message::Status69(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
-            };
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
+            }
         }
         Message::Status70(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
-            };
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
+            }
         }
         Message::GetAccountRange(req) => {
             let response = process_account_range_request(req, state.storage.clone()).await?;
@@ -1200,16 +1273,30 @@ async fn handle_incoming_message(
             }
         }
         Message::GetBlockHeaders(msg_data) if peer_supports_eth => {
+            let block_headers = msg_data.fetch_headers(&state.storage).await;
+            trace!(
+                peer=%state.node,
+                id=msg_data.id,
+                response_count=block_headers.len(),
+                "Serving GetBlockHeaders request"
+            );
             let response = BlockHeaders {
                 id: msg_data.id,
-                block_headers: msg_data.fetch_headers(&state.storage).await,
+                block_headers,
             };
             send(state, Message::BlockHeaders(response)).await?;
         }
         Message::GetBlockBodies(msg_data) if peer_supports_eth => {
+            let block_bodies = msg_data.fetch_blocks(&state.storage).await;
+            trace!(
+                peer=%state.node,
+                id=msg_data.id,
+                response_count=block_bodies.len(),
+                "Serving GetBlockBodies request"
+            );
             let response = BlockBodies {
                 id: msg_data.id,
-                block_bodies: msg_data.fetch_blocks(&state.storage).await,
+                block_bodies,
             };
             send(state, Message::BlockBodies(response)).await?;
         }
@@ -1433,6 +1520,401 @@ async fn handle_incoming_message(
                 Err(_) => send(state, Message::TrieNodes(TrieNodes { id, nodes: vec![] })).await?,
             }
         }
+        // Polygon PoS: process new blocks received via P2P.
+        // These ETH messages are deprecated post-merge for Ethereum but are the
+        // primary block propagation mechanism for Polygon.
+        Message::EthNewBlock(new_block) if peer_supports_eth => {
+            let chain_id = state.storage.get_chain_config().chain_id;
+            let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
+            if is_polygon {
+                let new_block = *new_block;
+                let block_hash = new_block.block.hash();
+                let block_number = new_block.block.header.number;
+
+                // Skip blocks we already have or that are already being processed.
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                if block_number <= latest {
+                    // Already processed — skip silently.
+                } else if !state.blockchain.mark_polygon_in_flight(block_hash) {
+                    debug!(peer=%state.node, block_number, "Block already in-flight, skipping");
+                } else {
+                    debug!(
+                        peer=%state.node,
+                        block_number,
+                        hash=?block_hash,
+                        td=%new_block.total_difficulty,
+                        "Received new Polygon block via P2P"
+                    );
+
+                    // Check if parent exists before executing
+                    let parent_hash = new_block.block.header.parent_hash;
+                    if state
+                        .storage
+                        .get_block_header_by_hash(parent_hash)?
+                        .is_none()
+                    {
+                        // Parent not in DB — buffer for chain-following when parent arrives
+                        state
+                            .blockchain
+                            .buffer_polygon_pending_block(new_block.block);
+                        let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                        if block_number > latest + 64 {
+                            warn!(
+                                peer=%state.node,
+                                block_number,
+                                latest,
+                                gap = block_number.saturating_sub(latest),
+                                "Polygon block parent not found, triggering gap-fill sync"
+                            );
+                            state.blockchain.set_polygon_sync_head(block_hash);
+                        } else {
+                            debug!(
+                                peer=%state.node,
+                                block_number,
+                                latest,
+                                "Polygon block parent not found, buffered for chain-follow"
+                            );
+                        }
+                    } else {
+                        // Parent exists — offload pipeline to background task
+                        // so we don't block the peer connection for ~2s.
+                        let blockchain = state.blockchain.clone();
+                        let storage = state.storage.clone();
+                        let block = new_block.block;
+                        let announced_td = new_block.total_difficulty;
+                        tokio::spawn(async move {
+                            // Serialize with the sync cycle: both paths call
+                            // forkchoice_update, which destructively rewinds
+                            // canonical entries above the given head. Without
+                            // this lock, racing updates produce a canonical
+                            // "hole" that breaks BLOCKHASH lookups later.
+                            let canonical_lock = blockchain.polygon_canonical_lock();
+                            let _canonical_guard = canonical_lock.lock().await;
+                            // Re-check: the sync cycle may have advanced past
+                            // this block while we were waiting for the lock.
+                            let latest = storage.get_latest_block_number().await.unwrap_or(0);
+                            let blk_number = block.header.number;
+                            let blk_hash = block.hash();
+                            if blk_number <= latest {
+                                blockchain.clear_polygon_in_flight(&blk_hash);
+                                return;
+                            }
+                            // Run the blocking pipeline on the tokio blocking pool
+                            let bc = blockchain.clone();
+                            let result = tokio::task::spawn_blocking(move || {
+                                bc.add_block_pipeline(block, None)
+                            })
+                            .await;
+                            let result = match result {
+                                Ok(r) => r,
+                                Err(e) => {
+                                    // Clear in-flight on panic so the block can be retried.
+                                    blockchain.clear_polygon_in_flight(&blk_hash);
+                                    warn!(block_number = blk_number, error = %e, "Polygon block task panicked");
+                                    return;
+                                }
+                            };
+                            match result {
+                                Ok(()) => {
+                                    let latest =
+                                        storage.get_latest_block_number().await.unwrap_or(0);
+                                    let local_td_lower_bound = ethrex_common::U256::from(latest);
+                                    if announced_td > local_td_lower_bound || blk_number > latest {
+                                        if let Err(e) = storage
+                                            .forkchoice_update(
+                                                vec![],
+                                                blk_number,
+                                                blk_hash,
+                                                None,
+                                                None,
+                                            )
+                                            .await
+                                        {
+                                            warn!(block_number = blk_number, error = %e, "forkchoice_update failed");
+                                        } else {
+                                            debug!(block_number = blk_number, %announced_td, "Updated canonical head (Polygon)");
+                                        }
+                                    }
+
+                                    // Chain-follow: process buffered blocks whose parent we just stored
+                                    let mut next_parent = blk_hash;
+                                    let mut chain_depth = 0u32;
+                                    loop {
+                                        if chain_depth >= 64 {
+                                            debug!("Chain-follow depth limit reached (64)");
+                                            break;
+                                        }
+                                        let Some(pending) =
+                                            blockchain.take_polygon_pending_block(next_parent)
+                                        else {
+                                            break;
+                                        };
+                                        chain_depth += 1;
+                                        let pending_hash = pending.hash();
+                                        let pending_number = pending.header.number;
+                                        let bc_inner = blockchain.clone();
+                                        let inner_result = tokio::task::spawn_blocking(move || {
+                                            bc_inner.add_block_pipeline(pending, None)
+                                        })
+                                        .await;
+                                        match inner_result {
+                                            Ok(Ok(())) => {
+                                                let latest = storage
+                                                    .get_latest_block_number()
+                                                    .await
+                                                    .unwrap_or(0);
+                                                if pending_number > latest {
+                                                    let _ = storage
+                                                        .forkchoice_update(
+                                                            vec![],
+                                                            pending_number,
+                                                            pending_hash,
+                                                            None,
+                                                            None,
+                                                        )
+                                                        .await;
+                                                }
+                                                debug!(
+                                                    block_number = pending_number,
+                                                    "Processed buffered Polygon block"
+                                                );
+                                                next_parent = pending_hash;
+                                            }
+                                            Ok(Err(e)) => {
+                                                warn!(block_number = pending_number, error = %e, "Failed to process buffered Polygon block");
+                                                break;
+                                            }
+                                            Err(e) => {
+                                                warn!(block_number = pending_number, error = %e, "Buffered block task panicked");
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    blockchain.clear_polygon_in_flight(&blk_hash);
+                                }
+                                Err(e) => {
+                                    // Clear in-flight on error so the block can be retried.
+                                    blockchain.clear_polygon_in_flight(&blk_hash);
+                                    warn!(block_number = blk_number, error = %e, "Failed to process Polygon block");
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+            // Non-Polygon chains: silently ignore (post-merge, blocks come via Engine API).
+        }
+        Message::NewBlockHashes(new_block_hashes) if peer_supports_eth => {
+            let chain_id = state.storage.get_chain_config().chain_id;
+            let is_polygon = ethrex_polygon::genesis::is_polygon_chain(chain_id);
+            if is_polygon {
+                // Request full block headers+bodies for unknown, non-in-flight hashes.
+                let latest_nbh = state.storage.get_latest_block_number().await.unwrap_or(0);
+                let unknown: Vec<(H256, u64)> = new_block_hashes
+                    .block_hashes
+                    .iter()
+                    .filter(|(_, num)| *num > latest_nbh)
+                    .filter(|(hash, _)| {
+                        state
+                            .storage
+                            .get_block_header_by_hash(*hash)
+                            .ok()
+                            .flatten()
+                            .is_none()
+                    })
+                    .copied()
+                    .collect();
+
+                for &(hash, number) in &unknown {
+                    debug!(
+                        peer=%state.node,
+                        block_number = number,
+                        hash = ?hash,
+                        "Fetching block from NewBlockHashes announcement"
+                    );
+
+                    // Send GetBlockHeaders and GetBlockBodies for this hash
+                    let header_id: u64 = rand::random();
+                    let body_id: u64 = rand::random();
+
+                    let (header_tx, header_rx) = tokio::sync::oneshot::channel::<Message>();
+                    let (body_tx, body_rx) = tokio::sync::oneshot::channel::<Message>();
+
+                    handle_outgoing_request(
+                        state,
+                        Message::GetBlockHeaders(GetBlockHeaders {
+                            id: header_id,
+                            startblock: HashOrNumber::Hash(hash),
+                            limit: 1,
+                            skip: 0,
+                            reverse: false,
+                        }),
+                        header_tx,
+                    )
+                    .await?;
+
+                    handle_outgoing_request(
+                        state,
+                        Message::GetBlockBodies(GetBlockBodies {
+                            id: body_id,
+                            block_hashes: vec![hash],
+                        }),
+                        body_tx,
+                    )
+                    .await?;
+
+                    // Spawn a task to await both responses and process the block
+                    let blockchain = state.blockchain.clone();
+                    let storage = state.storage.clone();
+                    tokio::spawn(async move {
+                        let timeout = std::time::Duration::from_secs(5);
+                        let (header_resp, body_resp) = tokio::join!(
+                            tokio::time::timeout(timeout, header_rx),
+                            tokio::time::timeout(timeout, body_rx),
+                        );
+
+                        // Extract header
+                        let header = match header_resp {
+                            Ok(Ok(Message::BlockHeaders(mut bh)))
+                                if !bh.block_headers.is_empty() =>
+                            {
+                                bh.block_headers.swap_remove(0)
+                            }
+                            _ => {
+                                debug!(
+                                    block_number = number,
+                                    "Failed to fetch header for NewBlockHashes"
+                                );
+                                return;
+                            }
+                        };
+
+                        // Extract body
+                        let body = match body_resp {
+                            Ok(Ok(Message::BlockBodies(mut bb))) if !bb.block_bodies.is_empty() => {
+                                bb.block_bodies.swap_remove(0)
+                            }
+                            _ => {
+                                debug!(
+                                    block_number = number,
+                                    "Failed to fetch body for NewBlockHashes"
+                                );
+                                return;
+                            }
+                        };
+
+                        let block = ethrex_common::types::Block::new(header, body);
+                        let blk_number = block.header.number;
+                        let blk_hash = block.hash();
+
+                        // Serialize with the sync cycle and NewBlock handler.
+                        let canonical_lock = blockchain.polygon_canonical_lock();
+                        let _canonical_guard = canonical_lock.lock().await;
+
+                        // Skip if already processed or in-flight
+                        let latest = storage.get_latest_block_number().await.unwrap_or(0);
+                        if blk_number <= latest || !blockchain.mark_polygon_in_flight(blk_hash) {
+                            return;
+                        }
+
+                        // Check parent exists
+                        let parent_hash = block.header.parent_hash;
+                        let parent_exists = storage
+                            .get_block_header_by_hash(parent_hash)
+                            .ok()
+                            .flatten()
+                            .is_some();
+
+                        if !parent_exists {
+                            blockchain.buffer_polygon_pending_block(block);
+                            debug!(
+                                block_number = blk_number,
+                                "Fetched block buffered (parent missing)"
+                            );
+                            return;
+                        }
+
+                        // Process via pipeline
+                        let bc = blockchain.clone();
+                        let result =
+                            tokio::task::spawn_blocking(move || bc.add_block_pipeline(block, None))
+                                .await;
+                        match result {
+                            Ok(Ok(())) => {
+                                let latest = storage.get_latest_block_number().await.unwrap_or(0);
+                                if blk_number > latest {
+                                    let _ = storage
+                                        .forkchoice_update(vec![], blk_number, blk_hash, None, None)
+                                        .await;
+                                }
+                                debug!(
+                                    block_number = blk_number,
+                                    "Processed block from NewBlockHashes"
+                                );
+
+                                // Chain-follow buffered blocks
+                                let mut next_parent = blk_hash;
+                                let mut chain_depth = 0u32;
+                                loop {
+                                    if chain_depth >= 64 {
+                                        debug!("Chain-follow depth limit reached (64)");
+                                        break;
+                                    }
+                                    let Some(pending) =
+                                        blockchain.take_polygon_pending_block(next_parent)
+                                    else {
+                                        break;
+                                    };
+                                    chain_depth += 1;
+                                    let pending_hash = pending.hash();
+                                    let pending_number = pending.header.number;
+                                    let bc_inner = blockchain.clone();
+                                    match tokio::task::spawn_blocking(move || {
+                                        bc_inner.add_block_pipeline(pending, None)
+                                    })
+                                    .await
+                                    {
+                                        Ok(Ok(())) => {
+                                            let latest = storage
+                                                .get_latest_block_number()
+                                                .await
+                                                .unwrap_or(0);
+                                            if pending_number > latest {
+                                                let _ = storage
+                                                    .forkchoice_update(
+                                                        vec![],
+                                                        pending_number,
+                                                        pending_hash,
+                                                        None,
+                                                        None,
+                                                    )
+                                                    .await;
+                                            }
+                                            debug!(
+                                                block_number = pending_number,
+                                                "Processed buffered block (chain-follow)"
+                                            );
+                                            next_parent = pending_hash;
+                                        }
+                                        _ => break,
+                                    }
+                                }
+                                blockchain.clear_polygon_in_flight(&blk_hash);
+                            }
+                            Ok(Err(e)) => {
+                                blockchain.clear_polygon_in_flight(&blk_hash);
+                                warn!(block_number = blk_number, error = %e, "Failed to process fetched block");
+                            }
+                            Err(e) => {
+                                blockchain.clear_polygon_in_flight(&blk_hash);
+                                warn!(block_number = blk_number, error = %e, "Fetched block task panicked");
+                            }
+                        }
+                    });
+                }
+            }
+            // Non-Polygon chains: silently ignore.
+        }
         #[cfg(feature = "l2")]
         Message::L2(req) if peer_supports_l2 => {
             handle_based_capability_message(state, req).await?;
@@ -1458,7 +1940,14 @@ async fn handle_incoming_message(
             }
         }
         // TODO: Add new message types and handlers as they are implemented
-        message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
+        message => {
+            warn!(
+                peer=%state.node,
+                message=%message,
+                "Unhandled incoming message"
+            );
+            return Err(PeerConnectionError::MessageNotHandled(format!("{message}")));
+        }
     };
     Ok(())
 }

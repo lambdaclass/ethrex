@@ -18,6 +18,7 @@ ethrex-common = { path = "../common/", default-features = false }
 ethrex-crypto = { path = "../common/crypto", default-features = false }
 ethrex-vm = { path = "../vm", default-features = false }
 ethrex-rlp = { path = "../common/rlp", default-features = false }
+ethrex-polygon = { path = "../polygon", default-features = false }
 ethrex-l2-common = { path = "../l2/common", default-features = false }
 
 # EIP-8025 SSZ dependencies (optional)

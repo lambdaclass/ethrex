@@ -23,7 +23,9 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    types::{
+        AccessListEntry, Code, Fork, Log, PolygonFeeConfig, Transaction, fee_config::FeeConfig,
+    },
 };
 use ethrex_crypto::Crypto;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -37,7 +39,7 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
 
-/// Specifies whether the VM operates in L1 or L2 mode.
+/// Specifies whether the VM operates in L1, L2, or Polygon mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
     /// Standard Ethereum L1 execution.
@@ -45,6 +47,8 @@ pub enum VMType {
     L1,
     /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
+    /// Polygon PoS execution with deferred fee distribution.
+    Polygon(PolygonFeeConfig),
 }
 
 /// Execution substate that tracks changes during transaction execution.
@@ -469,6 +473,19 @@ impl<'a> VM<'a> {
 
         let mut substate = Substate::initialize(&env, tx)?;
 
+        if matches!(vm_type, VMType::Polygon(_)) {
+            // Polygon: add P256Verify (0x100) to warm set.
+            substate
+                .accessed_addresses
+                .insert(Address::from_low_u64_be(0x100));
+            // Remove ONLY address 0x0a (KZG point evaluation) from warm set.
+            // Bor's Cancun-equivalent fork warms 1-9 but NOT 0x0a (KZG is not
+            // active on Polygon). BLS addresses 0x0b-0x11 stay warm.
+            substate
+                .accessed_addresses
+                .remove(&Address::from_low_u64_be(0x0a));
+        }
+
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
         let fork = env.config.fork;
@@ -505,7 +522,11 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: if matches!(vm_type, VMType::Polygon(_)) {
+                VM::build_opcode_table_polygon(fork)
+            } else {
+                VM::build_opcode_table(fork)
+            },
             crypto,
         };
 
@@ -596,6 +617,28 @@ impl<'a> VM<'a> {
         }
 
         self.substate.push_backup();
+
+        // Polygon: emit Bor LogTransfer for the initial tx value transfer.
+        // Must be AFTER push_backup() so the log reverts with failed transactions.
+        // Covers both CALL and CREATE tx types.
+        if matches!(self.vm_type, VMType::Polygon(_))
+            && !self.current_call_frame.msg_value.is_zero()
+        {
+            let from = self.env.origin;
+            let to = self.current_call_frame.to;
+            let value = self.current_call_frame.msg_value;
+            let sender_bal = self.db.get_account(from)?.info.balance;
+            let recipient_bal = self.db.get_account(to)?.info.balance;
+            let log = crate::hooks::polygon_hook::build_value_transfer_log(
+                from,
+                to,
+                value,
+                sender_bal,
+                recipient_bal,
+            );
+            self.substate.add_log(log);
+        }
+
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
@@ -632,6 +675,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.env.config.eip7883,
                 self.db.store.precompile_cache(),
                 self.crypto,
             );
@@ -689,6 +733,7 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        eip7883: bool,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
@@ -698,6 +743,7 @@ impl<'a> VM<'a> {
                 calldata,
                 gas_remaining,
                 fork,
+                eip7883,
                 cache,
                 crypto,
             ),
@@ -733,6 +779,18 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
+        // Polygon: handle substate backup for LogTransfer revert semantics.
+        // On success: commit the backup to preserve LogTransfer logs from execution.
+        // On failure: revert so LogTransfer from value transfer is discarded (only LogFeeTransfer survives).
+        // Skip for system calls (gas_price == 0) which don't have LogTransfer/LogFeeTransfer.
+        if matches!(self.vm_type, VMType::Polygon(_)) && !self.env.gas_price.is_zero() {
+            if ctx_result.is_success() {
+                self.substate.commit_backup();
+            } else {
+                self.substate.revert_backup();
+            }
+        }
+
         for hook in self.hooks.clone() {
             hook.borrow_mut()
                 .finalize_execution(self, &mut ctx_result)?;
@@ -742,7 +800,9 @@ impl<'a> VM<'a> {
 
         // Only include logs if transaction succeeded. When a transaction reverts,
         // no logs should be emitted (including EIP-7708 Transfer logs).
-        let logs = if ctx_result.is_success() {
+        // Exception: Polygon always includes logs because the PolygonHook appends
+        // a LogFeeTransfer log after finalization, even for failed transactions.
+        let logs = if ctx_result.is_success() || matches!(self.vm_type, VMType::Polygon(_)) {
             self.substate.extract_logs()
         } else {
             Vec::new()
@@ -792,7 +852,9 @@ impl Substate {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
         }
 
-        // Add the address for the P256 verify precompile post-Osaka
+        // Add P256Verify (0x100) to warm set for L1 post-Osaka.
+        // For Polygon, this is handled in VM::new using vm_type (since
+        // env.config.fork resolves to Prague, not a Polygon-specific fork).
         if env.config.fork >= Fork::Osaka {
             initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }

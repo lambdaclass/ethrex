@@ -194,6 +194,9 @@ impl Syncer {
                             %sync_head,
                             %error, "Sync cycle failed, retrying",
                         );
+                        if let Some((actor, operation)) = error.actor_timeout_context() {
+                            crate::utils::log_actor_timeout_diagnostics(actor, operation).await;
+                        }
                     }
                 }
             }
@@ -340,7 +343,6 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
@@ -354,10 +356,25 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
+            | SyncError::PeerTableError(_)
             | SyncError::NoBlocks
             | SyncError::NoBlockHeaders => true,
             // PeerHandler handled above by delegation
             SyncError::PeerHandler(_) => unreachable!(),
+        }
+    }
+
+    /// Returns (actor, operation) if this error wraps an `ActorError::RequestTimeout`,
+    /// suitable for emitting runtime-health diagnostics. Returns `None` otherwise.
+    pub fn actor_timeout_context(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            SyncError::PeerTableError(ActorError::RequestTimeout) => {
+                Some(("PeerTable", "SyncError::PeerTableError"))
+            }
+            SyncError::PeerHandler(PeerHandlerError::PeerTableError(
+                ActorError::RequestTimeout,
+            )) => Some(("PeerTable", "SyncError::PeerHandler")),
+            _ => None,
         }
     }
 }

@@ -62,6 +62,16 @@ pub struct RequestStorageTrieNodesError {
     pub source: SnapError,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum StorageFailureMode {
+    Success,
+    Timeout,
+    Empty,
+    ValidationFail,
+    NoData,
+}
+
+#[derive(Clone)]
 struct StorageTaskResult {
     start_index: usize,
     account_storages: Vec<Vec<(H256, U256)>>,
@@ -69,6 +79,9 @@ struct StorageTaskResult {
     remaining_start: usize,
     remaining_end: usize,
     remaining_hash_range: (H256, Option<H256>),
+    failure_mode: StorageFailureMode,
+    /// First account hash in the request, for per-account failure mode tracking.
+    first_account: Option<H256>,
 }
 
 #[derive(Debug)]
@@ -97,6 +110,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    seconds_per_block: u64,
     diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
@@ -248,13 +262,14 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, seconds_per_block) {
             info!("request_account_range became stale, updating pivot");
             *pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                seconds_per_block,
                 diagnostics,
             )
             .await
@@ -521,6 +536,7 @@ pub async fn request_storage_ranges(
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
+    seconds_per_block: u64,
 ) -> Result<u64, SnapError> {
     METRICS
         .current_step
@@ -557,19 +573,65 @@ pub async fn request_storage_ranges(
     // TODO: Turn this into a stable sort for binary search.
     accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
     let chunk_size = STORAGE_BATCH_SIZE;
-    let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
-    // list of tasks to be executed
-    // Types are (start_index, end_index, starting_hash)
-    // NOTE: end_index is NOT inclusive
-
+    // Partition into bulk-path tasks (fresh accounts with empty intervals) and
+    // per-interval tasks (big accounts marked in a prior call). The previous
+    // implementation queued every account from `start_hash: zero` and relied
+    // on the response handler's bulk-task big-account split path to re-queue
+    // per-interval tasks each call. That fails when peers cover a big account
+    // fully without hitting their response limit on it: the split path doesn't
+    // fire, no per-interval tasks get queued, intervals never drain, the
+    // account is stuck pending forever even after its data is on disk.
     let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
-    for i in 0..chunk_count {
-        let chunk_start = chunk_size * i;
-        let chunk_end = (chunk_start + chunk_size).min(accounts_by_root_hash.len());
+    let mut bulk_chunk_start: Option<usize> = None;
+    for i in 0..accounts_by_root_hash.len() {
+        let first_account = *accounts_by_root_hash[i].1.first().ok_or_else(|| {
+            SnapError::InternalError("Empty accounts vector while scheduling tasks".to_owned())
+        })?;
+        let intervals = &account_storage_roots
+            .accounts_with_storage_root
+            .get(&first_account)
+            .ok_or_else(|| {
+                SnapError::InternalError(
+                    "Could not find intervals for account while scheduling".to_owned(),
+                )
+            })?
+            .1;
+        if intervals.is_empty() {
+            let chunk_start = *bulk_chunk_start.get_or_insert(i);
+            if i + 1 - chunk_start >= chunk_size {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: chunk_start,
+                    end_index: i + 1,
+                    start_hash: H256::zero(),
+                    end_hash: None,
+                });
+                bulk_chunk_start = None;
+            }
+        } else {
+            if let Some(start) = bulk_chunk_start {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: start,
+                    end_index: i,
+                    start_hash: H256::zero(),
+                    end_hash: None,
+                });
+                bulk_chunk_start = None;
+            }
+            for &(start_hash, end_hash) in intervals.iter() {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: i,
+                    end_index: i + 1,
+                    start_hash,
+                    end_hash: Some(end_hash),
+                });
+            }
+        }
+    }
+    if let Some(start) = bulk_chunk_start {
         tasks_queue_not_started.push_back(StorageTask {
-            start_index: chunk_start,
-            end_index: chunk_end,
+            start_index: start,
+            end_index: accounts_by_root_hash.len(),
             start_hash: H256::zero(),
             end_hash: None,
         });
@@ -581,6 +643,13 @@ pub async fn request_storage_ranges(
     // channel to send the result of dumping storages
     let mut disk_joinset: tokio::task::JoinSet<Result<(), DumpError>> = tokio::task::JoinSet::new();
 
+    // Track in-flight worker tasks so we can drain them before returning.
+    // The main loop can break early on staleness — detached `tokio::spawn`
+    // tasks would then try to `tx.send` to a dropped channel, skipping the
+    // `dec_requests` handler in the main loop's try_recv and leaking the
+    // peer's reservation slot.
+    let mut request_set: tokio::task::JoinSet<Result<(), SnapError>> = tokio::task::JoinSet::new();
+
     let mut task_count = tasks_queue_not_started.len();
     let mut completed_tasks = 0;
 
@@ -591,6 +660,37 @@ pub async fn request_storage_ranges(
     let mut current_account_storages: BTreeMap<H256, AccountsWithStorage> = BTreeMap::new();
 
     let mut logged_no_free_peers_count = 0;
+
+    // Diagnostic: per-account failure mode counts. Per-call so we can see
+    // why specific accounts aren't progressing this iteration.
+    let mut failure_mode_counts: HashMap<H256, [u32; 5]> = HashMap::new();
+    let mut last_sample_dump = std::time::Instant::now();
+
+    // Diagnostic: at function entry, log task partition (bulk vs per-interval).
+    let bulk_task_count = tasks_queue_not_started
+        .iter()
+        .filter(|t| t.end_hash.is_none())
+        .count();
+    let interval_task_count = tasks_queue_not_started
+        .iter()
+        .filter(|t| t.end_hash.is_some())
+        .count();
+    let interval_account_count = accounts_by_root_hash
+        .iter()
+        .filter(|(_, accs)| {
+            accs.first()
+                .and_then(|a| account_storage_roots.accounts_with_storage_root.get(a))
+                .map(|(_, intervals)| !intervals.is_empty())
+                .unwrap_or(false)
+        })
+        .count();
+    info!(
+        "request_storage_ranges entry: groups={}, bulk_tasks={}, interval_tasks={}, in_progress_accounts={}",
+        accounts_by_root_hash.len(),
+        bulk_task_count,
+        interval_task_count,
+        interval_account_count,
+    );
 
     debug!("Starting request_storage_ranges loop");
     loop {
@@ -643,8 +743,56 @@ pub async fn request_storage_ranges(
                 remaining_start,
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
+                failure_mode,
+                first_account,
             } = result;
             completed_tasks += 1;
+
+            if let Some(acc) = first_account {
+                let entry = failure_mode_counts.entry(acc).or_insert([0u32; 5]);
+                let idx = match failure_mode {
+                    StorageFailureMode::Success => 0,
+                    StorageFailureMode::Timeout => 1,
+                    StorageFailureMode::Empty => 2,
+                    StorageFailureMode::ValidationFail => 3,
+                    StorageFailureMode::NoData => 4,
+                };
+                entry[idx] = entry[idx].saturating_add(1);
+            }
+
+            // Sample-dump every 60s: pick 5 accounts with most failures and
+            // log their state to spot stuck accounts.
+            if last_sample_dump.elapsed() >= std::time::Duration::from_secs(60) {
+                last_sample_dump = std::time::Instant::now();
+                let mut samples: Vec<(H256, [u32; 5])> =
+                    failure_mode_counts.iter().map(|(k, v)| (*k, *v)).collect();
+                samples.sort_unstable_by_key(|(_, c)| std::cmp::Reverse(c[1] + c[2] + c[3] + c[4]));
+                for (acc, counts) in samples.into_iter().take(5) {
+                    let intervals_len = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(&acc)
+                        .map(|(_, i)| i.len())
+                        .unwrap_or(0);
+                    let cached_root_some = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(&acc)
+                        .map(|(r, _)| r.is_some())
+                        .unwrap_or(false);
+                    let healed = account_storage_roots.healed_accounts.contains(&acc);
+                    info!(
+                        "stuck_sample acc={:#x} success={} timeout={} empty={} valid_fail={} nodata={} intervals={} cached_root_some={} healed={}",
+                        acc,
+                        counts[0],
+                        counts[1],
+                        counts[2],
+                        counts[3],
+                        counts[4],
+                        intervals_len,
+                        cached_root_some,
+                        healed,
+                    );
+                }
+            }
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
                 for account in accounts {
@@ -869,6 +1017,46 @@ pub async fn request_storage_ranges(
                         debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
+            } else if let Some(hash_end) = hash_end {
+                // Per-interval task completed: the peer covered
+                // [start_hash, hash_end] fully and verify_range reported
+                // should_continue=false, so the worker returns
+                // remaining_start == remaining_end and the guard above does
+                // not fire. Drop the matching interval here so the account
+                // can finalize across calls; otherwise the partition logic
+                // at function entry would re-queue the same range forever.
+                let mut acc_hash: H256 = H256::zero();
+                for account in accounts_by_root_hash[start_index].1.iter() {
+                    if let Some((_, old_intervals)) = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(account)
+                        && !old_intervals.is_empty()
+                    {
+                        acc_hash = *account;
+                    }
+                }
+                // acc_hash stays zero when a sibling per-interval task for the
+                // same account already drained the last interval and finalized
+                // it earlier in this call's loop — there's nothing left to do.
+                if !acc_hash.is_zero() {
+                    let (_, old_intervals) = account_storage_roots
+                            .accounts_with_storage_root
+                            .get_mut(&acc_hash)
+                            .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                    let pos = old_intervals
+                        .iter()
+                        .position(|(_old_start, end)| end == &hash_end)
+                        .ok_or(SnapError::InternalError(
+                            "Could not find an old interval that we were tracking".to_owned(),
+                        ))?;
+                    old_intervals.remove(pos);
+                    if old_intervals.is_empty() {
+                        for account in accounts_by_root_hash[start_index].1.iter() {
+                            accounts_done.insert(*account, vec![]);
+                            account_storage_roots.healed_accounts.insert(*account);
+                        }
+                    }
+                }
             }
 
             if account_storages.is_empty() {
@@ -935,7 +1123,7 @@ pub async fn request_storage_ranges(
             }
         }
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, seconds_per_block) {
             info!("request_storage_ranges became stale, breaking");
             break;
         }
@@ -981,7 +1169,7 @@ pub async fn request_storage_ranges(
                 chunk_storage_roots.first().unwrap_or(&H256::zero()),
             );
         }
-        tokio::spawn(request_storage_ranges_worker(
+        request_set.spawn(request_storage_ranges_worker(
             task,
             peer_id,
             connection,
@@ -991,6 +1179,15 @@ pub async fn request_storage_ranges(
             tx,
             permit,
         ));
+    }
+
+    // Drain any remaining in-flight tasks so that every spawned worker
+    // runs to completion (and drops its `RequestPermit`, which calls
+    // `dec_requests` automatically). Without this, exiting the loop on
+    // staleness would drop the receiver, causing workers' `tx.send` to
+    // fail and leaving their permits un-dropped.
+    while !request_set.is_empty() {
+        let _ = request_set.join_next().await;
     }
 
     {
@@ -1236,18 +1433,19 @@ async fn request_storage_ranges_worker(
     let end = task.end_index;
     let start_hash = task.start_hash;
 
-    // Defaults for the "retry this same range" outcome used by every failure
-    // branch below.
-    let retry_outcome = || {
-        (
-            Vec::<Vec<(H256, U256)>>::new(),
-            task.start_index,
-            task.end_index,
-            (start_hash, task.end_hash),
-        )
-    };
-
     let request_id = rand::random();
+    let account_hash_count = chunk_account_hashes.len();
+    let first_account = chunk_account_hashes.first().copied();
+    let empty_task_result = StorageTaskResult {
+        start_index: task.start_index,
+        account_storages: Vec::new(),
+        peer_id,
+        remaining_start: task.start_index,
+        remaining_end: task.end_index,
+        remaining_hash_range: (start_hash, task.end_hash),
+        failure_mode: StorageFailureMode::NoData,
+        first_account,
+    };
     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
         id: request_id,
         root_hash: state_root,
@@ -1265,134 +1463,157 @@ async fn request_storage_ranges_worker(
         .await;
     drop(permit);
 
-    let (account_storages, remaining_start, remaining_end, remaining_hash_range) = 'outcome: {
-        let Ok(RLPxMessage::StorageRanges(StorageRanges {
-            id: _,
-            slots,
-            proof,
-        })) = response
-        else {
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
-            tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
-            tracing::debug!("Failed to get storage range");
-            break 'outcome retry_outcome();
-        };
-        if slots.is_empty() && proof.is_empty() {
-            #[cfg(feature = "metrics")]
-            ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
-            tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
-            tracing::debug!("Received empty storage range");
-            break 'outcome retry_outcome();
+    let Ok(RLPxMessage::StorageRanges(StorageRanges {
+        id: _,
+        slots,
+        proof,
+    })) = response
+    else {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
+        tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
+        tracing::debug!(
+            "Failed to get storage range from peer {peer_id}: err={:?}",
+            response.as_ref().err()
+        );
+        let mut r = empty_task_result;
+        r.failure_mode = StorageFailureMode::Timeout;
+        tx.send(r).await.ok();
+        return Ok(());
+    };
+    if slots.is_empty() && proof.is_empty() {
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
+        tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
+        let mut r = empty_task_result;
+        r.failure_mode = StorageFailureMode::Empty;
+        tx.send(r).await.ok();
+        tracing::debug!(
+            "Received empty storage range from peer {peer_id} (accounts={account_hash_count}, first={:?}, state_root={:?})",
+            first_account,
+            state_root,
+        );
+        return Ok(());
+    }
+    // Check we got some data and no more than the requested amount
+    if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
+        let mut r = empty_task_result;
+        r.failure_mode = StorageFailureMode::NoData;
+        tx.send(r).await.ok();
+        return Ok(());
+    }
+    // Unzip & validate response
+    let proof = encodable_to_proof(&proof);
+    let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
+    let mut should_continue = false;
+    // Validate each storage range
+    let mut storage_roots = chunk_storage_roots.into_iter();
+    let last_slot_index = slots.len() - 1;
+    for (i, next_account_slots) in slots.into_iter().enumerate() {
+        // We won't accept empty storage ranges
+        if next_account_slots.is_empty() {
+            // This shouldn't happen
+            error!("Received empty storage range, skipping");
+            let mut r = empty_task_result.clone();
+            r.failure_mode = StorageFailureMode::Empty;
+            tx.send(r).await.ok();
+            return Ok(());
         }
-        if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-            break 'outcome retry_outcome();
-        }
-        let proof = encodable_to_proof(&proof);
-        let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
-        let mut should_continue = false;
-        let mut validation_failed = false;
-        let mut storage_roots = chunk_storage_roots.into_iter();
-        let last_slot_index = slots.len() - 1;
-        for (i, next_account_slots) in slots.into_iter().enumerate() {
-            if next_account_slots.is_empty() {
-                error!("Received empty storage range, skipping");
-                validation_failed = true;
-                break;
+        let encoded_values = next_account_slots
+            .iter()
+            .map(|slot| slot.data.encode_to_vec())
+            .collect::<Vec<_>>();
+        let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
+
+        let storage_root = match storage_roots.next() {
+            Some(root) => root,
+            None => {
+                let mut r = empty_task_result.clone();
+                r.failure_mode = StorageFailureMode::NoData;
+                tx.send(r).await.ok();
+                error!("No storage root for account {i}");
+                return Err(SnapError::NoStorageRoots);
             }
-            let encoded_values = next_account_slots
-                .iter()
-                .map(|slot| slot.data.encode_to_vec())
-                .collect::<Vec<_>>();
-            let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
+        };
 
-            let storage_root = match storage_roots.next() {
-                Some(root) => root,
-                None => {
-                    error!("No storage root for account {i}");
-                    break 'outcome retry_outcome();
-                }
-            };
-
-            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-            if i == last_slot_index && !proof.is_empty() {
-                let Ok(sc) = verify_range(
-                    storage_root,
-                    &start_hash,
-                    &hashed_keys,
-                    &encoded_values,
-                    &proof,
-                ) else {
-                    validation_failed = true;
-                    break;
-                };
-                should_continue = sc;
-            } else if verify_range(
+        // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+        if i == last_slot_index && !proof.is_empty() {
+            let Ok(sc) = verify_range(
                 storage_root,
                 &start_hash,
                 &hashed_keys,
                 &encoded_values,
-                &[],
-            )
-            .is_err()
-            {
-                validation_failed = true;
-                break;
-            }
-
-            account_storages.push(
-                next_account_slots
-                    .iter()
-                    .map(|slot| (slot.hash, slot.data))
-                    .collect(),
-            );
-        }
-
-        if validation_failed {
-            break 'outcome retry_outcome();
-        }
-
-        let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
-            let last_account_storage = match account_storages.last() {
-                Some(storage) => storage,
-                None => {
-                    error!("No account storage found, this shouldn't happen");
-                    break 'outcome retry_outcome();
-                }
+                &proof,
+            ) else {
+                let mut r = empty_task_result;
+                r.failure_mode = StorageFailureMode::ValidationFail;
+                tx.send(r).await.ok();
+                return Ok(());
             };
-            let (last_hash, _) = match last_account_storage.last() {
-                Some(last_hash) => last_hash,
-                None => {
-                    error!("No last hash found, this shouldn't happen");
-                    break 'outcome retry_outcome();
-                }
-            };
-            let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
-            let next_hash = H256::from_uint(&next_hash_u256);
-            (start + account_storages.len() - 1, end, next_hash)
-        } else {
-            (start + account_storages.len(), end, H256::zero())
-        };
-        let slot_count: usize = account_storages.iter().map(|s| s.len()).sum();
-        #[cfg(feature = "metrics")]
-        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
-        tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
-        (
-            account_storages,
-            remaining_start,
-            remaining_end,
-            (remaining_start_hash, task.end_hash),
+            should_continue = sc;
+        } else if verify_range(
+            storage_root,
+            &start_hash,
+            &hashed_keys,
+            &encoded_values,
+            &[],
         )
-    };
+        .is_err()
+        {
+            let mut r = empty_task_result.clone();
+            r.failure_mode = StorageFailureMode::ValidationFail;
+            tx.send(r).await.ok();
+            return Ok(());
+        }
 
+        account_storages.push(
+            next_account_slots
+                .iter()
+                .map(|slot| (slot.hash, slot.data))
+                .collect(),
+        );
+    }
+    let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
+        let last_account_storage = match account_storages.last() {
+            Some(storage) => storage,
+            None => {
+                let mut r = empty_task_result.clone();
+                r.failure_mode = StorageFailureMode::NoData;
+                tx.send(r).await.ok();
+                error!("No account storage found, this shouldn't happen");
+                return Err(SnapError::NoAccountStorages);
+            }
+        };
+        let (last_hash, _) = match last_account_storage.last() {
+            Some(last_hash) => last_hash,
+            None => {
+                let mut r = empty_task_result.clone();
+                r.failure_mode = StorageFailureMode::NoData;
+                tx.send(r).await.ok();
+                error!("No last hash found, this shouldn't happen");
+                return Err(SnapError::NoAccountStorages);
+            }
+        };
+        let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
+        let next_hash = H256::from_uint(&next_hash_u256);
+        (start + account_storages.len() - 1, end, next_hash)
+    } else {
+        (start + account_storages.len(), end, H256::zero())
+    };
+    let slot_count: usize = account_storages.iter().map(|s| s.len()).sum();
     let task_result = StorageTaskResult {
         start_index: start,
         account_storages,
         peer_id,
         remaining_start,
         remaining_end,
-        remaining_hash_range,
+        remaining_hash_range: (remaining_start_hash, task.end_hash),
+        failure_mode: StorageFailureMode::Success,
+        first_account,
     };
+    #[cfg(feature = "metrics")]
+    ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
+    tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
 }

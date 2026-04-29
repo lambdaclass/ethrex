@@ -406,6 +406,9 @@ impl<'a> VM<'a> {
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
     pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn; 256] {
+        if fork.is_polygon() {
+            return Self::build_opcode_table_polygon(fork);
+        }
         if fork >= Fork::Amsterdam {
             Self::build_opcode_table_amsterdam()
         } else if fork >= Fork::Osaka {
@@ -623,6 +626,32 @@ impl<'a> VM<'a> {
         opcode_table[Opcode::EXCHANGE as usize] = OpCodeFn::new::<OpExchangeHandler>();
         // EIP-7843 opcode
         opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn::new::<OpSlotNumHandler>();
+        opcode_table
+    }
+
+    /// Builds the opcode table for Polygon PoS forks.
+    ///
+    /// Key differences from Ethereum:
+    /// - Opcode 0x44 returns block.difficulty (not PREVRANDAO) — no beacon chain
+    /// - BLOBHASH (0x49) and BLOBBASEFEE (0x4A) are disabled — no blob transactions
+    /// - CLZ (0x1E) is only activated at Lisovo fork
+    #[allow(clippy::as_conversions, clippy::indexing_slicing)]
+    pub(crate) fn build_opcode_table_polygon(fork: Fork) -> [OpCodeFn; 256] {
+        // Start from the Amsterdam table (includes all Ethereum opcodes)
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
+
+        // Polygon: opcode 0x44 returns difficulty, not PREVRANDAO
+        opcode_table[Opcode::PREVRANDAO as usize] = OpCodeFn::new::<OpDifficultyHandler>();
+
+        // Polygon: no blob transactions, disable blob-related opcodes
+        opcode_table[Opcode::BLOBHASH as usize] = OpCodeFn::new::<OpInvalidHandler>();
+        opcode_table[Opcode::BLOBBASEFEE as usize] = OpCodeFn::new::<OpInvalidHandler>();
+
+        // CLZ is only available from Lisovo fork onward
+        if (fork as u8) < (Fork::Lisovo as u8) {
+            opcode_table[Opcode::CLZ as usize] = OpCodeFn::new::<OpInvalidHandler>();
+        }
+
         opcode_table
     }
 }

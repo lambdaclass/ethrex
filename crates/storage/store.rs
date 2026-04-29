@@ -63,12 +63,12 @@ pub const MAX_WITNESSES: u64 = 128;
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
 #[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 128;
+const DB_COMMIT_THRESHOLD: usize = 10_000;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
-const BATCH_COMMIT_THRESHOLD: usize = 4;
+const BATCH_COMMIT_THRESHOLD: usize = 10;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -188,6 +188,10 @@ pub struct Store {
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    /// Serializes concurrent `forkchoice_update` callers so that the cache
+    /// update and the DB write transaction remain mutually ordered.
+    fcu_lock: Arc<tokio::sync::Mutex<()>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -983,6 +987,20 @@ impl Store {
         Ok(self.latest_block_header.get().number)
     }
 
+    /// Set the latest block number in the DB (for recovery after interrupted sync).
+    /// Roll back the latest block number (DB + in-memory cache) for recovery.
+    pub fn rollback_latest_block_number(&self, number: BlockNumber) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        let mut txn = self.backend.begin_write()?;
+        txn.put(CHAIN_DATA, &key, &number.to_le_bytes())?;
+        txn.commit()?;
+        // Also update the in-memory cache
+        if let Some(header) = self.load_block_header(number)? {
+            self.latest_block_header.update(header);
+        }
+        Ok(())
+    }
+
     /// Update pending block number
     pub async fn update_pending_block_number(
         &self,
@@ -1007,7 +1025,12 @@ impl Store {
             .transpose()
     }
 
-    pub async fn forkchoice_update_inner(
+    /// DB mutation step of `forkchoice_update`.
+    ///
+    /// Callers MUST hold `fcu_lock` (only `forkchoice_update` should invoke this).
+    /// The read of `LatestBlockNumber` below happens outside the write
+    /// transaction and would be a TOCTOU window without that serialization.
+    async fn forkchoice_update_inner(
         &self,
         new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
@@ -1026,6 +1049,12 @@ impl Store {
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
+            // Delete canonical entries above the new head by enumerating each key.
+            // `delete_range` is not safe here: keys are `u64::to_le_bytes()`, and
+            // RocksDB's lexicographic comparator does not match LE numeric order
+            // (e.g. block 256 = [0x00, 0x01, ..] sorts before block 11 = [0x0B, ..]),
+            // so a range-delete would silently miss blocks whose LE first byte is
+            // smaller than `head+1`'s first byte.
             for number in (head_number + 1)..=(latest) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
@@ -1415,6 +1444,15 @@ impl Store {
 
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
+            // Store canonical block hash mapping (number → hash).
+            // On L1 this is done via fork_choice_updated, but for Polygon
+            // (no Engine API) we must do it here so BLOCKHASH lookups work.
+            tx.put(
+                CANONICAL_BLOCK_HASHES,
+                &block_number.to_le_bytes(),
+                &hash_key,
+            )?;
+
             for (index, transaction) in block.body.transactions.iter().enumerate() {
                 let tx_hash = transaction.hash();
                 // Key: tx_hash + block_hash
@@ -1545,6 +1583,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1686,6 +1725,17 @@ impl Store {
             .ok_or(StoreError::MissingEarliestBlockNumber)?;
         let block_header = self.latest_block_header.get();
 
+        // Polygon uses Bor-specific forks for fork_id computation
+        if let Some(bor_config) =
+            ethrex_polygon::genesis::bor_config_for_chain(chain_config.chain_id)
+        {
+            return Ok(ethrex_polygon::fork_id::polygon_fork_id(
+                genesis_header.hash(),
+                bor_config,
+                block_header.number,
+            ));
+        }
+
         Ok(ForkId::new(
             chain_config,
             genesis_header,
@@ -1739,6 +1789,10 @@ impl Store {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<Option<AccountUpdatesList>, StoreError> {
+        let Some(header) = self.get_block_header_by_hash(block_hash)? else {
+            return Ok(None);
+        };
+        let state_root = header.state_root;
         let Some(mut state_trie) = self.state_trie(block_hash)? else {
             return Ok(None);
         };
@@ -1746,6 +1800,7 @@ impl Store {
         Ok(Some(self.apply_account_updates_from_trie_batch(
             &mut state_trie,
             account_updates,
+            state_root,
         )?))
     }
 
@@ -1753,10 +1808,12 @@ impl Store {
         &self,
         state_trie: &mut Trie,
         account_updates: impl IntoIterator<Item = &'a AccountUpdate>,
+        state_root: H256,
     ) -> Result<AccountUpdatesList, StoreError> {
+        // Establish baseline hash so collect_changes_since_last_hash can detect modifications
+        let _baseline = state_trie.hash_no_commit(&NativeCrypto);
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit(&NativeCrypto);
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1799,10 +1856,8 @@ impl Store {
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
-            state_trie.insert(
-                hashed_address.as_bytes().to_vec(),
-                account_state.encode_to_vec(),
-            )?;
+            let encoded_account = account_state.encode_to_vec();
+            state_trie.insert(hashed_address.as_bytes().to_vec(), encoded_account)?;
         }
         let (state_trie_hash, state_updates) =
             state_trie.collect_changes_since_last_hash(&NativeCrypto);
@@ -1822,12 +1877,13 @@ impl Store {
         mut state_trie: Trie,
         account_updates: &[AccountUpdate],
         mut storage_tries: StorageTries,
+        state_root: H256,
     ) -> Result<(StorageTries, AccountUpdatesList), StoreError> {
+        // Establish baseline hash so collect_changes_since_last_hash can detect modifications
+        let _baseline = state_trie.hash_no_commit(&NativeCrypto);
         let mut ret_storage_updates = Vec::new();
 
         let mut code_updates = Vec::new();
-
-        let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -2092,12 +2148,23 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        let genesis_block = genesis.get_block();
+        self.add_initial_state_with_block(genesis, genesis_block)
+            .await
+    }
+
+    /// Like `add_initial_state`, but uses a caller-provided genesis block.
+    ///
+    /// This is needed for Polygon networks where the genesis block format
+    /// differs from standard Ethereum (no post-merge header fields).
+    pub async fn add_initial_state_with_block(
+        &mut self,
+        genesis: Genesis,
+        genesis_block: Block,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
-        // Obtain genesis block
-        let genesis_block = genesis.get_block();
         let genesis_block_number = genesis_block.header.number;
-
         let genesis_hash = genesis_block.hash();
 
         // Set chain config
@@ -2280,19 +2347,35 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        // Serialize concurrent forkchoice updates. Without this, two callers
+        // could interleave their `latest_block_header` cache updates with each
+        // other's DB writes, leaving the cache inconsistent with the DB or
+        // letting a later caller's write reorder relative to the cache update
+        // order (see the TOCTOU discussion around canonical/latest drift).
+        let _guard = self.fcu_lock.lock().await;
+
         // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        // Snapshot the previous header so we can roll the cache back if the DB
+        // write fails — otherwise the cache would point at a block the DB does
+        // not consider canonical.
+        let previous_head = self.latest_block_header.get();
         let new_head = self
             .load_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
-        self.forkchoice_update_inner(
-            new_canonical_blocks,
-            head_number,
-            head_hash,
-            safe,
-            finalized,
-        )
-        .await?;
+        if let Err(err) = self
+            .forkchoice_update_inner(
+                new_canonical_blocks,
+                head_number,
+                head_hash,
+                safe,
+                finalized,
+            )
+            .await
+        {
+            self.latest_block_header.update((*previous_head).clone());
+            return Err(err);
+        }
 
         Ok(())
     }

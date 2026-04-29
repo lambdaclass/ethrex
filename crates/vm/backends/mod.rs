@@ -10,7 +10,7 @@ use ethrex_common::types::{
     AccessList, AccountUpdate, Block, BlockHeader, Fork, GenericTransaction, Receipt, Transaction,
     Withdrawal,
 };
-use ethrex_common::{Address, types::fee_config::FeeConfig};
+use ethrex_common::{Address, types::PolygonFeeConfig, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
@@ -62,6 +62,19 @@ impl Evm {
         Ok(evm)
     }
 
+    pub fn new_for_polygon(
+        db: impl VmDatabase + 'static,
+        polygon_fee_config: PolygonFeeConfig,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
+        let wrapped_db: DynVmDatabase = Box::new(db);
+        Evm {
+            db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
+            vm_type: VMType::Polygon(polygon_fee_config),
+            crypto,
+        }
+    }
+
     pub fn new_from_db_for_l1(
         store: Arc<impl LevmDatabase + 'static>,
         crypto: Arc<dyn Crypto>,
@@ -75,6 +88,20 @@ impl Evm {
         crypto: Arc<dyn Crypto>,
     ) -> Self {
         Self::_new_from_db(store, VMType::L2(fee_config), crypto)
+    }
+
+    pub fn new_from_db_for_polygon(
+        store: Arc<impl LevmDatabase + 'static>,
+        polygon_fee_config: PolygonFeeConfig,
+        crypto: Arc<dyn Crypto>,
+    ) -> Self {
+        Self::_new_from_db(store, VMType::Polygon(polygon_fee_config), crypto)
+    }
+
+    /// Update the Polygon fee config for a specific block.
+    /// Called before block execution to resolve BorConfig addresses.
+    pub fn set_polygon_fee_config(&mut self, config: PolygonFeeConfig) {
+        self.vm_type = VMType::Polygon(config);
     }
 
     fn _new_from_db(
@@ -229,6 +256,28 @@ impl Evm {
     /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
     pub fn set_bal_index(&mut self, index: u16) {
         self.db.set_bal_index(index);
+    }
+
+    /// Execute a Polygon (Bor) system call against a system contract.
+    /// Returns the execution report including logs for receipt construction.
+    pub fn execute_polygon_system_call(
+        &mut self,
+        block_header: &BlockHeader,
+        contract_address: Address,
+        system_address: Address,
+        calldata: bytes::Bytes,
+        gas_limit: u64,
+    ) -> Result<ethrex_levm::errors::ExecutionReport, EvmError> {
+        levm::polygon_system_call_levm(
+            block_header,
+            calldata,
+            &mut self.db,
+            contract_address,
+            system_address,
+            gas_limit,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
     }
 
     pub fn simulate_tx_from_generic(

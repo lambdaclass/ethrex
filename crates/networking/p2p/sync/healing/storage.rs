@@ -9,8 +9,8 @@ use crate::{
     snap::{
         RequestStorageTrieNodesError,
         constants::{
-            MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, SHOW_PROGRESS_INTERVAL_DURATION,
-            STORAGE_BATCH_SIZE,
+            HEALING_QUEUE_SOFT_LIMIT, MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES,
+            SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE,
         },
         request_storage_trienodes,
     },
@@ -27,7 +27,8 @@ use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node};
 use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
-    collections::{HashMap, VecDeque},
+    cmp::Ordering as CmpOrdering,
+    collections::{BinaryHeap, HashMap},
     sync::atomic::Ordering,
     time::Instant,
 };
@@ -74,8 +75,11 @@ pub struct StorageHealer {
     /// We use this to track what is still to be downloaded
     /// After processing the nodes it may be left empty,
     /// but if we have too many requests in flight
-    /// we may want to throttle the new requests
-    download_queue: VecDeque<NodeRequest>,
+    /// we may want to throttle the new requests.
+    ///
+    /// Ordered by depth (deepest first) to bound memory: deep nodes resolve
+    /// leaves that cascade up through `healing_queue` and free pending parents.
+    download_queue: BinaryHeap<DepthOrderedRequest>,
     /// Arc<dyn> to the db, clone freely
     store: Store,
     /// Memory of everything stored
@@ -97,6 +101,11 @@ pub struct StorageHealer {
     failed_downloads: usize,
     empty_count: usize,
     disconnected_count: usize,
+    /// Count of loop iterations where dispatch was skipped because
+    /// `healing_queue.len() >= HEALING_QUEUE_SOFT_LIMIT`. Reset every
+    /// progress interval — the logged value is a per-interval rate, not a
+    /// cumulative total.
+    backpressure_stalls: usize,
 }
 
 /// This struct stores the metadata we need when we request a node
@@ -110,6 +119,36 @@ pub struct NodeRequest {
     parent: Nibbles,
     /// What hash was requested. We use this for validation
     hash: H256,
+}
+
+/// `NodeRequest` ordered by `storage_path` depth, deepest first.
+///
+/// Used inside a `BinaryHeap` (max-heap) so the dispatcher pops the deepest
+/// pending node available. Depth-first draining is what shrinks `healing_queue`
+/// fastest: committing a leaf cascades up through its ancestors via
+/// `commit_node`, freeing pending parents. Shallow-first would instead keep
+/// expanding the frontier and grow the queue without bound.
+#[derive(Debug, Clone)]
+struct DepthOrderedRequest(NodeRequest);
+
+impl PartialEq for DepthOrderedRequest {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.storage_path.len() == other.0.storage_path.len()
+    }
+}
+
+impl Eq for DepthOrderedRequest {}
+
+impl PartialOrd for DepthOrderedRequest {
+    fn partial_cmp(&self, other: &Self) -> Option<CmpOrdering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DepthOrderedRequest {
+    fn cmp(&self, other: &Self) -> CmpOrdering {
+        self.0.storage_path.len().cmp(&other.0.storage_path.len())
+    }
 }
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
@@ -152,6 +191,7 @@ pub async fn heal_storage_trie(
         failed_downloads: Default::default(),
         empty_count: Default::default(),
         disconnected_count: Default::default(),
+        backpressure_stalls: Default::default(),
     };
 
     // With this we track what's going on with the tasks in flight
@@ -190,6 +230,8 @@ pub async fn heal_storage_trie(
                 snap_peer_count,
                 inflight_requests = state.requests.len(),
                 download_queue_len = state.download_queue.len(),
+                healing_queue_len = state.healing_queue.len(),
+                backpressure_stalls = state.backpressure_stalls,
                 maximum_depth = state.maximum_length_seen,
                 leaves_healed = state.leafs_healed,
                 global_leaves_healed = global_leafs_healed,
@@ -206,6 +248,7 @@ pub async fn heal_storage_trie(
             state.failed_downloads = 0;
             state.empty_count = 0;
             state.disconnected_count = 0;
+            state.backpressure_stalls = 0;
         }
 
         let is_done = state.requests.is_empty() && state.download_queue.is_empty();
@@ -237,26 +280,46 @@ pub async fn heal_storage_trie(
         }
 
         if is_done {
+            // Await in-flight request tasks so `make_request`'s inc/dec
+            // stays balanced. Dropping the JoinSet aborts them mid-await
+            // and leaks peer reservation slots.
+            requests_task_joinset.join_all().await;
             db_joinset.join_all().await;
             return Ok(true);
         }
 
         if is_stale {
+            requests_task_joinset.join_all().await;
             db_joinset.join_all().await;
             state.healing_queue = HashMap::new();
             return Ok(false);
         }
 
-        ask_peers_for_nodes(
-            &mut state.download_queue,
-            &mut state.requests,
-            &mut requests_task_joinset,
-            peers,
-            state.state_root,
-            &task_sender,
-            &mut logged_no_free_peers_count,
-        )
-        .await;
+        // Backpressure: while the pending-parents map is at its soft limit, stop
+        // dispatching new downloads and let in-flight requests drain it. Because
+        // the download queue is a max-heap by depth, the in-flight work is the
+        // deepest available — exactly what cascades commits up through
+        // `healing_queue` and frees entries fastest.
+        //
+        // The `requests.is_empty()` escape hatch is required: only in-flight
+        // responses drain `healing_queue` via `commit_node` cascades. If we
+        // ever reach `requests.is_empty() && healing_queue >= SOFT_LIMIT`
+        // without this override, the loop spins with nothing in-flight to
+        // refill the channel, and healing stalls until staleness fires.
+        if state.healing_queue.len() < HEALING_QUEUE_SOFT_LIMIT || state.requests.is_empty() {
+            ask_peers_for_nodes(
+                &mut state.download_queue,
+                &mut state.requests,
+                &mut requests_task_joinset,
+                peers,
+                state.state_root,
+                &task_sender,
+                &mut logged_no_free_peers_count,
+            )
+            .await;
+        } else {
+            state.backpressure_stalls += 1;
+        }
 
         let _ = requests_task_joinset.try_join_next();
 
@@ -309,10 +372,14 @@ pub async fn heal_storage_trie(
                     .remove(&request_id)
                     .expect("request disappeared");
                 state.failed_downloads += 1;
-                state
-                    .download_queue
-                    .extend(inflight_request.requests.clone());
-                peers.peer_table.record_failure(inflight_request.peer_id)?;
+                let peer_id = inflight_request.peer_id;
+                state.download_queue.extend(
+                    inflight_request
+                        .requests
+                        .into_iter()
+                        .map(DepthOrderedRequest),
+                );
+                peers.peer_table.record_failure(peer_id)?;
             }
         }
     }
@@ -320,7 +387,7 @@ pub async fn heal_storage_trie(
 
 /// it grabs N peers to ask for data
 async fn ask_peers_for_nodes(
-    download_queue: &mut VecDeque<NodeRequest>,
+    download_queue: &mut BinaryHeap<DepthOrderedRequest>,
     requests: &mut HashMap<u64, InflightRequest>,
     requests_task_joinset: &mut JoinSet<
         Result<u64, TrySendError<Result<TrieNodes, RequestStorageTrieNodesError>>>,
@@ -348,8 +415,15 @@ async fn ask_peers_for_nodes(
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             return;
         };
-        let at = download_queue.len().saturating_sub(STORAGE_BATCH_SIZE);
-        let download_chunk = download_queue.split_off(at);
+        // Pop the deepest STORAGE_BATCH_SIZE items from the heap.
+        let mut download_chunk: Vec<NodeRequest> =
+            Vec::with_capacity(STORAGE_BATCH_SIZE.min(download_queue.len()));
+        for _ in 0..STORAGE_BATCH_SIZE {
+            match download_queue.pop() {
+                Some(DepthOrderedRequest(req)) => download_chunk.push(req),
+                None => break,
+            }
+        }
         let req_id: u64 = random();
         let (paths, inflight_requests_data) = create_node_requests(download_chunk);
         requests.insert(
@@ -380,9 +454,7 @@ async fn ask_peers_for_nodes(
     }
 }
 
-fn create_node_requests(
-    node_requests: VecDeque<NodeRequest>,
-) -> (Vec<Vec<Bytes>>, Vec<NodeRequest>) {
+fn create_node_requests(node_requests: Vec<NodeRequest>) -> (Vec<Vec<Bytes>>, Vec<NodeRequest>) {
     let mut mapped_requests: HashMap<Nibbles, Vec<NodeRequest>> = HashMap::new();
 
     for request in node_requests {
@@ -416,7 +488,7 @@ fn create_node_requests(
 async fn zip_requeue_node_responses_score_peer(
     requests: &mut HashMap<u64, InflightRequest>,
     peer_handler: &mut PeerHandler,
-    download_queue: &mut VecDeque<NodeRequest>,
+    download_queue: &mut BinaryHeap<DepthOrderedRequest>,
     trie_nodes: &TrieNodes,
     succesful_downloads: &mut usize,
     failed_downloads: &mut usize,
@@ -438,7 +510,7 @@ async fn zip_requeue_node_responses_score_peer(
         *failed_downloads += 1;
         peer_handler.peer_table.record_failure(request.peer_id)?;
 
-        download_queue.extend(request.requests);
+        download_queue.extend(request.requests.into_iter().map(DepthOrderedRequest));
         return Ok(None);
     }
 
@@ -451,7 +523,7 @@ async fn zip_requeue_node_responses_score_peer(
         );
         *failed_downloads += 1;
         peer_handler.peer_table.record_failure(request.peer_id)?;
-        download_queue.extend(request.requests);
+        download_queue.extend(request.requests.into_iter().map(DepthOrderedRequest));
         return Ok(None);
     }
 
@@ -488,7 +560,13 @@ async fn zip_requeue_node_responses_score_peer(
         .collect::<Result<Vec<NodeResponse>, RLPDecodeError>>()
     {
         if request.requests.len() > nodes_size {
-            download_queue.extend(request.requests.into_iter().skip(nodes_size));
+            download_queue.extend(
+                request
+                    .requests
+                    .into_iter()
+                    .skip(nodes_size)
+                    .map(DepthOrderedRequest),
+            );
         }
         *succesful_downloads += 1;
         peer_handler.peer_table.record_success(request.peer_id)?;
@@ -496,7 +574,7 @@ async fn zip_requeue_node_responses_score_peer(
     } else {
         *failed_downloads += 1;
         peer_handler.peer_table.record_failure(request.peer_id)?;
-        download_queue.extend(request.requests);
+        download_queue.extend(request.requests.into_iter().map(DepthOrderedRequest));
         Ok(None)
     }
 }
@@ -504,7 +582,7 @@ async fn zip_requeue_node_responses_score_peer(
 #[allow(clippy::too_many_arguments)]
 fn process_node_responses(
     node_processing_queue: &mut Vec<NodeResponse>,
-    download_queue: &mut VecDeque<NodeRequest>,
+    download_queue: &mut BinaryHeap<DepthOrderedRequest>,
     store: &Store,
     healing_queue: &mut StorageHealingQueue,
     leafs_healed: &mut usize,
@@ -557,7 +635,11 @@ fn process_node_responses(
                     pending_children_count,
                 },
             );
-            download_queue.extend(pending_children_nibbles);
+            download_queue.extend(
+                pending_children_nibbles
+                    .into_iter()
+                    .map(DepthOrderedRequest),
+            );
         }
     }
 
@@ -568,37 +650,33 @@ fn get_initial_downloads(
     store: &Store,
     state_root: H256,
     account_paths: &AccountStorageRoots,
-) -> VecDeque<NodeRequest> {
+) -> BinaryHeap<DepthOrderedRequest> {
     let trie = store
         .open_locked_state_trie(state_root)
         .expect("We should be able to open the store");
-    let mut initial_requests: VecDeque<NodeRequest> = VecDeque::new();
-    initial_requests.extend(
-        account_paths
-            .healed_accounts
-            .par_iter()
-            .filter_map(|acc_path| {
-                // Accounts can be deleted from the trie after the healing process happens
-                // This is an edge case where an account with value got deleted by
-                // a self destruct contract creation step
-                let rlp = trie
-                    .get(acc_path.as_bytes())
-                    .expect("We should be able to open the store")?;
-                let account = AccountState::decode(&rlp).expect("We should have a valid account");
-                if account.storage_root == *EMPTY_TRIE_HASH {
-                    return None;
-                }
+    account_paths
+        .healed_accounts
+        .par_iter()
+        .filter_map(|acc_path| {
+            // Accounts can be deleted from the trie after the healing process happens
+            // This is an edge case where an account with value got deleted by
+            // a self destruct contract creation step
+            let rlp = trie
+                .get(acc_path.as_bytes())
+                .expect("We should be able to open the store")?;
+            let account = AccountState::decode(&rlp).expect("We should have a valid account");
+            if account.storage_root == *EMPTY_TRIE_HASH {
+                return None;
+            }
 
-                Some(NodeRequest {
-                    acc_path: Nibbles::from_bytes(&acc_path.0),
-                    storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
-                    parent: Nibbles::default(),
-                    hash: account.storage_root,
-                })
-            })
-            .collect::<VecDeque<_>>(),
-    );
-    initial_requests
+            Some(DepthOrderedRequest(NodeRequest {
+                acc_path: Nibbles::from_bytes(&acc_path.0),
+                storage_path: Nibbles::default(), // We need to be careful, the root parent is a special case
+                parent: Nibbles::default(),
+                hash: account.storage_root,
+            }))
+        })
+        .collect()
 }
 
 /// Returns the full paths to the node's missing children and grandchildren
@@ -724,5 +802,49 @@ fn commit_node(
     } else {
         healing_queue.insert(parent_key, parent_entry);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn request_at_depth(depth: usize) -> NodeRequest {
+        NodeRequest {
+            acc_path: Nibbles::default(),
+            storage_path: Nibbles::from_bytes(&vec![0u8; depth.div_ceil(2)]).slice(0, depth),
+            parent: Nibbles::default(),
+            hash: H256::zero(),
+        }
+    }
+
+    #[test]
+    fn binary_heap_pops_deepest_first() {
+        let depths = [1usize, 5, 3, 2, 4, 0, 7, 6];
+        let mut heap: BinaryHeap<DepthOrderedRequest> = depths
+            .iter()
+            .map(|&d| DepthOrderedRequest(request_at_depth(d)))
+            .collect();
+
+        let mut popped = Vec::new();
+        while let Some(DepthOrderedRequest(req)) = heap.pop() {
+            popped.push(req.storage_path.len());
+        }
+
+        let mut expected: Vec<usize> = depths.to_vec();
+        expected.sort_by(|a, b| b.cmp(a));
+        assert_eq!(popped, expected);
+    }
+
+    #[test]
+    fn equal_depth_pops_without_panic() {
+        let mut heap: BinaryHeap<DepthOrderedRequest> = (0..10)
+            .map(|_| DepthOrderedRequest(request_at_depth(4)))
+            .collect();
+        let mut count = 0;
+        while heap.pop().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, 10);
     }
 }

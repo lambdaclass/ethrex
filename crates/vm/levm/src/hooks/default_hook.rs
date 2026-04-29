@@ -5,7 +5,7 @@ use crate::{
     gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
     hooks::hook::Hook,
     utils::*,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
@@ -31,7 +31,17 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
-        if vm.env.config.fork >= Fork::Prague {
+        if matches!(vm.vm_type, VMType::Polygon(_)) {
+            // Polygon PoS: enforce 2^25 max transaction gas limit
+            if vm.tx.gas_limit() > POLYGON_MAX_TX_GAS {
+                return Err(VMError::TxValidation(
+                    TxValidationError::TxMaxGasLimitExceeded {
+                        tx_hash: vm.tx.hash(),
+                        tx_gas_limit: vm.tx.gas_limit(),
+                    },
+                ));
+            }
+        } else if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
             // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
             // Amsterdam removes this restriction (EIP-8037 reservoir model).
@@ -235,7 +245,8 @@ pub fn refund_sender(
     // EIP-7778: Separate block vs user gas accounting for Amsterdam+
     // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
     // Receipt cumulative_gas_used = post-refund total (what user pays).
-    if vm.env.config.fork >= Fork::Amsterdam {
+    // Polygon doesn't have EIP-7778, so skip this path for Polygon forks.
+    if vm.env.config.fork >= Fork::Amsterdam && !matches!(vm.vm_type, VMType::Polygon(_)) {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
         // Apply intrinsic state gas refund from existing authorities (EIP-7702/EIP-8037).
@@ -443,7 +454,9 @@ pub fn validate_init_code_size(vm: &mut VM<'_>) -> Result<(), VMError> {
     // [EIP-3860] - INITCODE_SIZE_EXCEEDED
     // [EIP-7954] - Amsterdam increases the limit
     let code_size = vm.current_call_frame.calldata.len();
-    let max_size = if vm.env.config.fork >= Fork::Amsterdam {
+    let max_size = if matches!(vm.vm_type, VMType::Polygon(_)) {
+        POLYGON_INIT_CODE_MAX_SIZE
+    } else if vm.env.config.fork >= Fork::Amsterdam {
         AMSTERDAM_INIT_CODE_MAX_SIZE
     } else {
         INIT_CODE_MAX_SIZE
@@ -654,12 +667,18 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
 
         vm.increase_account_balance(to, value)?;
 
-        // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
-        // Self-transfers (origin == to) should NOT emit a log per the EIP spec
         let from = vm.env.origin;
-        if vm.env.config.fork >= Fork::Amsterdam && !value.is_zero() && from != to {
-            let log = create_eth_transfer_log(from, to, value);
-            vm.substate.add_log(log);
+        if !value.is_zero() {
+            // NOTE: Polygon LogTransfer for the initial value transfer is emitted
+            // AFTER push_backup() in VM::execute(), so it reverts with failed txs.
+            // See vm.rs — Bor adds this log inside evm.Call(), inside the snapshot.
+
+            // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
+            // Self-transfers (origin == to) should NOT emit a log per the EIP spec
+            if vm.env.config.fork >= Fork::Amsterdam && from != to {
+                let log = create_eth_transfer_log(from, to, value);
+                vm.substate.add_log(log);
+            }
         }
     }
     Ok(())

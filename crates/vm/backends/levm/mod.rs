@@ -126,6 +126,11 @@ impl LEVM {
                 })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            // Skip StateSyncTransactions — they are consensus-only (Polygon state sync).
+            // System calls are executed separately after all regular transactions.
+            if matches!(tx, Transaction::StateSyncTransaction(_)) {
+                continue;
+            }
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
@@ -188,6 +193,15 @@ impl LEVM {
                 block_gas_used = block_gas_used.saturating_add(report.gas_used);
             }
 
+            ::tracing::debug!(
+                "TX_GAS tx_index={} gas_used={} gas_spent={} cumulative={} logs={}",
+                tx_idx,
+                report.gas_used,
+                report.gas_spent,
+                cumulative_gas_used,
+                report.logs.len()
+            );
+
             let receipt = Receipt::new(
                 tx.tx_type(),
                 matches!(report.result, TxResult::Success),
@@ -197,6 +211,14 @@ impl LEVM {
 
             receipts.push(receipt);
         }
+
+        ::tracing::debug!(
+            "BLOCK_GAS_TOTAL block={} block_gas_used={} expected={} receipts={}",
+            block.header.number,
+            block_gas_used,
+            block.header.gas_used,
+            receipts.len()
+        );
 
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
         // Per-tx checks are skipped for Amsterdam because block gas is computed
@@ -231,7 +253,7 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            VMType::L2(_) | VMType::Polygon(_) => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -349,7 +371,7 @@ impl LEVM {
                 VMType::L1 => {
                     extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                 }
-                VMType::L2(_) => Default::default(),
+                VMType::L2(_) | VMType::Polygon(_) => Default::default(),
             };
 
             if let Some(withdrawals) = &block.body.withdrawals {
@@ -444,6 +466,10 @@ impl LEVM {
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            // Skip StateSyncTransactions — they are consensus-only (Polygon state sync).
+            if matches!(tx, Transaction::StateSyncTransaction(_)) {
+                continue;
+            }
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
             // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
@@ -571,7 +597,7 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            VMType::L2(_) | VMType::Polygon(_) => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -1984,13 +2010,26 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let mut config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        // Polygon: Bor activates EIP-7883 (MODEXP gas increase) at Lisovo fork,
+        // which doesn't map to our L1 fork enum. Force-enable it.
+        if matches!(vm_type, VMType::Polygon(_)) {
+            config.eip7883 = true;
+        }
+        // EVM coinbase: used for COINBASE opcode and EIP-3651 warm set.
+        // On Polygon, header.coinbase is always 0x0. Bor sets Context.Coinbase to the
+        // BorConfig fee recipient (same as PolygonHook.fee_coinbase).
+        // The block AUTHOR (signer) is separate and only used for consensus validation.
+        let coinbase = match &vm_type {
+            VMType::Polygon(pfc) => pfc.coinbase,
+            _ => block_header.coinbase,
+        };
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
             config,
             block_number: block_header.number,
-            coinbase: block_header.coinbase,
+            coinbase,
             timestamp: block_header.timestamp,
             prev_randao: Some(block_header.prev_randao),
             slot_number: block_header
@@ -2280,8 +2319,16 @@ impl LEVM {
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
 
-        // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2(_) = vm_type {
+        // L2 doesn't run pre-block system calls
+        if matches!(vm_type, VMType::L2(_)) {
+            return Ok(());
+        }
+
+        // Polygon: skip beacon root (no beacon chain) but run EIP-2935
+        if matches!(vm_type, VMType::Polygon(_)) {
+            if fork >= Fork::Prague {
+                Self::process_block_hash_history(block_header, db, vm_type, crypto)?;
+            }
             return Ok(());
         }
 
@@ -2308,18 +2355,19 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let coinbase = match &vm_type {
+        VMType::Polygon(pfc) => pfc.coinbase,
+        _ => block_header.coinbase,
+    };
     let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
-    let coinbase_backup = db
-        .current_accounts_state
-        .get(&block_header.coinbase)
-        .cloned();
+    let coinbase_backup = db.current_accounts_state.get(&coinbase).cloned();
     let env = Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
         // So we add the base cost that will be taken in the execution.
         gas_limit: SYS_CALL_GAS_LIMIT + TX_BASE_COST,
         block_number: block_header.number,
-        coinbase: block_header.coinbase,
+        coinbase,
         timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         base_fee_per_gas: U256::zero(),
@@ -2377,11 +2425,84 @@ pub fn generic_system_contract_levm(
     }
 
     if let Some(coinbase_account) = coinbase_backup {
-        db.current_accounts_state
-            .insert(block_header.coinbase, coinbase_account);
+        db.current_accounts_state.insert(coinbase, coinbase_account);
     } else {
         // If the coinbase account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&block_header.coinbase);
+        db.current_accounts_state.remove(&coinbase);
+    }
+
+    Ok(report)
+}
+
+/// Execute a Polygon (Bor) system call against a system contract.
+///
+/// Similar to `generic_system_contract_levm` but with Polygon-specific parameters:
+/// - Uses configurable gas limit (Bor uses 50M, not L1's 30M)
+/// - Skips the Prague system contract empty-code check
+/// - Restores system address and coinbase state after execution (keeping target contract changes)
+#[allow(clippy::too_many_arguments)]
+pub fn polygon_system_call_levm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
+    db: &mut GeneralizedDatabase,
+    contract_address: Address,
+    system_address: Address,
+    gas_limit: u64,
+    vm_type: VMType,
+    crypto: &dyn Crypto,
+) -> Result<ExecutionReport, EvmError> {
+    let chain_config = db.store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let coinbase = match &vm_type {
+        VMType::Polygon(pfc) => pfc.coinbase,
+        _ => block_header.coinbase,
+    };
+    let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
+    let coinbase_backup = db.current_accounts_state.get(&coinbase).cloned();
+    let env = Environment {
+        origin: system_address,
+        gas_limit: gas_limit + TX_BASE_COST,
+        block_number: block_header.number,
+        coinbase,
+        timestamp: block_header.timestamp,
+        prev_randao: Some(block_header.prev_randao),
+        difficulty: block_header.difficulty,
+        chain_id: U256::from(chain_config.chain_id),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_excess_blob_gas: block_header.excess_blob_gas,
+        block_blob_gas_used: block_header.blob_gas_used,
+        block_gas_limit: i64::MAX as u64,
+        config,
+        ..Default::default()
+    };
+
+    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        value: U256::zero(),
+        data: calldata,
+        ..Default::default()
+    });
+
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
+        .and_then(|mut vm| vm.execute())
+        .map_err(EvmError::from);
+
+    let report = result?;
+
+    // Restore system address state (changes are artifacts of the call mechanism)
+    if let Some(system_account) = system_account_backup {
+        db.current_accounts_state
+            .insert(system_address, system_account);
+    } else {
+        db.current_accounts_state.remove(&system_address);
+    }
+
+    // Restore coinbase state (system calls should not affect the coinbase)
+    if let Some(coinbase_account) = coinbase_backup {
+        db.current_accounts_state.insert(coinbase, coinbase_account);
+    } else {
+        db.current_accounts_state.remove(&coinbase);
     }
 
     Ok(report)
@@ -2513,8 +2634,8 @@ fn env_from_generic(
     let config = EVMConfig::new_from_chain_config(&chain_config, header);
 
     // Validate slot_number for Amsterdam+ blocks
-    // For L2 chains, slot_number is always 0
-    let slot_number = if let VMType::L2(_) = vm_type {
+    // For L2 and Polygon chains, slot_number is always 0
+    let slot_number = if matches!(vm_type, VMType::L2(_) | VMType::Polygon(_)) {
         U256::zero()
     } else if config.fork >= Fork::Amsterdam {
         header
@@ -2529,6 +2650,10 @@ fn env_from_generic(
         header.slot_number.map(U256::from).unwrap_or(U256::zero())
     };
 
+    let coinbase = match &vm_type {
+        VMType::Polygon(pfc) => pfc.coinbase,
+        _ => header.coinbase,
+    };
     Ok(Environment {
         origin: tx.from.0.into(),
         gas_limit: tx
@@ -2536,7 +2661,7 @@ fn env_from_generic(
             .unwrap_or(get_max_allowed_gas_limit(header.gas_limit, config.fork)), // Ensure tx doesn't fail due to gas limit
         config,
         block_number: header.number,
-        coinbase: header.coinbase,
+        coinbase,
         timestamp: header.timestamp,
         prev_randao: Some(header.prev_randao),
         slot_number,

@@ -1,4 +1,5 @@
 use crate::{
+    backend,
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
@@ -38,7 +39,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::net::UdpSocket;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 /// See: https://github.com/ethereum/devp2p/blob/master/discv5/discv5-wire.md#nodes-response-0x04
@@ -168,13 +169,13 @@ impl DiscoveryServer {
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
-        if let Ok(fork_id) = storage.get_fork_id().await {
+        if let Ok(fork_id) = backend::get_fork_id(&storage).await {
             local_node_record
                 .set_fork_id(fork_id, &signer)
                 .expect("Failed to set fork_id on local node record");
         }
 
-        let discovery_server = Self {
+        let mut discovery_server = Self {
             local_node: local_node.clone(),
             local_node_record,
             signer,
@@ -201,7 +202,23 @@ impl DiscoveryServer {
             count = bootnodes.len(),
             "Adding bootnodes"
         );
-        peer_table.new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)?;
+        peer_table.new_contacts(
+            bootnodes.clone(),
+            local_node.node_id(),
+            DiscoveryProtocol::Discv5,
+        )?;
+
+        // Send initial pings to bootnodes to start the WHOAREYOU handshake.
+        for bootnode in &bootnodes {
+            if let Err(e) = discovery_server.send_ping(bootnode).await {
+                debug!(
+                    protocol = "discv5",
+                    addr = %bootnode.udp_addr(),
+                    err = ?e,
+                    "Failed to ping bootnode (will retry via lookup)"
+                );
+            }
+        }
 
         Ok(discovery_server.start())
     }

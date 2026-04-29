@@ -19,6 +19,7 @@ members = [
   "crates/l2/networking/rpc",
   "crates/networking/p2p",
   "crates/networking/rpc",
+  "crates/polygon",
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
@@ -79,6 +80,7 @@ ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 ethrex-monitor = { path = "./tooling/monitor" }
 ethrex-repl = { path = "./tooling/repl" }
+ethrex-polygon = { path = "./crates/polygon" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }

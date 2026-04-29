@@ -109,16 +109,22 @@ where
                 .map_err(ExecutionError::BlockBodyValidation)
         })?;
 
-        // Validate the block header pre-execution
-        report_cycles("validate_block_pre_execution", || {
-            validate_block_pre_execution(
-                block,
-                parent_block_header,
-                &chain_config,
-                elasticity_multiplier,
-            )
-            .map_err(ExecutionError::BlockValidation)
-        })?;
+        // Validate the block header pre-execution.
+        // Skip for Polygon: Bor uses different EIP-1559 parameters (elasticity=4,
+        // denominator=16 post-Delhi) and different header rules (non-zero difficulty,
+        // extended extra_data with validator seal). The blockchain layer handles
+        // Polygon validation via verify_bor_header instead.
+        if !ethrex_polygon::genesis::is_polygon_chain(chain_id) {
+            report_cycles("validate_block_pre_execution", || {
+                validate_block_pre_execution(
+                    block,
+                    parent_block_header,
+                    &chain_config,
+                    elasticity_multiplier,
+                )
+                .map_err(ExecutionError::BlockValidation)
+            })?;
+        }
 
         // Create VM using the provided factory
         let mut vm = report_cycles("setup_evm", || vm_factory(&wrapped_db, i))?;
@@ -127,6 +133,12 @@ where
         let (result, _bal) = report_cycles("execute_block", || {
             vm.execute_block(block).map_err(ExecutionError::Evm)
         })?;
+
+        // For Polygon: execute system calls (commitState) from block body.
+        // Must happen after execute_block and before get_state_transitions.
+        if ethrex_polygon::genesis::is_polygon_chain(chain_id) {
+            execute_guest_polygon_system_calls(block, &chain_config, &mut vm)?;
+        }
 
         let receipts = result.receipts;
         let block_gas_used = result.block_gas_used;
@@ -161,10 +173,14 @@ where
                 .map_err(ExecutionError::ReceiptsRootValidation)
         })?;
 
-        report_cycles("validate_requests_hash", || {
-            validate_requests_hash(&block.header, &chain_config, &result.requests)
-                .map_err(ExecutionError::RequestsRootValidation)
-        })?;
+        // Skip requests hash validation for Polygon — Polygon sets prague_time=0
+        // for EVM opcode gating but doesn't implement execution requests (EIP-7685).
+        if !ethrex_polygon::genesis::is_polygon_chain(chain_id) {
+            report_cycles("validate_requests_hash", || {
+                validate_requests_hash(&block.header, &chain_config, &result.requests)
+                    .map_err(ExecutionError::RequestsRootValidation)
+            })?;
+        }
 
         acc_receipts.push(receipts);
         parent_block_header = &block.header;
@@ -193,4 +209,73 @@ where
         non_privileged_count: non_privileged_count.into(),
         chain_id,
     })
+}
+
+/// Execute Polygon system calls in the guest program context.
+/// Uses StateSyncData from the block body directly (no Heimdall).
+fn execute_guest_polygon_system_calls(
+    block: &Block,
+    chain_config: &ethrex_common::types::ChainConfig,
+    vm: &mut Evm,
+) -> Result<(), ExecutionError> {
+    use ethrex_common::types::Transaction;
+    use ethrex_polygon::genesis::bor_config_for_chain;
+    use ethrex_polygon::system_calls::{
+        MAX_SYSTEM_CALL_GAS, STATE_RECEIVER_CONTRACT, SYSTEM_ADDRESS, encode_commit_state,
+    };
+
+    let bor_config = bor_config_for_chain(chain_config.chain_id).ok_or_else(|| {
+        ExecutionError::Internal(format!(
+            "No BorConfig for chain_id {}",
+            chain_config.chain_id
+        ))
+    })?;
+
+    let block_number = block.header.number;
+
+    // Collect StateSyncData from block body
+    let state_sync_data: Vec<_> = block
+        .body
+        .transactions
+        .iter()
+        .filter_map(|tx| match tx {
+            Transaction::StateSyncTransaction(st) => Some(&st.state_sync_data),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
+    if state_sync_data.is_empty() {
+        return Ok(());
+    }
+
+    let delay = bor_config.get_state_sync_delay(block_number);
+    let sync_time = block.header.timestamp - delay;
+    let chain_id_str = chain_config.chain_id.to_string();
+
+    for event in state_sync_data.iter() {
+        // RLP-encode the EventRecord matching Bor's format
+        let mut record_bytes = Vec::new();
+        ethrex_rlp::structs::Encoder::new(&mut record_bytes)
+            .encode_field(&event.id)
+            .encode_field(&event.contract)
+            .encode_field(&event.data)
+            .encode_field(&event.tx_hash)
+            .encode_field(&0u64) // log_index
+            .encode_field(&chain_id_str)
+            .finish();
+
+        let calldata = bytes::Bytes::from(encode_commit_state(sync_time, &record_bytes));
+
+        // commitState reverts are non-fatal
+        let _ = vm.execute_polygon_system_call(
+            &block.header,
+            STATE_RECEIVER_CONTRACT,
+            SYSTEM_ADDRESS,
+            calldata,
+            MAX_SYSTEM_CALL_GAS,
+        );
+    }
+
+    Ok(())
 }

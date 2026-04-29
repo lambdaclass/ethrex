@@ -3805,6 +3805,7 @@ dependencies = [
  "ethrex-l2-rpc",
  "ethrex-metrics",
  "ethrex-p2p",
+ "ethrex-polygon",
  "ethrex-repl",
  "ethrex-rlp",
  "ethrex-rpc",
@@ -3866,6 +3867,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-guest-program",
  "ethrex-metrics",
+ "ethrex-polygon",
  "ethrex-prover",
  "ethrex-rlp",
  "ethrex-storage",
@@ -3924,6 +3926,7 @@ version = "10.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
+ "ethrex-polygon",
  "hex",
  "serde",
  "serde_json",
@@ -3982,6 +3985,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-l2-common",
+ "ethrex-polygon",
  "ethrex-rlp",
  "ethrex-vm",
  "hex",
@@ -4218,6 +4222,7 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-l2-common",
  "ethrex-metrics",
+ "ethrex-polygon",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
@@ -4244,6 +4249,27 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "ethrex-polygon"
+version = "9.0.0"
+dependencies = [
+ "bytes",
+ "crc32fast",
+ "ethereum-types 0.15.1",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-rlp",
+ "hex",
+ "lru 0.16.4",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
  "tokio-util",
  "tracing",
 ]
@@ -4326,6 +4352,7 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-metrics",
  "ethrex-p2p",
+ "ethrex-polygon",
  "ethrex-rlp",
  "ethrex-storage",
  "ethrex-storage-rollup",
@@ -4394,6 +4421,7 @@ dependencies = [
  "bytes",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-polygon",
  "ethrex-rlp",
  "ethrex-trie",
  "fastbloom",
