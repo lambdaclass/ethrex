@@ -129,6 +129,29 @@ pub async fn sync_cycle_snap(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
     );
+    // BSC: peers occasionally announce stale heads (their own catch-up state).
+    // Picking a stale sync_head as the snap pivot strands the sync: we'd
+    // download tens of millions of headers only to discover the pivot is
+    // already past the staleness threshold and re-do everything. Validate
+    // freshness up front; if stale, abort and let the bridge re-trigger with
+    // a newer head.
+    if (chain_id == 56 || chain_id == 97)
+        && let Ok(Some(headers)) = peers
+            .request_block_headers_from_hash(
+                sync_head,
+                crate::peer_handler::BlockRequestOrder::NewToOld,
+            )
+            .await
+        && let Some(header) = headers.into_iter().next()
+        && !bsc_head_is_fresh(header.timestamp)
+    {
+        let age = current_unix_time().saturating_sub(header.timestamp);
+        warn!(
+            "BSC sync_head is stale (block {} ts {} age {}s) — aborting cycle so bridge can re-pick a fresher head",
+            header.number, header.timestamp, age
+        );
+        return Ok(());
+    }
     let pending_block = match store.get_pending_block(sync_head).await {
         Ok(res) => res,
         Err(e) => return Err(e.into()),
@@ -904,9 +927,24 @@ pub async fn update_pivot(
     }
 }
 
+/// Maximum age (in seconds) we accept for a header to be considered the
+/// current chain tip. BSC produces ~1.3 blocks/s; a 5-minute window safely
+/// includes recent heads while rejecting stale peer announcements.
+pub const BSC_HEAD_FRESHNESS_SECS: u64 = 300;
+
+/// Returns true if `header_timestamp` is within `BSC_HEAD_FRESHNESS_SECS` of now.
+/// Used to reject pivots from peers that are themselves behind the chain.
+pub fn bsc_head_is_fresh(header_timestamp: u64) -> bool {
+    let now = current_unix_time();
+    header_timestamp + BSC_HEAD_FRESHNESS_SECS >= now
+}
+
 /// Probe forward to discover the freshest known chain tip via exponential
 /// step + binary search, asking up to PEERS_PER_PROBE peers per probe so a
-/// single dead peer doesn't shrink the search horizon.
+/// single dead peer doesn't shrink the search horizon. Rejects probe
+/// responses whose `header.number` doesn't match the probed number, or whose
+/// timestamp is stale — peers occasionally serve a different cached header
+/// rather than failing, which previously led the probe past the real tip.
 pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) -> BlockHeader {
     const MAX_FORWARD_STEP: u64 = 1_000_000;
     const EXP_ITER: usize = 25;
@@ -918,21 +956,7 @@ pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) 
     let mut high: Option<u64> = None;
     for _ in 0..EXP_ITER {
         let probe_number = low + step;
-        let mut probe_header: Option<BlockHeader> = None;
-        for _ in 0..PEERS_PER_PROBE {
-            if let Ok(Some(headers)) = peers
-                .request_block_headers_from_number(
-                    probe_number,
-                    1,
-                    crate::peer_handler::BlockRequestOrder::OldToNew,
-                )
-                .await
-                && let Some(header) = headers.into_iter().next()
-            {
-                probe_header = Some(header);
-                break;
-            }
-        }
+        let probe_header = probe_block_at(probe_number, peers, PEERS_PER_PROBE).await;
         match probe_header {
             Some(header) => {
                 if header.number > best_pivot.number {
@@ -954,21 +978,7 @@ pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) 
                 break;
             }
             let mid = lo + (hi - lo) / 2;
-            let mut probe_header: Option<BlockHeader> = None;
-            for _ in 0..PEERS_PER_PROBE {
-                if let Ok(Some(headers)) = peers
-                    .request_block_headers_from_number(
-                        mid,
-                        1,
-                        crate::peer_handler::BlockRequestOrder::OldToNew,
-                    )
-                    .await
-                    && let Some(header) = headers.into_iter().next()
-                {
-                    probe_header = Some(header);
-                    break;
-                }
-            }
+            let probe_header = probe_block_at(mid, peers, PEERS_PER_PROBE).await;
             match probe_header {
                 Some(header) => {
                     if header.number > best_pivot.number {
@@ -983,6 +993,33 @@ pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) 
         }
     }
     best_pivot
+}
+
+/// Issue a single-header request for `probe_number`, retrying across up to
+/// `peers_per_probe` peers. Only accepts the response if `header.number`
+/// matches the requested number — peers occasionally return an arbitrary
+/// cached header for out-of-range numbers instead of erroring, which would
+/// otherwise lead the probe past the real chain tip.
+async fn probe_block_at(
+    probe_number: u64,
+    peers: &mut PeerHandler,
+    peers_per_probe: usize,
+) -> Option<BlockHeader> {
+    for _ in 0..peers_per_probe {
+        if let Ok(Some(headers)) = peers
+            .request_block_headers_from_number(
+                probe_number,
+                1,
+                crate::peer_handler::BlockRequestOrder::OldToNew,
+            )
+            .await
+            && let Some(header) = headers.into_iter().next()
+            && header.number == probe_number
+        {
+            return Some(header);
+        }
+    }
+    None
 }
 
 pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
@@ -1040,6 +1077,7 @@ pub async fn update_pivot_bsc(
             )
             .await
             && let Some(header) = headers.into_iter().next()
+            && bsc_head_is_fresh(header.timestamp)
             && best_pivot.as_ref().is_none_or(|h| header.number > h.number)
         {
             best_pivot = Some(header);
@@ -1049,6 +1087,14 @@ pub async fn update_pivot_bsc(
         best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
     }
     let new_pivot = best_pivot.ok_or(SyncError::NoBlockHeaders)?;
+    if !bsc_head_is_fresh(new_pivot.timestamp) {
+        let age = current_unix_time().saturating_sub(new_pivot.timestamp);
+        warn!(
+            "BSC pivot refresh: best candidate is stale (block {} ts {} age {}s) — retrying after peers catch up",
+            new_pivot.number, new_pivot.timestamp, age
+        );
+        return Err(SyncError::NoBlockHeaders);
+    }
     info!(
         "BSC pivot refreshed: block {} -> {} (hash {:?})",
         current_pivot.number,
