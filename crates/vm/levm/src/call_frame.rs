@@ -298,6 +298,12 @@ pub struct CallFrame {
     /// EIP-8037 state-diff journal: tracks state-growth events in this frame.
     /// Merged into parent on success; dropped on revert.
     pub state_diff: StateDiff,
+    /// EIP-8037 frame-end state-gas accounting: signed bytes-paid counter for this
+    /// frame's subtree. Each frame-end settlement increments by the residual cost
+    /// it just paid; on success merge, the child counter sums into the parent.
+    /// Signed because same-tx SELFDESTRUCT refunds can drive it negative (the
+    /// account-creation portion was charged via intrinsic_state_gas, not here).
+    pub state_gas_used: i64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -395,6 +401,7 @@ impl CallFrame {
             state_gas_reservoir_snapshot: 0,
             state_gas_spill_snapshot: 0,
             state_diff: StateDiff::default(),
+            state_gas_used: 0,
         }
     }
 

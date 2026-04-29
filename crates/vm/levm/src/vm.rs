@@ -598,10 +598,7 @@ impl<'a> VM<'a> {
             // Use the available portion (clipped by the current `gas_remaining`) so
             // the spill counter reflects what was actually drawn from gas_remaining
             // rather than what was attempted.
-            #[expect(
-                clippy::as_conversions,
-                reason = "gas_remaining max(0) fits in u64"
-            )]
+            #[expect(clippy::as_conversions, reason = "gas_remaining max(0) fits in u64")]
             let gas_remaining_before = self.current_call_frame.gas_remaining.max(0) as u64;
             let spill_actual = spill.min(gas_remaining_before);
             self.state_gas_spill = self
@@ -614,6 +611,52 @@ impl<'a> VM<'a> {
         }
         // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
         self.state_gas_reservoir -= from_reservoir;
+        Ok(())
+    }
+
+    /// EIP-8037 frame-end state-gas settlement (Amsterdam+).
+    ///
+    /// Computes this frame's net state-byte growth (its accumulated
+    /// `state_diff`) times `cost_per_state_byte`, subtracts what successful
+    /// descendants already paid (`state_gas_used`), and reconciles the
+    /// residual against the reservoir (drain first, spill into `gas_remaining`
+    /// if reservoir empty). If neither covers the residual, returns
+    /// `ExceptionalHalt::OutOfGas` so the caller can roll back the frame.
+    ///
+    /// Negative residual (subtree net-shrunk state) credits the reservoir
+    /// directly and leaves `state_gas_used` untouched — the credit reaches
+    /// the parent via `incorporate_child_on_success`-style propagation.
+    ///
+    /// Must only be called for Amsterdam+ frames at the success-path frame
+    /// boundary (after bytecode has run, after CREATE code-deposit handling).
+    pub fn apply_frame_state_gas(&mut self) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "apply_frame_state_gas called pre-Amsterdam"
+        );
+        let growth_bytes = self.current_call_frame.state_diff.bytes();
+        let cpsb = self.cost_per_state_byte;
+        let growth_cost = growth_bytes
+            .checked_mul(cpsb)
+            .ok_or(InternalError::Overflow)?;
+        let already_paid = self.current_call_frame.state_gas_used;
+        let growth_cost_signed = i128::from(growth_cost);
+        let already_paid_signed = i128::from(already_paid);
+        let residual = growth_cost_signed
+            .checked_sub(already_paid_signed)
+            .ok_or(InternalError::Underflow)?;
+        if residual > 0 {
+            let cost: u64 = u64::try_from(residual).map_err(|_| InternalError::Overflow)?;
+            self.draw_state_gas(cost)?;
+            self.current_call_frame.state_gas_used = self
+                .current_call_frame
+                .state_gas_used
+                .checked_add(i64::try_from(cost).map_err(|_| InternalError::Overflow)?)
+                .ok_or(InternalError::Overflow)?;
+        } else if residual < 0 {
+            let credit: u64 = u64::try_from(-residual).map_err(|_| InternalError::Overflow)?;
+            self.refund_state_gas_to_reservoir(credit)?;
+        }
         Ok(())
     }
 
@@ -642,8 +685,7 @@ impl<'a> VM<'a> {
                 clippy::as_conversions,
                 reason = "spill_refund <= state_gas_spill <= u64::MAX/2 in any practical scenario"
             )]
-            let spill_i64 =
-                i64::try_from(spill_refund).map_err(|_| InternalError::Overflow)?;
+            let spill_i64 = i64::try_from(spill_refund).map_err(|_| InternalError::Overflow)?;
             self.current_call_frame.gas_remaining = self
                 .current_call_frame
                 .gas_remaining
