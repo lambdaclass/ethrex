@@ -330,7 +330,7 @@ impl RpcHandler for GetBlobBaseFee {
 }
 
 pub async fn get_all_block_rpc_receipts(
-    _block_number: BlockNumber,
+    block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
@@ -353,14 +353,16 @@ pub async fn get_all_block_rpc_receipts(
         .try_into()
         .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
-    let block_hash = header.hash();
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
-    // Fetch all receipts in a single cursor pass
-    let all_receipts = storage.get_receipts_for_block(&block_hash).await?;
+    // Fetch receipt for each tx in the block and add block and tx info
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
-    for (index, (tx, receipt)) in body.transactions.iter().zip(all_receipts.iter()).enumerate() {
+    for (index, tx) in body.transactions.iter().enumerate() {
         let index = index as u64;
+        let receipt = match storage.get_receipt(block_number, index).await? {
+            Some(receipt) => receipt,
+            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
+        };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
             tx.clone(),
@@ -383,15 +385,23 @@ pub async fn get_all_block_rpc_receipts(
 }
 
 pub async fn get_all_block_receipts(
-    _block_number: BlockNumber,
+    block_number: BlockNumber,
     header: BlockHeader,
-    _body: BlockBody,
+    body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<Receipt>, RpcErr> {
+    let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(Vec::new());
+        return Ok(receipts);
     }
-    let block_hash = header.hash();
-    Ok(storage.get_receipts_for_block(&block_hash).await?)
+    for (index, _) in body.transactions.iter().enumerate() {
+        let index = index as u64;
+        let receipt = match storage.get_receipt(block_number, index).await? {
+            Some(receipt) => receipt,
+            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
+        };
+        receipts.push(receipt);
+    }
+    Ok(receipts)
 }
