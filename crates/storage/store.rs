@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -27,6 +28,7 @@ use ethrex_common::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
         Receipt, Transaction,
+        block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
@@ -1979,6 +1981,52 @@ impl Store {
         composite_key
     }
 
+    /// Stores a `BlockAccessList` keyed by block hash.
+    ///
+    /// Called from every block-import path on Amsterdam+ blocks. Pre-Amsterdam blocks
+    /// have `block_access_list_hash == None` and are never passed here.
+    pub fn store_block_access_list(
+        &self,
+        block_hash: H256,
+        bal: &BlockAccessList,
+    ) -> Result<(), StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        let value = bal.encode_to_vec();
+        self.write(BLOCK_ACCESS_LISTS, key, value)
+    }
+
+    /// Retrieves a stored `BlockAccessList` by block hash.
+    ///
+    /// Returns `Ok(None)` for pre-Amsterdam blocks or pruned entries.
+    pub fn get_block_access_list(
+        &self,
+        block_hash: H256,
+    ) -> Result<Option<BlockAccessList>, StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        match self.read(BLOCK_ACCESS_LISTS, key)? {
+            None => Ok(None),
+            Some(bytes) => {
+                let bal = BlockAccessList::decode(&bytes)
+                    .map_err(|e| StoreError::Custom(format!("BAL decode error: {e}")))?;
+                Ok(Some(bal))
+            }
+        }
+    }
+
+    /// Retrieves `BlockAccessList`s for multiple hashes in order.
+    ///
+    /// Missing or pruned entries are returned as `None`; position correspondence
+    /// is preserved.
+    pub fn iter_block_access_lists_by_hashes(
+        &self,
+        hashes: &[H256],
+    ) -> Result<Vec<Option<BlockAccessList>>, StoreError> {
+        hashes
+            .iter()
+            .map(|h| self.get_block_access_list(*h))
+            .collect()
+    }
+
     /// Stores a pre-serialized execution witness for a block.
     ///
     /// The witness is converted to RPC format (RpcExecutionWitness) before storage
@@ -3350,5 +3398,67 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::{
+        Address, U256,
+        types::block_access_list::{AccountChanges, BlockAccessList},
+    };
+
+    fn make_store() -> Store {
+        Store::new("", EngineType::InMemory).expect("failed to create in-memory store")
+    }
+
+    fn make_bal() -> BlockAccessList {
+        let mut bal = BlockAccessList::new();
+        bal.add_account_changes(AccountChanges::new(Address::from([1u8; 20])));
+        bal
+    }
+
+    #[test]
+    fn bal_round_trip_insert_get() {
+        let store = make_store();
+        let hash = H256::from([42u8; 32]);
+        let bal = make_bal();
+        store.store_block_access_list(hash, &bal).unwrap();
+        let retrieved = store.get_block_access_list(hash).unwrap();
+        assert_eq!(retrieved, Some(bal));
+    }
+
+    #[test]
+    fn bal_get_missing_returns_none() {
+        let store = make_store();
+        let hash = H256::from([99u8; 32]);
+        let result = store.get_block_access_list(hash).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn bal_iter_preserves_order() {
+        let store = make_store();
+        let hashes: Vec<H256> = (0u8..5).map(|i| H256::from([i; 32])).collect();
+        let bals: Vec<BlockAccessList> = (0u8..5)
+            .map(|i| {
+                let mut bal = BlockAccessList::new();
+                bal.add_account_changes(AccountChanges::new(Address::from([i; 20])));
+                bal
+            })
+            .collect();
+
+        // Store only odd-indexed ones, leaving even (except 0) as missing
+        store.store_block_access_list(hashes[1], &bals[1]).unwrap();
+        store.store_block_access_list(hashes[3], &bals[3]).unwrap();
+
+        let results = store.iter_block_access_lists_by_hashes(&hashes).unwrap();
+        assert_eq!(results.len(), 5);
+        assert!(results[0].is_none());
+        assert_eq!(results[1], Some(bals[1].clone()));
+        assert!(results[2].is_none());
+        assert_eq!(results[3], Some(bals[3].clone()));
+        assert!(results[4].is_none());
     }
 }

@@ -3,11 +3,13 @@ use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 
 use crate::rlpx::snap::{
-    AccountRange, AccountRangeUnit, ByteCodes, GetAccountRange, GetByteCodes, GetStorageRanges,
-    GetTrieNodes, StorageRanges, StorageSlot, TrieNodes,
+    AccountRange, AccountRangeUnit, BlockAccessLists, ByteCodes, GetAccountRange,
+    GetBlockAccessLists, GetByteCodes, GetStorageRanges, GetTrieNodes, StorageRanges, StorageSlot,
+    TrieNodes,
 };
 use ethrex_common::types::AccountStateSlimCodec;
 
+use super::constants::BAL_RESPONSE_SOFT_CAP_BYTES;
 use super::error::SnapError;
 use super::proof_to_encodable;
 
@@ -159,6 +161,68 @@ pub async fn process_trie_nodes_request(
         Ok(TrieNodes {
             id: request.id,
             nodes,
+        })
+    })
+    .await
+    .map_err(|e| SnapError::TaskPanic(e.to_string()))?
+}
+
+/// Serves a `GetBlockAccessLists` request (snap/2 / EIP-8189).
+///
+/// Iterates `block_hashes` in order. For each hash:
+/// - Returns `Some(bal)` if the BAL is available locally.
+/// - Returns `None` if the block is unknown (Task 4.3) or the BAL has been
+///   pruned (Task 4.4 — same wire result, distinguished only in comments).
+///
+/// Accumulates encoded bytes; stops adding new BALs once the cumulative
+/// size exceeds `min(request.response_bytes, BAL_RESPONSE_SOFT_CAP_BYTES)`.
+/// Remaining slots are filled with `None` (position correspondence
+/// preserved). The first BAL is always included even if it alone exceeds
+/// the cap (soft cap — Task 4.5).
+pub async fn process_block_access_lists_request(
+    request: GetBlockAccessLists,
+    store: Store,
+) -> Result<BlockAccessLists, SnapError> {
+    tokio::task::spawn_blocking(move || {
+        let byte_cap = request.response_bytes.min(BAL_RESPONSE_SOFT_CAP_BYTES);
+        let mut bytes_used: u64 = 0;
+        let mut cap_reached = false;
+        let mut bals = Vec::with_capacity(request.block_hashes.len());
+
+        for hash in &request.block_hashes {
+            if cap_reached {
+                // Position correspondence: emit None for every remaining slot.
+                bals.push(None);
+                continue;
+            }
+            match store.get_block_access_list(*hash)? {
+                None => {
+                    // Block unknown or BAL pruned — return None slot.
+                    // (Task 4.3: unknown block hash; Task 4.4: pruned BAL.)
+                    bals.push(None);
+                }
+                Some(bal) => {
+                    let encoded_len = bal.encode_to_vec().len() as u64;
+                    // Always include the first BAL even if it exceeds the cap (soft cap, Task 4.5).
+                    let first_entry = bals.is_empty();
+                    if !first_entry && bytes_used + encoded_len > byte_cap {
+                        // Cap crossed: emit None for this slot and mark cap reached.
+                        cap_reached = true;
+                        bals.push(None);
+                    } else {
+                        bytes_used += encoded_len;
+                        bals.push(Some(bal));
+                        if bytes_used >= byte_cap {
+                            cap_reached = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(BlockAccessLists {
+            id: request.id,
+            bals,
         })
     })
     .await

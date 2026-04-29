@@ -36,6 +36,8 @@ pub enum ChainError {
     Custom(String),
     #[error("Unknown Payload")]
     UnknownPayload,
+    #[error("Block access list hash in header does not match computed hash")]
+    InvalidBlockAccessListHash,
 }
 
 impl From<EvmError> for ChainError {
@@ -67,6 +69,7 @@ impl ChainError {
             ChainError::WitnessGeneration(_) => "witness_generation",
             ChainError::Custom(_) => "custom_error",
             ChainError::UnknownPayload => "unknown_payload",
+            ChainError::InvalidBlockAccessListHash => "invalid_block_access_list_hash",
         }
     }
 }
