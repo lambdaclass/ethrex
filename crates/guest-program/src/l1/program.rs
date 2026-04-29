@@ -26,7 +26,7 @@ pub fn execution_program(
         blocks,
         execution_witness,
     } = input;
-
+    
     let BatchExecutionResult {
         receipts: _,
         initial_state_hash,
@@ -44,7 +44,7 @@ pub fn execution_program(
         },
         crypto.clone(),
     )?;
-
+    
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -52,6 +52,21 @@ pub fn execution_program(
         chain_id: chain_id.into(),
         transaction_count: non_privileged_count,
     })
+}
+
+#[cfg(feature = "eip-8025")]
+use libssz_merkle::Sha256Hasher;
+
+/// Wrapper to pass Crypto into libssz_merkle::hash_tree_root, 
+/// so hashing is computed by precompiles
+#[cfg(feature = "eip-8025")]
+struct CryptoWrapper(Arc<dyn Crypto>);
+
+#[cfg(feature = "eip-8025")]
+impl Sha256Hasher for CryptoWrapper {
+    fn hash(&self, data: &[u8]) -> [u8; 32] {
+        self.0.sha256(data)
+    }
 }
 
 /// Decode and execute the L1 stateless validation program from EIP-8025 wire
@@ -64,13 +79,13 @@ pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
-    use libssz_merkle::{HashTreeRoot, Sha2Hasher};
+    use libssz_merkle::HashTreeRoot;
 
     let (new_payload_request, execution_witness) = super::decode_eip8025(bytes).map_err(|err| {
         ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
     })?;
 
-    let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
+    let request_root = new_payload_request.hash_tree_root(&CryptoWrapper(crypto.clone()));
     let valid = validate_eip8025_execution(&new_payload_request, execution_witness, crypto).is_ok();
 
     Ok(ProgramOutput {
