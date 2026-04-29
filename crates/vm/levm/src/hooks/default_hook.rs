@@ -199,8 +199,18 @@ impl Hook for DefaultHook {
             let to_subtract = if ctx_result.is_success() {
                 vm.state_gas_reservoir
             } else {
-                vm.state_gas_reservoir_post_setup
-                    .saturating_add(vm.state_gas_spill)
+                // On top-level failure, refund only the execution-time draws (delta
+                // between post-setup snapshot and current). Intrinsic-time draws
+                // (auth tuples, CREATE-tx target charge) stay charged to the user.
+                let reservoir_drawn = vm
+                    .state_gas_reservoir_post_setup
+                    .saturating_sub(vm.state_gas_reservoir);
+                let spill_drawn = vm
+                    .state_gas_spill
+                    .saturating_sub(vm.state_gas_spill_post_setup);
+                vm.state_gas_reservoir
+                    .saturating_add(reservoir_drawn)
+                    .saturating_add(spill_drawn)
             };
             ctx_result.gas_used = ctx_result.gas_used.saturating_sub(to_subtract);
         }

@@ -459,6 +459,12 @@ pub struct VM<'a> {
     /// regular gas for block accounting — EELS charge_state_gas spills don't
     /// increment regular_gas_used.
     pub state_gas_spill: u64,
+    /// EIP-8037: Spill counter captured immediately after `prepare_execution` (any
+    /// intrinsic-time spill is pinned here). On top-level failure, only the
+    /// EXECUTION-time portion `state_gas_spill - state_gas_spill_post_setup` is
+    /// refunded, so intrinsic spills (e.g. an oversized auth tuple that already
+    /// burned the spill at intrinsic time) stay charged to the user.
+    pub state_gas_spill_post_setup: u64,
     /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
     pub cost_per_state_byte: u64,
     /// EIP-8037 state-diff journal: finalized diff for the completed transaction.
@@ -512,6 +518,7 @@ impl<'a> VM<'a> {
             state_gas_reservoir_initial: 0,
             state_gas_reservoir_post_setup: 0,
             state_gas_spill: 0,
+            state_gas_spill_post_setup: 0,
             cost_per_state_byte: cpsb,
             state_diff_finalized: StateDiff::default(),
             state_diff_intrinsic_seed: StateDiff::default(),
@@ -666,11 +673,12 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
-        // EIP-8037: snapshot the reservoir balance after intrinsic + auth processing.
-        // This is the value to restore on top-level failure so execution-time draws
-        // are refunded to the user (state ops were rolled back).
+        // EIP-8037: snapshot the reservoir balance and spill counter after intrinsic
+        // + auth processing. On top-level failure these are the pre-execution values
+        // so only the execution-time delta is refunded to the user.
         if self.env.config.fork >= Fork::Amsterdam {
             self.state_gas_reservoir_post_setup = self.state_gas_reservoir;
+            self.state_gas_spill_post_setup = self.state_gas_spill;
         }
 
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
