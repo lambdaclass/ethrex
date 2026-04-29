@@ -724,10 +724,25 @@ impl<'a> VM<'a> {
 
         // EIP-8037 (Amsterdam+): charge state gas for new account creation AFTER
         // initcode size validation, so oversized CREATE doesn't burn state gas.
+        // If the parent doesn't have enough gas (reservoir + gas_remaining) to cover
+        // the 112-byte new-account charge, soft-fail the CREATE — push 0 to the
+        // parent's stack and let it continue, instead of bubbling an OOG up. This
+        // matches EIP-8037: "CREATE returns 0 if state gas is insufficient" rather
+        // than halting the caller.
         if self.env.config.fork >= Fork::Amsterdam {
             #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
             let new_account_state_gas =
                 gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+            #[expect(clippy::as_conversions, reason = "gas_remaining max(0) fits in u64")]
+            let available = self.state_gas_reservoir.saturating_add(
+                self.current_call_frame.gas_remaining.max(0) as u64,
+            );
+            if available < new_account_state_gas {
+                self.current_call_frame.stack.push(FAIL)?;
+                self.tracer
+                    .exit_early(0, Some("InsufficientStateGas".to_string()))?;
+                return Ok(OpcodeResult::Continue);
+            }
             self.draw_state_gas(new_account_state_gas)?;
         }
 
