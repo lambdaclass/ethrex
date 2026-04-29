@@ -158,8 +158,10 @@ async fn run(
                         "Warning: Returned exception {error:?} does not match expected {expected_exception:?}",
                     );
                 }
-                // Expected exception matched — stop processing further blocks of this test.
-                break;
+                // Expected exception matched — skip this block and continue with the
+                // next one. Some fixtures (e.g. fork-transition) intentionally mix a
+                // rejected pre-fork block with an accepted post-fork block.
+                continue;
             }
             Ok(_) => {
                 if expects_exception {
@@ -193,9 +195,11 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
 
     for block_fixture in test.blocks.iter() {
-        // Skip fixtures that expect an exception — the normal run() already verified them.
+        // Skip blocks that expect an exception — the normal run() already verified them.
+        // Continue with the rest of the blocks instead of returning early; fork-transition
+        // fixtures legitimately mix rejected pre-fork blocks with accepted post-fork ones.
         if block_fixture.expect_exception.is_some() {
-            return Ok(());
+            continue;
         }
 
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
