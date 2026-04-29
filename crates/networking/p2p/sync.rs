@@ -161,25 +161,22 @@ impl Syncer {
             // If the error is irrecoverable, we exit ethrex
             Err(error) => {
                 let recoverable = error.is_recoverable();
+                self.diagnostics.write().await.current_phase = "idle".to_string();
                 debug!(
                     error_type = %error,
                     recoverable = recoverable,
                     action = if recoverable { "retry" } else { "exit" },
                     "Sync cycle error classification"
                 );
-                {
-                    let mut diag = self.diagnostics.write().await;
-                    diag.current_phase = "idle".to_string();
-                    diag.push_error(SyncErrorEvent {
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs(),
-                        error_type: format!("{:?}", std::mem::discriminant(&error)),
-                        error_message: error.to_string(),
-                        recoverable,
-                    });
-                }
+                self.diagnostics.write().await.push_error(SyncErrorEvent {
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    error_type: format!("{:?}", std::mem::discriminant(&error)),
+                    error_message: error.to_string(),
+                    recoverable,
+                });
                 match recoverable {
                     false => {
                         // We exit the node, as we can't recover this error
@@ -320,6 +317,12 @@ pub enum SyncError {
 
 impl SyncError {
     pub fn is_recoverable(&self) -> bool {
+        // PeerHandler delegates to its own classification so that transient
+        // peer/network errors retry while structural errors (dead actor,
+        // local storage full) still exit.
+        if let SyncError::PeerHandler(e) = self {
+            return e.is_recoverable();
+        }
         match self {
             SyncError::SnapshotReadError(_, _)
             | SyncError::SnapshotDecodeError(_)
@@ -330,8 +333,6 @@ impl SyncError {
             | SyncError::AccountStoragesSnapshotsDirNotFound
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
-            | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_)
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -353,7 +354,10 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
-            | SyncError::NoBlocks => true,
+            | SyncError::NoBlocks
+            | SyncError::NoBlockHeaders => true,
+            // PeerHandler handled above by delegation
+            SyncError::PeerHandler(_) => unreachable!(),
         }
     }
 }
