@@ -14,7 +14,7 @@ use std::time::Duration;
 ///
 /// This limits the amount of data a peer can return in a single response,
 /// preventing memory exhaustion and ensuring reasonable response times.
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum number of accounts/items to request in a single snap request.
 ///
@@ -47,10 +47,10 @@ pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64;
 pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 
 /// Number of storage accounts to process per batch during state healing.
-pub const STORAGE_BATCH_SIZE: usize = 300;
+pub const STORAGE_BATCH_SIZE: usize = 1024;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 500;
+pub const NODE_BATCH_SIZE: usize = 1024;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
