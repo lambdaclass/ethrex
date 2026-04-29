@@ -369,6 +369,13 @@ pub async fn get_all_block_rpc_receipts(
     let all_receipts = storage
         .get_receipts_for_block_from_index(&block_hash, 0, Some(fetch_count))
         .await?;
+    if all_receipts.len() != fetch_count {
+        return Err(RpcErr::Internal(format!(
+            "Expected {} receipts, got {}",
+            fetch_count,
+            all_receipts.len()
+        )));
+    }
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
     for (index, (tx, receipt)) in body
