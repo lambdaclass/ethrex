@@ -114,7 +114,7 @@ jobs:
         if: always()
         env:
           SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
-          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "lighthouse-${{ matrix.network }}"
           OUTCOME: ${{ steps.snapsync.outcome }}
@@ -161,7 +161,7 @@ jobs:
         if: always()
         env:
           SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
-          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "prysm-${{ matrix.network }}"
           OUTCOME: ${{ steps.snapsync.outcome }}
