@@ -21,6 +21,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
@@ -28,6 +29,7 @@ use crate::peer_handler::PeerHandler;
 use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
+    async_fs,
     constants::{
         BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
         SECONDS_PER_BLOCK, SNAP_LIMIT,
@@ -223,8 +225,6 @@ pub async fn sync_cycle_snap(
             // Too few blocks for a snap sync, switching to full sync
             info!("Sync head is found, switching to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
-            // Disable snap metrics so the progress display stops
-            METRICS.disable().await;
             return super::full::sync_cycle_full(
                 peers,
                 blockchain,
@@ -318,11 +318,7 @@ pub async fn snap_sync(
     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
-    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|e| {
-        SyncError::FileSystem(format!(
-            "Failed to create {code_hashes_snapshot_dir:?}: {e}"
-        ))
-    })?;
+    async_fs::ensure_dir_exists(&code_hashes_snapshot_dir).await?;
 
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
@@ -556,15 +552,11 @@ pub async fn snap_sync(
 
     diagnostics.write().await.current_phase = "bytecodes".to_string();
     info!("Starting download code hashes from peers");
-    for entry in std::fs::read_dir(&code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
-    {
-        let entry =
-            entry.map_err(|e| SyncError::FileSystem(format!("Failed to read dir entry: {e}")))?;
-        let snapshot_contents = std::fs::read(entry.path())
-            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+    let code_hash_files = async_fs::read_dir_paths(&code_hashes_dir).await?;
+    for file_path in code_hash_files {
+        let snapshot_contents = async_fs::read_file(&file_path).await?;
         let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
+            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(file_path))?;
 
         for hash in code_hashes {
             // If we haven't seen the code hash yet, add it to the list of hashes to download
@@ -614,8 +606,7 @@ pub async fn snap_sync(
             .await?;
     }
 
-    std::fs::remove_dir_all(code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(&code_hashes_dir).await?;
 
     *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
@@ -883,7 +874,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
         store
             .open_locked_state_trie(state_root)
             .expect("couldn't open trie")
-            .validate_parallel()
+            .validate()
     })
     .await
     .expect("We should be able to create threads");
@@ -900,40 +891,21 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = tokio::task::spawn_blocking(move || {
-        use rayon::prelude::*;
-        let mut iter = store
+        store
             .iter_accounts(state_root)
             .expect("couldn't iterate accounts")
-            .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH);
-
-        const CHUNK_SIZE: usize = 4096;
-        let mut result: Result<(), ethrex_trie::TrieError> = Ok(());
-
-        loop {
-            let chunk: Vec<_> = iter.by_ref().take(CHUNK_SIZE).collect();
-            if chunk.is_empty() {
-                break;
-            }
-
-            result = chunk
-                .par_iter()
-                .try_for_each(|(hashed_address, account_state)| {
-                    store
-                        .open_locked_storage_trie(
-                            *hashed_address,
-                            state_root,
-                            account_state.storage_root,
-                        )
-                        .expect("couldn't open storage trie")
-                        .validate()
-                });
-
-            if result.is_err() {
-                break;
-            }
-        }
-
-        result
+            .par_bridge()
+            .try_for_each(|(hashed_address, account_state)| {
+                let store_clone = store.clone();
+                store_clone
+                    .open_locked_storage_trie(
+                        hashed_address,
+                        state_root,
+                        account_state.storage_root,
+                    )
+                    .expect("couldn't open storage trie")
+                    .validate()
+            })
     })
     .await
     .expect("We should be able to create threads");
@@ -946,43 +918,27 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
 
 pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
-
-    // Collect unique code hashes — many contracts share bytecode (proxies, ERC20 clones)
-    let mut unique_hashes = HashSet::new();
-    for (_, account_state) in store
+    let mut is_valid = true;
+    for (account_hash, account_state) in store
         .iter_accounts(state_root)
         .expect("we couldn't iterate over accounts")
     {
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            unique_hashes.insert(account_state.code_hash);
+        if account_state.code_hash != *EMPTY_KECCACK_HASH
+            && !store
+                .get_account_code(account_state.code_hash)
+                .is_ok_and(|code| code.is_some())
+        {
+            error!(
+                "Missing code hash {:x} for account {:x}",
+                account_state.code_hash, account_hash
+            );
+            is_valid = false
         }
     }
-
-    info!(
-        "Collected {} unique code hashes for validation",
-        unique_hashes.len()
-    );
-
-    // Validate in parallel using existence-only check
-    use rayon::prelude::*;
-    let missing: Vec<_> = unique_hashes
-        .par_iter()
-        .filter(|code_hash| match store.code_exists(**code_hash) {
-            Ok(exists) => !exists,
-            Err(e) => {
-                error!("DB error checking code hash {:x}: {e}", code_hash);
-                true
-            }
-        })
-        .collect();
-
-    if !missing.is_empty() {
-        for hash in &missing {
-            error!("Missing code hash {:x}", hash);
-        }
+    if !is_valid {
         std::process::exit(1);
     }
-    true
+    is_valid
 }
 
 // ============================================================================
@@ -1032,15 +988,10 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
-    for entry in std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-    {
-        let entry = entry
-            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
-        info!("Reading account file from entry {entry:?}");
-        let snapshot_path = entry.path();
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+    let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account file from {snapshot_path:?}");
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
         let account_states_snapshot: Vec<(H256, AccountState)> =
             RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
@@ -1081,8 +1032,7 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -1094,22 +1044,14 @@ async fn insert_storages(
     account_storages_snapshots_dir: &Path,
     _: &Path,
 ) -> Result<(), SyncError> {
-    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use crate::utils::AccountsWithStorage;
+    use rayon::iter::IntoParallelIterator;
 
-    for entry in std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-    {
-        use crate::utils::AccountsWithStorage;
+    let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account storage file from {snapshot_path:?}");
 
-        let entry = entry.map_err(|err| {
-            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
-        })?;
-        info!("Reading account storage file from entry {entry:?}");
-
-        let snapshot_path = entry.path();
-
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
 
         #[expect(clippy::type_complexity)]
         let account_storages_snapshot: Vec<AccountsWithStorage> =
@@ -1148,8 +1090,7 @@ async fn insert_storages(
             .await?;
     }
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
 
     Ok(())
 }
@@ -1174,13 +1115,7 @@ async fn insert_accounts(
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
+    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
@@ -1216,10 +1151,8 @@ async fn insert_accounts(
 
     drop(db); // close db before removing directory
 
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
+    async_fs::remove_dir_all(&get_rocksdb_temp_accounts_dir(datadir)).await?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1279,13 +1212,7 @@ async fn insert_storages(
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
+    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let snapshot = db.snapshot();
@@ -1358,10 +1285,8 @@ async fn insert_storages(
     drop(snapshot);
     drop(db);
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
+    async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
     Ok(())
 }
