@@ -628,8 +628,7 @@ impl Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let key = (block_hash, index).encode_to_vec();
+        let key = receipt_key(&block_hash, index);
         let value = receipt.encode_to_vec();
         self.write_async(RECEIPTS, key, value).await
     }
@@ -644,7 +643,7 @@ impl Store {
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
                 (key, value)
             })
@@ -671,7 +670,7 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let key = (block_hash, index).encode_to_vec();
+        let key = receipt_key(&block_hash, index);
         self.read_async(RECEIPTS, key)
             .await?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
@@ -1064,28 +1063,43 @@ impl Store {
 
     /// Retrieves receipts for a block starting from the given index.
     /// Used by eth/70 partial receipt requests (EIP-7975).
+    ///
+    /// Uses cursor-based prefix iteration over the 32-byte block hash prefix
+    /// for efficient batch retrieval.
     pub async fn get_receipts_for_block_from_index(
         &self,
         block_hash: &BlockHash,
         start_index: u64,
     ) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts = Vec::new();
-        let mut index = start_index;
+        let backend = self.backend.clone();
+        let block_hash = *block_hash;
 
-        let txn = self.backend.begin_read()?;
-        loop {
-            let key = (*block_hash, index).encode_to_vec();
-            match txn.get(RECEIPTS, key.as_slice())? {
-                Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
-                    receipts.push(receipt);
-                    index += 1;
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            let prefix = block_hash.as_bytes().to_vec();
+            let iter = txn.prefix_iterator(RECEIPTS, &prefix)?;
+            let mut receipts = Vec::new();
+            for result in iter {
+                let (k, v) = result?;
+                if !k.starts_with(&prefix) {
+                    break;
                 }
-                None => break,
+                // Skip entries before start_index (for eth/70 partial requests)
+                if k.len() == 40 && start_index > 0 {
+                    let idx_bytes: [u8; 8] = k[32..40]
+                        .try_into()
+                        .expect("slice is exactly 8 bytes (checked k.len() == 40)");
+                    let idx = u64::from_be_bytes(idx_bytes);
+                    if idx < start_index {
+                        continue;
+                    }
+                }
+                receipts.push(Receipt::decode(v.as_ref())?);
             }
-        }
-
-        Ok(receipts)
+            Ok(receipts)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Snap State methods
@@ -1428,7 +1442,7 @@ impl Store {
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
                 tx.put(RECEIPTS, &key, &value)?;
             }
@@ -3199,6 +3213,14 @@ fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
+}
+
+/// Builds a fixed-width RECEIPTS key: block_hash (32B) || index (8B BE).
+pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(40);
+    key.extend_from_slice(block_hash.as_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
