@@ -1158,6 +1158,92 @@ async fn insert_storages(
 // Account and Storage Insertion (rocksdb)
 // ============================================================================
 
+/// A RocksDB iterator filtered to a single first-nibble range.
+/// Collects code hashes (flushed incrementally to disk) and storage accounts
+/// as side effects while yielding `(H256, Vec<u8>)` account entries.
+#[cfg(feature = "rocksdb")]
+struct NibbleIterator<'a> {
+    iter: rocksdb::DBRawIterator<'a>,
+    nibble: u8,
+    code_hashes: Vec<H256>,
+    storage_accounts: Vec<(H256, H256)>,
+    code_hash_file_index: &'a std::sync::atomic::AtomicU64,
+    code_hashes_dir: &'a std::path::Path,
+    collected_storage_accounts: &'a std::sync::Mutex<Vec<Vec<(H256, H256)>>>,
+}
+
+#[cfg(feature = "rocksdb")]
+impl NibbleIterator<'_> {
+    fn flush_code_hashes(&mut self) {
+        if !self.code_hashes.is_empty() {
+            use crate::utils::{dump_to_file, get_code_hashes_snapshot_file};
+            use ethrex_rlp::encode::RLPEncode;
+
+            let file_idx = self.code_hash_file_index.fetch_add(1, Ordering::Relaxed);
+            let file_name = get_code_hashes_snapshot_file(self.code_hashes_dir, file_idx);
+            let hashes: Vec<H256> = std::mem::take(&mut self.code_hashes);
+            if let Err(e) = dump_to_file(&file_name, hashes.encode_to_vec()) {
+                tracing::error!(
+                    "Failed to write code hashes file (nibble {}): {:?}",
+                    self.nibble,
+                    e
+                );
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rocksdb")]
+impl Drop for NibbleIterator<'_> {
+    fn drop(&mut self) {
+        self.flush_code_hashes();
+        let storage = std::mem::take(&mut self.storage_accounts);
+        if !storage.is_empty() {
+            self.collected_storage_accounts
+                .lock()
+                .expect("storage accounts mutex poisoned")
+                .push(storage);
+        }
+    }
+}
+
+#[cfg(feature = "rocksdb")]
+impl Iterator for NibbleIterator<'_> {
+    type Item = (H256, Vec<u8>);
+    fn next(&mut self) -> Option<Self::Item> {
+        use crate::snap::constants::CODE_HASH_WRITE_BUFFER_SIZE;
+
+        if !self.iter.valid() {
+            self.flush_code_hashes();
+            return None;
+        }
+        let key = self.iter.key()?;
+        if (key[0] >> 4) != self.nibble {
+            self.flush_code_hashes();
+            return None;
+        }
+        let value = self.iter.value()?;
+        let account_hash = H256::from_slice(key);
+        let value_vec = value.to_vec();
+        METRICS
+            .account_tries_inserted
+            .fetch_add(1, Ordering::Relaxed);
+        let account_state = AccountState::decode(&value_vec).expect("We should have accounts here");
+        if account_state.storage_root != *EMPTY_TRIE_HASH {
+            self.storage_accounts
+                .push((account_hash, account_state.storage_root));
+        }
+        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+            self.code_hashes.push(account_state.code_hash);
+            if self.code_hashes.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
+                self.flush_code_hashes();
+            }
+        }
+        self.iter.next();
+        Some((account_hash, value_vec))
+    }
+}
+
 #[cfg(feature = "rocksdb")]
 async fn insert_accounts(
     store: Store,
@@ -1166,8 +1252,9 @@ async fn insert_accounts(
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
-    use crate::utils::get_rocksdb_temp_accounts_dir;
-    use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+    use crate::utils::{get_code_hashes_snapshots_dir, get_rocksdb_temp_accounts_dir};
+    use ethrex_trie::trie_sorted::trie_from_sorted_parallel;
+    use std::sync::Mutex;
 
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
@@ -1183,37 +1270,49 @@ async fn insert_accounts(
         .collect();
     db.ingest_external_file(file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-        }
-    }
 
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    let compute_state_root = trie_from_sorted_accounts_wrap(
-        trie.db(),
-        &mut iter
-            .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
-            .inspect(|(k, v)| {
-                METRICS
-                    .account_tries_inserted
-                    .fetch_add(1, Ordering::Relaxed);
-                let account_state = AccountState::decode(v).expect("We should have accounts here");
-                if account_state.storage_root != *EMPTY_TRIE_HASH {
-                    storage_accounts.accounts_with_storage_root.insert(
-                        H256::from_slice(k),
-                        (Some(account_state.storage_root), Vec::new()),
-                    );
-                }
-            })
-            .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
-    )
+    // Build state trie in parallel (16 sub-tries by first nibble).
+    // Each sub-trie uses a streaming RocksDB iterator (no bulk memory).
+    // Side effects (code hashes, storage accounts) are collected per-thread
+    // via NibbleIterator's Drop impl.
+    let snapshot = db.snapshot();
+    let collected_storage_accounts: Mutex<Vec<Vec<(H256, H256)>>> = Mutex::new(Vec::new());
+    let code_hash_file_index =
+        std::sync::atomic::AtomicU64::new(code_hash_collector.next_file_index());
+    let code_hashes_dir = get_code_hashes_snapshots_dir(datadir);
+
+    let compute_state_root = trie_from_sorted_parallel(trie.db(), |nibble| {
+        let mut raw_iter = snapshot.raw_iterator();
+        let mut start_key = [0u8; 32];
+        start_key[0] = nibble << 4;
+        raw_iter.seek(start_key);
+
+        Box::new(NibbleIterator {
+            iter: raw_iter,
+            nibble,
+            code_hashes: Vec::new(),
+            storage_accounts: Vec::new(),
+            code_hash_file_index: &code_hash_file_index,
+            code_hashes_dir: &code_hashes_dir,
+            collected_storage_accounts: &collected_storage_accounts,
+        })
+    })
     .map_err(SyncError::TrieGenerationError)?;
 
+    // Merge per-thread storage accounts (code hashes already flushed to disk by Drop)
+    for (account_hash, storage_root) in collected_storage_accounts
+        .into_inner()
+        .expect("storage accounts mutex poisoned")
+        .into_iter()
+        .flatten()
+    {
+        storage_accounts
+            .accounts_with_storage_root
+            .insert(account_hash, (Some(storage_root), Vec::new()));
+    }
+    code_hash_collector.set_file_index(code_hash_file_index.load(Ordering::Relaxed));
+
+    drop(snapshot);
     drop(db); // close db before removing directory
 
     std::fs::remove_dir_all(account_state_snapshots_dir)

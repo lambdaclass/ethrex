@@ -88,6 +88,16 @@ impl CodeHashCollector {
         self.file_index += 1;
     }
 
+    /// Returns the current file index (for external writers to coordinate)
+    pub fn next_file_index(&self) -> u64 {
+        self.file_index
+    }
+
+    /// Updates the file index (after external writers have written files)
+    pub fn set_file_index(&mut self, index: u64) {
+        self.file_index = index;
+    }
+
     /// Check possible errors from the previous task
     async fn check_previous_task(&mut self) -> Result<(), SyncError> {
         if let Some(task) = self.disk_tasks.join_next().await {
