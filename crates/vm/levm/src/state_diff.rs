@@ -139,7 +139,7 @@ impl StateDiff {
     ///      Idempotent: if not found anywhere, propagate up so a higher merge can resolve.
     ///   2. Set-union the rest: child's new_accounts/new_storage_slots/auth_total/auth_only into self.
     ///   3. Sum-merge code_deposits.
-    pub fn merge_from_child(&mut self, child: StateDiff, ancestors: &mut [StateDiff]) {
+    pub fn merge_from_child(&mut self, mut child: StateDiff, ancestors: &mut [StateDiff]) {
         // 1a. Storage cancellations
         for (addr, key) in child.cancellations_storage.iter() {
             if self.new_storage_slots.remove(&(*addr, *key)) {
@@ -179,6 +179,16 @@ impl StateDiff {
                 // Propagate up so a higher merge can resolve.
                 self.cancellations_account.insert(*addr);
             }
+        }
+
+        // 1c. Scrub the child's own slots/code_deposits for cancelled accounts so the
+        // set-union below cannot reintroduce them. Without this, a same-tx
+        // CREATE+SSTORE-in-init+SELFDESTRUCT pattern leaks the init's slots back into
+        // the parent after the cancellation removed the new_account record.
+        let cancelled_accounts: Vec<Address> = child.cancellations_account.iter().copied().collect();
+        for addr in &cancelled_accounts {
+            child.new_storage_slots.retain(|(a, _)| a != addr);
+            child.code_deposits.remove(addr);
         }
 
         // 2. Set-union for HashSets, Vec-extend for auth lists (per-tuple worst case).
