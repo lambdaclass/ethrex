@@ -10,8 +10,8 @@ mod healing;
 mod snap_sync;
 
 use crate::metrics::METRICS;
-use crate::peer_handler::{PeerHandler, PeerHandlerError};
-use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
+use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
 use ethrex_common::H256;
@@ -29,7 +29,7 @@ use std::sync::{
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
@@ -204,6 +204,28 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
+            // Probe the sync head's block number before committing to snap sync.
+            // On a fresh devnet the chain head may be only a few blocks deep; the
+            // existing in-loop `head_close_to_0` guard in `sync_cycle_snap` is
+            // only reached after a successful header batch, which can stall when
+            // peers are barely synced themselves. Pre-checking avoids that.
+            if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
+                && sync_head_number < MIN_FULL_BLOCKS
+            {
+                info!(
+                    sync_head_number,
+                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                );
+                self.snap_enabled.store(false, Ordering::Relaxed);
+                return full::sync_cycle_full(
+                    &mut self.peers,
+                    self.blockchain.clone(),
+                    self.cancel_token.clone(),
+                    sync_head,
+                    store,
+                )
+                .await;
+            }
             METRICS.enable().await;
             // We validate that we have the folders that are being used empty, as we currently assume
             // they are. If they are not empty we empty the folder
@@ -231,6 +253,44 @@ impl Syncer {
             .await
         }
     }
+}
+
+/// Number of attempts to fetch the sync head's header for the snap-vs-full pre-check.
+const PROBE_SYNC_HEAD_ATTEMPTS: u32 = 3;
+/// Delay between probe attempts.
+const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Tries to fetch the block header for `sync_head` and return its number.
+///
+/// Returns `None` if peers don't respond with the requested header within
+/// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
+/// and fall through to the regular sync path.
+async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Option<u64> {
+    for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
+        match peers
+            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+            .await
+        {
+            Ok(Some(headers)) => {
+                if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
+                    return Some(header.number);
+                }
+                debug!("Sync head probe: response did not contain target header");
+            }
+            Ok(None) => {
+                debug!(
+                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no peer response"
+                );
+            }
+            Err(e) => {
+                warn!("Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS} failed: {e}");
+            }
+        }
+        if attempt < PROBE_SYNC_HEAD_ATTEMPTS {
+            tokio::time::sleep(PROBE_SYNC_HEAD_RETRY_DELAY).await;
+        }
+    }
+    None
 }
 
 #[derive(Debug, Default)]
