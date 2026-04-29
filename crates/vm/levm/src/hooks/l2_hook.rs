@@ -489,7 +489,7 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
     // NOT CHECKED: privileged transactions can't be of "create" type
 
     // (6) INTRINSIC_GAS_TOO_LOW
-    // CHANGED: the gas should be charged, but the transaction shouldn't error
+    // CHANGED: the gas should be charged, but the transaction shouldn't error.
     if vm.add_intrinsic_gas().is_err() {
         tx_should_fail = true;
     }
@@ -517,6 +517,10 @@ fn prepare_execution_privileged(vm: &mut VM<'_>) -> Result<(), crate::errors::VM
         // If the transaction failed some validation, but it must still be included
         // To prevent it from taking effect, we force it to revert
         vm.current_call_frame.msg_value = U256::zero();
+        // Redirect to a non-precompile address so run_execution takes the
+        // opcode path and executes INVALID → revert (instead of entering
+        // the precompile path with uninitialized code_address).
+        vm.current_call_frame.to = Address::zero();
         vm.current_call_frame.set_code(Code {
             hash: H256::zero(),
             bytecode: vec![Opcode::INVALID.into()].into(),

@@ -423,12 +423,10 @@ impl<'a> VM<'a> {
             let reservoir = execution_gas.saturating_sub(gas_left);
             if reservoir > 0 {
                 // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
-                let reservoir_i64 =
-                    i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
                 self.current_call_frame.gas_remaining = self
                     .current_call_frame
                     .gas_remaining
-                    .checked_sub(reservoir_i64)
+                    .checked_sub(reservoir)
                     .ok_or(InternalError::Overflow)?;
                 self.state_gas_reservoir = reservoir;
             }
