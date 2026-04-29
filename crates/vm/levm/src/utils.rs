@@ -421,20 +421,24 @@ impl<'a> VM<'a> {
                     .state_diff
                     .record_new_account(self.current_call_frame.to);
             }
-            // EIP-7702 auth tuples: each tuple is recorded into state_diff_intrinsic_seed for
-            // net state-bytes accounting. Tuples that fail ecrecover are NOT recorded (address
-            // unknown); per option-2 semantics, only state actually written is charged. Tuples
-            // that pass ecrecover but fail later validation (chain-id, nonce) remain in auth_total
-            // (full 135 bytes) — matching the EELS reference: invalid tuples still cost the full
-            // intrinsic. Duplicate authorities deduplicate via FxHashSet — option-2 only charges
-            // once for the net state written even if multiple tuples point at the same authority.
+            // EIP-7702 auth tuples: each tuple is recorded into state_diff_intrinsic_seed
+            // for net state-bytes accounting. Per the EELS reference, every tuple
+            // costs the full new-account+auth-base intrinsic regardless of validity
+            // — invalid signatures still surface in `auth_total` so the frame-end
+            // residual matches the intrinsic charge that was seeded into
+            // `state_gas_used`. Tuples passing ecrecover use the authority address
+            // (later eligible for downgrade to `auth_only` when the authority
+            // pre-existed); tuples failing ecrecover use a zero placeholder that
+            // can never downgrade.
             if let Some(auth_list) = self.tx.authorization_list() {
                 for auth in auth_list.iter() {
-                    if let Ok(Some(authority)) = eip7702_recover_address(auth, self.crypto) {
-                        self.current_call_frame
-                            .state_diff
-                            .record_auth_total(authority);
-                    }
+                    let authority = eip7702_recover_address(auth, self.crypto)
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(Address::zero);
+                    self.current_call_frame
+                        .state_diff
+                        .record_auth_total(authority);
                 }
             }
             // Snapshot the intrinsic seed for top-level-revert finalization.
