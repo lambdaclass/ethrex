@@ -734,9 +734,9 @@ impl<'a> VM<'a> {
             let new_account_state_gas =
                 gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
             #[expect(clippy::as_conversions, reason = "gas_remaining max(0) fits in u64")]
-            let available = self.state_gas_reservoir.saturating_add(
-                self.current_call_frame.gas_remaining.max(0) as u64,
-            );
+            let available = self
+                .state_gas_reservoir
+                .saturating_add(self.current_call_frame.gas_remaining.max(0) as u64);
             if available < new_account_state_gas {
                 self.current_call_frame.stack.push(FAIL)?;
                 self.tracer
@@ -1224,8 +1224,7 @@ impl<'a> VM<'a> {
                 // state effects that no longer exist.
                 let refundable_bytes = self.merge_child_state_diff(child_state_diff);
                 if self.env.config.fork >= Fork::Amsterdam && refundable_bytes > 0 {
-                    let refundable_gas =
-                        refundable_bytes.saturating_mul(self.cost_per_state_byte);
+                    let refundable_gas = refundable_bytes.saturating_mul(self.cost_per_state_byte);
                     self.refund_state_gas_to_reservoir(refundable_gas)?;
                 }
             }
@@ -1245,8 +1244,8 @@ impl<'a> VM<'a> {
                     .state_gas_spill
                     .saturating_sub(state_gas_spill_snapshot);
                 if spilled_during_child > 0 {
-                    let spill_credit = i64::try_from(spilled_during_child)
-                        .map_err(|_| InternalError::Overflow)?;
+                    let spill_credit =
+                        i64::try_from(spilled_during_child).map_err(|_| InternalError::Overflow)?;
                     self.current_call_frame.gas_remaining = self
                         .current_call_frame
                         .gas_remaining
@@ -1309,8 +1308,7 @@ impl<'a> VM<'a> {
                 // reservoir for any bytes the merge resolved (cross-frame cancellations).
                 let refundable_bytes = self.merge_child_state_diff(child_state_diff);
                 if self.env.config.fork >= Fork::Amsterdam && refundable_bytes > 0 {
-                    let refundable_gas =
-                        refundable_bytes.saturating_mul(self.cost_per_state_byte);
+                    let refundable_gas = refundable_bytes.saturating_mul(self.cost_per_state_byte);
                     self.refund_state_gas_to_reservoir(refundable_gas)?;
                 }
             }
@@ -1328,8 +1326,8 @@ impl<'a> VM<'a> {
                     .state_gas_spill
                     .saturating_sub(state_gas_spill_snapshot);
                 if spilled_during_child > 0 {
-                    let spill_credit = i64::try_from(spilled_during_child)
-                        .map_err(|_| InternalError::Overflow)?;
+                    let spill_credit =
+                        i64::try_from(spilled_during_child).map_err(|_| InternalError::Overflow)?;
                     self.current_call_frame.gas_remaining = self
                         .current_call_frame
                         .gas_remaining

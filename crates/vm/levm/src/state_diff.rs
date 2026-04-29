@@ -139,11 +139,7 @@ impl StateDiff {
     ///      Idempotent: if not found anywhere, propagate up so a higher merge can resolve.
     ///   2. Set-union the rest: child's new_accounts/new_storage_slots/auth_total/auth_only into self.
     ///   3. Sum-merge code_deposits.
-    pub fn merge_from_child(
-        &mut self,
-        mut child: StateDiff,
-        ancestors: &mut [StateDiff],
-    ) -> u64 {
+    pub fn merge_from_child(&mut self, mut child: StateDiff, ancestors: &mut [StateDiff]) -> u64 {
         use crate::gas_cost::{STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET};
         // Bytes whose state-gas charges are now stranded — the corresponding records
         // are being removed by this merge — and should be refunded to the reservoir
@@ -161,8 +157,7 @@ impl StateDiff {
             let mut handled = false;
             for ancestor in ancestors.iter_mut().rev() {
                 if ancestor.new_storage_slots.remove(&(*addr, *key)) {
-                    refundable_bytes =
-                        refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
+                    refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
                     handled = true;
                     break;
                 }
@@ -195,8 +190,7 @@ impl StateDiff {
             let mut handled = false;
             for ancestor in ancestors.iter_mut().rev() {
                 if ancestor.new_accounts.remove(addr) {
-                    refundable_bytes =
-                        refundable_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
+                    refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
                     #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
                     let slot_count = ancestor
                         .new_storage_slots
@@ -225,7 +219,8 @@ impl StateDiff {
         // the parent after the cancellation removed the new_account record. Bytes
         // dropped here also need to be refunded to the reservoir (the state-gas was
         // drawn at SSTORE / code-deposit time but the state effect no longer exists).
-        let cancelled_accounts: Vec<Address> = child.cancellations_account.iter().copied().collect();
+        let cancelled_accounts: Vec<Address> =
+            child.cancellations_account.iter().copied().collect();
         for addr in &cancelled_accounts {
             #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
             let slot_count = child
