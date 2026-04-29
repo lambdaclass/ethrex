@@ -1215,7 +1215,22 @@ impl<'a> VM<'a> {
                 // On revert, restore the reservoir AND spill counter to their pre-child
                 // snapshots. State gas drawn from the reservoir or spilled to the child's
                 // gas_remaining is returned/forgotten because the child's state mutations
-                // are rolled back.
+                // are rolled back. Any spill that was charged against the child's
+                // gas_remaining (and therefore baked into ctx_result.gas_used at sub-frame
+                // halt time) is re-credited to the parent so it doesn't leak into the
+                // outer tx's regular-gas dimension.
+                let spilled_during_child = self
+                    .state_gas_spill
+                    .saturating_sub(state_gas_spill_snapshot);
+                if spilled_during_child > 0 {
+                    let spill_credit = i64::try_from(spilled_during_child)
+                        .map_err(|_| InternalError::Overflow)?;
+                    self.current_call_frame.gas_remaining = self
+                        .current_call_frame
+                        .gas_remaining
+                        .checked_add(spill_credit)
+                        .ok_or(InternalError::Overflow)?;
+                }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 self.state_gas_spill = state_gas_spill_snapshot;
 
@@ -1278,8 +1293,22 @@ impl<'a> VM<'a> {
                 // (Implicit drop when executed_call_frame goes out of scope.)
 
                 // On revert, restore the reservoir AND spill counter to their pre-child
-                // snapshots. The CREATE-account state gas refund below adds back the
-                // 112-byte charge that was drawn before the child frame began.
+                // snapshots. Re-credit any spill that was charged against the child's
+                // gas_remaining to the parent so it doesn't leak into the outer tx's
+                // regular-gas dimension.  The CREATE-account state gas refund below adds
+                // back the 112-byte charge that was drawn before the child frame began.
+                let spilled_during_child = self
+                    .state_gas_spill
+                    .saturating_sub(state_gas_spill_snapshot);
+                if spilled_during_child > 0 {
+                    let spill_credit = i64::try_from(spilled_during_child)
+                        .map_err(|_| InternalError::Overflow)?;
+                    self.current_call_frame.gas_remaining = self
+                        .current_call_frame
+                        .gas_remaining
+                        .checked_add(spill_credit)
+                        .ok_or(InternalError::Overflow)?;
+                }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 self.state_gas_spill = state_gas_spill_snapshot;
 
