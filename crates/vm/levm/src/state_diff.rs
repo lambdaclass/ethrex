@@ -35,6 +35,13 @@ pub struct StateDiff {
     /// Cross-frame cancellations: accounts selfdestructed but created in an ancestor.
     /// Resolved on merge_from_child by removing from parent/ancestor's new_accounts (and slots/code).
     pub cancellations_account: FxHashSet<Address>,
+    /// EIP-8037 frame-end accounting: net negative bytes contributed by THIS frame's
+    /// cross-frame cancellations (slots/accounts created by an ancestor and cleared
+    /// here). Mirrors EELS's negative `byte_delta` term at descendant
+    /// `apply_frame_state_gas`. Settled at this frame's apply (credits the reservoir)
+    /// and cleared so the cancellation propagating up via `merge_from_child` doesn't
+    /// re-credit at the resolving frame.
+    pub pending_negative_bytes: u64,
 }
 
 impl StateDiff {
@@ -104,16 +111,30 @@ impl StateDiff {
     // Cancellation API
     // -------------------------------------------------------------------------
 
-    /// Cancel a slot creation. If created in this frame's diff, remove directly.
-    /// Otherwise queue for cross-frame resolution at merge_from_child.
+    /// Cancel a slot creation. If created in this frame's diff, remove directly
+    /// (the bytes() decrease itself reflects the cancellation). Otherwise queue
+    /// for cross-frame resolution at merge_from_child and add to
+    /// `pending_negative_bytes` so this frame's apply_frame_state_gas surfaces it
+    /// as a negative residual, crediting the reservoir.
     pub fn cancel_storage_slot(&mut self, addr: Address, key: H256) {
-        if !self.new_storage_slots.remove(&(addr, key)) {
-            self.cancellations_storage.insert((addr, key));
+        use crate::gas_cost::STATE_BYTES_PER_STORAGE_SET;
+        if !self.new_storage_slots.remove(&(addr, key))
+            && self.cancellations_storage.insert((addr, key))
+        {
+            self.pending_negative_bytes = self
+                .pending_negative_bytes
+                .saturating_add(STATE_BYTES_PER_STORAGE_SET);
         }
     }
 
-    /// Cancel an account creation. If created in this frame's diff, remove account + its slots + code_deposit.
-    /// Otherwise queue for cross-frame resolution at merge_from_child.
+    /// Cancel an account creation. If created in this frame's diff, remove account
+    /// + its slots + code_deposit. Otherwise queue for cross-frame resolution at
+    /// merge_from_child. Account-level cancellations don't add to
+    /// `pending_negative_bytes`: the new-account portion was never inline-charged
+    /// (only recorded on parent), and storage/code deposits the descendants did
+    /// pay for surface as a negative residual at the resolving ancestor's apply
+    /// (`bytes()` reduced via merge-time cleanup, `state_gas_used` retains the
+    /// descendants' contributions).
     pub fn cancel_new_account(&mut self, addr: Address) {
         if self.new_accounts.remove(&addr) {
             self.new_storage_slots.retain(|(a, _)| *a != addr);

@@ -635,15 +635,24 @@ impl<'a> VM<'a> {
             "apply_frame_state_gas called pre-Amsterdam"
         );
         let growth_bytes = self.current_call_frame.state_diff.bytes();
+        let pending_negative = self.current_call_frame.state_diff.pending_negative_bytes;
+        // Clear the pending-negative pool so cancellations propagating up via
+        // merge_from_child don't re-credit at a resolving ancestor's apply.
+        self.current_call_frame.state_diff.pending_negative_bytes = 0;
         let cpsb = self.cost_per_state_byte;
         let growth_cost = growth_bytes
             .checked_mul(cpsb)
             .ok_or(InternalError::Overflow)?;
+        let negative_cost = pending_negative
+            .checked_mul(cpsb)
+            .ok_or(InternalError::Overflow)?;
         let already_paid = self.current_call_frame.state_gas_used;
-        let growth_cost_signed = i128::from(growth_cost);
-        let already_paid_signed = i128::from(already_paid);
-        let residual = growth_cost_signed
-            .checked_sub(already_paid_signed)
+        // Signed residual: net growth bytes (positive minus pending negative)
+        // times cpsb, minus what successful descendants already paid.
+        let residual = i128::from(growth_cost)
+            .checked_sub(i128::from(negative_cost))
+            .ok_or(InternalError::Underflow)?
+            .checked_sub(i128::from(already_paid))
             .ok_or(InternalError::Underflow)?;
         if residual > 0 {
             let cost: u64 = u64::try_from(residual).map_err(|_| InternalError::Overflow)?;
