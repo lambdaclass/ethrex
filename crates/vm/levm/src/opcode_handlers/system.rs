@@ -1286,6 +1286,21 @@ impl<'a> VM<'a> {
                 // EIP-8037 StateDiff: merge child's diff into parent.
                 // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
                 self.merge_child_state_diff(child_state_diff);
+
+                // EIP-8037: if a descendant SELFDESTRUCT'd the just-created account, the
+                // merge above removed our new_account record. Refund the 112-byte CREATE
+                // account state-gas to the reservoir so the user doesn't pay for an
+                // account that no longer exists at end-of-tx.  Symmetric to the revert
+                // arm below, but triggered by cancellation rather than by the child
+                // frame failing.
+                if self.env.config.fork >= Fork::Amsterdam
+                    && !self.current_call_frame.state_diff.new_accounts.contains(&to)
+                {
+                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
+                    let new_account_state_gas =
+                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
+                    self.refund_state_gas_to_reservoir(new_account_state_gas)?;
+                }
             }
             TxResult::Revert(err) => {
                 // EIP-8037 StateDiff: child state_diff is dropped (not merged) on revert/error
