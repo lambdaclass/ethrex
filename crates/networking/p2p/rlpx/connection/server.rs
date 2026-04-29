@@ -1242,7 +1242,7 @@ async fn handle_incoming_message(
                 let start_index = if i == 0 { first_block_receipt_index } else { 0 };
                 let block_receipts = state
                     .storage
-                    .get_receipts_for_block_from_index(hash, start_index)
+                    .get_receipts_for_block_from_index(hash, start_index, None)
                     .await?;
 
                 let mut block_receipt_list = Vec::new();

@@ -1058,18 +1058,23 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.get_receipts_for_block_from_index(block_hash, 0).await
+        self.get_receipts_for_block_from_index(block_hash, 0, None)
+            .await
     }
 
-    /// Retrieves receipts for a block starting from the given index.
-    /// Used by eth/70 partial receipt requests (EIP-7975).
+    /// Retrieves receipts for a block starting from the given index,
+    /// optionally limited to `max_count` receipts.
     ///
     /// Uses cursor-based prefix iteration over the 32-byte block hash prefix
-    /// for efficient batch retrieval.
+    /// for efficient batch retrieval. Used by:
+    /// - eth/70 partial receipt requests (EIP-7975) via p2p
+    /// - `eth_getTransactionReceipt` RPC with a count limit to avoid
+    ///   fetching the entire block's receipts
     pub async fn get_receipts_for_block_from_index(
         &self,
         block_hash: &BlockHash,
         start_index: u64,
+        max_count: Option<usize>,
     ) -> Result<Vec<Receipt>, StoreError> {
         let backend = self.backend.clone();
         let block_hash = *block_hash;
@@ -1095,6 +1100,11 @@ impl Store {
                     }
                 }
                 receipts.push(Receipt::decode(v.as_ref())?);
+                if let Some(max) = max_count
+                    && receipts.len() >= max
+                {
+                    break;
+                }
             }
             Ok(receipts)
         })
