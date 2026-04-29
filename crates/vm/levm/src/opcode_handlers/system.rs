@@ -89,28 +89,11 @@ impl OpcodeHandler for OpCallHandler {
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
 
-        // EIP-8037 (Amsterdam+): account for state gas spill in child gas computation,
-        // but charge state gas AFTER regular gas per EIPs#11421.
-        // Regular gas OOG must not consume state gas that would inflate the parent's
-        // reservoir on frame failure.
-        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
-        let gas_left = if needs_state_gas {
-            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-            let new_account_state_gas =
-                gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * vm.cost_per_state_byte;
-            let from_reservoir = vm.state_gas_reservoir.min(new_account_state_gas);
-            // Safe: from_reservoir = min(reservoir, new_account_state_gas) <= new_account_state_gas
-            #[expect(
-                clippy::arithmetic_side_effects,
-                reason = "from_reservoir <= new_account_state_gas"
-            )]
-            let spill = new_account_state_gas - from_reservoir;
-            gas_left
-                .checked_sub(spill)
-                .ok_or(ExceptionalHalt::OutOfGas)?
-        } else {
-            gas_left
-        };
+        // EIP-8037 (Amsterdam+): record CALL-with-value-to-empty new account for
+        // frame-end state-gas accounting. The account creation surfaces in the
+        // parent's state-diff because move_ether (in handle_return_call's transfer
+        // path) creates the target after this frame's diff snapshot is taken.
+        let creates_new_account = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
 
         let (gas_cost, gas_limit) = gas_cost::call(
             new_memory_size,
@@ -123,20 +106,14 @@ impl OpcodeHandler for OpCallHandler {
             fork,
         )?;
 
-        // Charge regular gas first (before state gas, per EIPs#11421).
+        // Charge regular gas (state gas is settled at frame-end per EIP-8037).
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
                 .checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
-        // Then charge state gas for new account creation.
-        if needs_state_gas {
-            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-            let new_account_state_gas =
-                gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * vm.cost_per_state_byte;
-            vm.draw_state_gas(new_account_state_gas)?;
-            // EIP-8037 StateDiff: record new account.
+        if creates_new_account {
             vm.current_call_frame.state_diff.record_new_account(callee);
         }
 
@@ -157,8 +134,8 @@ impl OpcodeHandler for OpCallHandler {
             &data,
         );
 
-        // Generic call. `needs_state_gas` flows through so generic_call can refund the
-        // reservoir + cancel the diff entry if the call early-reverts (OutOfFund/MaxDepth).
+        // Generic call. `creates_new_account` flows through so generic_call can
+        // cancel the parent's diff entry if the call early-reverts (OutOfFund/MaxDepth).
         vm.generic_call(
             gas_limit,
             value,
@@ -172,7 +149,7 @@ impl OpcodeHandler for OpCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
-            needs_state_gas,
+            creates_new_account,
         )
     }
 }
@@ -269,7 +246,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             return_len,
             bytecode,
             is_delegation_7702,
-            false, // needs_state_gas: only OpCallHandler with value-to-empty creates a new account
+            false, // records_new_account: only OpCallHandler with value-to-empty creates a new account
         )
     }
 }
@@ -361,7 +338,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
-            false, // needs_state_gas: only OpCallHandler with value-to-empty creates a new account
+            false, // records_new_account: only OpCallHandler with value-to-empty creates a new account
         )
     }
 }
@@ -451,7 +428,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
-            false, // needs_state_gas: only OpCallHandler with value-to-empty creates a new account
+            false, // records_new_account: only OpCallHandler with value-to-empty creates a new account
         )
     }
 }
@@ -578,13 +555,9 @@ impl OpcodeHandler for OpSelfDestructHandler {
                     vm.env.config.fork,
                 )?)?;
 
-            // EIP-8037 (Amsterdam+): charge state gas for new account creation via SELFDESTRUCT
+            // EIP-8037 (Amsterdam+): record SELFDESTRUCT-induced new account creation
+            // on this frame's state-diff; settled at frame-end with the rest of the diff.
             if target_account_is_empty && balance > U256::zero() {
-                #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-                let new_account_state_gas =
-                    gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * vm.cost_per_state_byte;
-                vm.draw_state_gas(new_account_state_gas)?;
-                // EIP-8037 StateDiff: record new account.
                 vm.current_call_frame
                     .state_diff
                     .record_new_account(beneficiary);
@@ -722,30 +695,10 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
-        // EIP-8037 (Amsterdam+): charge state gas for new account creation AFTER
-        // initcode size validation, so oversized CREATE doesn't burn state gas.
-        // If the parent doesn't have enough gas (reservoir + gas_remaining) to cover
-        // the 112-byte new-account charge, soft-fail the CREATE — push 0 to the
-        // parent's stack and let it continue, instead of bubbling an OOG up. This
-        // matches EIP-8037: "CREATE returns 0 if state gas is insufficient" rather
-        // than halting the caller.
-        if self.env.config.fork >= Fork::Amsterdam {
-            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-            let new_account_state_gas =
-                gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
-            #[expect(clippy::as_conversions, reason = "gas_remaining max(0) fits in u64")]
-            let available = self
-                .state_gas_reservoir
-                .saturating_add(self.current_call_frame.gas_remaining.max(0) as u64);
-            if available < new_account_state_gas {
-                self.current_call_frame.stack.push(FAIL)?;
-                self.tracer
-                    .exit_early(0, Some("InsufficientStateGas".to_string()))?;
-                return Ok(OpcodeResult::Continue);
-            }
-            self.draw_state_gas(new_account_state_gas)?;
-        }
-
+        // EIP-8037 (Amsterdam+): no inline state-gas charge here. The new-account
+        // creation is recorded on the parent's state-diff once the early-fail checks
+        // pass, and the parent's frame-end settles the residual state gas (drain
+        // reservoir → spill into gas_remaining → OOG) per the spec.
         let current_call_frame = &mut self.current_call_frame;
 
         // Pre-Amsterdam: is_static check happens here, before gas reservation
@@ -779,13 +732,6 @@ impl<'a> VM<'a> {
             None => calculate_create_address(deployer, deployer_nonce),
         };
 
-        // EIP-8037 StateDiff: record new account (address now known; state gas was drawn above).
-        if self.env.config.fork >= Fork::Amsterdam {
-            self.current_call_frame
-                .state_diff
-                .record_new_account(new_address);
-        }
-
         // Log CREATE in tracer
         let call_type = match salt {
             Some(_) => CallType::CREATE2,
@@ -812,18 +758,6 @@ impl<'a> VM<'a> {
         ];
         for (condition, reason) in checks {
             if condition {
-                // EIP-8037: no account created on early failure — refund the CREATE
-                // account state gas charged at the top of this function.
-                if self.env.config.fork >= Fork::Amsterdam {
-                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-                    let new_account_state_gas =
-                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
-                    self.refund_state_gas_to_reservoir(new_account_state_gas)?;
-                    // EIP-8037 StateDiff: cancel the record made above — no account was created.
-                    self.current_call_frame
-                        .state_diff
-                        .cancel_new_account(new_address);
-                }
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -843,22 +777,19 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
-            // Per EELS: on collision, regular gas stays consumed (not returned)
-            // but the CREATE account state gas IS refunded — no account was created.
-            if self.env.config.fork >= Fork::Amsterdam {
-                #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-                let new_account_state_gas =
-                    gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
-                self.refund_state_gas_to_reservoir(new_account_state_gas)?;
-                // EIP-8037 StateDiff: cancel the record made above — collision means no account created.
-                self.current_call_frame
-                    .state_diff
-                    .cancel_new_account(new_address);
-            }
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
+        }
+
+        // EIP-8037 StateDiff: record new account on the parent's diff. Recorded
+        // here (after all early-fail checks) so unsuccessful CREATEs don't need to
+        // cancel; on child revert, handle_return_create cancels the record.
+        if self.env.config.fork >= Fork::Amsterdam {
+            self.current_call_frame
+                .state_diff
+                .record_new_account(new_address);
         }
 
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928
@@ -986,7 +917,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
-        needs_state_gas: bool,
+        records_new_account: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -995,7 +926,7 @@ impl<'a> VM<'a> {
         if should_transfer_value && !value.is_zero() {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
-                self.undo_call_state_gas_on_early_revert(needs_state_gas, to)?;
+                self.undo_call_new_account_record_on_early_revert(records_new_account, to);
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -1008,7 +939,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
-            self.undo_call_state_gas_on_early_revert(needs_state_gas, to)?;
+            self.undo_call_new_account_record_on_early_revert(records_new_account, to);
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
         }
@@ -1181,6 +1112,7 @@ impl<'a> VM<'a> {
             call_frame_backup,
             stack,
             state_diff: child_state_diff,
+            state_gas_used: child_state_gas_used,
             ..
         } = executed_call_frame;
 
@@ -1218,28 +1150,27 @@ impl<'a> VM<'a> {
                 self.current_call_frame.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
 
-                // EIP-8037 StateDiff: merge child's diff into parent. Refund the reservoir
-                // for any bytes whose state-gas charges were stranded by a cross-frame
-                // cancellation resolved during this merge — these reservoir draws backed
-                // state effects that no longer exist.
-                let refundable_bytes = self.merge_child_state_diff(child_state_diff);
-                if self.env.config.fork >= Fork::Amsterdam && refundable_bytes > 0 {
-                    let refundable_gas = refundable_bytes.saturating_mul(self.cost_per_state_byte);
-                    self.refund_state_gas_to_reservoir(refundable_gas)?;
+                // EIP-8037: merge child's diff into parent and propagate the
+                // bytes-paid counter so the parent's frame-end residual subtracts
+                // what descendants already paid. No reservoir refund here — under
+                // frame-end accounting the parent's settlement picks up cross-frame
+                // negative deltas as a negative residual (credits the reservoir).
+                self.merge_child_state_diff(child_state_diff);
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.current_call_frame.state_gas_used = self
+                        .current_call_frame
+                        .state_gas_used
+                        .checked_add(child_state_gas_used)
+                        .ok_or(InternalError::Overflow)?;
                 }
             }
             TxResult::Revert(_) => {
-                // EIP-8037 StateDiff: child state_diff is dropped (not merged) on revert/error
-                // — its mutations and cancellations are discarded.
-                // (Implicit drop when executed_call_frame goes out of scope.)
-
-                // On revert, restore the reservoir AND spill counter to their pre-child
-                // snapshots. State gas drawn from the reservoir or spilled to the child's
-                // gas_remaining is returned/forgotten because the child's state mutations
-                // are rolled back. Any spill that was charged against the child's
-                // gas_remaining (and therefore baked into ctx_result.gas_used at sub-frame
-                // halt time) is re-credited to the parent so it doesn't leak into the
-                // outer tx's regular-gas dimension.
+                // EIP-8037: child's state_diff and state_gas_used are dropped (not
+                // merged) on revert. Restore the reservoir and spill counter to their
+                // pre-child snapshots so successful sub-sub-frame charges that were
+                // rolled back along with the child don't leak into block accounting.
+                // Re-credit any spill that landed in the parent's gas_remaining via
+                // a child sub-sub-frame's apply_frame_state_gas.
                 let spilled_during_child = self
                     .state_gas_spill
                     .saturating_sub(state_gas_spill_snapshot);
@@ -1283,6 +1214,7 @@ impl<'a> VM<'a> {
             state_gas_spill_snapshot,
             stack,
             state_diff: child_state_diff,
+            state_gas_used: child_state_gas_used,
             ..
         } = executed_call_frame;
 
@@ -1304,24 +1236,24 @@ impl<'a> VM<'a> {
                 self.current_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
 
-                // EIP-8037 StateDiff: merge child's diff into parent. Refund the
-                // reservoir for any bytes the merge resolved (cross-frame cancellations).
-                let refundable_bytes = self.merge_child_state_diff(child_state_diff);
-                if self.env.config.fork >= Fork::Amsterdam && refundable_bytes > 0 {
-                    let refundable_gas = refundable_bytes.saturating_mul(self.cost_per_state_byte);
-                    self.refund_state_gas_to_reservoir(refundable_gas)?;
+                // EIP-8037: merge child's diff into parent and propagate the
+                // bytes-paid counter so the parent's frame-end residual subtracts
+                // what descendants already paid.
+                self.merge_child_state_diff(child_state_diff);
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.current_call_frame.state_gas_used = self
+                        .current_call_frame
+                        .state_gas_used
+                        .checked_add(child_state_gas_used)
+                        .ok_or(InternalError::Overflow)?;
                 }
             }
             TxResult::Revert(err) => {
-                // EIP-8037 StateDiff: child state_diff is dropped (not merged) on revert/error
-                // — its mutations and cancellations are discarded.
-                // (Implicit drop when executed_call_frame goes out of scope.)
-
-                // On revert, restore the reservoir AND spill counter to their pre-child
-                // snapshots. Re-credit any spill that was charged against the child's
-                // gas_remaining to the parent so it doesn't leak into the outer tx's
-                // regular-gas dimension.  The CREATE-account state gas refund below adds
-                // back the 112-byte charge that was drawn before the child frame began.
+                // EIP-8037: child's state_diff and state_gas_used are dropped (not
+                // merged) on revert. Restore reservoir and spill snapshots so any
+                // sub-sub-frame charges that were rolled back along with the child
+                // don't leak. Cancel the new-account record that was placed on the
+                // parent's diff before the child frame began.
                 let spilled_during_child = self
                     .state_gas_spill
                     .saturating_sub(state_gas_spill_snapshot);
@@ -1337,17 +1269,7 @@ impl<'a> VM<'a> {
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 self.state_gas_spill = state_gas_spill_snapshot;
 
-                // EIP-8037: CREATE's account state gas was charged in the parent before
-                // the child frame began; no account was created, so refund it to the reservoir.
                 if self.env.config.fork >= Fork::Amsterdam {
-                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-                    let new_account_state_gas =
-                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
-                    self.refund_state_gas_to_reservoir(new_account_state_gas)?;
-                    // EIP-8037 StateDiff: cancel the record made on the parent frame's diff
-                    // before the child was launched. The child diff is dropped on revert via
-                    // merge-on-success / drop-on-revert plumbing, but the new-account record
-                    // lives on the parent and must be undone explicitly here.
                     self.current_call_frame.state_diff.cancel_new_account(to);
                 }
 
@@ -1396,24 +1318,20 @@ impl<'a> VM<'a> {
     }
 
     /// EIP-8037: when a CALL with value-to-empty triggers `early_revert_message_call`
-    /// (OutOfFund / MaxDepth), the new-account state-gas draw and diff record made by
-    /// `OpCallHandler` must be undone — no account is actually created.
-    fn undo_call_state_gas_on_early_revert(
+    /// (OutOfFund / MaxDepth), the new-account record made by `OpCallHandler` must be
+    /// cancelled on the parent's state-diff — no account is actually created. State
+    /// gas wasn't drawn inline (frame-end accounts for it), so no reservoir refund.
+    fn undo_call_new_account_record_on_early_revert(
         &mut self,
-        needs_state_gas: bool,
+        records_new_account: bool,
         callee: Address,
-    ) -> Result<(), VMError> {
-        if !needs_state_gas {
-            return Ok(());
+    ) {
+        if !records_new_account {
+            return;
         }
-        #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-        let new_account_state_gas =
-            gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
-        self.refund_state_gas_to_reservoir(new_account_state_gas)?;
         self.current_call_frame
             .state_diff
             .cancel_new_account(callee);
-        Ok(())
     }
 
     fn early_revert_message_call(&mut self, gas_limit: u64, reason: String) -> Result<(), VMError> {

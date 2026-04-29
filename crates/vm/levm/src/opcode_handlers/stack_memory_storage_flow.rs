@@ -303,11 +303,7 @@ impl OpcodeHandler for OpSStoreHandler {
             )?)?;
 
         if needs_state_gas {
-            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-            let storage_set_state_gas =
-                gas_cost::STATE_BYTES_PER_STORAGE_SET * vm.cost_per_state_byte;
-            vm.draw_state_gas(storage_set_state_gas)?;
-            // EIP-8037 StateDiff: record new storage slot.
+            // EIP-8037 frame-end accounting: only record; settled at frame-end.
             vm.current_call_frame
                 .state_diff
                 .record_new_storage_slot(to, key);
@@ -371,13 +367,10 @@ impl OpcodeHandler for OpSStoreHandler {
             }
         }
 
-        // EIP-8037: refund state gas for 0→N→0 SSTORE (slot creation undone).
+        // EIP-8037: 0→N→0 SSTORE undoes slot creation; cancel the diff entry so
+        // the frame-end residual doesn't include the slot. No reservoir refund —
+        // we never drew inline; frame-end will see the cancelled diff.
         if is_zero_to_n_to_zero_amsterdam {
-            #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-            let storage_set_state_gas =
-                gas_cost::STATE_BYTES_PER_STORAGE_SET * vm.cost_per_state_byte;
-            vm.refund_state_gas_to_reservoir(storage_set_state_gas)?;
-            // EIP-8037 StateDiff: cancel the slot (0→N→0 — creation undone by clearing).
             vm.current_call_frame
                 .state_diff
                 .cancel_storage_slot(to, key);

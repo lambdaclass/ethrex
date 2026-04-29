@@ -439,6 +439,13 @@ impl<'a> VM<'a> {
             }
             // Snapshot the intrinsic seed for top-level-revert finalization.
             self.state_diff_intrinsic_seed = self.current_call_frame.state_diff.clone();
+            // EIP-8037 frame-end accounting: intrinsic state gas was already charged
+            // via `increase_consumed_gas(total_gas)` above. Seed `state_gas_used`
+            // with the intrinsic-state portion so the top-level frame-end residual
+            // = total_state_diff_bytes*cpsb - intrinsic_state_gas drains only the
+            // execution-time state gas from the reservoir (avoids double-charging).
+            self.current_call_frame.state_gas_used =
+                i64::try_from(state_gas).map_err(|_| InternalError::Overflow)?;
         }
 
         // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.

@@ -76,6 +76,31 @@ impl<'a> VM<'a> {
             self.update_account_bytecode(contract_address, Code::from_bytecode(code, self.crypto))?;
         }
 
+        // EIP-8037 (Amsterdam+): settle frame-end state gas. residual = state_diff.bytes() *
+        // cpsb - state_gas_used. Drains reservoir → spills into gas_remaining → OOG. On
+        // OOG the frame is converted to a Revert with full gas consumed; the call-frame
+        // backup chain rolls back state mutations once the parent processes the failure.
+        if self.env.config.fork >= Fork::Amsterdam {
+            if let Err(error) = self.apply_frame_state_gas() {
+                if error.should_propagate() {
+                    return Err(error);
+                }
+                let callframe = &mut self.current_call_frame;
+                callframe.gas_remaining = 0;
+                #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+                let gas_used = callframe
+                    .gas_limit
+                    .checked_sub(callframe.gas_remaining as u64)
+                    .ok_or(InternalError::Underflow)?;
+                return Ok(ContextResult {
+                    result: TxResult::Revert(error),
+                    gas_used,
+                    gas_spent: gas_used,
+                    output: Bytes::new(),
+                });
+            }
+        }
+
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         let gas_used = {
             let callframe = &mut self.current_call_frame;
@@ -169,10 +194,9 @@ impl<'a> VM<'a> {
             return Err(ExceptionalHalt::InvalidContractPrefix.into());
         }
 
-        // EIP-8037 (Amsterdam+): Per EELS process_create_message (bal@v5.4.0):
-        // 1. Size check first (reject oversized before any gas charges)
-        // 2. Keccak hash cost (regular gas)
-        // 3. State gas for code deposit
+        // EIP-8037 (Amsterdam+): per the spec rev at snobal-devnet-5, code-deposit
+        // state gas is settled at frame-end via the state-diff record (no inline
+        // charge). Only the regular-gas keccak hash cost is charged here.
         if fork >= Fork::Amsterdam {
             // Size check BEFORE gas charges
             if code_length > AMSTERDAM_MAX_CODE_SIZE {
@@ -183,15 +207,11 @@ impl<'a> VM<'a> {
             let regular = words
                 .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
                 .ok_or(InternalError::Overflow)?;
-            let state = code_length
-                .checked_mul(self.cost_per_state_byte)
-                .ok_or(InternalError::Overflow)?;
 
-            // Regular gas (keccak hash cost) before state gas
+            // Regular gas (keccak hash cost). State gas for the deployed code is
+            // recorded on the state-diff and settled at frame-end.
             self.current_call_frame.increase_consumed_gas(regular)?;
-            if state > 0 {
-                self.draw_state_gas(state)?;
-                // EIP-8037 StateDiff: record code deposit.
+            if code_length > 0 {
                 self.current_call_frame
                     .state_diff
                     .record_code_deposit(self.current_call_frame.to, code_length);
