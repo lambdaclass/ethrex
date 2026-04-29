@@ -80,12 +80,14 @@ pub fn execution_program(
             execution_witness,
         } => {
             let request_root = new_payload_request.hash_tree_root(&Sha2Hasher);
+            let chain_id = execution_witness.chain_config.chain_id;
             let valid =
                 validate_eip8025_execution(&new_payload_request, execution_witness, crypto).is_ok();
 
             Ok(ProgramOutput {
                 new_payload_request_root: request_root,
                 valid,
+                chain_id,
             })
         }
         DecodedEip8025::Canonical {
@@ -95,12 +97,14 @@ pub fn execution_program(
             let request_root = stateless_input
                 .new_payload_request
                 .hash_tree_root(&Sha2Hasher);
+            let chain_id = stateless_input.chain_config.chain_id;
             let valid =
                 validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
 
             Ok(ProgramOutput {
                 new_payload_request_root: request_root,
                 valid,
+                chain_id,
             })
         }
     }
