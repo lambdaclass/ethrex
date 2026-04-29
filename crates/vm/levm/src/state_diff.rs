@@ -172,19 +172,41 @@ impl StateDiff {
         // 1a. Storage cancellations
         for (addr, key) in child.cancellations_storage.iter() {
             if self.new_storage_slots.remove(&(*addr, *key)) {
+                // Same-frame: slot set+cleared in self. No reservoir credit
+                // needed — the bytes were only recorded, never settled.
                 refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
                 continue;
             }
-            let mut handled = false;
-            for ancestor in ancestors.iter_mut().rev() {
-                if ancestor.new_storage_slots.remove(&(*addr, *key)) {
-                    refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
-                    handled = true;
+            // Search ancestors youngest-first.
+            let mut resolving_idx: Option<usize> = None;
+            for idx in (0..ancestors.len()).rev() {
+                if ancestors[idx].new_storage_slots.remove(&(*addr, *key)) {
+                    resolving_idx = Some(idx);
                     break;
                 }
             }
-            if !handled {
-                // Propagate up so a higher merge can resolve.
+            if let Some(res_idx) = resolving_idx {
+                refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
+                // EELS computes byte_delta per-frame from a snapshot taken at
+                // frame entry. For a slot set in an ancestor (above res_idx)
+                // and cleared in a descendant, every frame between the
+                // resolving ancestor (exclusive) and the cancelling frame
+                // (inclusive) observes a 1→0 slot transition during its
+                // execution and credits -32 × cpsb at its frame-end. The
+                // deepest frame already added to its own pending_negative
+                // when SSTORE called cancel_storage_slot. We replicate the
+                // intermediate-frame credits here by adding to self and to
+                // every younger ancestor between res_idx and self.
+                self.pending_negative_bytes = self
+                    .pending_negative_bytes
+                    .saturating_add(STATE_BYTES_PER_STORAGE_SET);
+                for ancestor in ancestors.iter_mut().skip(res_idx + 1) {
+                    ancestor.pending_negative_bytes = ancestor
+                        .pending_negative_bytes
+                        .saturating_add(STATE_BYTES_PER_STORAGE_SET);
+                }
+            } else {
+                // Not found anywhere; propagate up so a higher merge can resolve.
                 self.cancellations_storage.insert((*addr, *key));
             }
         }
