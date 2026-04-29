@@ -30,6 +30,8 @@ const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD: usize = 16;
 const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD: usize = 2;
 /// `MAX_BLOB_COMMITMENTS_PER_BLOCK` (Electra).
 const MAX_BLOB_COMMITMENTS_PER_BLOCK: usize = 4096;
+/// `MAX_BLOCK_ACCESS_LIST_BYTES` (Amsterdam).
+const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16777216;
 
 // ── EIP-7685 request type prefixes ─────────────────────────────────
 
@@ -169,6 +171,31 @@ pub struct ExecutionPayload {
     pub excess_blob_gas: u64,
 }
 
+/// SSZ `ExecutionPayload` execution payload V4.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct ExecutionPayloadV4 {
+    pub parent_hash: [u8; 32],
+    pub fee_recipient: Bytes20,
+    pub state_root: [u8; 32],
+    pub receipts_root: [u8; 32],
+    pub logs_bloom: LogsBloom,
+    pub prev_randao: [u8; 32],
+    pub block_number: u64,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub timestamp: u64,
+    pub extra_data: SszList<u8, MAX_EXTRA_DATA_BYTES>,
+    /// `base_fee_per_gas` encoded as a 256-bit unsigned integer (little-endian).
+    pub base_fee_per_gas: [u8; 32],
+    pub block_hash: [u8; 32],
+    pub transactions: SszList<SszList<u8, MAX_BYTES_PER_TRANSACTION>, MAX_TRANSACTIONS_PER_PAYLOAD>,
+    pub withdrawals: SszList<Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD>,
+    pub blob_gas_used: u64,
+    pub excess_blob_gas: u64,
+    pub block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>,
+    pub slot_number: u64,
+}
+
 // ── ExecutionRequests ──────────────────────────────────────────────
 
 /// SSZ `ExecutionRequests` container (Electra) — the typed EIP-7685 bundle
@@ -218,6 +245,15 @@ impl ExecutionRequests {
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct NewPayloadRequest {
     pub execution_payload: ExecutionPayload,
+    pub versioned_hashes: SszList<[u8; 32], MAX_BLOB_COMMITMENTS_PER_BLOCK>,
+    pub parent_beacon_block_root: [u8; 32],
+    pub execution_requests: ExecutionRequests,
+}
+
+/// SSZ `NewPayloadRequest` for the Amsterdam fork.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct NewPayloadRequestAmsterdam {
+    pub execution_payload: ExecutionPayloadV4,
     pub versioned_hashes: SszList<[u8; 32], MAX_BLOB_COMMITMENTS_PER_BLOCK>,
     pub parent_beacon_block_root: [u8; 32],
     pub execution_requests: ExecutionRequests,
