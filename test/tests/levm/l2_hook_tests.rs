@@ -202,6 +202,37 @@ fn fee_token_lock_only_contract() -> Account {
     )
 }
 
+/// Standard non-privileged, non-fee-token L2 Environment on Prague.
+/// Derives tx fee bounds from `gas_price`/`base_fee_per_gas`. Remaining fields
+/// use `Default::default()` (zeros / None / empty) which is fine for these tests.
+fn non_privileged_l2_env(
+    sender: Address,
+    coinbase: Address,
+    gas_limit: u64,
+    base_fee_per_gas: u64,
+    gas_price: u64,
+) -> Environment {
+    let fork = Fork::Prague;
+    let blob_schedule = EVMConfig::canonical_values(fork);
+    Environment {
+        origin: sender,
+        gas_limit,
+        config: EVMConfig::new(fork, blob_schedule),
+        block_number: 1,
+        coinbase,
+        timestamp: 1000,
+        prev_randao: Some(H256::zero()),
+        chain_id: U256::from(1),
+        base_fee_per_gas: U256::from(base_fee_per_gas),
+        base_blob_fee_per_gas: U256::from(1),
+        gas_price: U256::from(gas_price),
+        tx_max_priority_fee_per_gas: Some(U256::from(gas_price - base_fee_per_gas)),
+        tx_max_fee_per_gas: Some(U256::from(gas_price)),
+        block_gas_limit: gas_limit * 2,
+        ..Default::default()
+    }
+}
+
 // ==================== Tests ====================
 
 /// Regression test for PR #6045 / audit finding: fee token storage rollback.
@@ -357,34 +388,7 @@ fn finalize_mutation_failure_reverts_all_changes() {
     let test_db = TestDatabase::new();
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
 
-    let fork = Fork::Prague;
-    let blob_schedule = EVMConfig::canonical_values(fork);
-    let env = Environment {
-        origin: sender,
-        gas_limit,
-        config: EVMConfig::new(fork, blob_schedule),
-        block_number: 1,
-        coinbase,
-        timestamp: 1000,
-        prev_randao: Some(H256::zero()),
-        difficulty: U256::zero(),
-        slot_number: U256::zero(),
-        chain_id: U256::from(1),
-        base_fee_per_gas: U256::from(base_fee_per_gas),
-        base_blob_fee_per_gas: U256::from(1),
-        gas_price: U256::from(gas_price),
-        block_excess_blob_gas: None,
-        block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
-        tx_max_priority_fee_per_gas: Some(U256::from(gas_price - base_fee_per_gas)),
-        tx_max_fee_per_gas: Some(U256::from(gas_price)),
-        tx_max_fee_per_blob_gas: None,
-        tx_nonce: 0,
-        block_gas_limit: gas_limit * 2,
-        is_privileged: false,
-        fee_token: None,
-        disable_balance_check: false,
-    };
+    let env = non_privileged_l2_env(sender, coinbase, gas_limit, base_fee_per_gas, gas_price);
 
     let fee_config = FeeConfig {
         base_fee_vault: None,
@@ -675,5 +679,136 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         recipient_balance_after,
         U256::zero(),
         "Recipient should not receive funds from a reverted privileged tx"
+    );
+}
+
+/// Regression test: undo_last_transaction must restore storage slots.
+///
+/// The L2Hook's finalize_execution used to clear the call_frame_backup
+/// (which contains SSTORE rollback data) before BackupHook could save it
+/// into tx_backup. This meant undo_last_transaction restored account info
+/// (balances, nonces) but silently lost all storage changes.
+///
+/// This is critical for the Credible Layer integration where transactions
+/// are executed speculatively and then undone if the sidecar rejects them.
+#[test]
+fn undo_last_transaction_restores_storage_slots() {
+    let sender = Address::from_low_u64_be(SENDER);
+    let coinbase = Address::from_low_u64_be(COINBASE);
+    let contract = Address::from_low_u64_be(0x3000);
+
+    let gas_limit: u64 = 100_000;
+    let gas_price = 1000u64;
+
+    // Contract that writes 0xDEAD to storage slot 0, then returns.
+    //
+    // ```text
+    // PUSH2 0xDEAD  PUSH1 0x00  SSTORE       // slot[0] = 0xDEAD
+    // PUSH1 0x00    PUSH1 0x00  RETURN        // return(0, 0)
+    // ```
+    #[rustfmt::skip]
+    let sstore_bytecode = vec![
+        0x61, 0xDE, 0xAD,  // PUSH2 0xDEAD
+        0x60, 0x00,         // PUSH1 0x00
+        0x55,               // SSTORE
+        0x60, 0x00,         // PUSH1 0x00
+        0x60, 0x00,         // PUSH1 0x00
+        0xf3,               // RETURN
+    ];
+
+    let initial_slot = H256::zero();
+    let initial_value = U256::from(42);
+    let contract_storage: FxHashMap<H256, U256> =
+        [(initial_slot, initial_value)].into_iter().collect();
+
+    let accounts: FxHashMap<Address, Account> = [
+        (sender, eoa(U256::from(10_000_000_000u64))),
+        (coinbase, eoa(U256::zero())),
+        (
+            contract,
+            Account::new(
+                U256::zero(),
+                Code::from_bytecode(Bytes::from(sstore_bytecode), &NativeCrypto),
+                1,
+                contract_storage,
+            ),
+        ),
+    ]
+    .into_iter()
+    .collect();
+
+    let test_db = TestDatabase::new();
+    let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(test_db), accounts);
+
+    // priority fee = 0 (base_fee == gas_price), no operator fee
+    let env = non_privileged_l2_env(sender, coinbase, gas_limit, gas_price, gas_price);
+
+    let fee_config = FeeConfig {
+        base_fee_vault: None,
+        operator_fee_config: None,
+        l1_fee_config: None,
+    };
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: gas_price,
+        gas_limit,
+        to: TxKind::Call(contract),
+        value: U256::zero(),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+
+    let mut vm = VM::new(
+        env,
+        &mut db,
+        &tx,
+        LevmCallTracer::disabled(),
+        VMType::L2(fee_config),
+        &NativeCrypto,
+    )
+    .unwrap();
+
+    // Execute the transaction — it should succeed and write 0xDEAD to slot 0
+    let result = vm.execute();
+    assert!(
+        result.is_ok(),
+        "Transaction should succeed, got: {result:?}"
+    );
+
+    // Verify storage was modified by the tx
+    let slot_after_exec = db
+        .get_account(contract)
+        .unwrap()
+        .storage
+        .get(&initial_slot)
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        slot_after_exec,
+        U256::from(0xDEAD),
+        "Storage slot 0 should be 0xDEAD after execution"
+    );
+
+    // Undo the transaction
+    db.undo_last_transaction()
+        .expect("undo_last_transaction should succeed");
+
+    // The critical assertion: storage must be restored to the original value
+    let slot_after_undo = db
+        .get_account(contract)
+        .unwrap()
+        .storage
+        .get(&initial_slot)
+        .copied()
+        .unwrap_or_default();
+    assert_eq!(
+        slot_after_undo,
+        initial_value,
+        "Storage slot 0 should be restored to {initial_value} after undo_last_transaction, \
+         but was {slot_after_undo} (0xDEAD = {:#x} means storage backup was lost)",
+        U256::from(0xDEAD)
     );
 }
