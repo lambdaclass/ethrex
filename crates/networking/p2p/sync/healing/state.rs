@@ -25,6 +25,7 @@ use tracing::{debug, trace};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
+    peer_table::PeerTableServerProtocol as _,
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
@@ -78,7 +79,7 @@ pub async fn heal_state_trie_wrap(
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
-    mut peers: PeerHandler,
+    peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut healing_queue: StateHealingQueue,
@@ -117,7 +118,7 @@ async fn heal_state_trie(
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
-                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             last_update = Instant::now();
@@ -189,7 +190,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(&peer_id).await?;
+                    peers.peer_table.record_success(peer_id)?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -198,7 +199,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(&peer_id).await?;
+                    peers.peer_table.record_failure(peer_id)?;
                 }
             }
         }
@@ -215,9 +216,9 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, connection)) = peers
+                let Some((peer_id, connection, permit)) = peers
                     .peer_table
-                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                     .await
                     .inspect_err(
                         |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
@@ -242,17 +243,11 @@ async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
 
-                let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
-                    let response = request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
+                    let response =
+                        request_state_trienodes(connection, permit, state_root, batch.clone())
+                            .await;
                     // TODO: add error handling
                     tx.send((peer_id, response, batch)).await.inspect_err(
                         |err| debug!(error=?err, "Failed to send state trie nodes response"),

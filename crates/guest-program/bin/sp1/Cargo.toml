@@ -1,6 +1,6 @@
 [package]
 name = "ethrex-guest-sp1"
-version = "9.0.0"
+version = "10.0.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
@@ -36,3 +36,4 @@ bls12_381 = { git = "https://github.com/lambdaclass/bls12_381-patch/", branch = 
 
 [features]
 l2 = ["ethrex-guest-program/l2", "sp1-zkvm/embedded"]
+eip-8025 = ["ethrex-guest-program/eip-8025"]

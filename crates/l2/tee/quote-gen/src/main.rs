@@ -9,8 +9,7 @@ use ethrex_common::utils::keccak;
 use ethrex_guest_program::crypto::NativeCrypto;
 use ethrex_guest_program::input::ProgramInput;
 use ethrex_l2_common::{
-    calldata::Value,
-    prover::{BatchProof, ProofCalldata, ProverType},
+    prover::{ProofBytes, ProverOutput, ProverType},
     utils::get_address_from_secret_key,
 };
 use secp256k1::{Message, SecretKey, generate_keypair, rand};
@@ -72,12 +71,12 @@ async fn do_loop(private_key: &SecretKey, commit_hash: String) -> Result<u64, St
     let (batch_number, input) = get_batch(commit_hash).await?;
     let output = calculate_transition(input)?;
     let signature = sign_eip191(&output, private_key);
-    let calldata = ProofCalldata {
+    let prover_output = ProverOutput::Proof(ProofBytes {
         prover_type: ProverType::TDX,
-        calldata: vec![Value::Bytes(signature.into())],
-    };
+        proof: signature,
+    });
 
-    submit_proof(batch_number, BatchProof::ProofCalldata(calldata)).await?;
+    submit_proof(batch_number, prover_output).await?;
     Ok(batch_number)
 }
 
