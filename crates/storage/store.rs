@@ -1461,24 +1461,26 @@ impl Store {
             match version {
                 None if db_path.exists() && !dir_is_empty(&db_path)? => {
                     // Pre-metadata DB — cannot migrate safely
-                    return Err(StoreError::NotFoundDBVersion {
-                        expected: STORE_SCHEMA_VERSION,
-                    });
+                    return Err(StoreError::NotFoundDBVersion);
                 }
                 None => {
                     // Fresh / empty directory — write initial metadata
                     init_metadata_file(&db_path)?;
                 }
                 Some(v) if v < 1 => {
-                    return Err(StoreError::IncompatibleDBVersion {
-                        found: v,
-                        expected: STORE_SCHEMA_VERSION,
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!("DB version v{v} is invalid (predates migrations)"),
                     });
                 }
                 Some(v) if v > STORE_SCHEMA_VERSION => {
-                    return Err(StoreError::IncompatibleDBVersion {
-                        found: v,
-                        expected: STORE_SCHEMA_VERSION,
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!(
+                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
+                        ),
                     });
                 }
                 #[cfg(feature = "rocksdb")]

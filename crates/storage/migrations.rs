@@ -34,6 +34,11 @@ const _: () = assert!(
     "MIGRATIONS length must equal STORE_SCHEMA_VERSION - 1"
 );
 
+/// Returns the migration function that upgrades from `version` to `version + 1`.
+fn migration_for_version(version: u64) -> MigrationFn {
+    MIGRATIONS[(version - 1) as usize]
+}
+
 /// Runs all pending migrations from `current_version` up to `STORE_SCHEMA_VERSION`.
 ///
 /// Each migration is applied one version at a time, and the metadata file is
@@ -45,18 +50,12 @@ pub fn run_pending_migrations(
     db_path: &Path,
     current_version: u64,
 ) -> Result<(), StoreError> {
-    assert!(
-        MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize,
-        "MIGRATIONS length must equal STORE_SCHEMA_VERSION - 1"
-    );
-
     for version in current_version..STORE_SCHEMA_VERSION {
-        let idx = (version - 1) as usize; // v1→v2 is index 0
         let target = version + 1;
 
         tracing::info!("Running migration v{version} → v{target}");
 
-        MIGRATIONS[idx](backend).map_err(|e| StoreError::MigrationFailed {
+        migration_for_version(version)(backend).map_err(|e| StoreError::MigrationFailed {
             from: version,
             to: target,
             reason: e.to_string(),
@@ -78,6 +77,8 @@ pub fn run_pending_migrations(
 /// Writes the schema version to metadata.json using write-to-temp-then-rename
 /// for crash safety. On POSIX filesystems `rename` is atomic, so the metadata
 /// file is never left in a partial/truncated state.
+// TODO: move metadata persistence into the StorageBackend abstraction so we
+// don't need to pass `db_path` around.
 fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError> {
     let metadata_path = db_path.join(STORE_METADATA_FILENAME);
     let tmp_path = db_path.join(format!("{}.tmp", STORE_METADATA_FILENAME));

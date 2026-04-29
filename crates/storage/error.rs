@@ -44,8 +44,10 @@ pub enum StoreError {
     IoError(#[from] std::io::Error),
     #[error("Error serializing metadata: {0}")]
     DbMetadataError(#[from] serde_json::Error),
-    #[error("Incompatible DB Version: not found, expected v{expected}")]
-    NotFoundDBVersion { expected: u64 },
+    #[error(
+        "Cannot migrate the database: its version is unavailable, which means it predates versioning and migrations. A full resync (removedb) is required."
+    )]
+    NotFoundDBVersion,
     #[error("Incompatible DB Version: found v{found}, expected v{expected}")]
     IncompatibleDBVersion { found: u64, expected: u64 },
     #[error("Migration from v{from} to v{to} failed: {reason}")]
