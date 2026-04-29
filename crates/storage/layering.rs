@@ -476,16 +476,6 @@ impl TrieCacheRef {
             Self::Flat(cache) => cache.lock().ok()?.get(key),
         }
     }
-
-    /// Insert a value into the flat cache (read-through promotion).
-    /// No-ops for the layered variant since layered cache is managed via `put_batch`.
-    fn promote(&self, key: &[u8], value: &[u8]) {
-        if let Self::Flat(cache) = self {
-            if let Ok(mut guard) = cache.lock() {
-                guard.put(key.to_vec(), value.to_vec());
-            }
-        }
-    }
 }
 
 impl From<Arc<TrieLayerCache>> for TrieCacheRef {
@@ -564,18 +554,7 @@ impl TrieDB for TrieWrapper {
         if let Some(value) = self.inner.get(self.state_root, key.as_ref()) {
             return Ok(Some(value));
         }
-        // Read-through: when in flat cache (batch) mode, promote disk-fetched
-        // nodes into the cache so subsequent trie traversals hit memory.
-        if matches!(self.inner, TrieCacheRef::Flat(_)) {
-            let cache_key: Vec<u8> = key.as_ref().to_vec();
-            let result = self.db.get(key)?;
-            if let Some(ref value) = result {
-                self.inner.promote(&cache_key, value);
-            }
-            Ok(result)
-        } else {
-            self.db.get(key)
-        }
+        self.db.get(key)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
