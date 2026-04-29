@@ -796,11 +796,18 @@ impl<'a> VM<'a> {
 
         // EIP-8037 StateDiff: record new account on the parent's diff. On child
         // revert, handle_return_create cancels the record (guarded so it only
-        // cancels what was recorded).
-        if self.env.config.fork >= Fork::Amsterdam && !target_existed_at_tx_entry {
-            self.current_call_frame
-                .state_diff
-                .record_new_account(new_address);
+        // cancels what was recorded). For pre-existed targets, skip the record
+        // and remember the address so a same-tx SELFDESTRUCT can apply the
+        // deferred -112 refund (EELS subtracts NEW_ACCOUNT regardless of
+        // whether apply added it).
+        if self.env.config.fork >= Fork::Amsterdam {
+            if target_existed_at_tx_entry {
+                self.create_skipped_pre_existed.insert(new_address);
+            } else {
+                self.current_call_frame
+                    .state_diff
+                    .record_new_account(new_address);
+            }
         }
 
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928

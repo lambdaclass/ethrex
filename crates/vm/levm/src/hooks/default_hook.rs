@@ -143,7 +143,7 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        settle_state_diff_finalized(vm, ctx_result.is_success());
+        settle_state_diff_finalized(vm, ctx_result.is_success())?;
 
         // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
         // Per EELS, collision at process_message_call level returns
@@ -245,29 +245,63 @@ impl Hook for DefaultHook {
 /// created and then destroyed in the same tx.
 ///
 /// Shared between L1 (`DefaultHook`) and L2 (`L2Hook`) finalize paths.
-pub fn settle_state_diff_finalized(vm: &mut VM<'_>, is_success: bool) {
+pub fn settle_state_diff_finalized(vm: &mut VM<'_>, is_success: bool) -> Result<(), VMError> {
+    use crate::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT;
     if vm.env.config.fork < Fork::Amsterdam {
-        return;
+        return Ok(());
     }
     if is_success {
         vm.state_diff_finalized = vm.current_call_frame.state_diff.clone();
-        // For each account both created and selfdestructed in this tx, cancel the
-        // new-account entry from the diff. Same-frame cancellations have already
-        // been applied at SELFDESTRUCT time; this sweep covers cross-frame cases
-        // where the create lived in an ancestor and the selfdestruct in a descendant.
-        // Guard with `contains` so already-cancelled entries don't pollute
-        // `cancellations_account` with stale propagations.
+        // Mirror EELS's deferred SD refund (process_message_call's
+        // accounts_to_delete loop): for each account both created and
+        // selfdestructed in this tx, refund NEW_ACCOUNT + slot bytes + code_len
+        // to the reservoir AND drop the records from the finalized diff. For
+        // pre-funded targets where CREATE skipped record_new_account, the
+        // +112 still gets refunded (EELS subtracts unconditionally) — track
+        // this as a block-state offset since there's no record to remove.
         let selfdestruct_addrs: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
+        let cpsb = vm.cost_per_state_byte;
         for addr in selfdestruct_addrs {
-            if vm.substate.is_account_created(&addr)
-                && vm.state_diff_finalized.new_accounts.contains(&addr)
-            {
-                vm.state_diff_finalized.cancel_new_account(addr);
+            if !vm.substate.is_account_created(&addr) {
+                continue;
+            }
+            let mut refund_bytes: u64 = 0;
+            if vm.state_diff_finalized.new_accounts.remove(&addr) {
+                refund_bytes = refund_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
+            } else if vm.create_skipped_pre_existed.contains(&addr) {
+                // Pre-funded SD'd: +112 was never recorded, but EELS still
+                // refunds it. Track via block-state offset so finalized.bytes()
+                // ↓ at block accounting.
+                refund_bytes = refund_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
+                vm.block_state_offset_bytes = vm
+                    .block_state_offset_bytes
+                    .saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
+            }
+            #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
+            let slot_count = vm
+                .state_diff_finalized
+                .new_storage_slots
+                .iter()
+                .filter(|(a, _)| *a == addr)
+                .count() as u64;
+            refund_bytes = refund_bytes.saturating_add(
+                slot_count.saturating_mul(crate::gas_cost::STATE_BYTES_PER_STORAGE_SET),
+            );
+            vm.state_diff_finalized
+                .new_storage_slots
+                .retain(|(a, _)| *a != addr);
+            if let Some(code_len) = vm.state_diff_finalized.code_deposits.remove(&addr) {
+                refund_bytes = refund_bytes.saturating_add(code_len);
+            }
+            if refund_bytes > 0 {
+                let refund_gas = refund_bytes.saturating_mul(cpsb);
+                vm.refund_state_gas_to_reservoir(refund_gas)?;
             }
         }
     } else {
         vm.state_diff_finalized = vm.state_diff_intrinsic_seed.clone();
     }
+    Ok(())
 }
 
 pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
@@ -312,6 +346,7 @@ pub fn refund_sender(
         let state_gas = vm
             .state_diff_finalized
             .bytes()
+            .saturating_sub(vm.block_state_offset_bytes)
             .saturating_mul(vm.cost_per_state_byte);
         // Intrinsic state gas is state_diff_intrinsic_seed.bytes() * cpsb.
         let intrinsic_state_gas = vm

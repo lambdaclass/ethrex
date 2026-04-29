@@ -473,6 +473,19 @@ pub struct VM<'a> {
     /// EIP-8037 state-diff journal: seed diff from intrinsic tx costs (access-list entries,
     /// auth tuples pre-charged before execution begins). Used to restore on top-level revert.
     pub state_diff_intrinsic_seed: StateDiff,
+    /// EIP-8037 deferred SD refund: addresses where a CREATE skipped
+    /// `record_new_account` because the target already existed at tx entry
+    /// (pre-funded). When such an address is selfdestructed in the same tx,
+    /// EELS still refunds NEW_ACCOUNT (112) bytes — the apply byte_delta
+    /// contributed 0 for the account but the deferred refund subtracts 112
+    /// regardless. Tracked here so the finalize sweep can apply the
+    /// reservoir refund + block-state offset.
+    pub create_skipped_pre_existed: FxHashSet<Address>,
+    /// EIP-8037 block-state offset bytes: phantom bytes subtracted from
+    /// `state_diff_finalized.bytes()` at block-state computation. Mirrors
+    /// EELS's deferred SD refund for pre-funded targets where the +112 was
+    /// never recorded but is still refunded.
+    pub block_state_offset_bytes: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -522,6 +535,8 @@ impl<'a> VM<'a> {
             cost_per_state_byte: cpsb,
             state_diff_finalized: StateDiff::default(),
             state_diff_intrinsic_seed: StateDiff::default(),
+            create_skipped_pre_existed: FxHashSet::default(),
+            block_state_offset_bytes: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -926,6 +941,7 @@ impl<'a> VM<'a> {
         let net_state_gas_used = self
             .state_diff_finalized
             .bytes()
+            .saturating_sub(self.block_state_offset_bytes)
             .saturating_mul(self.cost_per_state_byte);
 
         let report = ExecutionReport {
