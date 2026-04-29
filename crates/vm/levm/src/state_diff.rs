@@ -160,61 +160,35 @@ impl StateDiff {
     ///      Idempotent: if not found anywhere, propagate up so a higher merge can resolve.
     ///   2. Set-union the rest: child's new_accounts/new_storage_slots/auth_total/auth_only into self.
     ///   3. Sum-merge code_deposits.
-    pub fn merge_from_child(&mut self, mut child: StateDiff, ancestors: &mut [StateDiff]) -> u64 {
+    pub fn merge_from_child(&mut self, mut child: StateDiff, _ancestors: &mut [StateDiff]) -> u64 {
         use crate::gas_cost::{STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET};
-        // Bytes whose state-gas charges are now stranded — the corresponding records
-        // are being removed by this merge — and should be refunded to the reservoir
-        // by the caller. Same-frame cancellations don't go through here (they remove
-        // locally and refund inline at the SSTORE/CREATE handler), so this only
-        // counts cross-frame resolutions.
+        // EIP-8037 (v8037.0.1): merge resolves cancellations against `self` only.
+        // We do NOT mutate older ancestors here — that would persist past an
+        // intermediate frame's revert (handle_return_call only drops the frame's
+        // own state_diff). Cancellations that don't resolve in self propagate up
+        // via self.cancellations_storage / cancellations_account so the next merge
+        // continues searching, and each propagating frame credits its own
+        // pending_negative_bytes per EELS's per-frame byte_delta accounting:
+        // a slot set above the eventual resolver and cleared below it is observed
+        // as a 1→0 transition by every frame in between, and each surfaces
+        // -32×cpsb at its own apply_frame_state_gas.
         let mut refundable_bytes: u64 = 0;
 
-        // 1a. Storage cancellations
+        // 1a. Storage cancellations: try to resolve in self; if not, propagate up.
         for (addr, key) in child.cancellations_storage.iter() {
             if self.new_storage_slots.remove(&(*addr, *key)) {
-                // Same-frame: slot set+cleared in self. No reservoir credit
-                // needed — the bytes were only recorded, never settled.
                 refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
-                continue;
-            }
-            // Search ancestors youngest-first.
-            let mut resolving_idx: Option<usize> = None;
-            for idx in (0..ancestors.len()).rev() {
-                if ancestors[idx].new_storage_slots.remove(&(*addr, *key)) {
-                    resolving_idx = Some(idx);
-                    break;
-                }
-            }
-            if let Some(res_idx) = resolving_idx {
-                refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
-                // EELS computes byte_delta per-frame from a snapshot taken at
-                // frame entry. For a slot set in an ancestor (above res_idx)
-                // and cleared in a descendant, every frame between the
-                // resolving ancestor (exclusive) and the cancelling frame
-                // (inclusive) observes a 1→0 slot transition during its
-                // execution and credits -32 × cpsb at its frame-end. The
-                // deepest frame already added to its own pending_negative
-                // when SSTORE called cancel_storage_slot. We replicate the
-                // intermediate-frame credits here by adding to self and to
-                // every younger ancestor between res_idx and self.
+            } else {
+                self.cancellations_storage.insert((*addr, *key));
                 self.pending_negative_bytes = self
                     .pending_negative_bytes
                     .saturating_add(STATE_BYTES_PER_STORAGE_SET);
-                for ancestor in ancestors.iter_mut().skip(res_idx + 1) {
-                    ancestor.pending_negative_bytes = ancestor
-                        .pending_negative_bytes
-                        .saturating_add(STATE_BYTES_PER_STORAGE_SET);
-                }
-            } else {
-                // Not found anywhere; propagate up so a higher merge can resolve.
-                self.cancellations_storage.insert((*addr, *key));
             }
         }
 
-        // 1b. Account cancellations
+        // 1b. Account cancellations: try to resolve in self; if not, propagate up.
         for addr in child.cancellations_account.iter() {
-            let found_in_self = self.new_accounts.remove(addr);
-            if found_in_self {
+            if self.new_accounts.remove(addr) {
                 refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
                 #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
                 let slot_count = self
@@ -228,30 +202,7 @@ impl StateDiff {
                     refundable_bytes = refundable_bytes.saturating_add(code_len);
                 }
                 self.new_storage_slots.retain(|(a, _)| a != addr);
-                continue;
-            }
-            let mut handled = false;
-            for ancestor in ancestors.iter_mut().rev() {
-                if ancestor.new_accounts.remove(addr) {
-                    refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
-                    #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
-                    let slot_count = ancestor
-                        .new_storage_slots
-                        .iter()
-                        .filter(|(a, _)| a == addr)
-                        .count() as u64;
-                    refundable_bytes = refundable_bytes
-                        .saturating_add(slot_count.saturating_mul(STATE_BYTES_PER_STORAGE_SET));
-                    if let Some(code_len) = ancestor.code_deposits.remove(addr) {
-                        refundable_bytes = refundable_bytes.saturating_add(code_len);
-                    }
-                    ancestor.new_storage_slots.retain(|(a, _)| a != addr);
-                    handled = true;
-                    break;
-                }
-            }
-            if !handled {
-                // Propagate up so a higher merge can resolve.
+            } else {
                 self.cancellations_account.insert(*addr);
             }
         }
