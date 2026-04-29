@@ -1218,9 +1218,16 @@ impl<'a> VM<'a> {
                 self.current_call_frame.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
 
-                // EIP-8037 StateDiff: merge child's diff into parent.
-                // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
-                self.merge_child_state_diff(child_state_diff);
+                // EIP-8037 StateDiff: merge child's diff into parent. Refund the reservoir
+                // for any bytes whose state-gas charges were stranded by a cross-frame
+                // cancellation resolved during this merge — these reservoir draws backed
+                // state effects that no longer exist.
+                let refundable_bytes = self.merge_child_state_diff(child_state_diff);
+                if self.env.config.fork >= Fork::Amsterdam && refundable_bytes > 0 {
+                    let refundable_gas =
+                        refundable_bytes.saturating_mul(self.cost_per_state_byte);
+                    self.refund_state_gas_to_reservoir(refundable_gas)?;
+                }
             }
             TxResult::Revert(_) => {
                 // EIP-8037 StateDiff: child state_diff is dropped (not merged) on revert/error
@@ -1298,47 +1305,13 @@ impl<'a> VM<'a> {
                 self.current_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
 
-                // EIP-8037 StateDiff: merge child's diff into parent.
-                // self.current_call_frame is the parent; self.call_frames holds grandparent+ ancestors.
-                self.merge_child_state_diff(child_state_diff);
-
-                // EIP-8037: if a descendant SELFDESTRUCT'd the just-created account, the
-                // merge above removed our new_account record (and, courtesy of
-                // cancel_new_account / merge_from_child's child-scrub, any slots and
-                // code-deposits that belonged to the cancelled address). The reservoir
-                // has been debited for all of those state-gas charges, but they no
-                // longer correspond to any state effect — refund them.
-                //
-                // We do this by restoring the reservoir + spill to their pre-child
-                // snapshots (undoing every draw the child performed for the cancelled
-                // account) and then refunding the 112-byte CREATE account charge that
-                // generic_create drew before the child started. This is symmetric to
-                // the revert arm below.  Tests that don't have other state ops outside
-                // the cancelled account (e.g. stateless self-call CREATE-tx) end up
-                // identical to fix #4's 112-only refund since snapshot-restore is a
-                // no-op there.
-                if self.env.config.fork >= Fork::Amsterdam
-                    && !self.current_call_frame.state_diff.new_accounts.contains(&to)
-                {
-                    let spilled_during_child = self
-                        .state_gas_spill
-                        .saturating_sub(state_gas_spill_snapshot);
-                    if spilled_during_child > 0 {
-                        let spill_credit = i64::try_from(spilled_during_child)
-                            .map_err(|_| InternalError::Overflow)?;
-                        self.current_call_frame.gas_remaining = self
-                            .current_call_frame
-                            .gas_remaining
-                            .checked_add(spill_credit)
-                            .ok_or(InternalError::Overflow)?;
-                    }
-                    self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                    self.state_gas_spill = state_gas_spill_snapshot;
-
-                    #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
-                    let new_account_state_gas =
-                        gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
-                    self.refund_state_gas_to_reservoir(new_account_state_gas)?;
+                // EIP-8037 StateDiff: merge child's diff into parent. Refund the
+                // reservoir for any bytes the merge resolved (cross-frame cancellations).
+                let refundable_bytes = self.merge_child_state_diff(child_state_diff);
+                if self.env.config.fork >= Fork::Amsterdam && refundable_bytes > 0 {
+                    let refundable_gas =
+                        refundable_bytes.saturating_mul(self.cost_per_state_byte);
+                    self.refund_state_gas_to_reservoir(refundable_gas)?;
                 }
             }
             TxResult::Revert(err) => {

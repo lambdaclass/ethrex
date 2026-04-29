@@ -509,7 +509,7 @@ impl<'a> VM<'a> {
     /// Ancestor resolution walks `self.call_frames` (grandparent+ stack). Because
     /// `merge_from_child` requires `&mut [StateDiff]` but the stack holds `CallFrame`s,
     /// ancestor diffs are temporarily swapped out, the merge is performed, then written back.
-    pub fn merge_child_state_diff(&mut self, child_diff: StateDiff) {
+    pub fn merge_child_state_diff(&mut self, child_diff: StateDiff) -> u64 {
         // Swap ancestor diffs out so we can pass &mut [StateDiff] to merge_from_child.
         let mut ancestor_diffs: Vec<StateDiff> = self
             .call_frames
@@ -517,7 +517,8 @@ impl<'a> VM<'a> {
             .map(|f| std::mem::take(&mut f.state_diff))
             .collect();
 
-        self.current_call_frame
+        let refundable_bytes = self
+            .current_call_frame
             .state_diff
             .merge_from_child(child_diff, &mut ancestor_diffs);
 
@@ -525,6 +526,8 @@ impl<'a> VM<'a> {
         for (frame, diff) in self.call_frames.iter_mut().zip(ancestor_diffs.into_iter()) {
             frame.state_diff = diff;
         }
+
+        refundable_bytes
     }
 
     #[inline(always)]

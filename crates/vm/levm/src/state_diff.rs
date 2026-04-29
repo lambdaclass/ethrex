@@ -139,15 +139,30 @@ impl StateDiff {
     ///      Idempotent: if not found anywhere, propagate up so a higher merge can resolve.
     ///   2. Set-union the rest: child's new_accounts/new_storage_slots/auth_total/auth_only into self.
     ///   3. Sum-merge code_deposits.
-    pub fn merge_from_child(&mut self, mut child: StateDiff, ancestors: &mut [StateDiff]) {
+    pub fn merge_from_child(
+        &mut self,
+        mut child: StateDiff,
+        ancestors: &mut [StateDiff],
+    ) -> u64 {
+        use crate::gas_cost::{STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET};
+        // Bytes whose state-gas charges are now stranded — the corresponding records
+        // are being removed by this merge — and should be refunded to the reservoir
+        // by the caller. Same-frame cancellations don't go through here (they remove
+        // locally and refund inline at the SSTORE/CREATE handler), so this only
+        // counts cross-frame resolutions.
+        let mut refundable_bytes: u64 = 0;
+
         // 1a. Storage cancellations
         for (addr, key) in child.cancellations_storage.iter() {
             if self.new_storage_slots.remove(&(*addr, *key)) {
+                refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
                 continue;
             }
             let mut handled = false;
             for ancestor in ancestors.iter_mut().rev() {
                 if ancestor.new_storage_slots.remove(&(*addr, *key)) {
+                    refundable_bytes =
+                        refundable_bytes.saturating_add(STATE_BYTES_PER_STORAGE_SET);
                     handled = true;
                     break;
                 }
@@ -162,15 +177,38 @@ impl StateDiff {
         for addr in child.cancellations_account.iter() {
             let found_in_self = self.new_accounts.remove(addr);
             if found_in_self {
+                refundable_bytes = refundable_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
+                #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
+                let slot_count = self
+                    .new_storage_slots
+                    .iter()
+                    .filter(|(a, _)| a == addr)
+                    .count() as u64;
+                refundable_bytes = refundable_bytes
+                    .saturating_add(slot_count.saturating_mul(STATE_BYTES_PER_STORAGE_SET));
+                if let Some(code_len) = self.code_deposits.remove(addr) {
+                    refundable_bytes = refundable_bytes.saturating_add(code_len);
+                }
                 self.new_storage_slots.retain(|(a, _)| a != addr);
-                self.code_deposits.remove(addr);
                 continue;
             }
             let mut handled = false;
             for ancestor in ancestors.iter_mut().rev() {
                 if ancestor.new_accounts.remove(addr) {
+                    refundable_bytes =
+                        refundable_bytes.saturating_add(STATE_BYTES_PER_NEW_ACCOUNT);
+                    #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
+                    let slot_count = ancestor
+                        .new_storage_slots
+                        .iter()
+                        .filter(|(a, _)| a == addr)
+                        .count() as u64;
+                    refundable_bytes = refundable_bytes
+                        .saturating_add(slot_count.saturating_mul(STATE_BYTES_PER_STORAGE_SET));
+                    if let Some(code_len) = ancestor.code_deposits.remove(addr) {
+                        refundable_bytes = refundable_bytes.saturating_add(code_len);
+                    }
                     ancestor.new_storage_slots.retain(|(a, _)| a != addr);
-                    ancestor.code_deposits.remove(addr);
                     handled = true;
                     break;
                 }
@@ -184,11 +222,23 @@ impl StateDiff {
         // 1c. Scrub the child's own slots/code_deposits for cancelled accounts so the
         // set-union below cannot reintroduce them. Without this, a same-tx
         // CREATE+SSTORE-in-init+SELFDESTRUCT pattern leaks the init's slots back into
-        // the parent after the cancellation removed the new_account record.
+        // the parent after the cancellation removed the new_account record. Bytes
+        // dropped here also need to be refunded to the reservoir (the state-gas was
+        // drawn at SSTORE / code-deposit time but the state effect no longer exists).
         let cancelled_accounts: Vec<Address> = child.cancellations_account.iter().copied().collect();
         for addr in &cancelled_accounts {
+            #[expect(clippy::as_conversions, reason = "filter().count() bounded")]
+            let slot_count = child
+                .new_storage_slots
+                .iter()
+                .filter(|(a, _)| a == addr)
+                .count() as u64;
+            refundable_bytes = refundable_bytes
+                .saturating_add(slot_count.saturating_mul(STATE_BYTES_PER_STORAGE_SET));
+            if let Some(code_len) = child.code_deposits.remove(addr) {
+                refundable_bytes = refundable_bytes.saturating_add(code_len);
+            }
             child.new_storage_slots.retain(|(a, _)| a != addr);
-            child.code_deposits.remove(addr);
         }
 
         // 2. Set-union for HashSets, Vec-extend for auth lists (per-tuple worst case).
@@ -211,6 +261,8 @@ impl StateDiff {
                 .and_modify(|n| *n = n.saturating_add(len))
                 .or_insert(len);
         }
+
+        refundable_bytes
     }
 }
 
