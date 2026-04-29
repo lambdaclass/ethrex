@@ -50,8 +50,8 @@ amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
 
-zkevm-vectors: $(ZKEVM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
-	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam/amsterdam/eip8025_optional_proofs
+zkevm-vectors: $(ZKEVM_ARTIFACT) $(SPECTEST_VECTORS_DIR) amsterdam-vectors
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
