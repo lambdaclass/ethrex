@@ -558,18 +558,14 @@ pub async fn request_storage_ranges(
     accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
     let chunk_size = STORAGE_BATCH_SIZE;
 
-    // list of tasks to be executed
-    // Types are (start_index, end_index, starting_hash)
-    // NOTE: end_index is NOT inclusive
-
     // Partition into bulk-path tasks (fresh accounts with empty intervals) and
     // per-interval tasks (big accounts marked in a prior call). The previous
     // implementation queued every account from `start_hash: zero` and relied
-    // on branch-3 in the response handler re-firing each call to re-queue
-    // per-interval tasks for big accounts. That fails when peers cover a big
-    // account fully without hitting their response limit on it: branch-3
-    // doesn't fire, no per-interval tasks get queued, intervals never drain,
-    // the account is stuck pending forever even after its data is on disk.
+    // on the response handler's bulk-task big-account split path to re-queue
+    // per-interval tasks each call. That fails when peers cover a big account
+    // fully without hitting their response limit on it: the split path doesn't
+    // fire, no per-interval tasks get queued, intervals never drain, the
+    // account is stuck pending forever even after its data is on disk.
     let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
     let mut bulk_chunk_start: Option<usize> = None;
     for (i, (_, accounts)) in accounts_by_root_hash.iter().enumerate() {
@@ -586,12 +582,10 @@ pub async fn request_storage_ranges(
             })?
             .1;
         if intervals.is_empty() {
-            if bulk_chunk_start.is_none() {
-                bulk_chunk_start = Some(i);
-            }
-            if i + 1 - bulk_chunk_start.unwrap_or(i) >= chunk_size {
+            let chunk_start = *bulk_chunk_start.get_or_insert(i);
+            if i + 1 - chunk_start >= chunk_size {
                 tasks_queue_not_started.push_back(StorageTask {
-                    start_index: bulk_chunk_start.unwrap_or(i),
+                    start_index: chunk_start,
                     end_index: i + 1,
                     start_hash: H256::zero(),
                     end_hash: None,
@@ -608,7 +602,7 @@ pub async fn request_storage_ranges(
                 });
                 bulk_chunk_start = None;
             }
-            for (start_hash, end_hash) in intervals.clone() {
+            for &(start_hash, end_hash) in intervals.iter() {
                 tasks_queue_not_started.push_back(StorageTask {
                     start_index: i,
                     end_index: i + 1,
@@ -939,17 +933,21 @@ pub async fn request_storage_ranges(
                         acc_hash = *account;
                     }
                 }
+                // acc_hash stays zero when a sibling per-interval task for the
+                // same account already drained the last interval and finalized
+                // it earlier in this call's loop — there's nothing left to do.
                 if !acc_hash.is_zero() {
                     let (_, old_intervals) = account_storage_roots
                             .accounts_with_storage_root
                             .get_mut(&acc_hash)
                             .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
-                    if let Some(pos) = old_intervals
+                    let pos = old_intervals
                         .iter()
                         .position(|(_old_start, end)| end == &hash_end)
-                    {
-                        old_intervals.remove(pos);
-                    }
+                        .ok_or(SnapError::InternalError(
+                            "Could not find an old interval that we were tracking".to_owned(),
+                        ))?;
+                    old_intervals.remove(pos);
                     if old_intervals.is_empty() {
                         for account in accounts_by_root_hash[start_index].1.iter() {
                             accounts_done.insert(*account, vec![]);
