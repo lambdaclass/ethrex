@@ -680,6 +680,19 @@ impl<'a> VM<'a> {
         } else if residual < 0 {
             let credit: u64 = u64::try_from(-residual).map_err(|_| InternalError::Overflow)?;
             self.refund_state_gas_to_reservoir(credit)?;
+            // Clamp state_gas_used so it propagates only the "net-growth still
+            // recorded" portion to the parent. Without this, when descendants
+            // drained for records that this frame's merge-time cleanup later
+            // removed (e.g. SD'd same-tx accounts whose code/slots were merged
+            // away), state_gas_used carries the stale drain forward — and the
+            // parent's apply produces another negative residual covering the
+            // same bytes, double-crediting the user.
+            let net_growth = i128::from(growth_cost)
+                .checked_sub(i128::from(negative_cost))
+                .ok_or(InternalError::Underflow)?
+                .max(0);
+            self.current_call_frame.state_gas_used =
+                i64::try_from(net_growth).map_err(|_| InternalError::Overflow)?;
         }
         Ok(())
     }
