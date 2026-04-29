@@ -9,7 +9,7 @@ This project uses three key repositories for Hive testing:
 1. **[ethereum/hive](https://github.com/ethereum/hive)** - The main Hive testing framework
    - Current commit: `0921fb7833e3de180eacdc9f26de6e51dcab0dba`
 2. **[ethereum/execution-spec-tests](https://github.com/ethereum/execution-spec-tests)** - Test fixtures and vectors
-   - Current version: `snobal-devnet-5@v8037.0.0` (Amsterdam fork support)
+   - Current version: `snobal-devnet-5@v8037.0.1` (Amsterdam fork support)
 3. **[ethereum/execution-specs](https://github.com/ethereum/execution-specs)** - Fork specifications
    - Current branch: `forks/amsterdam`
 
@@ -289,8 +289,8 @@ The workflow uses fork-specific fixtures to ensure comprehensive test coverage:
 ```yaml
 # Amsterdam tests use fixtures_snobal-devnet-5 (includes BAL-specific tests)
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-5@v8037.0.0/fixtures_snobal-devnet-5.tar.gz"
-  FLAGS+=" --sim.buildarg branch=tests-snobal-devnet-5@v8037.0.0"
+  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-5@v8037.0.1/fixtures_snobal-devnet-5.tar.gz"
+  FLAGS+=" --sim.buildarg branch=tests-snobal-devnet-5@v8037.0.1"
 else
   # Other forks use fixtures_develop (comprehensive coverage including static tests)
   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
@@ -310,10 +310,10 @@ Contents:
 https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
 
 # .fixtures_url_amsterdam
-https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-5@v8037.0.0/fixtures_snobal-devnet-5.tar.gz
+https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-5@v8037.0.1/fixtures_snobal-devnet-5.tar.gz
 ```
 
-**Note**: The CI workflow uses `fixtures_snobal-devnet-5` with `branch=tests-snobal-devnet-5@v8037.0.0` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
+**Note**: The CI workflow uses `fixtures_snobal-devnet-5` with `branch=tests-snobal-devnet-5@v8037.0.1` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
 
 ## Updating Repository Versions
 

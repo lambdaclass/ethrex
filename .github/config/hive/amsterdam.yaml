@@ -1,4 +1,4 @@
 # Amsterdam (BAL) hive test configuration
-# Pinned from ethereum/execution-specs tests-snobal-devnet-5@v8037.0.0 @ 2026-04-29
-fixtures: https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-5@v8037.0.0/fixtures_snobal-devnet-5.tar.gz
-eels_commit: 9c0ed45c5efa4164d2cc560e1bc34fbe75a92998
+# Pinned from ethereum/execution-specs tests-snobal-devnet-5@v8037.0.1 @ 2026-04-29
+fixtures: https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-5@v8037.0.1/fixtures_snobal-devnet-5.tar.gz
+eels_commit: 203076a80622e5a2d8e8fda8a8979363251a91f6
