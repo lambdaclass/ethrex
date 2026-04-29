@@ -774,6 +774,17 @@ impl<'a> VM<'a> {
         // Increment sender nonce (irreversible change)
         self.increment_account_nonce(deployer)?;
 
+        // EIP-8037 byte-delta accounting: a CREATE only contributes +112 (new
+        // account) if the target didn't exist at tx entry. Capture `exists`
+        // BEFORE `get_account_mut`, which calls `mark_modified` and sets
+        // `exists = true` unconditionally as a side effect. An address that was
+        // created and selfdestructed within this same tx satisfies `exists ==
+        // true` in the cache but `existed_at_tx_entry == false` per the spec —
+        // `is_account_created` distinguishes that case. Pre-funded externally
+        // (exists at tx entry) skips the record.
+        let target_existed_at_tx_entry = self.db.get_account(new_address)?.exists
+            && !self.substate.is_account_created(&new_address);
+
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
@@ -783,10 +794,10 @@ impl<'a> VM<'a> {
             return Ok(OpcodeResult::Continue);
         }
 
-        // EIP-8037 StateDiff: record new account on the parent's diff. Recorded
-        // here (after all early-fail checks) so unsuccessful CREATEs don't need to
-        // cancel; on child revert, handle_return_create cancels the record.
-        if self.env.config.fork >= Fork::Amsterdam {
+        // EIP-8037 StateDiff: record new account on the parent's diff. On child
+        // revert, handle_return_create cancels the record (guarded so it only
+        // cancels what was recorded).
+        if self.env.config.fork >= Fork::Amsterdam && !target_existed_at_tx_entry {
             self.current_call_frame
                 .state_diff
                 .record_new_account(new_address);
@@ -1269,7 +1280,16 @@ impl<'a> VM<'a> {
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 self.state_gas_spill = state_gas_spill_snapshot;
 
-                if self.env.config.fork >= Fork::Amsterdam {
+                // Cancel only if the parent recorded the new-account at CREATE time.
+                // If the target pre-existed, we never recorded — calling cancel would
+                // wrongly queue a cross-frame cancellation.
+                if self.env.config.fork >= Fork::Amsterdam
+                    && self
+                        .current_call_frame
+                        .state_diff
+                        .new_accounts
+                        .contains(&to)
+                {
                     self.current_call_frame.state_diff.cancel_new_account(to);
                 }
 
