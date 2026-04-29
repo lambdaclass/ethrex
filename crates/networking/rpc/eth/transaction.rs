@@ -307,7 +307,9 @@ impl RpcHandler for GetTransactionReceiptRequest {
             block::get_all_block_rpc_receipts(block.header, block.body, storage, Some(index))
                 .await?;
 
-        // The last receipt in the list is the one at `index` (we fetched 0..=index)
+        if receipts.len() != (index as usize + 1) {
+            return Err(RpcErr::Internal("Could not get receipt".to_owned()));
+        }
         serde_json::to_value(receipts.last())
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

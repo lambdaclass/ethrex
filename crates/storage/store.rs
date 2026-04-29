@@ -1092,8 +1092,11 @@ impl Store {
                 if !k.starts_with(&prefix) {
                     break;
                 }
+                if k.len() != 40 {
+                    continue;
+                }
                 // Skip entries before start_index (for eth/70 partial requests)
-                if k.len() == 40 && start_index > 0 {
+                if start_index > 0 {
                     let idx_bytes: [u8; 8] = k[32..40]
                         .try_into()
                         .expect("slice is exactly 8 bytes (checked k.len() == 40)");
