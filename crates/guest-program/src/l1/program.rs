@@ -10,6 +10,9 @@ use crate::l1::output::ProgramOutput;
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_vm::Evm;
 
+#[cfg(feature = "eip-8025")]
+use libssz_merkle::Sha256Hasher;
+
 #[cfg(not(feature = "eip-8025"))]
 use crate::common::BatchExecutionResult;
 
@@ -26,7 +29,7 @@ pub fn execution_program(
         blocks,
         execution_witness,
     } = input;
-    
+
     let BatchExecutionResult {
         receipts: _,
         initial_state_hash,
@@ -44,7 +47,7 @@ pub fn execution_program(
         },
         crypto.clone(),
     )?;
-    
+
     Ok(ProgramOutput {
         initial_state_hash,
         final_state_hash,
@@ -54,10 +57,7 @@ pub fn execution_program(
     })
 }
 
-#[cfg(feature = "eip-8025")]
-use libssz_merkle::Sha256Hasher;
-
-/// Wrapper to pass Crypto into libssz_merkle::hash_tree_root, 
+/// Wrapper to pass Crypto into libssz_merkle::hash_tree_root,
 /// so hashing is computed by precompiles
 #[cfg(feature = "eip-8025")]
 struct CryptoWrapper(Arc<dyn Crypto>);
