@@ -1,4 +1,4 @@
-use std::arch::aarch64::*;
+use core::arch::aarch64::*;
 
 const BLAKE2B_IV: [u64; 12] = [
     0x6A09E667F3BCC908,

@@ -17,10 +17,10 @@ use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServer},
     sync::SyncMode,
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
@@ -32,7 +32,7 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -354,30 +354,69 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
     }
 }
 
-pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
+pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
     let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
     let udp_port = opts
         .discovery_port
         .parse()
         .expect("Failed to parse discovery port");
 
-    let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
-        addr.parse().expect("Failed to parse p2p address")
-    } else {
-        local_ip()
-            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
-    };
-
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node::new(p2p_node_ip, udp_port, tcp_port, local_public_key);
+    // Determine bind and external addresses.
+    //
+    // --nat.extip sets the address announced to peers (for nodes behind NAT).
+    // --p2p.addr sets the bind address (defaults to the auto-detected local IP
+    //   when --nat.extip is not given, or to the unspecified address when it is:
+    //   0.0.0.0 for IPv4, :: for IPv6).
+    let (bind_addr, external_addr): (IpAddr, IpAddr) = match (&opts.p2p_addr, &opts.nat_extip) {
+        (_, Some(extip)) => {
+            let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
+            let bind: IpAddr = opts
+                .p2p_addr
+                .as_deref()
+                .map(|a| {
+                    let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
+                    assert!(
+                        addr.is_ipv4() == external.is_ipv4(),
+                        "--p2p.addr and --nat.extip must use the same address family (both IPv4 or both IPv6)"
+                    );
+                    addr
+                })
+                .unwrap_or_else(|| {
+                    if external.is_ipv6() {
+                        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+                    } else {
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                    }
+                });
+            (bind, external)
+        }
+        (Some(addr), None) => {
+            let ip: IpAddr = addr.parse().expect("Failed to parse p2p address");
+            (ip, ip)
+        }
+        (None, None) => {
+            let ip = local_ip().unwrap_or_else(|_| {
+                local_ipv6().expect("Neither ipv4 nor ipv6 local address found")
+            });
+            (ip, ip)
+        }
+    };
+
+    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    let network_config = NetworkConfig {
+        bind_addr,
+        tcp_port,
+        udp_port,
+    };
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = node.enode_url();
     info!(enode = %enode, "Local node initialized");
 
-    node
+    (node, network_config)
 }
 
 pub fn get_local_node_record(
@@ -457,9 +496,14 @@ pub async fn init_l1(
     let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
-        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+        | Err(err @ StoreError::NotFoundDBVersion) => {
             return Err(eyre::eyre!(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(err @ StoreError::MigrationFailed { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. The database may be in an inconsistent state. Please erase your DB by running `ethrex removedb` and restart node to resync."
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
@@ -487,11 +531,11 @@ pub async fn init_l1(
 
     let signer = get_signer(&datadir);
 
-    let local_p2p_node = get_local_p2p_node(&opts, &signer);
+    let (local_p2p_node, network_config) = get_local_p2p_node(&opts, &signer);
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
+    let peer_table = PeerTableServer::spawn(opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -500,6 +544,7 @@ pub async fn init_l1(
 
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
+        network_config,
         tracker.clone(),
         signer,
         peer_table.clone(),
@@ -512,7 +557,7 @@ pub async fn init_l1(
     )
     .expect("P2P context could not be created");
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+    let initiator = RLPxInitiator::spawn(p2p_context.clone());
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
@@ -601,6 +646,13 @@ pub fn migrate_datadir_if_needed(
 
     // Verify chain IDs match.
     let Some(db_chain_id) = read_chain_id_from_db(base_datadir) else {
+        warn!(
+            "Found a database at {base_datadir:?} with valid store metadata but could not \
+             read its chain ID. Skipping automatic migration to {network_datadir:?}. \
+             If this is a pre-v10 database you intend to reuse, stop ethrex and move its \
+             contents into {network_datadir:?} manually before restarting. See the logs \
+             above for the specific error from the storage layer."
+        );
         return;
     };
     let expected_chain_id = match network.get_genesis() {

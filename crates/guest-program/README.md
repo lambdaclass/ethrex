@@ -145,7 +145,7 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 - **ELF output**: `bin/risc0/out/riscv32im-risc0-elf`
 - **VK output**: `bin/risc0/out/riscv32im-risc0-vk`
 
-### ZisK v0.15.0 (Polygon)
+### ZisK v0.16.1 (Polygon)
 - **Architecture**: RISC-V 64-bit
 - **ELF output**: `bin/zisk/out/riscv64ima-zisk-elf`
 - **Requires**: `cargo-zisk` toolchain installed
