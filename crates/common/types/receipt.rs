@@ -24,6 +24,17 @@ pub struct Receipt {
     pub logs: Vec<Log>,
 }
 
+/// Per-transaction block-context values derived from an ordered slice of a
+/// block's receipts. Neither field is part of the `Receipt` itself (gas_used is
+/// a delta of `cumulative_gas_used`; `log_index_offset` counts logs in prior
+/// receipts) so naive single-receipt queries have to walk the block to recover
+/// them. Storing them lets `eth_getTransactionReceipt` be O(1) instead of O(N).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ReceiptMeta {
+    pub gas_used: u64,
+    pub log_index_offset: u64,
+}
+
 impl Receipt {
     pub fn new(tx_type: TxType, succeeded: bool, cumulative_gas_used: u64, logs: Vec<Log>) -> Self {
         Self {
@@ -32,6 +43,28 @@ impl Receipt {
             cumulative_gas_used,
             logs,
         }
+    }
+
+    /// Compute per-tx metadata for an ordered slice of a block's receipts.
+    ///
+    /// Used by the block commit path to persist the metadata alongside
+    /// receipts, and by lazy-backfill paths to derive it for blocks committed
+    /// before the metadata CF existed. The two paths share this implementation
+    /// so they can't drift.
+    pub fn build_block_meta(receipts: &[Receipt]) -> Vec<ReceiptMeta> {
+        let mut out = Vec::with_capacity(receipts.len());
+        let mut last_cumulative: u64 = 0;
+        let mut log_index_offset: u64 = 0;
+        for receipt in receipts {
+            let gas_used = receipt.cumulative_gas_used.saturating_sub(last_cumulative);
+            out.push(ReceiptMeta {
+                gas_used,
+                log_index_offset,
+            });
+            last_cumulative = receipt.cumulative_gas_used;
+            log_index_offset = log_index_offset.saturating_add(receipt.logs.len() as u64);
+        }
+        out
     }
 
     pub fn encode_inner(&self) -> Vec<u8> {

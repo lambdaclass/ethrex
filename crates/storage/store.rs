@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_NUMBERS, BLOCK_RECEIPT_META, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -26,7 +27,7 @@ use ethrex_common::{
     types::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
-        Receipt, Transaction,
+        Receipt, ReceiptMeta, Transaction,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
@@ -666,7 +667,7 @@ impl Store {
     }
 
     /// Obtain receipt by block hash and index
-    async fn get_receipt_by_block_hash(
+    pub async fn get_receipt_by_block_hash(
         &self,
         block_hash: BlockHash,
         index: Index,
@@ -677,6 +678,61 @@ impl Store {
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
+    }
+
+    /// Fetch every receipt for a block in a single batched backend call.
+    ///
+    /// Keys share a `block_hash` prefix so RocksDB's MultiGet coalesces them
+    /// into ~one SST-block read rather than the `n` independent reads a
+    /// `join_all` over `get_receipt_by_block_hash` would do.
+    pub async fn get_receipts_by_block_hash(
+        &self,
+        block_hash: BlockHash,
+        count: u64,
+    ) -> Result<Vec<Receipt>, StoreError> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let keys: Vec<Vec<u8>> = (0..count)
+            .map(|index| (block_hash, index).encode_to_vec())
+            .collect();
+        let raw = self.multi_read_async(RECEIPTS, keys).await?;
+        let mut receipts = Vec::with_capacity(raw.len());
+        for (index, value) in raw.into_iter().enumerate() {
+            let bytes = value.ok_or_else(|| {
+                StoreError::Custom(format!("Missing receipt {index} for block {block_hash:#x}"))
+            })?;
+            receipts.push(Receipt::decode(bytes.as_slice())?);
+        }
+        Ok(receipts)
+    }
+
+    /// Fetch packed per-tx [`ReceiptMeta`] for a block.
+    ///
+    /// Returns `None` if the block was committed before this CF was introduced;
+    /// callers should fall back to deriving the values from the receipts
+    /// themselves via [`Receipt::build_block_meta`] and may opt to
+    /// [`put_block_receipt_meta`] the result so the next lookup is O(1).
+    pub async fn get_block_receipt_meta(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<Vec<ReceiptMeta>>, StoreError> {
+        let raw = self
+            .read_async(BLOCK_RECEIPT_META, block_hash.as_bytes().to_vec())
+            .await?;
+        raw.as_deref().map(decode_block_receipt_meta).transpose()
+    }
+
+    /// Write packed per-tx [`ReceiptMeta`] for a block.
+    /// Used for lazy backfill of pre-existing data (see [`get_block_receipt_meta`]).
+    pub async fn put_block_receipt_meta(
+        &self,
+        block_hash: BlockHash,
+        meta: &[ReceiptMeta],
+    ) -> Result<(), StoreError> {
+        let value = encode_block_receipt_meta(meta);
+        self.write_async(BLOCK_RECEIPT_META, block_hash.as_bytes().to_vec(), value)
+            .await
     }
 
     /// Get account code by its hash.
@@ -1282,6 +1338,28 @@ impl Store {
         txn.get(table, &key)
     }
 
+    /// Helper method for async batched reads against a single table.
+    ///
+    /// Spawns a blocking task so the backend's native batch primitive
+    /// (e.g. RocksDB `MultiGet`) can coalesce bloom filter and SST block
+    /// reads across keys. Much faster than `join_all`-ing `read_async`
+    /// when keys share a common prefix, which is the case for per-block
+    /// receipts.
+    async fn multi_read_async(
+        &self,
+        table: &'static str,
+        keys: Vec<Vec<u8>>,
+    ) -> Result<Vec<Option<Vec<u8>>>, StoreError> {
+        let backend = self.backend.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            txn.multi_get(table, &keys)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
     /// Helper method for batch writes
     /// Spawns blocking task to avoid blocking tokio runtime
     /// This is the most important optimization for healing performance
@@ -1427,11 +1505,17 @@ impl Store {
         }
 
         for (block_hash, receipts) in update_batch.receipts {
+            let meta = Receipt::build_block_meta(&receipts);
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).encode_to_vec();
                 let value = receipt.encode_to_vec();
                 tx.put(RECEIPTS, &key, &value)?;
             }
+            tx.put(
+                BLOCK_RECEIPT_META,
+                block_hash.as_bytes(),
+                &encode_block_receipt_meta(&meta),
+            )?;
         }
 
         for (code_hash, code) in update_batch.code_updates {
@@ -3226,6 +3310,46 @@ impl LatestBlockHeaderCache {
     }
 }
 
+/// Packed layout is `N * [u64 gas_used_le | u64 log_index_offset_le]`, so 16
+/// bytes per transaction. u64 matches the widths used in the in-memory
+/// `Receipt` / RPC receipt types, keeping every boundary cast-free.
+const BLOCK_RECEIPT_META_ENTRY_LEN: usize = 16;
+
+fn encode_block_receipt_meta(meta: &[ReceiptMeta]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(meta.len() * BLOCK_RECEIPT_META_ENTRY_LEN);
+    for entry in meta {
+        out.extend_from_slice(&entry.gas_used.to_le_bytes());
+        out.extend_from_slice(&entry.log_index_offset.to_le_bytes());
+    }
+    out
+}
+
+fn decode_block_receipt_meta(bytes: &[u8]) -> Result<Vec<ReceiptMeta>, StoreError> {
+    if !bytes.len().is_multiple_of(BLOCK_RECEIPT_META_ENTRY_LEN) {
+        return Err(StoreError::Custom(format!(
+            "Corrupt block_receipt_meta: {} bytes is not a multiple of {}",
+            bytes.len(),
+            BLOCK_RECEIPT_META_ENTRY_LEN
+        )));
+    }
+    let mut out = Vec::with_capacity(bytes.len() / BLOCK_RECEIPT_META_ENTRY_LEN);
+    for chunk in bytes.chunks_exact(BLOCK_RECEIPT_META_ENTRY_LEN) {
+        // chunks_exact(N) always yields length-N slices, so these conversions
+        // cannot fail; expect() signals that intent to clippy.
+        let gas_bytes: [u8; 8] = chunk[0..8]
+            .try_into()
+            .expect("chunks_exact yields entry-sized slices");
+        let log_bytes: [u8; 8] = chunk[8..16]
+            .try_into()
+            .expect("chunks_exact yields entry-sized slices");
+        out.push(ReceiptMeta {
+            gas_used: u64::from_le_bytes(gas_bytes),
+            log_index_offset: u64::from_le_bytes(log_bytes),
+        });
+    }
+    Ok(out)
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StoreMetadata {
     pub schema_version: u64,
@@ -3350,5 +3474,66 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod block_receipt_meta_tests {
+    use super::*;
+    use ethrex_common::types::{Log, ReceiptMeta, TxType};
+
+    fn mk_meta(gas_used: u64, log_index_offset: u64) -> ReceiptMeta {
+        ReceiptMeta {
+            gas_used,
+            log_index_offset,
+        }
+    }
+
+    fn mk_receipt(cumulative_gas_used: u64, log_count: usize) -> Receipt {
+        Receipt {
+            tx_type: TxType::Legacy,
+            succeeded: true,
+            cumulative_gas_used,
+            logs: vec![
+                Log {
+                    address: Default::default(),
+                    topics: vec![],
+                    data: Default::default(),
+                };
+                log_count
+            ],
+        }
+    }
+
+    #[test]
+    fn encode_decode_roundtrip() {
+        let meta = vec![
+            mk_meta(21_000, 0),
+            mk_meta(42_500, 3),
+            mk_meta(0, u64::MAX - 1),
+        ];
+        let bytes = encode_block_receipt_meta(&meta);
+        assert_eq!(bytes.len(), meta.len() * BLOCK_RECEIPT_META_ENTRY_LEN);
+        assert_eq!(decode_block_receipt_meta(&bytes).unwrap(), meta);
+    }
+
+    #[test]
+    fn decode_rejects_bad_length() {
+        assert!(decode_block_receipt_meta(&[0u8; 15]).is_err());
+    }
+
+    #[test]
+    fn build_derives_gas_used_and_log_offsets() {
+        // 3 receipts: 21k gas / 1 log, 42k cumulative gas (21k delta) / 0 logs,
+        // 70k cumulative (28k delta) / 2 logs.
+        let receipts = vec![
+            mk_receipt(21_000, 1),
+            mk_receipt(42_000, 0),
+            mk_receipt(70_000, 2),
+        ];
+        assert_eq!(
+            Receipt::build_block_meta(&receipts),
+            vec![mk_meta(21_000, 0), mk_meta(21_000, 1), mk_meta(28_000, 1)],
+        );
     }
 }
