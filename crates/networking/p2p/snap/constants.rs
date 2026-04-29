@@ -74,6 +74,35 @@ pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 /// Maximum number of concurrent in-flight requests during storage healing.
 pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
 
+/// Soft limit on the number of entries in a healing pending-parents queue.
+///
+/// Shared by storage healing (`StorageHealingQueue`) and state healing
+/// (`StateHealingQueue`). Both are `HashMap`s of nodes awaiting their missing
+/// children; both are drained via `commit_node` cascades. The limit is sized
+/// for the larger of the two (storage) and is therefore conservative for
+/// state.
+///
+/// Storage per-entry cost, branch-dominated worst case:
+/// - `NodeResponse.node`: a branch `Node` is a `Box<BranchNode>` with 16
+///   `NodeRef` choices (~56 B each in the `Hash` variant) plus `ValueRLP`
+///   header, ≈ 950 B on the heap.
+/// - `NodeResponse.node_request`: three `Nibbles` (each a `Vec<u8>`, ~24 B
+///   header + up to 64 B data) + one `H256`, ≈ 250 B inline+heap.
+/// - `HashMap<(Nibbles, Nibbles), _>` key and bucket overhead, ≈ 100 B.
+///
+/// Total ≈ 1.3 KB per entry → 800_000 entries ≈ 1.0 GB. State entries omit
+/// the extra `acc_path` `Nibbles` and use a single-`Nibbles` key, so they're
+/// smaller — the same count uses less memory on that side. Leaf-dominated
+/// entries are smaller still, so this is an upper-bound estimate. The limit
+/// gates the pending-parents map only; the download queue is a separate
+/// (smaller) allocation.
+///
+/// When exceeded, the dispatcher stops issuing new download requests and
+/// waits for in-flight responses to drain the queue. The download queue is a
+/// max-heap by depth, so in-flight work is the deepest available — which
+/// frees pending parents fastest via `commit_node` cascades.
+pub const HEALING_QUEUE_SOFT_LIMIT: usize = 800_000;
+
 // =============================================================================
 // BLOCK SYNC CONFIGURATION
 // =============================================================================
