@@ -304,6 +304,12 @@ pub struct CallFrame {
     /// Signed because same-tx SELFDESTRUCT refunds can drive it negative (the
     /// account-creation portion was charged via intrinsic_state_gas, not here).
     pub state_gas_used: i64,
+    /// EIP-8037: set when the parent OpCallHandler pre-recorded a `new_account`
+    /// entry for this frame's target (CALL with non-zero value to an empty
+    /// address). On child revert the record must be cancelled in the parent's
+    /// state_diff so a rolled-back account creation doesn't leak +112 state bytes
+    /// into block accounting.
+    pub parent_recorded_new_account: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -402,6 +408,7 @@ impl CallFrame {
             state_gas_spill_snapshot: 0,
             state_diff: StateDiff::default(),
             state_gas_used: 0,
+            parent_recorded_new_account: false,
         }
     }
 

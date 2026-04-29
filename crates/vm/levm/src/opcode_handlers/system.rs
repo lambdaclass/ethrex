@@ -1026,6 +1026,11 @@ impl<'a> VM<'a> {
                     let log = create_eth_transfer_log(msg_sender, to, value);
                     self.substate.add_log(log);
                 }
+            } else if !ctx_result.is_success() {
+                // EIP-8037: precompile failure short-circuits the value transfer,
+                // so the pre-emptive new_account record must be cancelled to avoid
+                // leaking +112 state bytes for an account that was never created.
+                self.undo_call_new_account_record_on_early_revert(records_new_account, to);
             }
 
             self.tracer.exit_context(&ctx_result, false)?;
@@ -1059,6 +1064,7 @@ impl<'a> VM<'a> {
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
             new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
             new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
+            new_call_frame.parent_recorded_new_account = records_new_account;
 
             self.add_callframe(new_call_frame);
 
@@ -1131,6 +1137,8 @@ impl<'a> VM<'a> {
             stack,
             state_diff: child_state_diff,
             state_gas_used: child_state_gas_used,
+            to: child_to,
+            parent_recorded_new_account,
             ..
         } = executed_call_frame;
 
@@ -1203,6 +1211,16 @@ impl<'a> VM<'a> {
                 }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 self.state_gas_spill = state_gas_spill_snapshot;
+
+                // EIP-8037: undo the pre-emptive new_account record on parent for
+                // CALL-with-value-to-empty. The value transfer reverts with the
+                // child, so the account creation never persists; leaving the record
+                // would leak +112 state bytes into block accounting.
+                if parent_recorded_new_account {
+                    self.current_call_frame
+                        .state_diff
+                        .cancel_new_account(child_to);
+                }
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
