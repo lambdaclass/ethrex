@@ -12,7 +12,7 @@ use crate::{
     utils::RpcErr,
 };
 use ethrex_common::types::{
-    Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Receipt, calculate_base_fee_per_blob_gas,
+    Block, BlockBody, BlockHash, BlockHeader, Receipt, calculate_base_fee_per_blob_gas,
 };
 use ethrex_storage::Store;
 
@@ -177,7 +177,7 @@ impl RpcHandler for GetBlockReceiptsRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        let receipts = get_all_block_rpc_receipts(block_number, header, body, storage).await?;
+        let receipts = get_all_block_rpc_receipts(header, body, storage, None).await?;
 
         serde_json::to_value(&receipts).map_err(|error| RpcErr::Internal(error.to_string()))
     }
@@ -270,11 +270,11 @@ impl RpcHandler for GetRawReceipts {
         };
         let header = storage.get_block_header(block_number)?;
         let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
+        let (header, _body) = match (header, body) {
             (Some(header), Some(body)) => (header, body),
             _ => return Ok(Value::Null),
         };
-        let receipts: Vec<String> = get_all_block_receipts(block_number, header, body, storage)
+        let receipts: Vec<String> = get_all_block_receipts(header, storage)
             .await?
             .iter()
             .map(|receipt| {
@@ -329,11 +329,18 @@ impl RpcHandler for GetBlobBaseFee {
     }
 }
 
+/// Fetches RPC receipts for a block, optionally stopping after `target_index`.
+///
+/// When `target_index` is `Some(n)`, only receipts 0..=n are fetched using a
+/// cursor pass — this is the fast path for `eth_getTransactionReceipt` which
+/// only needs one receipt but requires preceding cumulative gas values.
+///
+/// When `target_index` is `None`, all receipts are fetched (for `eth_getBlockReceipts`).
 pub async fn get_all_block_rpc_receipts(
-    block_number: BlockNumber,
     header: BlockHeader,
     body: BlockBody,
     storage: &Store,
+    target_index: Option<u64>,
 ) -> Result<Vec<RpcReceipt>, RpcErr> {
     let mut receipts = Vec::new();
     // Check if this is the genesis block
@@ -353,16 +360,25 @@ pub async fn get_all_block_rpc_receipts(
         .try_into()
         .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
     // Fetch receipt info from block
+    let block_hash = header.hash();
     let block_info = RpcReceiptBlockInfo::from_block_header(header);
-    // Fetch receipt for each tx in the block and add block and tx info
+    // Fetch receipts: only up to target_index+1 when set, otherwise all
+    let fetch_count = target_index
+        .map(|ti| (ti + 1) as usize)
+        .unwrap_or(body.transactions.len());
+    let all_receipts = storage
+        .get_receipts_for_block_from_index(&block_hash, 0, Some(fetch_count))
+        .await?;
     let mut last_cumulative_gas_used = 0;
     let mut current_log_index = 0;
-    for (index, tx) in body.transactions.iter().enumerate() {
+    for (index, (tx, receipt)) in body
+        .transactions
+        .iter()
+        .zip(all_receipts.iter())
+        .enumerate()
+        .take(fetch_count)
+    {
         let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;
         let tx_info = RpcReceiptTxInfo::from_transaction(
             tx.clone(),
@@ -385,23 +401,13 @@ pub async fn get_all_block_rpc_receipts(
 }
 
 pub async fn get_all_block_receipts(
-    block_number: BlockNumber,
     header: BlockHeader,
-    body: BlockBody,
     storage: &Store,
 ) -> Result<Vec<Receipt>, RpcErr> {
-    let mut receipts = Vec::new();
     // Check if this is the genesis block
     if header.parent_hash.is_zero() {
-        return Ok(receipts);
+        return Ok(Vec::new());
     }
-    for (index, _) in body.transactions.iter().enumerate() {
-        let index = index as u64;
-        let receipt = match storage.get_receipt(block_number, index).await? {
-            Some(receipt) => receipt,
-            _ => return Err(RpcErr::Internal("Could not get receipt".to_owned())),
-        };
-        receipts.push(receipt);
-    }
-    Ok(receipts)
+    let block_hash = header.hash();
+    Ok(storage.get_receipts_for_block(&block_hash).await?)
 }
