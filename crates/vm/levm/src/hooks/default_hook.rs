@@ -295,7 +295,16 @@ pub fn settle_state_diff_finalized(vm: &mut VM<'_>, is_success: bool) -> Result<
             }
             if refund_bytes > 0 {
                 let refund_gas = refund_bytes.saturating_mul(cpsb);
-                vm.refund_state_gas_to_reservoir(refund_gas)?;
+                // EELS amsterdam/vm/interpreter.py:200 credits ONLY the reservoir
+                // for the deferred SD refund (no spill-back to gas_left). User
+                // recovers spilled regular gas via `total_remaining = gas_left +
+                // reservoir` at fork.py:1057. Crediting gas_remaining here would
+                // leave `ctx_result.gas_used` (captured pre-settle) stale and
+                // double-credit the user.
+                vm.state_gas_reservoir = vm
+                    .state_gas_reservoir
+                    .checked_add(refund_gas)
+                    .ok_or(InternalError::Overflow)?;
             }
         }
     } else {
