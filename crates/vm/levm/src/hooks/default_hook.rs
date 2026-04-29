@@ -188,29 +188,28 @@ impl Hook for DefaultHook {
 
         // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
         // Per EELS, state_gas_left is preserved even on exceptional halt — only
-        // regular gas_left is burned.  The user does NOT pay for unspent reservoir.
+        // regular gas_left is burned. The user does NOT pay for unspent reservoir.
         // On top-level failure (revert/halt/oog), execution-time state-gas draws
-        // (both from reservoir and spilled to gas_remaining) are refunded too,
-        // since the corresponding state operations were rolled back. The
-        // post-setup snapshot captures the reservoir balance after intrinsic +
-        // auth processing; the spill counter tracks gas_remaining bytes that
-        // would otherwise be charged to the user for now-rolled-back state ops.
+        // FROM THE RESERVOIR are refunded (the state ops were rolled back). Spill
+        // draws — gas_remaining bytes consumed because the reservoir was empty —
+        // are *regular gas* consumed and stay burned per EIP-8037 §"Block-level
+        // gas accounting": on exceptional halt remaining `gas_left` is attributed
+        // to `execution_regular_gas_used` and any prior charges to gas_remaining
+        // (whether from opcode execution or state-gas spill) stay counted.
+        // Refunding the spill here under-charges block_regular_gas_used and lets
+        // the miner over-fill the block past gas_limit, producing blocks that
+        // peer validators (geth, erigon) reject with "gas limit reached".
         if vm.env.config.fork >= Fork::Amsterdam {
             let to_subtract = if ctx_result.is_success() {
                 vm.state_gas_reservoir
             } else {
-                // On top-level failure, refund only the execution-time draws (delta
-                // between post-setup snapshot and current). Intrinsic-time draws
-                // (auth tuples, CREATE-tx target charge) stay charged to the user.
+                // On top-level failure, refund unused reservoir + reservoir-time
+                // execution draws. NOT spill: that was regular gas paid up-front.
                 let reservoir_drawn = vm
                     .state_gas_reservoir_post_setup
                     .saturating_sub(vm.state_gas_reservoir);
-                let spill_drawn = vm
-                    .state_gas_spill
-                    .saturating_sub(vm.state_gas_spill_post_setup);
                 vm.state_gas_reservoir
                     .saturating_add(reservoir_drawn)
-                    .saturating_add(spill_drawn)
             };
             ctx_result.gas_used = ctx_result.gas_used.saturating_sub(to_subtract);
         }
