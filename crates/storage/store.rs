@@ -6,10 +6,9 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_PROOF_ROOTS,
-            EXECUTION_PROOFS, EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS,
-            MISC_VALUES, PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE,
-            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
+            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
+            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -53,16 +52,12 @@ use std::{
     },
     thread::JoinHandle,
 };
+#[cfg(feature = "rocksdb")]
+use tracing::warn;
 use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
 pub const MAX_WITNESSES: u64 = 128;
-
-/// Maximum number of blocks to retain execution proofs for (EIP-8025).
-/// Matches the witness retention window (`MAX_WITNESSES`). 128 blocks is
-/// well beyond the Ethereum finality depth (~2 epochs ≈ 64 slots), giving
-/// validators enough time to verify proofs before they are pruned.
-pub const MAX_PROOF_BLOCKS: u64 = 128;
 
 // We use one constant for in-memory and another for on-disk backends.
 // This is due to tests requiring state older than 128 blocks.
@@ -1458,12 +1453,51 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
-        // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
 
         if engine_type != EngineType::InMemory {
-            // Check that the last used DB version matches the current version
-            validate_store_schema_version(&db_path)?;
+            let version = read_store_schema_version(&db_path)?;
+
+            match version {
+                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                    // Pre-metadata DB — cannot migrate safely
+                    return Err(StoreError::NotFoundDBVersion);
+                }
+                None => {
+                    // Fresh / empty directory — write initial metadata
+                    init_metadata_file(&db_path)?;
+                }
+                Some(v) if v < 1 => {
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!("DB version v{v} is invalid (predates migrations)"),
+                    });
+                }
+                Some(v) if v > STORE_SCHEMA_VERSION => {
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!(
+                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
+                        ),
+                    });
+                }
+                #[cfg(feature = "rocksdb")]
+                Some(v) if v < STORE_SCHEMA_VERSION => {
+                    // Open backend, run migrations, then proceed with the same Arc
+                    let backend: Arc<dyn crate::api::StorageBackend> =
+                        Arc::new(RocksDBBackend::open(&path)?);
+                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
+                }
+                Some(_) => {
+                    // version == STORE_SCHEMA_VERSION, proceed normally.
+                    // Without the `rocksdb` feature this also covers v < target,
+                    // but that path is unreachable since InMemory is the only
+                    // engine type and the outer guard excludes it.
+                }
+            }
         }
 
         match engine_type {
@@ -2055,174 +2089,6 @@ impl Store {
             }
             None => Ok(None),
         }
-    }
-
-    // ── Execution proof storage (EIP-8025) ──────────────────────────────
-
-    /// Build the composite key for an execution proof.
-    /// Layout: `block_number (8 BE) || new_payload_request_root (32) || proof_type (8 BE)` = 48 bytes.
-    fn make_proof_key(
-        block_number: u64,
-        new_payload_request_root: &H256,
-        proof_type: u64,
-    ) -> Vec<u8> {
-        let mut key = Vec::with_capacity(48);
-        key.extend_from_slice(&block_number.to_be_bytes());
-        key.extend_from_slice(new_payload_request_root.as_bytes());
-        key.extend_from_slice(&proof_type.to_be_bytes());
-        key
-    }
-
-    /// Store a mapping from new_payload_request_root to block_number (EIP-8025).
-    /// Persists the root→block association so it survives node restarts.
-    pub fn store_root_to_block(&self, root: H256, block_number: u64) -> Result<(), StoreError> {
-        self.write(
-            EXECUTION_PROOF_ROOTS,
-            root.as_bytes().to_vec(),
-            block_number.to_be_bytes().to_vec(),
-        )
-    }
-
-    /// Look up the block number for a given new_payload_request_root (EIP-8025).
-    pub fn get_block_number_by_root(&self, root: &H256) -> Result<Option<u64>, StoreError> {
-        let data: Option<Vec<u8>> = self.read(EXECUTION_PROOF_ROOTS, root.as_bytes().to_vec())?;
-        Ok(data.and_then(|bytes| {
-            if bytes.len() == 8 {
-                let mut buf = [0u8; 8];
-                buf.copy_from_slice(&bytes);
-                Some(u64::from_be_bytes(buf))
-            } else {
-                None
-            }
-        }))
-    }
-
-    /// Store a verified execution proof for a block (EIP-8025).
-    pub fn store_execution_proof(
-        &self,
-        block_number: u64,
-        new_payload_request_root: H256,
-        proof_type: u64,
-        proof_data: Vec<u8>,
-    ) -> Result<(), StoreError> {
-        let key = Self::make_proof_key(block_number, &new_payload_request_root, proof_type);
-        self.write(EXECUTION_PROOFS, key, proof_data)?;
-        self.cleanup_old_proofs(block_number)
-    }
-
-    /// Retrieve a single execution proof by block number, root, and proof type.
-    pub fn get_execution_proof(
-        &self,
-        block_number: u64,
-        new_payload_request_root: &H256,
-        proof_type: u64,
-    ) -> Result<Option<Vec<u8>>, StoreError> {
-        let key = Self::make_proof_key(block_number, new_payload_request_root, proof_type);
-        self.read(EXECUTION_PROOFS, key)
-    }
-
-    /// Retrieve all execution proofs for a given block number + root.
-    /// Returns a Vec of `(proof_type, proof_data)` pairs.
-    pub fn get_execution_proofs(
-        &self,
-        block_number: u64,
-        new_payload_request_root: &H256,
-    ) -> Result<Vec<(u64, Vec<u8>)>, StoreError> {
-        let mut prefix = Vec::with_capacity(40);
-        prefix.extend_from_slice(&block_number.to_be_bytes());
-        prefix.extend_from_slice(new_payload_request_root.as_bytes());
-
-        let read_txn = self.backend.begin_read()?;
-        let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
-        let mut proofs = Vec::new();
-        for item in iter {
-            let (key, value) = item?;
-            if !key.starts_with(&prefix) {
-                break;
-            }
-            // Extract proof_type from the last 8 bytes of the key
-            if key.len() >= 48 {
-                let mut proof_type_bytes = [0u8; 8];
-                proof_type_bytes.copy_from_slice(&key[40..48]);
-                let proof_type = u64::from_be_bytes(proof_type_bytes);
-                proofs.push((proof_type, value.to_vec()));
-            }
-        }
-        Ok(proofs)
-    }
-
-    fn cleanup_old_proofs(&self, latest_block_number: u64) -> Result<(), StoreError> {
-        if latest_block_number <= MAX_PROOF_BLOCKS {
-            return Ok(());
-        }
-
-        let threshold = latest_block_number - MAX_PROOF_BLOCKS;
-
-        if let Some(oldest_block_number) = self.get_oldest_proof_number()? {
-            let prefix = oldest_block_number.to_be_bytes();
-            let mut proof_keys_to_delete = Vec::new();
-            // Collect roots from deleted proofs so we can clean up their rtb: mappings.
-            let mut roots_to_delete = Vec::new();
-
-            {
-                let read_txn = self.backend.begin_read()?;
-                let iter = read_txn.prefix_iterator(EXECUTION_PROOFS, &prefix)?;
-
-                for item in iter {
-                    let (key, _) = item?;
-                    if key.len() < 8 {
-                        continue;
-                    }
-                    let mut block_number_bytes = [0u8; 8];
-                    block_number_bytes.copy_from_slice(&key[0..8]);
-                    let block_number = u64::from_be_bytes(block_number_bytes);
-                    if block_number > threshold {
-                        break;
-                    }
-                    // Extract root (bytes 8..40) from the composite key to clean up rtb: mapping.
-                    if key.len() >= 40 {
-                        let mut root_bytes = [0u8; 32];
-                        root_bytes.copy_from_slice(&key[8..40]);
-                        roots_to_delete.push(root_bytes);
-                    }
-                    proof_keys_to_delete.push(key.to_vec());
-                }
-            }
-
-            for key in proof_keys_to_delete {
-                self.delete(EXECUTION_PROOFS, key)?;
-            }
-
-            // Clean up the corresponding root→block mappings.
-            for root_bytes in roots_to_delete {
-                // Ignore errors — the mapping may already be gone.
-                let _ = self.delete(EXECUTION_PROOF_ROOTS, root_bytes.to_vec());
-            }
-        };
-
-        self.update_oldest_proof_number(threshold + 1)?;
-
-        Ok(())
-    }
-
-    fn update_oldest_proof_number(&self, oldest_block_number: u64) -> Result<(), StoreError> {
-        self.write(
-            MISC_VALUES,
-            b"oldest_proof_block_number".to_vec(),
-            oldest_block_number.to_le_bytes().to_vec(),
-        )?;
-        Ok(())
-    }
-
-    fn get_oldest_proof_number(&self) -> Result<Option<u64>, StoreError> {
-        let Some(value) = self.read(MISC_VALUES, b"oldest_proof_block_number".to_vec())? else {
-            return Ok(None);
-        };
-
-        let array: [u8; 8] = value.as_slice().try_into().map_err(|_| {
-            StoreError::Custom("Invalid oldest proof block number bytes".to_string())
-        })?;
-        Ok(Some(u64::from_le_bytes(array)))
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
@@ -3361,29 +3227,24 @@ impl LatestBlockHeaderCache {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct StoreMetadata {
-    schema_version: u64,
+pub struct StoreMetadata {
+    pub schema_version: u64,
 }
 
 impl StoreMetadata {
-    fn new(schema_version: u64) -> Self {
+    pub fn new(schema_version: u64) -> Self {
         Self { schema_version }
     }
 }
 
-fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+/// Reads the schema version from the metadata file, if it exists.
+///
+/// Returns `Some(version)` when metadata.json is present and valid,
+/// or `None` when the file does not exist.
+fn read_store_schema_version(path: &Path) -> Result<Option<u64>, StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
-    // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
-        // If datadir exists but is not empty, this is probably a DB for an
-        // old ethrex version and we should return an error
-        if path.exists() && !dir_is_empty(path)? {
-            return Err(StoreError::NotFoundDBVersion {
-                expected: STORE_SCHEMA_VERSION,
-            });
-        }
-        init_metadata_file(path)?;
-        return Ok(());
+        return Ok(None);
     }
     if !metadata_path.is_file() {
         return Err(StoreError::Custom(
@@ -3392,15 +3253,7 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     }
     let file_contents = std::fs::read_to_string(metadata_path)?;
     let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
-
-    // Check schema version matches the expected one
-    if metadata.schema_version != STORE_SCHEMA_VERSION {
-        return Err(StoreError::IncompatibleDBVersion {
-            found: metadata.schema_version,
-            expected: STORE_SCHEMA_VERSION,
-        });
-    }
-    Ok(())
+    Ok(Some(metadata.schema_version))
 }
 
 fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
@@ -3419,8 +3272,9 @@ fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     Ok(is_empty)
 }
 
-/// Checks whether a valid database exists at the given path by looking for
-/// a metadata.json file with a matching schema version.
+/// Checks whether a valid (or migratable) database exists at the given path
+/// by looking for a metadata.json file with a schema version between 1 and
+/// `STORE_SCHEMA_VERSION` (inclusive).
 pub fn has_valid_db(path: &Path) -> bool {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     if !metadata_path.is_file() {
@@ -3432,25 +3286,65 @@ pub fn has_valid_db(path: &Path) -> bool {
     let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
         return false;
     };
-    metadata.schema_version == STORE_SCHEMA_VERSION
+    metadata.schema_version >= 1 && metadata.schema_version <= STORE_SCHEMA_VERSION
 }
 
 /// Reads the chain ID from an existing database without performing a full
 /// store initialization. Returns `None` if the database doesn't exist or
 /// the chain config can't be read. Always returns `None` when compiled
 /// without the `rocksdb` feature.
+///
+/// Each failure mode logs a warning so callers (and operators) can diagnose
+/// why an existing database was not usable — previously every error was
+/// silently swallowed by `.ok()?`.
 pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     if !has_valid_db(path) {
         return None;
     }
     #[cfg(feature = "rocksdb")]
     {
-        let backend = RocksDBBackend::open(path).ok()?;
-        let read = backend.begin_read().ok()?;
+        let backend = match RocksDBBackend::open(path) {
+            Ok(backend) => backend,
+            Err(e) => {
+                warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
+                return None;
+            }
+        };
+        let read = match backend.begin_read() {
+            Ok(read) => read,
+            Err(e) => {
+                warn!("Failed to begin read transaction at {path:?}: {e}");
+                return None;
+            }
+        };
         let key = chain_data_key(ChainDataIndex::ChainConfig);
-        let bytes = read.get(CHAIN_DATA, &key).ok()??;
-        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
-        Some(config.chain_id)
+        let bytes = match read.get(CHAIN_DATA, &key) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                warn!("Chain config entry not found in database at {path:?}");
+                return None;
+            }
+            Err(e) => {
+                warn!("Failed to read chain config from database at {path:?}: {e}");
+                return None;
+            }
+        };
+        // Only extract chain_id here: the stored `ChainConfig` JSON may include
+        // fields whose serialization changed across releases (e.g. pre-v10 wrote
+        // `terminal_total_difficulty` as a plain number, v10 expects hex string).
+        // Deserializing the full struct would reject otherwise-migratable v9 data.
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ChainIdOnly {
+            chain_id: u64,
+        }
+        match serde_json::from_slice::<ChainIdOnly>(&bytes) {
+            Ok(partial) => Some(partial.chain_id),
+            Err(e) => {
+                warn!("Failed to deserialize chain ID from database at {path:?}: {e}");
+                None
+            }
+        }
     }
     #[cfg(not(feature = "rocksdb"))]
     {

@@ -251,6 +251,9 @@ MULTISYNC_BUILD_PROFILE ?= release-with-debug-assertions
 MULTISYNC_LOCAL_IMAGE ?= ethrex-local:multisync
 # Branch to track for auto-update mode (defaults to current branch if not set)
 MULTISYNC_BRANCH ?= $(shell git rev-parse --abbrev-ref HEAD)
+# Sync phases that trigger TRACE logging and fast polling in the monitor.
+# Empty by default (no extra tracing). Example: MULTISYNC_WATCHED_PHASES=healing
+MULTISYNC_WATCHED_PHASES ?=
 
 multisync-up: ## Start all networks specified in MULTISYNC_NETWORKS via Docker Compose.
 	$(MULTISYNC_COMPOSE) up -d $(MULTISYNC_SERVICES)
@@ -341,4 +344,5 @@ multisync-loop-auto: ## Continuous loop with auto-update: pull latest, build, an
 		--branch "$(MULTISYNC_BRANCH)" \
 		--build-profile "$(MULTISYNC_BUILD_PROFILE)" \
 		--image-tag "$(MULTISYNC_LOCAL_IMAGE)" \
-		--ethrex-dir "$(ETHREX_DIR)"
+		--ethrex-dir "$(ETHREX_DIR)" \
+		$(if $(MULTISYNC_WATCHED_PHASES),--watched-phases "$(MULTISYNC_WATCHED_PHASES)")

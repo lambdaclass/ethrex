@@ -365,35 +365,6 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
-    #[cfg(feature = "eip-8025")]
-    #[arg(
-        long = "proof.callback-url",
-        value_name = "URL",
-        help = "Callback URL for delivering generated proofs (EIP-8025).",
-        help_heading = "Proof options",
-        env = "ETHREX_PROOF_CALLBACK_URL"
-    )]
-    pub proof_callback_url: Option<url::Url>,
-    #[cfg(feature = "eip-8025")]
-    #[arg(
-        long = "proof.coordinator-addr",
-        default_value = "127.0.0.1",
-        value_name = "ADDRESS",
-        help = "Listening address for the proof coordinator TCP server.",
-        help_heading = "Proof options",
-        env = "ETHREX_PROOF_COORDINATOR_ADDR"
-    )]
-    pub proof_coordinator_addr: String,
-    #[cfg(feature = "eip-8025")]
-    #[arg(
-        long = "proof.coordinator-port",
-        default_value_t = 9100,
-        value_name = "PORT",
-        help = "Listening port for the proof coordinator TCP server.",
-        help_heading = "Proof options",
-        env = "ETHREX_PROOF_COORDINATOR_PORT"
-    )]
-    pub proof_coordinator_port: u16,
 }
 
 impl Options {
@@ -477,12 +448,6 @@ impl Default for Options {
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
             max_blobs_per_block: None,
-            #[cfg(feature = "eip-8025")]
-            proof_callback_url: None,
-            #[cfg(feature = "eip-8025")]
-            proof_coordinator_addr: "127.0.0.1".to_string(),
-            #[cfg(feature = "eip-8025")]
-            proof_coordinator_port: 9100,
             precompute_witnesses: false,
             no_migrate: false,
         }
@@ -586,14 +551,6 @@ pub enum Subcommand {
         /// Execute a single command and exit
         #[arg(short = 'x', long)]
         execute: Option<String>,
-
-        /// Port to listen for EIP-8025 proof callbacks (GeneratedProof POSTs)
-        #[arg(long = "proof-callback-port", default_value = "9200")]
-        proof_callback_port: u16,
-
-        /// Timeout in seconds for the proof callback listener (proof generation can take minutes)
-        #[arg(long = "proof-callback-timeout", default_value = "300")]
-        proof_callback_timeout: u64,
     },
     #[cfg(feature = "l2")]
     #[command(name = "l2")]
@@ -703,8 +660,6 @@ impl Subcommand {
                 authrpc_jwtsecret,
                 history_file,
                 execute,
-                proof_callback_port,
-                proof_callback_timeout,
             } => {
                 ethrex_repl::run(
                     endpoint,
@@ -712,8 +667,6 @@ impl Subcommand {
                     authrpc_jwtsecret,
                     history_file,
                     execute,
-                    proof_callback_port,
-                    proof_callback_timeout,
                 )
                 .await;
             }

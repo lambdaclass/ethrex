@@ -135,6 +135,7 @@ pub(crate) async fn perform(
             negotiated_snap_capability: None,
             last_block_range_update_block: 0,
             requested_pooled_txs: HashMap::new(),
+            pending_tx_requests: Vec::new(),
             client_version: context.client_version.clone(),
             connection_broadcast_send: context.broadcast.clone(),
             peer_table: context.table.clone(),

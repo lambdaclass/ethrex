@@ -335,7 +335,7 @@ impl EthClient {
             value: overrides.value.unwrap_or_default(),
             from: overrides.from.unwrap_or_default(),
             gas: overrides.gas_limit,
-            gas_price: overrides.max_fee_per_gas.unwrap_or_default(),
+            gas_price: U256::from(overrides.max_fee_per_gas.unwrap_or_default()),
             ..Default::default()
         };
         let mut tx_json = json!({
@@ -416,9 +416,11 @@ impl EthClient {
         }
     }
 
-    pub async fn get_block_number(&self) -> Result<U256, EthClientError> {
+    pub async fn get_block_number(&self) -> Result<u64, EthClientError> {
         let request = RpcRequest::new("eth_blockNumber", None);
-        self.send_request_parsed(request).await
+        let block_number: U256 = self.send_request_parsed(request).await?;
+        u64::try_from(block_number)
+            .map_err(|_| EthClientError::Custom("block number overflows u64".to_owned()))
     }
 
     pub async fn get_block_by_hash(&self, block_hash: H256) -> Result<RpcBlock, EthClientError> {

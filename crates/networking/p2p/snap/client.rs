@@ -6,7 +6,7 @@ use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
-    peer_table::{PeerTable, PeerTableServerProtocol as _},
+    peer_table::{PeerTableServerProtocol as _, RequestPermit},
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
@@ -62,7 +62,6 @@ pub struct RequestStorageTrieNodesError {
     pub source: SnapError,
 }
 
-#[derive(Clone)]
 struct StorageTaskResult {
     start_index: usize,
     account_storages: Vec<Vec<(H256, U256)>>,
@@ -98,6 +97,7 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -107,9 +107,10 @@ pub async fn request_account_range(
     let limit_u256 = U256::from_big_endian(&limit.0);
 
     let range = limit_u256 - start_u256;
-    let chunk_count = U256::from(ACCOUNT_RANGE_CHUNK_COUNT)
-        .min(range.max(U256::one()))
-        .as_usize();
+    // Bounded by ACCOUNT_RANGE_CHUNK_COUNT (800), always fits in usize.
+    let chunk_count =
+        usize::try_from(U256::from(ACCOUNT_RANGE_CHUNK_COUNT).min(range.max(U256::one())))
+            .expect("chunk_count bounded by ACCOUNT_RANGE_CHUNK_COUNT");
     let chunk_size = range / chunk_count;
 
     // list of tasks to be executed
@@ -192,8 +193,6 @@ pub async fn request_account_range(
         }
 
         if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -221,7 +220,7 @@ pub async fn request_account_range(
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
         }
 
-        let Some((peer_id, connection)) = peers
+        let Some((peer_id, connection, permit)) = peers
             .peer_table
             .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
@@ -256,16 +255,11 @@ pub async fn request_account_range(
                 pivot_header.timestamp,
                 peers,
                 block_sync_state,
+                diagnostics,
             )
             .await
             .expect("Should be able to update pivot")
         }
-
-        // Reserve a request slot before spawning so get_best_peer sees
-        // this peer as busy immediately, preventing spawn floods.
-        // Workers call outgoing_request directly (not make_request) to
-        // avoid a double increment. Released via dec_requests on try_recv.
-        peers.peer_table.inc_requests(peer_id)?;
 
         tokio::spawn(request_account_range_worker(
             peer_id,
@@ -274,6 +268,7 @@ pub async fn request_account_range(
             chunk_end,
             pivot_header.state_root,
             tx,
+            permit,
         ));
     }
 
@@ -394,8 +389,6 @@ pub async fn request_bytecodes(
                 remaining_start,
                 remaining_end,
             } = result;
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
 
             debug!(
                 "Downloaded {} bytecodes from peer {peer_id} (current count: {downloaded_count})",
@@ -420,7 +413,7 @@ pub async fn request_bytecodes(
             }
         }
 
-        let Some((peer_id, mut connection)) = peers
+        let Some((peer_id, mut connection, permit)) = peers
             .peer_table
             .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
@@ -455,17 +448,7 @@ pub async fn request_bytecodes(
             .copied()
             .collect();
 
-        // Reserve a request slot before spawning (see account range comment).
-        peers.peer_table.inc_requests(peer_id)?;
-
         tokio::spawn(async move {
-            let empty_task_result = TaskResult {
-                start_index: chunk_start,
-                bytecodes: vec![],
-                peer_id,
-                remaining_start: chunk_start,
-                remaining_end: chunk_end,
-            };
             debug!(
                 "Requesting bytecode from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}"
             );
@@ -475,37 +458,41 @@ pub async fn request_bytecodes(
                 hashes: hashes_to_request.clone(),
                 bytes: MAX_RESPONSE_BYTES,
             });
-            // The caller already holds a request reservation for this peer,
-            // so call outgoing_request directly to avoid a double increment.
-            if let Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) = connection
+
+            let response = connection
                 .outgoing_request(request, PEER_REPLY_TIMEOUT)
-                .await
-            {
-                if codes.is_empty() {
-                    tx.send(empty_task_result).await.ok();
-                    // Too spammy
-                    // tracing::error!("Received empty account range");
-                    return;
+                .await;
+            drop(permit);
+
+            let (bytecodes, remaining_start) = match response {
+                Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) if !codes.is_empty() => {
+                    let validated_codes: Vec<Bytes> = codes
+                        .into_iter()
+                        .zip(hashes_to_request)
+                        .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
+                        .map(|(b, _hash)| b)
+                        .collect();
+                    let new_remaining_start = chunk_start + validated_codes.len();
+                    (validated_codes, new_remaining_start)
                 }
-                // Validate response by hashing bytecodes
-                let validated_codes: Vec<Bytes> = codes
-                    .into_iter()
-                    .zip(hashes_to_request)
-                    .take_while(|(b, hash)| ethrex_common::utils::keccak(b) == *hash)
-                    .map(|(b, _hash)| b)
-                    .collect();
-                let result = TaskResult {
-                    start_index: chunk_start,
-                    remaining_start: chunk_start + validated_codes.len(),
-                    bytecodes: validated_codes,
-                    peer_id,
-                    remaining_end: chunk_end,
-                };
-                tx.send(result).await.ok();
-            } else {
-                tracing::debug!("Failed to get bytecode");
-                tx.send(empty_task_result).await.ok();
-            }
+                Ok(RLPxMessage::ByteCodes(_)) => {
+                    // Empty response; retry the full chunk.
+                    (Vec::new(), chunk_start)
+                }
+                _ => {
+                    tracing::debug!("Failed to get bytecode");
+                    (Vec::new(), chunk_start)
+                }
+            };
+
+            let result = TaskResult {
+                start_index: chunk_start,
+                bytecodes,
+                peer_id,
+                remaining_start,
+                remaining_end: chunk_end,
+            };
+            tx.send(result).await.ok();
         });
     }
 
@@ -657,8 +644,6 @@ pub async fn request_storage_ranges(
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
             } = result;
-            // Release the reservation we made before spawning the task.
-            peers.peer_table.dec_requests(peer_id)?;
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -787,7 +772,9 @@ pub async fn request_storage_ranges(
                         .checked_mul(slots_per_chunk)
                         .unwrap_or(U256::MAX);
 
-                    let chunk_count = (missing_storage_range / chunk_size).as_usize().max(1);
+                    let chunk_count = usize::try_from(missing_storage_range / chunk_size)
+                        .unwrap_or(ACCOUNT_RANGE_CHUNK_COUNT)
+                        .max(1);
 
                     let first_acc_hash = *accounts_by_root_hash[remaining_start]
                         .1
@@ -953,7 +940,7 @@ pub async fn request_storage_ranges(
             break;
         }
 
-        let Some((peer_id, connection)) = peers
+        let Some((peer_id, connection, permit)) = peers
             .peer_table
             .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
@@ -994,9 +981,6 @@ pub async fn request_storage_ranges(
                 chunk_storage_roots.first().unwrap_or(&H256::zero()),
             );
         }
-        // Reserve a request slot before spawning (see account range comment).
-        peers.peer_table.inc_requests(peer_id)?;
-
         tokio::spawn(request_storage_ranges_worker(
             task,
             peer_id,
@@ -1005,6 +989,7 @@ pub async fn request_storage_ranges(
             chunk_account_hashes,
             chunk_storage_roots,
             tx,
+            permit,
         ));
     }
 
@@ -1050,16 +1035,19 @@ pub async fn request_storage_ranges(
     Ok(chunk_index + 1)
 }
 
+/// Requests state trie nodes at the given paths from an already-selected peer.
+/// Releases the peer slot as soon as the wire response is in; hash
+/// verification below is pure computation.
+/// Returns `SnapError::InvalidHash` if any returned node's hash does not match
+/// the requested path, and `SnapError::InvalidData` on an empty or oversized
+/// response.
 pub async fn request_state_trienodes(
-    peer_id: H256,
     mut connection: PeerConnection,
-    peer_table: PeerTable,
+    permit: RequestPermit,
     state_root: H256,
     paths: Vec<RequestMetadata>,
 ) -> Result<Vec<Node>, SnapError> {
     let expected_nodes = paths.len();
-    // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-    // This is so we avoid penalizing peers due to requesting stale data
 
     let request_id = rand::random();
     let request = RLPxMessage::GetTrieNodes(GetTrieNodes {
@@ -1072,15 +1060,11 @@ pub async fn request_state_trienodes(
             .collect(),
         bytes: MAX_RESPONSE_BYTES,
     });
-    let nodes = match PeerHandler::make_request(
-        &peer_table,
-        peer_id,
-        &mut connection,
-        request,
-        PEER_REPLY_TIMEOUT,
-    )
-    .await
-    {
+    let response = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await;
+    drop(permit);
+    let nodes = match response {
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => trie_nodes
             .nodes
             .iter()
@@ -1110,29 +1094,23 @@ pub async fn request_state_trienodes(
     Ok(nodes)
 }
 
-/// Requests storage trie nodes given the root of the state trie where they are contained and
-/// a hashmap mapping the path to the account in the state trie (aka hashed address) to the paths to the nodes in its storage trie (can be full or partial)
-/// Returns the nodes or None if:
-/// - There are no available peers (the node just started up or was rejected by all other nodes)
-/// - No peer returned a valid response in the given time and retry limits
+/// Requests storage trie nodes from an already-selected peer. The `GetTrieNodes`
+/// payload carries the state root and the per-account paths (hashed address
+/// prefix followed by storage-trie paths, which may be full or partial).
+/// Consumes a `RequestPermit` reserved by the caller at peer selection time;
+/// the permit drops when this function returns, releasing the slot.
+/// Errors are returned as `RequestStorageTrieNodesError` carrying the
+/// request ID so the caller can reconcile it with its in-flight map.
 pub async fn request_storage_trienodes(
-    peer_id: H256,
     mut connection: PeerConnection,
-    peer_table: PeerTable,
+    _permit: RequestPermit,
     get_trie_nodes: GetTrieNodes,
 ) -> Result<TrieNodes, RequestStorageTrieNodesError> {
-    // Keep track of peers we requested from so we can penalize unresponsive peers when we get a response
-    // This is so we avoid penalizing peers due to requesting stale data
     let request_id = get_trie_nodes.id;
     let request = RLPxMessage::GetTrieNodes(get_trie_nodes);
-    match PeerHandler::make_request(
-        &peer_table,
-        peer_id,
-        &mut connection,
-        request,
-        PEER_REPLY_TIMEOUT,
-    )
-    .await
+    match connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await
     {
         Ok(RLPxMessage::TrieNodes(trie_nodes)) => Ok(trie_nodes),
         Ok(other_msg) => Err(RequestStorageTrieNodesError {
@@ -1157,6 +1135,7 @@ async fn request_account_range_worker(
     chunk_end: H256,
     state_root: H256,
     tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+    permit: RequestPermit,
 ) -> Result<(), SnapError> {
     debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
     let request_id = rand::random();
@@ -1167,82 +1146,78 @@ async fn request_account_range_worker(
         limit_hash: chunk_end,
         response_bytes: MAX_RESPONSE_BYTES,
     });
-    if let Ok(RLPxMessage::AccountRange(AccountRange {
+
+    // Perform the wire request and release the peer slot as soon as the
+    // response (or error) is in — processing below is pure computation.
+    let response = connection
+        .outgoing_request(request, PEER_REPLY_TIMEOUT)
+        .await;
+    drop(permit);
+
+    let retry = || {
+        (
+            Vec::<AccountRangeUnit>::new(),
+            Some((chunk_start, chunk_end)),
+        )
+    };
+    let (accounts_out, chunk_left) = if let Ok(RLPxMessage::AccountRange(AccountRange {
         id: _,
         accounts,
         proof,
-        // The caller already holds a request reservation for this peer,
-        // so call outgoing_request directly to avoid a double increment.
-    })) = connection
-        .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
+    })) = response
     {
         if accounts.is_empty() {
-            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
-            return Ok(());
-        }
-        // Unzip & validate response
-        let proof = encodable_to_proof(&proof);
-        let (account_hashes, account_states): (Vec<_>, Vec<_>) = accounts
-            .clone()
-            .into_iter()
-            .map(|unit| (unit.hash, unit.account))
-            .unzip();
-        let encoded_accounts = account_states
-            .iter()
-            .map(|acc| acc.encode_to_vec())
-            .collect::<Vec<_>>();
-
-        let Ok(should_continue) = verify_range(
-            state_root,
-            &chunk_start,
-            &account_hashes,
-            &encoded_accounts,
-            &proof,
-        ) else {
-            tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                .await
-                .ok();
-            tracing::error!("Received invalid account range");
-            return Ok(());
-        };
-
-        // If the range has more accounts to fetch, we send the new chunk
-        let chunk_left = if should_continue {
-            let last_hash = match account_hashes.last() {
-                Some(last_hash) => last_hash,
-                None => {
-                    tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-                        .await
-                        .ok();
-                    error!("Account hashes last failed, this shouldn't happen");
-                    return Err(SnapError::NoAccountHashes);
-                }
-            };
-            let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
-            let new_start = H256::from_uint(&new_start_u256);
-            Some((new_start, chunk_end))
+            retry()
         } else {
-            None
-        };
-        tx.send((
-            accounts
-                .into_iter()
-                .filter(|unit| unit.hash <= chunk_end)
-                .collect(),
-            peer_id,
-            chunk_left,
-        ))
-        .await
-        .ok();
+            // Validate response — build the verification inputs by borrowing
+            // `accounts` so we can still consume it for the filtered output.
+            let proof = encodable_to_proof(&proof);
+            let account_hashes: Vec<H256> = accounts.iter().map(|u| u.hash).collect();
+            let encoded_accounts: Vec<_> =
+                accounts.iter().map(|u| u.account.encode_to_vec()).collect();
+
+            match verify_range(
+                state_root,
+                &chunk_start,
+                &account_hashes,
+                &encoded_accounts,
+                &proof,
+            ) {
+                Ok(should_continue) => {
+                    let chunk_left = if should_continue {
+                        match account_hashes.last() {
+                            Some(last_hash) => {
+                                let new_start_u256 = U256::from_big_endian(&last_hash.0) + 1;
+                                let new_start = H256::from_uint(&new_start_u256);
+                                Some((new_start, chunk_end))
+                            }
+                            None => {
+                                // Unreachable: accounts is non-empty here.
+                                error!("Account hashes last failed, this shouldn't happen");
+                                Some((chunk_start, chunk_end))
+                            }
+                        }
+                    } else {
+                        None
+                    };
+                    let filtered = accounts
+                        .into_iter()
+                        .filter(|unit| unit.hash <= chunk_end)
+                        .collect::<Vec<_>>();
+                    (filtered, chunk_left)
+                }
+                Err(_) => {
+                    tracing::error!("Received invalid account range");
+                    retry()
+                }
+            }
+        }
     } else {
         tracing::debug!("Failed to get account range");
-        tx.send((Vec::new(), peer_id, Some((chunk_start, chunk_end))))
-            .await
-            .ok();
-    }
+        retry()
+    };
+
+    tx.send((accounts_out, peer_id, chunk_left)).await.ok();
     Ok::<(), SnapError>(())
 }
 
@@ -1255,19 +1230,23 @@ async fn request_storage_ranges_worker(
     chunk_account_hashes: Vec<H256>,
     chunk_storage_roots: Vec<H256>,
     tx: tokio::sync::mpsc::Sender<StorageTaskResult>,
+    permit: RequestPermit,
 ) -> Result<(), SnapError> {
     let start = task.start_index;
     let end = task.end_index;
     let start_hash = task.start_hash;
 
-    let empty_task_result = StorageTaskResult {
-        start_index: task.start_index,
-        account_storages: Vec::new(),
-        peer_id,
-        remaining_start: task.start_index,
-        remaining_end: task.end_index,
-        remaining_hash_range: (start_hash, task.end_hash),
+    // Defaults for the "retry this same range" outcome used by every failure
+    // branch below.
+    let retry_outcome = || {
+        (
+            Vec::<Vec<(H256, U256)>>::new(),
+            task.start_index,
+            task.end_index,
+            (start_hash, task.end_hash),
+        )
     };
+
     let request_id = rand::random();
     let request = RLPxMessage::GetStorageRanges(GetStorageRanges {
         id: request_id,
@@ -1277,123 +1256,142 @@ async fn request_storage_ranges_worker(
         limit_hash: task.end_hash.unwrap_or(HASH_MAX),
         response_bytes: MAX_RESPONSE_BYTES,
     });
-    let Ok(RLPxMessage::StorageRanges(StorageRanges {
-        id: _,
-        slots,
-        proof,
-        // The caller already holds a request reservation for this peer,
-        // so call outgoing_request directly to avoid a double increment.
-    })) = connection
+    tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", "Sending storage range request");
+
+    // Perform the wire request and release the peer slot as soon as the
+    // response (or error) is in — validation below is pure computation.
+    let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
-        .await
-    else {
-        tracing::debug!("Failed to get storage range");
-        tx.send(empty_task_result).await.ok();
-        return Ok(());
-    };
-    if slots.is_empty() && proof.is_empty() {
-        tx.send(empty_task_result).await.ok();
-        tracing::debug!("Received empty storage range");
-        return Ok(());
-    }
-    // Check we got some data and no more than the requested amount
-    if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-        tx.send(empty_task_result).await.ok();
-        return Ok(());
-    }
-    // Unzip & validate response
-    let proof = encodable_to_proof(&proof);
-    let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
-    let mut should_continue = false;
-    // Validate each storage range
-    let mut storage_roots = chunk_storage_roots.into_iter();
-    let last_slot_index = slots.len() - 1;
-    for (i, next_account_slots) in slots.into_iter().enumerate() {
-        // We won't accept empty storage ranges
-        if next_account_slots.is_empty() {
-            // This shouldn't happen
-            error!("Received empty storage range, skipping");
-            tx.send(empty_task_result.clone()).await.ok();
-            return Ok(());
-        }
-        let encoded_values = next_account_slots
-            .iter()
-            .map(|slot| slot.data.encode_to_vec())
-            .collect::<Vec<_>>();
-        let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
+        .await;
+    drop(permit);
 
-        let storage_root = match storage_roots.next() {
-            Some(root) => root,
-            None => {
-                tx.send(empty_task_result.clone()).await.ok();
-                error!("No storage root for account {i}");
-                return Err(SnapError::NoStorageRoots);
-            }
+    let (account_storages, remaining_start, remaining_end, remaining_hash_range) = 'outcome: {
+        let Ok(RLPxMessage::StorageRanges(StorageRanges {
+            id: _,
+            slots,
+            proof,
+        })) = response
+        else {
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
+            tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
+            tracing::debug!("Failed to get storage range");
+            break 'outcome retry_outcome();
         };
+        if slots.is_empty() && proof.is_empty() {
+            #[cfg(feature = "metrics")]
+            ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
+            tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
+            tracing::debug!("Received empty storage range");
+            break 'outcome retry_outcome();
+        }
+        if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
+            break 'outcome retry_outcome();
+        }
+        let proof = encodable_to_proof(&proof);
+        let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
+        let mut should_continue = false;
+        let mut validation_failed = false;
+        let mut storage_roots = chunk_storage_roots.into_iter();
+        let last_slot_index = slots.len() - 1;
+        for (i, next_account_slots) in slots.into_iter().enumerate() {
+            if next_account_slots.is_empty() {
+                error!("Received empty storage range, skipping");
+                validation_failed = true;
+                break;
+            }
+            let encoded_values = next_account_slots
+                .iter()
+                .map(|slot| slot.data.encode_to_vec())
+                .collect::<Vec<_>>();
+            let hashed_keys: Vec<_> = next_account_slots.iter().map(|slot| slot.hash).collect();
 
-        // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
-        if i == last_slot_index && !proof.is_empty() {
-            let Ok(sc) = verify_range(
+            let storage_root = match storage_roots.next() {
+                Some(root) => root,
+                None => {
+                    error!("No storage root for account {i}");
+                    break 'outcome retry_outcome();
+                }
+            };
+
+            // The proof corresponds to the last slot, for the previous ones the slot must be the full range without edge proofs
+            if i == last_slot_index && !proof.is_empty() {
+                let Ok(sc) = verify_range(
+                    storage_root,
+                    &start_hash,
+                    &hashed_keys,
+                    &encoded_values,
+                    &proof,
+                ) else {
+                    validation_failed = true;
+                    break;
+                };
+                should_continue = sc;
+            } else if verify_range(
                 storage_root,
                 &start_hash,
                 &hashed_keys,
                 &encoded_values,
-                &proof,
-            ) else {
-                tx.send(empty_task_result).await.ok();
-                return Ok(());
-            };
-            should_continue = sc;
-        } else if verify_range(
-            storage_root,
-            &start_hash,
-            &hashed_keys,
-            &encoded_values,
-            &[],
-        )
-        .is_err()
-        {
-            tx.send(empty_task_result.clone()).await.ok();
-            return Ok(());
+                &[],
+            )
+            .is_err()
+            {
+                validation_failed = true;
+                break;
+            }
+
+            account_storages.push(
+                next_account_slots
+                    .iter()
+                    .map(|slot| (slot.hash, slot.data))
+                    .collect(),
+            );
         }
 
-        account_storages.push(
-            next_account_slots
-                .iter()
-                .map(|slot| (slot.hash, slot.data))
-                .collect(),
-        );
-    }
-    let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
-        let last_account_storage = match account_storages.last() {
-            Some(storage) => storage,
-            None => {
-                tx.send(empty_task_result.clone()).await.ok();
-                error!("No account storage found, this shouldn't happen");
-                return Err(SnapError::NoAccountStorages);
-            }
+        if validation_failed {
+            break 'outcome retry_outcome();
+        }
+
+        let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
+            let last_account_storage = match account_storages.last() {
+                Some(storage) => storage,
+                None => {
+                    error!("No account storage found, this shouldn't happen");
+                    break 'outcome retry_outcome();
+                }
+            };
+            let (last_hash, _) = match last_account_storage.last() {
+                Some(last_hash) => last_hash,
+                None => {
+                    error!("No last hash found, this shouldn't happen");
+                    break 'outcome retry_outcome();
+                }
+            };
+            let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
+            let next_hash = H256::from_uint(&next_hash_u256);
+            (start + account_storages.len() - 1, end, next_hash)
+        } else {
+            (start + account_storages.len(), end, H256::zero())
         };
-        let (last_hash, _) = match last_account_storage.last() {
-            Some(last_hash) => last_hash,
-            None => {
-                tx.send(empty_task_result.clone()).await.ok();
-                error!("No last hash found, this shouldn't happen");
-                return Err(SnapError::NoAccountStorages);
-            }
-        };
-        let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
-        let next_hash = H256::from_uint(&next_hash_u256);
-        (start + account_storages.len() - 1, end, next_hash)
-    } else {
-        (start + account_storages.len(), end, H256::zero())
+        let slot_count: usize = account_storages.iter().map(|s| s.len()).sum();
+        #[cfg(feature = "metrics")]
+        ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("success");
+        tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "success", slots = slot_count, "Storage range response received");
+        (
+            account_storages,
+            remaining_start,
+            remaining_end,
+            (remaining_start_hash, task.end_hash),
+        )
     };
+
     let task_result = StorageTaskResult {
         start_index: start,
         account_storages,
         peer_id,
         remaining_start,
         remaining_end,
-        remaining_hash_range: (remaining_start_hash, task.end_hash),
+        remaining_hash_range,
     };
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())

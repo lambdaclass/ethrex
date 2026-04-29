@@ -19,26 +19,16 @@ pub struct Repl {
     registry: Arc<CommandRegistry>,
     history_path: String,
     variables: VariableStore,
-    proof_callback_port: u16,
-    proof_callback_timeout: u64,
 }
 
 impl Repl {
-    pub fn new(
-        client: RpcClient,
-        authrpc_client: Option<RpcClient>,
-        history_path: String,
-        proof_callback_port: u16,
-        proof_callback_timeout: u64,
-    ) -> Self {
+    pub fn new(client: RpcClient, authrpc_client: Option<RpcClient>, history_path: String) -> Self {
         Self {
             client,
             authrpc_client,
             registry: Arc::new(CommandRegistry::new()),
             history_path,
             variables: VariableStore::new(),
-            proof_callback_port,
-            proof_callback_timeout,
         }
     }
 
@@ -272,27 +262,10 @@ impl Repl {
                     Err(e) => return formatter::format_error(&e),
                 };
                 match self.call_rpc_raw(namespace, method, &resolved).await {
-                    Ok((result, cmd)) => {
+                    Ok((result, _)) => {
                         let formatted = formatter::format_value(&result);
-                        let is_request_proofs = cmd.rpc_method == "engine_requestProofsV1";
                         self.variables.insert(var_name.to_string(), result);
-
-                        // After a successful requestProofsV1, spawn a one-shot
-                        // HTTP listener to receive the GeneratedProof callback.
-                        if is_request_proofs {
-                            let port = self.proof_callback_port;
-                            let timeout = self.proof_callback_timeout;
-                            crate::proof_callback::spawn_listener(
-                                port,
-                                timeout,
-                                self.variables.clone(),
-                            );
-                            format!(
-                                "{formatted}\nListening for proof callback on port {port} (timeout: {timeout}s)..."
-                            )
-                        } else {
-                            formatted
-                        }
+                        formatted
                     }
                     Err(e) => formatter::format_error(&e),
                 }
