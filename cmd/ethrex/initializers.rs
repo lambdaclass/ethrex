@@ -186,9 +186,6 @@ pub async fn init_rpc_api(
     cancel_token: CancellationToken,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
-        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
-    >,
 ) {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
@@ -232,8 +229,6 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator,
     );
 
     tracker.spawn(rpc_api);
@@ -501,9 +496,14 @@ pub async fn init_l1(
     let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
-        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+        | Err(err @ StoreError::NotFoundDBVersion) => {
             return Err(eyre::eyre!(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(err @ StoreError::MigrationFailed { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. The database may be in an inconsistent state. Please erase your DB by running `ethrex removedb` and restart node to resync."
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
@@ -561,31 +561,6 @@ pub async fn init_l1(
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
-    // Initialize EIP-8025 proof coordinator when the feature is enabled.
-    #[cfg(feature = "eip-8025")]
-    let proof_coordinator = {
-        use ethrex_blockchain::proof_coordinator::{
-            config::ProofCoordinatorConfig, coordinator::start_proof_coordinator,
-        };
-        let proof_config = ProofCoordinatorConfig {
-            callback_url: opts.proof_callback_url.clone(),
-            coordinator_addr: opts.proof_coordinator_addr.clone(),
-            coordinator_port: opts.proof_coordinator_port,
-        };
-        match start_proof_coordinator(store.clone(), proof_config).await {
-            Ok(handle) => {
-                info!("EIP-8025 proof coordinator started");
-                Some(handle)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to start proof coordinator: {e}. Proof endpoints will be unavailable."
-                );
-                None
-            }
-        }
-    };
-
     init_rpc_api(
         &opts,
         &datadir,
@@ -597,8 +572,6 @@ pub async fn init_l1(
         cancel_token.clone(),
         tracker.clone(),
         log_filter_handler,
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator,
     )
     .await;
 
@@ -673,6 +646,13 @@ pub fn migrate_datadir_if_needed(
 
     // Verify chain IDs match.
     let Some(db_chain_id) = read_chain_id_from_db(base_datadir) else {
+        warn!(
+            "Found a database at {base_datadir:?} with valid store metadata but could not \
+             read its chain ID. Skipping automatic migration to {network_datadir:?}. \
+             If this is a pre-v10 database you intend to reuse, stop ethrex and move its \
+             contents into {network_datadir:?} manually before restarting. See the logs \
+             above for the specific error from the storage layer."
+        );
         return;
     };
     let expected_chain_id = match network.get_genesis() {

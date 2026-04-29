@@ -29,6 +29,7 @@ tracing.workspace = true
 bytes.workspace = true
 rustc-hash.workspace = true
 crossbeam.workspace = true
+rayon.workspace = true
 tokio = { workspace = true, features = ["time", "rt", "sync", "macros"] }
 tokio-util.workspace = true
 
@@ -43,20 +44,7 @@ default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
-eip-8025 = [
-    "ethrex-common/eip-8025",
-    "ethrex-guest-program/eip-8025",
-    "dep:serde",
-    "dep:serde_json",
-    "dep:url",
-    "dep:reqwest",
-    "dep:spawned-concurrency",
-    "dep:ethrex-guest-program",
-    "dep:ethrex-prover",
-    "ethrex-prover?/eip-8025",
-    "tokio/io-util",
-    "tokio/net",
-]
+eip-8025 = ["ethrex-common/eip-8025"]
 
 [lints.clippy]
 unwrap_used = "deny"
