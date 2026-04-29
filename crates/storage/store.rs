@@ -588,9 +588,12 @@ impl Store {
             let mut transaction_locations = Vec::new();
 
             while let Some(Ok((key, value))) = iter.next() {
-                // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
-                // and starts with our exact tx_hash
-                if key.len() == 64 && &key[0..32] == tx_hash_bytes {
+                // Without a RocksDB prefix extractor, the iterator continues past
+                // the prefix boundary — break as soon as we leave our tx hash range.
+                if !key.starts_with(tx_hash_bytes) {
+                    break;
+                }
+                if key.len() == 64 {
                     transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
                 }
             }
