@@ -1288,14 +1288,38 @@ impl<'a> VM<'a> {
                 self.merge_child_state_diff(child_state_diff);
 
                 // EIP-8037: if a descendant SELFDESTRUCT'd the just-created account, the
-                // merge above removed our new_account record. Refund the 112-byte CREATE
-                // account state-gas to the reservoir so the user doesn't pay for an
-                // account that no longer exists at end-of-tx.  Symmetric to the revert
-                // arm below, but triggered by cancellation rather than by the child
-                // frame failing.
+                // merge above removed our new_account record (and, courtesy of
+                // cancel_new_account / merge_from_child's child-scrub, any slots and
+                // code-deposits that belonged to the cancelled address). The reservoir
+                // has been debited for all of those state-gas charges, but they no
+                // longer correspond to any state effect — refund them.
+                //
+                // We do this by restoring the reservoir + spill to their pre-child
+                // snapshots (undoing every draw the child performed for the cancelled
+                // account) and then refunding the 112-byte CREATE account charge that
+                // generic_create drew before the child started. This is symmetric to
+                // the revert arm below.  Tests that don't have other state ops outside
+                // the cancelled account (e.g. stateless self-call CREATE-tx) end up
+                // identical to fix #4's 112-only refund since snapshot-restore is a
+                // no-op there.
                 if self.env.config.fork >= Fork::Amsterdam
                     && !self.current_call_frame.state_diff.new_accounts.contains(&to)
                 {
+                    let spilled_during_child = self
+                        .state_gas_spill
+                        .saturating_sub(state_gas_spill_snapshot);
+                    if spilled_during_child > 0 {
+                        let spill_credit = i64::try_from(spilled_during_child)
+                            .map_err(|_| InternalError::Overflow)?;
+                        self.current_call_frame.gas_remaining = self
+                            .current_call_frame
+                            .gas_remaining
+                            .checked_add(spill_credit)
+                            .ok_or(InternalError::Overflow)?;
+                    }
+                    self.state_gas_reservoir = state_gas_reservoir_snapshot;
+                    self.state_gas_spill = state_gas_spill_snapshot;
+
                     #[expect(clippy::arithmetic_side_effects, reason = "bounded constants")]
                     let new_account_state_gas =
                         gas_cost::STATE_BYTES_PER_NEW_ACCOUNT * self.cost_per_state_byte;
