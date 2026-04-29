@@ -938,6 +938,42 @@ pub async fn request_storage_ranges(
                         debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
+            } else if let Some(hash_end) = hash_end {
+                // Per-interval task completed: the peer covered
+                // [start_hash, hash_end] fully and verify_range reported
+                // should_continue=false, so the worker returns
+                // remaining_start == remaining_end and the guard above does
+                // not fire. Drop the matching interval here so the account
+                // can finalize across calls; otherwise the partition logic
+                // at function entry would re-queue the same range forever.
+                let mut acc_hash: H256 = H256::zero();
+                for account in accounts_by_root_hash[start_index].1.iter() {
+                    if let Some((_, old_intervals)) = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(account)
+                        && !old_intervals.is_empty()
+                    {
+                        acc_hash = *account;
+                    }
+                }
+                if !acc_hash.is_zero() {
+                    let (_, old_intervals) = account_storage_roots
+                            .accounts_with_storage_root
+                            .get_mut(&acc_hash)
+                            .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                    if let Some(pos) = old_intervals
+                        .iter()
+                        .position(|(_old_start, end)| end == &hash_end)
+                    {
+                        old_intervals.remove(pos);
+                    }
+                    if old_intervals.is_empty() {
+                        for account in accounts_by_root_hash[start_index].1.iter() {
+                            accounts_done.insert(*account, vec![]);
+                            account_storage_roots.healed_accounts.insert(*account);
+                        }
+                    }
+                }
             }
 
             if account_storages.is_empty() {
