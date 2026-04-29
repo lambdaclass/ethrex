@@ -20,7 +20,7 @@ use tracing::{debug, info, warn};
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
 
-use super::{EXECUTE_BATCH_SIZE, SyncError};
+use super::{EXECUTE_BATCH_SIZE, PIPELINE_SUB_BATCH_SIZE, SyncError};
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
@@ -345,61 +345,28 @@ async fn add_blocks_in_batch(
     Ok(())
 }
 
-/// Executes the given blocks and stores them
-/// If sync_head_found is true, they will be executed one by one
-/// If sync_head_found is false, they will be executed in a single batch,
-/// falling back to one-by-one pipeline execution if the batch fails with
-/// a post-execution error (works around batch-mode state corruption bugs).
+/// Executes the given blocks and stores them using pipelined execution.
+///
+/// Blocks are processed in sub-batches (configured via `PIPELINE_SUB_BATCH_SIZE`),
+/// where each block goes through the pipeline with concurrent execution + merkleization.
+/// For the final batch (near sync head), this also stores each block's state individually.
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
-    sync_head_found: bool,
+    _final_batch: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
-    // If we found the sync head, run the blocks sequentially to store all the blocks's state
-    if sync_head_found {
-        return run_blocks_pipeline(blockchain, blocks).await;
-    }
-
-    // Try batch execution first (faster).
-    // We clone blocks because add_blocks_in_batch takes ownership but we need
-    // them for the fallback. The clone cost is negligible (~1-5ms) vs batch
-    // execution time (median ~29s on hoodi).
-    match blockchain
-        .add_blocks_in_batch(blocks.clone(), cancel_token)
+    let sub_batch_size = *PIPELINE_SUB_BATCH_SIZE;
+    blockchain
+        .add_blocks_in_pipeline_batches(blocks, sub_batch_size, cancel_token)
         .await
-    {
-        Ok(()) => Ok(()),
-        Err((ChainError::InvalidBlock(ref err), ref batch_failure))
-            if is_post_execution_error(err) =>
-        {
-            // Batch execution can produce incorrect results due to cross-block
-            // state cache pollution (e.g. `mark_modified` setting `exists = true`
-            // leaking across block boundaries). Fall back to single-block pipeline
-            // execution which uses fresh state per block.
-            let failed_block_info = batch_failure
-                .as_ref()
-                .and_then(|f| {
-                    blocks
-                        .iter()
-                        .find(|b| b.hash() == f.failed_block_hash)
-                        .map(|b| format!("block {} ({})", b.header.number, f.failed_block_hash))
-                })
-                .unwrap_or_else(|| "unknown block".to_string());
-            warn!(
-                "Batch execution failed at {failed_block_info} with: {err}. \
-                 Retrying batch with per-block pipeline execution."
-            );
-            run_blocks_pipeline(blockchain, blocks).await
-        }
-        Err(e) => Err(e),
-    }
 }
 
 /// Returns true for errors that arise from EVM execution and could differ
 /// between batch mode (shared VM state) and single-block pipeline mode.
 /// Pre-execution validation errors (header, body, structural) would fail
 /// identically in both modes, so retrying them is pointless.
+#[allow(dead_code)]
 fn is_post_execution_error(err: &InvalidBlockError) -> bool {
     matches!(
         err,
@@ -412,6 +379,7 @@ fn is_post_execution_error(err: &InvalidBlockError) -> bool {
     )
 }
 
+#[allow(dead_code)]
 async fn run_blocks_pipeline(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,

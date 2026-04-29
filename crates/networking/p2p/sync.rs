@@ -11,7 +11,7 @@ mod snap_sync;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{PeerHandler, PeerHandlerError};
-use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
+use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, PIPELINE_SUB_BATCH_SIZE_DEFAULT};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
 use ethrex_common::H256;
@@ -40,10 +40,12 @@ pub use snap_sync::{
 #[cfg(feature = "sync-test")]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = std::env::var("EXECUTE_BATCH_SIZE").map(|var| var.parse().expect("Execute batch size environmental variable is not a number")).unwrap_or(EXECUTE_BATCH_SIZE_DEFAULT);
+    static ref PIPELINE_SUB_BATCH_SIZE: usize = std::env::var("PIPELINE_SUB_BATCH_SIZE").map(|var| var.parse().expect("Pipeline sub-batch size environmental variable is not a number")).unwrap_or(PIPELINE_SUB_BATCH_SIZE_DEFAULT);
 }
 #[cfg(not(feature = "sync-test"))]
 lazy_static::lazy_static! {
     static ref EXECUTE_BATCH_SIZE: usize = EXECUTE_BATCH_SIZE_DEFAULT;
+    static ref PIPELINE_SUB_BATCH_SIZE: usize = PIPELINE_SUB_BATCH_SIZE_DEFAULT;
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]

@@ -106,6 +106,10 @@ pub const MIN_FULL_BLOCKS: u64 = 10_000;
 /// Number of blocks to execute in a single batch during full sync.
 pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
+/// Number of blocks per sub-batch when using pipelined execution during full sync.
+/// Each sub-batch processes blocks through the pipeline (concurrent exec + merkle).
+pub const PIPELINE_SUB_BATCH_SIZE_DEFAULT: usize = 64;
+
 /// Average time between blocks (used for timestamp-based calculations).
 pub const SECONDS_PER_BLOCK: u64 = 12;
 
