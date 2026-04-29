@@ -850,25 +850,9 @@ pub fn apply_plain_transaction(
         head.tx.sender(),
     )?;
 
-    // EIP-8037 (Amsterdam+): track regular and state gas separately.
-    //
-    // For failed Amsterdam txs, charge the worst-case regular contribution
-    // (`tx.gas_limit - tx_state_gas`) into the running block totals instead of
-    // the post-refund value carried by `report.gas_used`. The pre-execution
-    // `check_2d_gas_allowance` for the *next* candidate tx checks its
-    // worst-case regular contribution against `block_regular_gas_used` — if we
-    // record only the post-refund amount for an OOG'd tx, the running total is
-    // smaller than what a spec-compliant validator (e.g. geth) would compute,
-    // so the next tx may pass our local pre-check but cause the validator to
-    // reject the block (header.gasUsed under-count). Successful txs use the
-    // post-execution value unchanged: their actual regular charges are exactly
-    // `report.gas_used - state_gas`.
+    // EIP-8037 (Amsterdam+): track regular and state gas separately
     let tx_state_gas = report.state_gas_used;
-    let tx_regular_gas = if context.is_amsterdam && !report.is_success() {
-        head.tx.gas_limit().saturating_sub(tx_state_gas)
-    } else {
-        report.gas_used.saturating_sub(tx_state_gas)
-    };
+    let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
 
     // Compute new totals before committing them
     let new_regular = context
