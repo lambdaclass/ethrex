@@ -132,25 +132,41 @@ pub async fn sync_cycle_snap(
     // BSC: peers occasionally announce stale heads (their own catch-up state).
     // Picking a stale sync_head as the snap pivot strands the sync: we'd
     // download tens of millions of headers only to discover the pivot is
-    // already past the staleness threshold and re-do everything. Validate
-    // freshness up front; if stale, abort and let the bridge re-trigger with
-    // a newer head.
-    if (chain_id == 56 || chain_id == 97)
-        && let Ok(Some(headers)) = peers
+    // already past the staleness threshold and re-do everything. Require an
+    // affirmative freshness confirmation up front — if we can't fetch the
+    // header at all (peer routing picked a pruned peer that doesn't have it)
+    // or the header is stale, abort. Fresh-or-fail, not fresh-or-unknown.
+    if chain_id == 56 || chain_id == 97 {
+        let header = peers
             .request_block_headers_from_hash(
                 sync_head,
                 crate::peer_handler::BlockRequestOrder::NewToOld,
             )
             .await
-        && let Some(header) = headers.into_iter().next()
-        && !bsc_head_is_fresh(header.timestamp)
-    {
-        let age = current_unix_time().saturating_sub(header.timestamp);
-        warn!(
-            "BSC sync_head is stale (block {} ts {} age {}s) — aborting cycle so bridge can re-pick a fresher head",
-            header.number, header.timestamp, age
-        );
-        return Ok(());
+            .ok()
+            .flatten()
+            .and_then(|hs| hs.into_iter().next());
+        let fresh = header
+            .as_ref()
+            .map(|h| bsc_head_is_fresh(h.timestamp))
+            .unwrap_or(false);
+        if !fresh {
+            match header {
+                Some(h) => {
+                    let age = current_unix_time().saturating_sub(h.timestamp);
+                    warn!(
+                        "BSC sync_head is stale (block {} ts {} age {}s) — aborting cycle so bridge can re-pick a fresher head",
+                        h.number, h.timestamp, age
+                    );
+                }
+                None => {
+                    warn!(
+                        "BSC sync_head freshness unverifiable (no peer served the header) — aborting cycle"
+                    );
+                }
+            }
+            return Ok(());
+        }
     }
     let pending_block = match store.get_pending_block(sync_head).await {
         Ok(res) => res,
