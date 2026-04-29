@@ -126,6 +126,24 @@ jobs:
         run: |
           make -C tooling/ef_tests/blockchain test
 
+  test-stateless-zkevm:
+    name: Test - Stateless zkEVM
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run Blockchain EF tests
+        run: make -C tooling/ef_tests/blockchain test-stateless-zkevm
+
   docker_build:
     name: Build Docker
     runs-on: ubuntu-latest
