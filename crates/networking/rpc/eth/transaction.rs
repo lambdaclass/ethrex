@@ -307,8 +307,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
             block::get_all_block_rpc_receipts(block.header, block.body, storage, Some(index))
                 .await?;
 
-        serde_json::to_value(receipts.last())
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        serde_json::to_value(receipts.last()).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
 
