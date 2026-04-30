@@ -45,6 +45,10 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
+#[cfg(feature = "eip-7805")]
+pub mod inclusion_list_builder;
+#[cfg(feature = "eip-7805")]
+pub mod inclusion_list_validator;
 pub mod mempool;
 pub mod payload;
 pub mod tracing;
@@ -1813,6 +1817,103 @@ impl Blockchain {
         let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// EIP-7805 (FOCIL) variant of [`add_block_pipeline`]. Runs the standard
+    /// import pipeline and, if the chain has activated Hegotá and the
+    /// caller-provided context carries a non-empty inclusion list, runs the
+    /// satisfaction algorithm against the post-execution state.
+    ///
+    /// Returns `Err(ChainError::IlUnsatisfied { tx_hash })` if the block
+    /// imports successfully but fails the IL satisfaction check. The V6
+    /// `engine_newPayloadV6` handler maps this to
+    /// `PayloadStatus::inclusion_list_unsatisfied()`.
+    ///
+    /// Per Decision 4 in `design.md`, the satisfaction algorithm is a pure
+    /// state-comparison pass — no EVM re-execution. The validator is
+    /// initialized from post-state directly (one read per IL sender) rather
+    /// than incrementally tracked during execution; this keeps the hot path
+    /// untouched while preserving spec correctness (a missing IL tx is
+    /// classified by post-state regardless of how it was reached).
+    #[cfg(feature = "eip-7805")]
+    pub fn add_block_pipeline_with_il(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+        context: &ethrex_common::validation::BlockValidationContext,
+    ) -> Result<(), ChainError> {
+        use std::collections::HashSet;
+
+        let block_timestamp = block.header.timestamp;
+        let chain_config = self.storage.get_chain_config();
+        let parent_hash = block.header.parent_hash;
+        // Snapshot what we need for the satisfaction check BEFORE the inner
+        // pipeline consumes `block`. (`block` is moved into
+        // `add_block_pipeline_inner`.)
+        let pre_state_root = self
+            .storage
+            .get_block_header_by_hash(parent_hash)?
+            .map(|h| h.state_root);
+        let block_tx_hashes: HashSet<H256> =
+            block.body.transactions.iter().map(|tx| tx.hash()).collect();
+        let post_state_root = block.header.state_root;
+        let gas_left = block.header.gas_limit.saturating_sub(block.header.gas_used);
+
+        let (_, result) = self.add_block_pipeline_inner(block, bal)?;
+        result?;
+
+        // Only run the satisfaction check on the V6 path: Hegotá-active
+        // chain AND a non-empty IL was carried in the context.
+        if !chain_config.is_hegota_activated(block_timestamp) {
+            return Ok(());
+        }
+        let Some(il) = context.inclusion_list.as_ref() else {
+            return Ok(());
+        };
+        if il.is_empty() {
+            return Ok(());
+        }
+        let Some(pre_state_root) = pre_state_root else {
+            // Unreachable — the inner pipeline would have failed if the
+            // parent header wasn't found.
+            return Ok(());
+        };
+
+        let pre_state = inclusion_list_validator::StoreIlStateProvider {
+            store: &self.storage,
+            state_root: pre_state_root,
+        };
+        let post_state = inclusion_list_validator::StoreIlStateProvider {
+            store: &self.storage,
+            state_root: post_state_root,
+        };
+        let crypto = NativeCrypto;
+
+        let mut validator = inclusion_list_validator::InclusionListSatisfactionValidator::new(
+            il, &pre_state, &crypto,
+        )
+        .map_err(|e| ChainError::Custom(format!("IL validator init failed: {e}")))?;
+
+        // Initialize tracker from POST-state: equivalent to "observe every
+        // executed tx" since the post-state already reflects all updates.
+        // O(|IL senders|) reads, not O(block_size).
+        validator
+            .refresh_all_from(&post_state, &crypto)
+            .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
+
+        match validator.check(il, &block_tx_hashes, gas_left, &crypto) {
+            Ok(()) => Ok(()),
+            Err(inclusion_list_validator::IlCheckError::Unsatisfied(unsat)) => {
+                Err(ChainError::IlUnsatisfied {
+                    tx_hash: unsat.tx_hash,
+                })
+            }
+            Err(inclusion_list_validator::IlCheckError::SenderRecovery(e)) => Err(
+                ChainError::Custom(format!(
+                    "IL satisfaction check failed during sender recovery: {e}"
+                )),
+            ),
+        }
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).

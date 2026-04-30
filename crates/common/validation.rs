@@ -324,3 +324,42 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), InvalidBlockErr
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
 }
+
+/// EIP-7805 (FOCIL) block-import side-channel. Carries the inclusion list
+/// from `engine_newPayloadV6` into the block-validation path so that the
+/// satisfaction algorithm (in `ethrex_blockchain::inclusion_list_validator`)
+/// can run after block execution.
+///
+/// Per Decision 9 in `design.md`: the IL is *not* part of `Block` itself
+/// (FOCIL is a CL/EL hybrid; the block on-chain has no notion of an IL).
+/// This struct is request-scoped, populated only by V6 callers, and dropped
+/// after validation. Non-V6 callers pass `BlockValidationContext::empty()`.
+#[cfg(feature = "eip-7805")]
+#[derive(Debug, Clone, Default)]
+pub struct BlockValidationContext {
+    /// RLP-decoded IL transactions from `engine_newPayloadV6`'s
+    /// `inclusionListTransactions` parameter. `None` for non-V6 callers
+    /// or empty ILs (treated as no-op by the satisfaction validator).
+    pub inclusion_list: Option<Vec<crate::types::Transaction>>,
+}
+
+#[cfg(feature = "eip-7805")]
+impl BlockValidationContext {
+    /// Construct a context with no inclusion list. Use this for non-V6
+    /// callers (V1-V5 newPayload, P2P sync, snap sync, devnet imports).
+    /// Callers passing this guarantee the satisfaction check is a no-op.
+    pub fn empty() -> Self {
+        Self {
+            inclusion_list: None,
+        }
+    }
+
+    /// Construct a context from a V6 `inclusionListTransactions` parameter.
+    /// Empty IL collapses to `None` so the satisfaction validator skips
+    /// initialization.
+    pub fn with_inclusion_list(il: Vec<crate::types::Transaction>) -> Self {
+        Self {
+            inclusion_list: if il.is_empty() { None } else { Some(il) },
+        }
+    }
+}

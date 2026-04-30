@@ -322,6 +322,15 @@ impl RpcHandler for NewPayloadV5Request {
 
         let chain_config = context.storage.get_chain_config();
 
+        // Pre-Hegotá guard: V5 cannot accept Hegotá-timestamp payloads. Runs
+        // unconditionally (not feature-gated) so a non-FOCIL build still rejects
+        // when the chain config has hegota_time set.
+        if chain_config.is_hegota_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(
+                "engine_newPayloadV5 cannot accept Hegotá payloads".to_string(),
+            ));
+        }
+
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
@@ -340,6 +349,267 @@ impl RpcHandler for NewPayloadV5Request {
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+/// `engine_newPayloadV6` — adds `inclusionListTransactions` parameter and the
+/// `INCLUSION_LIST_UNSATISFIED` payload status per execution-apis #609. The IL
+/// satisfaction algorithm itself is wired into block validation in Phase 5.2;
+/// this handler RLP-decodes the IL parameter for parse-time validation and
+/// passes it through. (Today the V6 handler accepts the same payloads V5 would
+/// accept on a Hegotá chain; once Phase 5.2 lands, IL satisfaction is enforced
+/// at block-import time.)
+#[cfg(feature = "eip-7805")]
+pub struct NewPayloadV6Request {
+    pub payload: ExecutionPayload,
+    pub expected_blob_versioned_hashes: Vec<H256>,
+    pub parent_beacon_block_root: H256,
+    pub execution_requests: Vec<EncodedRequests>,
+    pub inclusion_list_transactions: Vec<bytes::Bytes>,
+    pub raw_bal_hash: Option<H256>,
+}
+
+#[cfg(feature = "eip-7805")]
+impl From<NewPayloadV6Request> for RpcRequest {
+    fn from(val: NewPayloadV6Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadV6".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.payload),
+                serde_json::json!(val.expected_blob_versioned_hashes),
+                serde_json::json!(val.parent_beacon_block_root),
+                serde_json::json!(val.execution_requests),
+                serde_json::json!(val.inclusion_list_transactions),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(feature = "eip-7805")]
+impl RpcHandler for NewPayloadV6Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 5 {
+            return Err(RpcErr::BadParams("Expected 5 params".to_owned()));
+        }
+
+        let raw_bal_hash = params[0]
+            .get("blockAccessList")
+            .map(|v| {
+                let hex_str = v
+                    .as_str()
+                    .ok_or(RpcErr::WrongParam("blockAccessList".to_string()))?;
+                let bytes = hex::decode(hex_str.trim_start_matches("0x"))
+                    .map_err(|_| RpcErr::WrongParam("blockAccessList".to_string()))?;
+                Ok::<_, RpcErr>(ethrex_common::utils::keccak(bytes))
+            })
+            .transpose()?;
+
+        Ok(Self {
+            payload: serde_json::from_value(params[0].clone())
+                .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
+            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+                .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
+            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+                .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
+            execution_requests: serde_json::from_value(params[3].clone())
+                .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
+            inclusion_list_transactions: parse_il_transactions(&params[4])?,
+            raw_bal_hash,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        validate_execution_payload_v4(&self.payload)?;
+        validate_execution_requests(&self.execution_requests)?;
+
+        // Parse-time sanity check on IL transactions: each must RLP-decode and
+        // its sender must recover from signature material. Per
+        // `engine-api-inclusion-list/spec.md` "IL transactions are
+        // sanity-checked at V6 parse time" — return -38003 on failure.
+        // Phase 5.2 will pass the decoded txs into the satisfaction validator;
+        // for now we just verify decode-ability so that the contract is
+        // honored from day one.
+        let crypto = ethrex_crypto::NativeCrypto;
+        for (i, raw) in self.inclusion_list_transactions.iter().enumerate() {
+            let tx =
+                ethrex_common::types::Transaction::decode_canonical(raw.as_ref()).map_err(|e| {
+                    RpcErr::InvalidPayloadAttributes(format!(
+                        "inclusionListTransactions[{i}]: RLP decode failed: {e}"
+                    ))
+                })?;
+            // Recover sender — surfaces invalid signatures at parse time.
+            tx.sender(&crypto).map_err(|e| {
+                RpcErr::InvalidPayloadAttributes(format!(
+                    "inclusionListTransactions[{i}]: signature recovery failed: {e}"
+                ))
+            })?;
+        }
+
+        let requests_hash = compute_requests_hash(&self.execution_requests);
+        let block_access_list_hash = self.raw_bal_hash;
+
+        let block = match get_block_from_payload(
+            &self.payload,
+            Some(self.parent_beacon_block_root),
+            Some(requests_hash),
+            block_access_list_hash,
+        ) {
+            Ok(block) => block,
+            Err(err) => {
+                return Ok(serde_json::to_value(PayloadStatus::invalid_with_err(
+                    &err.to_string(),
+                ))?);
+            }
+        };
+
+        let chain_config = context.storage.get_chain_config();
+        if !chain_config.is_hegota_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(
+                "engine_newPayloadV6 requires Hegotá-active timestamp".to_string(),
+            ));
+        }
+
+        // Note re: spec rule "INVALID_BLOCK_HASH replaced by INVALID" — ethrex
+        // already returns INVALID for hash mismatches (PayloadValidationStatus
+        // has no InvalidBlockHash variant). Spec compliance by construction.
+        let bal = self.payload.block_access_list.clone();
+
+        // Decode IL transactions for the satisfaction check (RLP-validated
+        // earlier at parse time; this re-decode is the same byte stream).
+        let mut decoded_il: Vec<ethrex_common::types::Transaction> =
+            Vec::with_capacity(self.inclusion_list_transactions.len());
+        for raw in &self.inclusion_list_transactions {
+            // Already validated at parse time, so this is infallible in
+            // practice; surface as Internal if a regression occurs.
+            decoded_il.push(
+                ethrex_common::types::Transaction::decode_canonical(raw.as_ref())
+                    .map_err(|e| RpcErr::Internal(e.to_string()))?,
+            );
+        }
+
+        let block_hash_for_il = block.hash();
+        let payload_status = handle_new_payload_v4(
+            &self.payload,
+            context.clone(),
+            block,
+            self.expected_blob_versioned_hashes.clone(),
+            bal,
+        )
+        .await?;
+
+        // Only run IL satisfaction when the V4-equivalent path returned
+        // VALID — INVALID/SYNCING/ACCEPTED short-circuits.
+        if payload_status.status == crate::types::payload::PayloadValidationStatus::Valid
+            && !decoded_il.is_empty()
+        {
+            // The block is now stored. Read its post-state and pre-state
+            // (parent's state_root) and run the satisfaction validator.
+            let stored_header = context
+                .storage
+                .get_block_header_by_hash(block_hash_for_il)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?
+                .ok_or_else(|| {
+                    RpcErr::Internal(
+                        "stored block missing for IL satisfaction check".to_string(),
+                    )
+                })?;
+            let parent_header = context
+                .storage
+                .get_block_header_by_hash(stored_header.parent_hash)
+                .map_err(|e| RpcErr::Internal(e.to_string()))?
+                .ok_or_else(|| {
+                    RpcErr::Internal(
+                        "parent block missing for IL satisfaction check".to_string(),
+                    )
+                })?;
+
+            let pre_state = ethrex_blockchain::inclusion_list_validator::StoreIlStateProvider {
+                store: &context.storage,
+                state_root: parent_header.state_root,
+            };
+            let post_state = ethrex_blockchain::inclusion_list_validator::StoreIlStateProvider {
+                store: &context.storage,
+                state_root: stored_header.state_root,
+            };
+            let crypto = ethrex_crypto::NativeCrypto;
+            let mut validator =
+                ethrex_blockchain::inclusion_list_validator::InclusionListSatisfactionValidator::new(
+                    &decoded_il,
+                    &pre_state,
+                    &crypto,
+                )
+                .map_err(|e| RpcErr::Internal(format!("IL validator init failed: {e}")))?;
+            validator
+                .refresh_all_from(&post_state, &crypto)
+                .map_err(|e| RpcErr::Internal(format!("IL validator refresh failed: {e}")))?;
+
+            // Reconstruct block_txs set from the stored block body.
+            let stored_body = context
+                .storage
+                .get_block_body_by_hash(block_hash_for_il)
+                .await
+                .map_err(|e| RpcErr::Internal(e.to_string()))?
+                .ok_or_else(|| {
+                    RpcErr::Internal(
+                        "stored block body missing for IL satisfaction check".to_string(),
+                    )
+                })?;
+            let block_tx_hashes: std::collections::HashSet<H256> =
+                stored_body.transactions.iter().map(|tx| tx.hash()).collect();
+            let gas_left = stored_header.gas_limit.saturating_sub(stored_header.gas_used);
+
+            match validator.check(&decoded_il, &block_tx_hashes, gas_left, &crypto) {
+                Ok(()) => {
+                    // Satisfied → pass through the V4-equivalent status.
+                }
+                Err(
+                    ethrex_blockchain::inclusion_list_validator::IlCheckError::Unsatisfied(_),
+                ) => {
+                    return serde_json::to_value(PayloadStatus::inclusion_list_unsatisfied())
+                        .map_err(|e| RpcErr::Internal(e.to_string()));
+                }
+                Err(
+                    ethrex_blockchain::inclusion_list_validator::IlCheckError::SenderRecovery(e),
+                ) => {
+                    return Err(RpcErr::Internal(format!(
+                        "IL satisfaction check failed during sender recovery: {e}"
+                    )));
+                }
+            }
+        }
+
+        serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+#[cfg(feature = "eip-7805")]
+fn parse_il_transactions(value: &Value) -> Result<Vec<bytes::Bytes>, RpcErr> {
+    let array = value.as_array().ok_or_else(|| {
+        RpcErr::WrongParam("inclusionListTransactions: expected array".to_string())
+    })?;
+    let mut out = Vec::with_capacity(array.len());
+    let mut total: usize = 0;
+    for (i, entry) in array.iter().enumerate() {
+        let s = entry.as_str().ok_or_else(|| {
+            RpcErr::WrongParam(format!(
+                "inclusionListTransactions[{i}]: expected hex string"
+            ))
+        })?;
+        let bytes = hex::decode(s.trim_start_matches("0x")).map_err(|_| {
+            RpcErr::WrongParam(format!("inclusionListTransactions[{i}]: invalid hex"))
+        })?;
+        total = total.saturating_add(bytes.len());
+        out.push(bytes::Bytes::from(bytes));
+    }
+    if total > ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST {
+        return Err(RpcErr::InvalidPayloadAttributes(format!(
+            "inclusionListTransactions exceeds 8192-byte cap (got {total} bytes)"
+        )));
+    }
+    Ok(out)
 }
 
 // GetPayload V1-V2-V3 implementations
@@ -1180,4 +1450,61 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
     };
 
     Ok(new_payload)
+}
+
+#[cfg(all(test, feature = "eip-7805"))]
+mod v6_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_il_transactions_accepts_empty_array() {
+        let parsed = parse_il_transactions(&json!([])).expect("empty IL parses");
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_il_transactions_accepts_hex_strings() {
+        let parsed =
+            parse_il_transactions(&json!(["0xdeadbeef", "0xcafe"])).expect("valid hex parses");
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert_eq!(parsed[1].as_ref(), &[0xca, 0xfe]);
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_non_array() {
+        let err = parse_il_transactions(&json!("0xdeadbeef")).unwrap_err();
+        assert!(matches!(err, RpcErr::WrongParam(_)));
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_non_string_entries() {
+        let err = parse_il_transactions(&json!([123])).unwrap_err();
+        assert!(matches!(err, RpcErr::WrongParam(_)));
+    }
+
+    #[test]
+    fn parse_il_transactions_rejects_invalid_hex() {
+        let err = parse_il_transactions(&json!(["0xZZ"])).unwrap_err();
+        assert!(matches!(err, RpcErr::WrongParam(_)));
+    }
+
+    #[test]
+    fn parse_il_transactions_enforces_8kib_cap() {
+        // 8193 bytes total → over cap by 1 byte.
+        let huge = format!(
+            "0x{}",
+            "ab".repeat(ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST + 1)
+        );
+        let err = parse_il_transactions(&json!([huge])).unwrap_err();
+        assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
+    }
+
+    #[test]
+    fn newpayload_v6_parse_rejects_wrong_param_count() {
+        let four_only =
+            NewPayloadV6Request::parse(&Some(vec![json!({}), json!([]), json!("0x"), json!([])]));
+        assert!(matches!(four_only, Err(RpcErr::BadParams(_))));
+    }
 }

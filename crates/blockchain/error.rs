@@ -36,6 +36,15 @@ pub enum ChainError {
     Custom(String),
     #[error("Unknown Payload")]
     UnknownPayload,
+    /// EIP-7805 (FOCIL) — block executes successfully but fails to satisfy
+    /// the inclusion list provided via `engine_newPayloadV6`. The `tx_hash`
+    /// is the offending IL transaction (kept for debugging; the engine API
+    /// response sets `validationError` to `null` per spec).
+    #[cfg(feature = "eip-7805")]
+    #[error("inclusion list unsatisfied: tx 0x{tx_hash:x}")]
+    IlUnsatisfied {
+        tx_hash: ethrex_common::H256,
+    },
 }
 
 impl From<EvmError> for ChainError {
@@ -67,6 +76,8 @@ impl ChainError {
             ChainError::WitnessGeneration(_) => "witness_generation",
             ChainError::Custom(_) => "custom_error",
             ChainError::UnknownPayload => "unknown_payload",
+            #[cfg(feature = "eip-7805")]
+            ChainError::IlUnsatisfied { .. } => "il_unsatisfied",
         }
     }
 }

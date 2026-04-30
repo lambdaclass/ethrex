@@ -362,6 +362,8 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        #[cfg(feature = "eip-7805")]
+        inclusion_list_transactions: None,
     };
 
     // Create blockchain

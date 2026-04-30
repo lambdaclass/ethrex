@@ -2,6 +2,8 @@ pub mod blobs;
 pub mod client_version;
 pub mod exchange_transition_config;
 pub mod fork_choice;
+#[cfg(feature = "eip-7805")]
+pub mod inclusion_list;
 pub mod payload;
 
 use crate::{
@@ -42,6 +44,16 @@ pub const CAPABILITIES: [&str; 24] = [
     "engine_getClientVersionV1",
 ];
 
+/// Engine API methods added by EIP-7805 (FOCIL). Advertised only when the
+/// `eip-7805` Cargo feature is enabled AND the running chain has `hegota_time`
+/// set in its config (per `engine-api-inclusion-list/spec.md`).
+#[cfg(feature = "eip-7805")]
+pub const FOCIL_CAPABILITIES: [&str; 3] = [
+    "engine_getInclusionListV1",
+    "engine_forkchoiceUpdatedV5",
+    "engine_newPayloadV6",
+];
+
 impl From<ExchangeCapabilitiesRequest> for RpcRequest {
     fn from(val: ExchangeCapabilitiesRequest) -> Self {
         RpcRequest {
@@ -66,6 +78,19 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
     }
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+        #[cfg(feature = "eip-7805")]
+        let caps: Vec<&str> = {
+            let mut c: Vec<&str> = CAPABILITIES.to_vec();
+            // Only advertise FOCIL methods when Hegotá is configured. A chain
+            // without `hegota_time` cannot serve V5/V6 payloads.
+            let chain_config = _context.storage.get_chain_config();
+            if chain_config.hegota_time.is_some() {
+                c.extend_from_slice(&FOCIL_CAPABILITIES);
+            }
+            c
+        };
+        #[cfg(not(feature = "eip-7805"))]
+        let caps: Vec<&str> = CAPABILITIES.to_vec();
+        Ok(json!(caps))
     }
 }

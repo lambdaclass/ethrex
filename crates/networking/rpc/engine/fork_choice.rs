@@ -8,6 +8,8 @@ use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "eip-7805")]
+use crate::types::fork_choice::PayloadAttributesV5;
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
@@ -161,8 +163,53 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
         let (head_block_opt, mut response) =
             handle_forkchoice(&self.fork_choice_state, context.clone(), 4).await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
-            validate_attributes_v4(attributes, &head_block, &context)?;
+            let chain_config = context.storage.get_chain_config();
+            validate_attributes_v4(attributes, &head_block, &chain_config)?;
             let payload_id = build_payload_v4(attributes, context, &self.fork_choice_state).await?;
+            response.set_id(payload_id);
+        }
+        serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+#[cfg(feature = "eip-7805")]
+#[derive(Debug)]
+pub struct ForkChoiceUpdatedV5 {
+    pub fork_choice_state: ForkChoiceState,
+    pub payload_attributes: Option<PayloadAttributesV5>,
+}
+
+#[cfg(feature = "eip-7805")]
+impl From<ForkChoiceUpdatedV5> for RpcRequest {
+    fn from(val: ForkChoiceUpdatedV5) -> Self {
+        RpcRequest {
+            method: "engine_forkchoiceUpdatedV5".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.fork_choice_state),
+                serde_json::json!(val.payload_attributes),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(feature = "eip-7805")]
+impl RpcHandler for ForkChoiceUpdatedV5 {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let (fork_choice_state, payload_attributes) = parse_v5(params)?;
+        Ok(ForkChoiceUpdatedV5 {
+            fork_choice_state,
+            payload_attributes,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let (head_block_opt, mut response) =
+            handle_forkchoice(&self.fork_choice_state, context.clone(), 5).await?;
+        if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
+            let chain_config = context.storage.get_chain_config();
+            validate_attributes_v5(attributes, &head_block, &chain_config)?;
+            let payload_id = build_payload_v5(attributes, context, &self.fork_choice_state).await?;
             response.set_id(payload_id);
         }
         serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -445,6 +492,8 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
+        #[cfg(feature = "eip-7805")]
+        inclusion_list_transactions: None,
     };
     let payload_id = args
         .id()
@@ -497,10 +546,17 @@ fn parse_v4(
 fn validate_attributes_v4(
     attributes: &PayloadAttributesV4,
     head_block: &BlockHeader,
-    context: &RpcApiContext,
+    chain_config: &ethrex_common::types::ChainConfig,
 ) -> Result<(), RpcErr> {
-    // Similar validation to V3
-    let chain_config = context.storage.get_chain_config();
+    // Pre-Hegotá guard: V4 cannot accept Hegotá-timestamp payload attributes.
+    // Runs unconditionally (not feature-gated) so a non-FOCIL build still rejects
+    // when the chain config has hegota_time set. The FCU state update is not
+    // rolled back; only the payload-build request is rejected.
+    if chain_config.is_hegota_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsupportedFork(
+            "engine_forkchoiceUpdatedV4 cannot accept Hegotá payload attributes".to_string(),
+        ));
+    }
     if !chain_config.is_amsterdam_activated(attributes.timestamp) {
         return Err(RpcErr::InvalidPayloadAttributes(
             "V4 payload attributes used for pre-Amsterdam timestamp".to_string(),
@@ -547,6 +603,8 @@ async fn build_payload_v4(
         version: 4,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
+        #[cfg(feature = "eip-7805")]
+        inclusion_list_transactions: None,
     };
     let payload_id = args
         .id()
@@ -556,6 +614,133 @@ async fn build_payload_v4(
         id = payload_id,
         slot = attributes.slot_number,
         "Fork choice updated V4 includes payload attributes. Creating a new payload"
+    );
+    let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
+        Ok(payload) => payload,
+        Err(ChainError::EvmError(error)) => return Err(error.into()),
+        Err(error) => return Err(RpcErr::Internal(error.to_string())),
+    };
+    context
+        .blockchain
+        .initiate_payload_build(payload, payload_id)
+        .await;
+    Ok(payload_id)
+}
+
+#[cfg(feature = "eip-7805")]
+fn parse_v5(
+    params: &Option<Vec<Value>>,
+) -> Result<(ForkChoiceState, Option<PayloadAttributesV5>), RpcErr> {
+    let params = params
+        .as_ref()
+        .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+
+    if params.len() != 2 && params.len() != 1 {
+        return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
+    }
+
+    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
+    let mut payload_attributes: Option<PayloadAttributesV5> = None;
+    if params.len() == 2 {
+        payload_attributes =
+            match serde_json::from_value::<Option<PayloadAttributesV5>>(params[1].clone()) {
+                Ok(attributes) => attributes,
+                Err(error) => {
+                    warn!("Could not parse V5 payload attributes {}", error);
+                    None
+                }
+            };
+    }
+    Ok((forkchoice_state, payload_attributes))
+}
+
+#[cfg(feature = "eip-7805")]
+fn validate_attributes_v5(
+    attributes: &PayloadAttributesV5,
+    head_block: &BlockHeader,
+    chain_config: &ethrex_common::types::ChainConfig,
+) -> Result<(), RpcErr> {
+    // V5 is the Hegotá-and-later FCU. Reject any pre-Hegotá timestamp with
+    // -38005, mirroring the spec.
+    if !chain_config.is_hegota_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsupportedFork(
+            "V5 payload attributes used for pre-Hegotá timestamp".to_string(),
+        ));
+    }
+    if attributes.withdrawals.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V5 payload attributes missing withdrawals".to_string(),
+        ));
+    }
+    if attributes.parent_beacon_block_root.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V5 payload attributes missing parent_beacon_block_root".to_string(),
+        ));
+    }
+    if attributes.timestamp <= head_block.timestamp {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "invalid timestamp".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// V5 payload-build hook. Decodes the IL transactions for log/observability
+/// but does NOT yet thread them into `BuildPayloadArgs` — that wiring lands
+/// in Phase 5.1 (`BuildPayloadArgs::inclusion_list_transactions`). For now,
+/// the locally-built block does not honor the IL during construction; the
+/// remote-validation path in `engine_newPayloadV6` is the authoritative
+/// satisfaction check.
+#[cfg(feature = "eip-7805")]
+async fn build_payload_v5(
+    attributes: &PayloadAttributesV5,
+    context: RpcApiContext,
+    fork_choice_state: &ForkChoiceState,
+) -> Result<u64, RpcErr> {
+    use ethrex_common::types::Transaction;
+
+    // Defensive: log if we receive ILs we can't decode. The CL is responsible
+    // for forwarding well-formed RLP; a bad encoding is a CL bug, not a
+    // proposer-injection condition we should accept.
+    let il_count = attributes.inclusion_list_transactions.len();
+    let mut decoded_il: Vec<Transaction> = Vec::with_capacity(il_count);
+    for (i, raw) in attributes.inclusion_list_transactions.iter().enumerate() {
+        match Transaction::decode_canonical(raw.as_ref()) {
+            Ok(tx) => decoded_il.push(tx),
+            Err(e) => {
+                return Err(RpcErr::InvalidPayloadAttributes(format!(
+                    "inclusion_list_transactions[{i}]: RLP decode failed: {e}"
+                )));
+            }
+        }
+    }
+
+    let args = BuildPayloadArgs {
+        parent: fork_choice_state.head_block_hash,
+        timestamp: attributes.timestamp,
+        fee_recipient: attributes.suggested_fee_recipient,
+        random: attributes.prev_randao,
+        withdrawals: attributes.withdrawals.clone(),
+        beacon_root: attributes.parent_beacon_block_root,
+        slot_number: Some(attributes.slot_number),
+        version: 5,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: context.gas_ceil,
+        inclusion_list_transactions: if decoded_il.is_empty() {
+            None
+        } else {
+            Some(decoded_il.clone())
+        },
+    };
+    let payload_id = args
+        .id()
+        .map_err(|error| RpcErr::Internal(error.to_string()))?;
+
+    info!(
+        id = payload_id,
+        slot = attributes.slot_number,
+        il_count,
+        "Fork choice updated V5 includes Hegotá payload attributes. Creating a new payload"
     );
     let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
         Ok(payload) => payload,
@@ -609,6 +794,173 @@ mod tests {
 
         let err = validate_attributes_v2_pre_shanghai(&attributes, &head_block).unwrap_err();
 
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
+    }
+
+    #[test]
+    fn forkchoice_updated_v4_rejects_hegota_timestamp_with_unsupported_fork() {
+        use super::validate_attributes_v4;
+        use crate::types::fork_choice::PayloadAttributesV4;
+        use ethereum_types::Address;
+        use ethrex_common::types::ChainConfig;
+
+        let chain_config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            amsterdam_time: Some(500),
+            hegota_time: Some(1000),
+            ..Default::default()
+        };
+
+        let attributes = PayloadAttributesV4 {
+            timestamp: 1500,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(Default::default()),
+            slot_number: 1,
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1499,
+            ..Default::default()
+        };
+
+        let err = validate_attributes_v4(&attributes, &head_block, &chain_config).unwrap_err();
+        assert!(
+            matches!(err, crate::utils::RpcErr::UnsupportedFork(_)),
+            "expected UnsupportedFork, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn forkchoice_updated_v4_accepts_amsterdam_timestamp_when_hegota_unset() {
+        use super::validate_attributes_v4;
+        use crate::types::fork_choice::PayloadAttributesV4;
+        use ethereum_types::Address;
+        use ethrex_common::types::ChainConfig;
+
+        let chain_config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            amsterdam_time: Some(500),
+            hegota_time: None,
+            ..Default::default()
+        };
+
+        let attributes = PayloadAttributesV4 {
+            timestamp: 1500,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(Default::default()),
+            slot_number: 1,
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1499,
+            ..Default::default()
+        };
+
+        validate_attributes_v4(&attributes, &head_block, &chain_config)
+            .expect("validate_attributes_v4 should accept Amsterdam-only chain");
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[test]
+    fn validate_v5_rejects_pre_hegota_timestamp_with_unsupported_fork() {
+        use super::validate_attributes_v5;
+        use crate::types::fork_choice::PayloadAttributesV5;
+        use ethereum_types::Address;
+        use ethrex_common::types::ChainConfig;
+
+        let chain_config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            amsterdam_time: Some(500),
+            hegota_time: Some(1000),
+            ..Default::default()
+        };
+
+        // timestamp 800 is Amsterdam (post-500) but pre-Hegotá (pre-1000).
+        let attributes = PayloadAttributesV5 {
+            timestamp: 800,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(Default::default()),
+            slot_number: 1,
+            inclusion_list_transactions: vec![],
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 799,
+            ..Default::default()
+        };
+        let err = validate_attributes_v5(&attributes, &head_block, &chain_config).unwrap_err();
+        assert!(
+            matches!(err, crate::utils::RpcErr::UnsupportedFork(_)),
+            "expected UnsupportedFork, got {err:?}"
+        );
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[test]
+    fn validate_v5_accepts_hegota_timestamp_with_empty_il() {
+        use super::validate_attributes_v5;
+        use crate::types::fork_choice::PayloadAttributesV5;
+        use ethereum_types::Address;
+        use ethrex_common::types::ChainConfig;
+
+        let chain_config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            amsterdam_time: Some(500),
+            hegota_time: Some(1000),
+            ..Default::default()
+        };
+
+        let attributes = PayloadAttributesV5 {
+            timestamp: 1500,
+            withdrawals: Some(vec![]),
+            parent_beacon_block_root: Some(Default::default()),
+            slot_number: 1,
+            inclusion_list_transactions: vec![],
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1499,
+            ..Default::default()
+        };
+        validate_attributes_v5(&attributes, &head_block, &chain_config)
+            .expect("V5 must accept Hegotá-active timestamp with empty IL");
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[test]
+    fn validate_v5_rejects_missing_withdrawals() {
+        use super::validate_attributes_v5;
+        use crate::types::fork_choice::PayloadAttributesV5;
+        use ethereum_types::Address;
+        use ethrex_common::types::ChainConfig;
+
+        let chain_config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            hegota_time: Some(1000),
+            ..Default::default()
+        };
+
+        let attributes = PayloadAttributesV5 {
+            timestamp: 1500,
+            withdrawals: None,
+            parent_beacon_block_root: Some(Default::default()),
+            slot_number: 1,
+            inclusion_list_transactions: vec![],
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1499,
+            ..Default::default()
+        };
+        let err = validate_attributes_v5(&attributes, &head_block, &chain_config).unwrap_err();
         assert!(matches!(
             err,
             crate::utils::RpcErr::InvalidPayloadAttributes(_)
