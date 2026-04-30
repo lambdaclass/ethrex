@@ -25,7 +25,7 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -49,7 +49,7 @@ jobs:
         backend: ["sp1", "risc0", "zisk"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -122,7 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: Check tdx

@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -36,7 +36,7 @@ jobs:
           cd crates/vm/levm
           make build-revm-comparison
       - name: Upload main benchmark binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pr-binary
           path: crates/vm/levm/target/release/benchmark
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
         with:
@@ -57,7 +57,7 @@ jobs:
           cd crates/vm/levm
           make build-revm-comparison
       - name: Upload main benchmark binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: main-binary
           path: crates/vm/levm/target/release/benchmark
@@ -68,7 +68,7 @@ jobs:
     needs: [benchmark-pr, benchmark-main]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install hyperfine
         uses: taiki-e/install-action@v2
@@ -79,13 +79,13 @@ jobs:
         uses: ./.github/actions/install-solc
 
       - name: Download PR binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: pr-binary
           path: ./pr
 
       - name: Download main binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: main-binary
           path: ./main

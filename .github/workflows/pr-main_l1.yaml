@@ -27,7 +27,7 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -64,7 +64,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -109,7 +109,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -132,7 +132,7 @@ jobs:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -149,7 +149,7 @@ jobs:
           variant: l1
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
@@ -175,10 +175,10 @@ jobs:
           #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download etherex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -245,10 +245,10 @@ jobs:
           #   artifact_prefix: sync
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -325,7 +325,7 @@ jobs:
 
       - name: Upload Hive Failure Logs
         if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
           path: src/results/failed_logs
@@ -354,7 +354,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -392,7 +392,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
