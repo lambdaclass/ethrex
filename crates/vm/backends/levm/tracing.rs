@@ -3,7 +3,7 @@ use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult,
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{Address, BigEndianHash, H256, tracing::CallTrace, types::BlockHeader};
 use ethrex_crypto::Crypto;
-use ethrex_levm::account::LevmAccount;
+use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
@@ -47,12 +47,8 @@ impl LEVM {
         Ok(())
     }
 
-    /// Execute a transaction and capture the pre/post account state (prestateTracer).
-    ///
-    /// Captures a snapshot of all touched accounts before and after execution.
-    /// The `diff_mode` flag controls whether to return both pre and post state or just pre state.
-    ///
-    /// Assumes the db already contains the state from all prior transactions in the block.
+    /// Executes `tx` and returns the prestateTracer result. `diff_mode` toggles between
+    /// pre-only and pre+post output. Assumes `db` already reflects all prior txs in the block.
     pub fn trace_tx_prestate(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
@@ -61,16 +57,16 @@ impl LEVM {
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<PrestateResult, EvmError> {
-        // Snapshot the current cache state before executing the tx.
         let pre_snapshot: CacheDB = db.current_accounts_state.clone();
 
-        // Execute the transaction (updates current_accounts_state in place).
         let sender = tx
             .sender(crypto)
             .map_err(|e| EvmError::Transaction(format!("Couldn't recover sender: {e}")))?;
         let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
         vm.execute()?;
+
+        preload_touched_codes(&pre_snapshot, db)?;
 
         let pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db);
 
@@ -122,13 +118,9 @@ impl LEVM {
     }
 }
 
-/// Identifies accounts touched by a transaction by comparing `pre_snapshot`
-/// (cache before the tx) with `post_cache` (cache after the tx).
-///
-/// Returns `(address, pre_account, post_account)` for each touched account.
-/// `pre_account` is the account state before the tx ran — sourced from
-/// `pre_snapshot` if the account was already cached, or from
-/// `initial_accounts_state` if the account was first loaded during this tx.
+/// Returns `(address, pre_account, post_account)` for every account in `post_cache`.
+/// `pre_account` comes from `pre_snapshot` if cached before the tx, otherwise from
+/// `initial_accounts_state`. Filtering unchanged accounts is the caller's job.
 fn find_touched_accounts<'a>(
     pre_snapshot: &'a CacheDB,
     post_cache: &'a CacheDB,
@@ -138,21 +130,11 @@ fn find_touched_accounts<'a>(
 
     for (addr, post_account) in post_cache {
         let pre_account = match pre_snapshot.get(addr) {
-            Some(pre) => {
-                if pre.info == post_account.info && pre.storage == post_account.storage {
-                    continue;
-                }
-                pre
-            }
+            Some(pre) => pre,
             None => {
-                // Account was first loaded during this tx.
-                // Pre-state comes from initial_accounts_state (the pristine DB-loaded value).
                 let Some(initial) = db.initial_accounts_state.get(addr) else {
                     continue;
                 };
-                if initial.info == post_account.info && initial.storage == post_account.storage {
-                    continue;
-                }
                 initial
             }
         };
@@ -163,7 +145,7 @@ fn find_touched_accounts<'a>(
     touched
 }
 
-/// Build the account state output for one account.
+/// Reads code from `db.codes`; caller must `preload_touched_codes` first.
 fn build_account_output(account: &LevmAccount, db: &GeneralizedDatabase) -> PrestateAccountState {
     let code = if account.info.code_hash != *EMPTY_KECCACK_HASH {
         db.codes
@@ -189,13 +171,9 @@ fn build_account_output(account: &LevmAccount, db: &GeneralizedDatabase) -> Pres
     }
 }
 
-/// Build the pre-tx state map for all accounts touched by a transaction.
-///
-/// For already-cached accounts, the pre_snapshot only contains storage slots
-/// loaded by *previous* transactions. Any slot first accessed during *this*
-/// transaction has its original value in `initial_accounts_state`. We merge
-/// both sources so the output includes every accessed slot, then filter to
-/// only slots actually touched by this tx (newly loaded or value changed).
+/// Builds the pre-tx state map. For accounts cached before this tx, `pre_snapshot`
+/// only holds slots loaded by previous txs; slots first read in this tx come from
+/// `initial_accounts_state`, so we merge both then keep only slots touched here.
 fn build_pre_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
@@ -206,8 +184,6 @@ fn build_pre_state_map(
     for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
         let mut state = build_account_output(pre_account, db);
 
-        // For already-cached accounts, merge newly-loaded slots from initial_accounts_state
-        // and filter to only slots touched by this tx.
         if let Some(pre_cached) = pre_snapshot.get(&addr) {
             if let Some(initial) = db.initial_accounts_state.get(&addr) {
                 for (k, v) in &initial.storage {
@@ -217,9 +193,6 @@ fn build_pre_state_map(
                         .or_insert_with(|| H256::from_uint(v));
                 }
             }
-            // Only keep slots actually touched in this tx:
-            // - Newly loaded slots (in post but not in pre_snapshot)
-            // - Slots whose value changed between pre and post
             state.storage.retain(|k, _| {
                 if !pre_cached.storage.contains_key(k) {
                     return true;
@@ -234,7 +207,34 @@ fn build_pre_state_map(
     result
 }
 
-/// Build the post-tx state map for all accounts touched by a transaction.
+/// Loads code into `db.codes` for every touched contract whose code wasn't executed
+/// (SELFDESTRUCT beneficiaries, plain-value transfer recipients) — without this they'd
+/// serialize as `code: 0x` despite a non-empty `code_hash`.
+fn preload_touched_codes(
+    pre_snapshot: &CacheDB,
+    db: &mut GeneralizedDatabase,
+) -> Result<(), EvmError> {
+    let hashes: Vec<H256> = db
+        .current_accounts_state
+        .iter()
+        .flat_map(|(addr, post)| {
+            let pre_hash = pre_snapshot
+                .get(addr)
+                .or_else(|| db.initial_accounts_state.get(addr))
+                .map(|a| a.info.code_hash)
+                .unwrap_or_default();
+            [post.info.code_hash, pre_hash]
+        })
+        .filter(|h| *h != *EMPTY_KECCACK_HASH)
+        .collect();
+
+    for hash in hashes {
+        db.get_code(hash)?;
+    }
+    Ok(())
+}
+
+/// Builds the diff-mode post-state: only changed accounts; destroyed accounts omitted.
 fn build_post_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
@@ -242,10 +242,20 @@ fn build_post_state_map(
 ) -> PrestateTrace {
     let mut result = PrestateTrace::new();
 
-    for (addr, _, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
+    for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
+        if matches!(
+            post_account.status,
+            AccountStatus::Destroyed | AccountStatus::DestroyedModified,
+        ) {
+            continue;
+        }
+
+        if pre_account.info == post_account.info && pre_account.storage == post_account.storage {
+            continue;
+        }
+
         let mut state = build_account_output(post_account, db);
 
-        // For already-cached accounts, filter to only slots touched by this tx.
         if let Some(pre_cached) = pre_snapshot.get(&addr) {
             state.storage.retain(|k, _| {
                 if !pre_cached.storage.contains_key(k) {

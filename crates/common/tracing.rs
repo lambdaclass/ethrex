@@ -72,6 +72,7 @@ pub struct CallLog {
 /// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#prestate-tracer
 #[derive(Debug, Serialize, Default, Clone)]
 pub struct PrestateAccountState {
+    #[serde(default, skip_serializing_if = "U256::is_zero")]
     pub balance: U256,
     #[serde(default, skip_serializing_if = "is_zero_nonce")]
     pub nonce: u64,

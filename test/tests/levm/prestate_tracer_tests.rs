@@ -424,3 +424,108 @@ fn prestate_diff_includes_created_account() {
         "child post-state nonce should be 1 after creation"
     );
 }
+
+/// Read-only access (Geth compat): a contract whose state isn't modified by the tx
+/// must still appear in non-diff `pre`, and must be absent from diff `post`.
+#[test]
+fn prestate_trace_includes_read_only_account() {
+    // Oracle: read slot from calldata, SLOAD it, return the value. No SSTORE.
+    //   PUSH1 0x00   60 00     ; calldata offset
+    //   CALLDATALOAD 35        ; -> slot
+    //   SLOAD        54        ; -> value
+    //   PUSH1 0x00   60 00
+    //   MSTORE       52        ; mem[0..32] = value
+    //   PUSH1 0x20   60 20
+    //   PUSH1 0x00   60 00
+    //   RETURN       F3
+    let oracle_bytecode = Bytes::from(vec![
+        0x60, 0x00, 0x35, 0x54, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xF3,
+    ]);
+
+    let oracle_addr = Address::from_low_u64_be(0xF000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+
+    let slot0 = H256::from_low_u64_be(0);
+    let oracle_value = U256::from(42);
+
+    let mut oracle_storage = FxHashMap::default();
+    oracle_storage.insert(slot0, oracle_value);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        oracle_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(oracle_bytecode.clone(), &NativeCrypto),
+            1,
+            oracle_storage,
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    // ── non-diff mode: oracle must appear in pre with code + slot0 ─────────
+    {
+        let test_db = TestDatabase {
+            accounts: accounts.clone(),
+        };
+        let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+        let header = default_header();
+
+        let tx = call_contract_tx(oracle_addr, sender_addr, slot0, 0);
+        let result =
+            LEVM::trace_tx_prestate(&mut db, &header, &tx, false, VMType::L1, &NativeCrypto)
+                .expect("trace should succeed");
+
+        let prestate = match result {
+            PrestateResult::Prestate(p) => p,
+            PrestateResult::Diff(_) => panic!("expected Prestate variant"),
+        };
+
+        let oracle_state = prestate
+            .get(&oracle_addr)
+            .expect("oracle must appear in prestate even though its state didn't change");
+        assert_eq!(
+            oracle_state.code, oracle_bytecode,
+            "oracle code must be present in prestate"
+        );
+        let slot0_val = oracle_state
+            .storage
+            .get(&slot0)
+            .expect("oracle slot0 (read by SLOAD) must appear in prestate storage");
+        assert_eq!(*slot0_val, H256::from_uint(&oracle_value));
+    }
+
+    // ── diff mode: oracle must appear in pre but NOT in post ───────────────
+    {
+        let test_db = TestDatabase { accounts };
+        let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+        let header = default_header();
+
+        let tx = call_contract_tx(oracle_addr, sender_addr, slot0, 0);
+        let result =
+            LEVM::trace_tx_prestate(&mut db, &header, &tx, true, VMType::L1, &NativeCrypto)
+                .expect("trace should succeed");
+
+        let diff = match result {
+            PrestateResult::Diff(d) => d,
+            PrestateResult::Prestate(_) => panic!("expected Diff variant"),
+        };
+
+        assert!(
+            diff.pre.contains_key(&oracle_addr),
+            "oracle must appear in diff pre"
+        );
+        assert!(
+            !diff.post.contains_key(&oracle_addr),
+            "oracle must NOT appear in diff post (state was unchanged)"
+        );
+    }
+}
