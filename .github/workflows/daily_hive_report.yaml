@@ -106,7 +106,7 @@ jobs:
           large-packages: false
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
@@ -152,7 +152,7 @@ jobs:
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -177,13 +177,13 @@ jobs:
       artifact_name: results_daily.md
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
       - name: Download all results
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: hive/workspace/logs
           pattern: "*_daily-results.zip"
@@ -226,7 +226,7 @@ jobs:
         run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
       - name: Upload daily result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: results_daily.md
           path: |
@@ -245,10 +245,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download hive results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ${{ needs.hive-report.outputs.artifact_name }}
 

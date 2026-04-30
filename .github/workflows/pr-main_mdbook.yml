@@ -22,7 +22,7 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup mdBook
         uses: peaceiris/actions-mdbook@v2
@@ -37,7 +37,7 @@ jobs:
 
       - name: Upload docs artifact
         if: ${{ github.ref == 'refs/heads/main' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: docs
           path: book/html
@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Check links
         uses: lycheeverse/lychee-action@v2
@@ -65,7 +65,7 @@ jobs:
       group: ${{ github.workflow }}-${{ github.ref }}
     steps:
       - name: Download docs artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: docs
           path: book/html

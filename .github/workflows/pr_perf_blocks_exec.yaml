@@ -25,14 +25,14 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache
         with:
           path: bin/ethrex-${{ matrix.branch }}
           key: binary-${{ matrix.branch }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         with:
           ref: ${{ github.event.pull_request[matrix.branch].sha }}
@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout PR
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.head_ref }}
           lfs: true
@@ -69,13 +69,13 @@ jobs:
           tool: hyperfine@1.16
 
       - name: Fetch base binary
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v5
         with:
           path: bin/ethrex-base
           key: binary-base-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Fetch HEAD binary
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v5
         with:
           path: bin/ethrex-head
           key: binary-head-${{ github.run_id }}-${{ github.run_attempt }}
@@ -90,7 +90,7 @@ jobs:
           "./bin/ethrex-{bin} --network fixtures/genesis/perf-ci.json --force import ./fixtures/blockchain/l2-1k-erc20.rlp --removedb"
           echo -e "## Benchmark Block Execution Results Comparison Against Main\n\n$(cat bench_pr_comparison.md)" > bench_pr_comparison.md
       - name: Upload PR results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pr-result
           path: bench_pr_comparison.md
@@ -98,7 +98,7 @@ jobs:
       - name: Find comment
         if: ${{ github.event.pull_request.head.repo.fork != true }}
         continue-on-error: true
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@v4
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -107,7 +107,7 @@ jobs:
 
       - name: Create or update comment
         if: ${{ github.event.pull_request.head.repo.fork != true }}
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
