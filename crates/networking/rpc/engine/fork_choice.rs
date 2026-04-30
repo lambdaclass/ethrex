@@ -492,7 +492,6 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
-        #[cfg(feature = "eip-7805")]
         inclusion_list_transactions: None,
     };
     let payload_id = args
@@ -603,7 +602,6 @@ async fn build_payload_v4(
         version: 4,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
-        #[cfg(feature = "eip-7805")]
         inclusion_list_transactions: None,
     };
     let payload_id = args
@@ -747,10 +745,17 @@ async fn build_payload_v5(
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    context
-        .blockchain
-        .initiate_payload_build(payload, payload_id)
-        .await;
+    if decoded_il.is_empty() {
+        context
+            .blockchain
+            .initiate_payload_build(payload, payload_id)
+            .await;
+    } else {
+        context
+            .blockchain
+            .initiate_payload_build_with_il(payload, payload_id, decoded_il)
+            .await;
+    }
     Ok(payload_id)
 }
 

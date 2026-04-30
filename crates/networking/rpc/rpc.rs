@@ -524,10 +524,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
-    #[cfg(feature = "eip-7805")] il_config: IlConfig,
 ) -> Result<(), RpcErr> {
-    // TODO: Refactor how filters are handled,
-    // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
     let block_worker_channel = start_block_executor(blockchain.clone());
     let service_context = RpcApiContext {
@@ -548,8 +545,82 @@ pub async fn start_api(
         gas_ceil,
         block_worker_channel,
         #[cfg(feature = "eip-7805")]
+        il_config: IlConfig::default(),
+    };
+    start_api_with_context(
+        http_addr,
+        ws_addr,
+        authrpc_addr,
+        active_filters,
+        service_context,
+    )
+    .await
+}
+
+/// EIP-7805 (FOCIL) variant of [`start_api`]. Accepts an additional
+/// `IlConfig` (sourced from CLI flags `--il-policy`, `--il-per-sender-cap`,
+/// `--il-max-bytes`) and wires it into the `RpcApiContext` so the
+/// `engine_getInclusionListV1` handler can read operator overrides.
+#[cfg(feature = "eip-7805")]
+#[allow(clippy::too_many_arguments)]
+pub async fn start_api_with_il_config(
+    http_addr: SocketAddr,
+    ws_addr: Option<SocketAddr>,
+    authrpc_addr: SocketAddr,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    jwt_secret: Bytes,
+    local_p2p_node: Node,
+    local_node_record: NodeRecord,
+    syncer: SyncManager,
+    peer_handler: PeerHandler,
+    client_version: ClientVersion,
+    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
+    gas_ceil: u64,
+    extra_data: String,
+    il_config: IlConfig,
+) -> Result<(), RpcErr> {
+    let active_filters = Arc::new(Mutex::new(HashMap::new()));
+    let block_worker_channel = start_block_executor(blockchain.clone());
+    let service_context = RpcApiContext {
+        storage,
+        blockchain,
+        active_filters: active_filters.clone(),
+        syncer: Some(Arc::new(syncer)),
+        peer_handler: Some(peer_handler),
+        node_data: NodeData {
+            jwt_secret,
+            local_p2p_node,
+            local_node_record,
+            client_version,
+            extra_data: extra_data.into(),
+        },
+        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
+        log_filter_handler,
+        gas_ceil,
+        block_worker_channel,
         il_config,
     };
+    start_api_with_context(
+        http_addr,
+        ws_addr,
+        authrpc_addr,
+        active_filters,
+        service_context,
+    )
+    .await
+}
+
+/// Shared body for both `start_api` variants — wires HTTP, WS, and authrpc
+/// servers off of an already-constructed `RpcApiContext`. No feature-gated
+/// arguments; `RpcApiContext` carries any conditional state internally.
+async fn start_api_with_context(
+    http_addr: SocketAddr,
+    ws_addr: Option<SocketAddr>,
+    authrpc_addr: SocketAddr,
+    active_filters: ActiveFilters,
+    service_context: RpcApiContext,
+) -> Result<(), RpcErr> {
 
     // Periodically clean up the active filters for the filters endpoints.
     tokio::task::spawn(async move {

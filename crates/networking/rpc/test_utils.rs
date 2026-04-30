@@ -259,8 +259,6 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            #[cfg(feature = "eip-7805")]
-            crate::rpc::IlConfig::default(),
         )
         .await
         .unwrap()
