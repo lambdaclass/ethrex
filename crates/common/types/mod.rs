@@ -9,6 +9,8 @@ mod constants;
 pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
+#[cfg(feature = "eip-7805")]
+pub mod inclusion_list;
 pub mod l2;
 pub mod payload;
 pub mod prover;
@@ -25,6 +27,8 @@ pub use block_access_list::{BalSynthesisItem, synthesize_bal_updates};
 pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;
+#[cfg(feature = "eip-7805")]
+pub use inclusion_list::*;
 pub use l2::*;
 pub use prover::*;
 pub use receipt::*;

@@ -40,6 +40,7 @@ path = "./lib.rs"
 
 [features]
 eip-8025 = ["ethrex-rpc/eip-8025"]
+eip-7805 = ["ethrex-rpc/eip-7805"]
 
 [lints.clippy]
 unwrap_used = "deny"

@@ -95,6 +95,12 @@ pub struct BuildPayloadArgs {
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
+    /// EIP-7805 (FOCIL) inclusion list. When `Some(non_empty)`, the payload
+    /// builder sequences these transactions first per Decision 5 in
+    /// `design.md`. RLP-decoded form (not bytes), populated by the V5
+    /// FCU handler from `PayloadAttributesV5::inclusion_list_transactions`.
+    #[cfg(feature = "eip-7805")]
+    pub inclusion_list_transactions: Option<Vec<ethrex_common::types::Transaction>>,
 }
 
 #[derive(Debug, Error)]
