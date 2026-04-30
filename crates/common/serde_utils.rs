@@ -333,20 +333,37 @@ pub mod u128 {
         where
             D: Deserializer<'de>,
         {
-            let value: Option<serde_json::Value> = Option::deserialize(d)?;
-            match value {
-                Some(serde_json::Value::Number(n)) => n
-                    .to_string()
-                    .parse::<u128>()
-                    .map(Some)
-                    .map_err(|_| D::Error::custom("Failed to deserialize u128 number")),
-                Some(serde_json::Value::String(s)) if !s.is_empty() => {
-                    u128::from_str_radix(s.trim_start_matches("0x"), 16)
-                        .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))
-                        .map(Some)
-                }
-                _ => Ok(None),
+            // Reading the raw JSON token avoids serde_json's default
+            // Number-as-f64 fallback for integers above u64::MAX, which
+            // would otherwise corrupt large decimal values like a
+            // mainnet-style terminalTotalDifficulty before u128 parsing.
+            let raw: Option<Box<serde_json::value::RawValue>> = Option::deserialize(d)?;
+            let Some(raw) = raw else { return Ok(None) };
+            let token = raw.get().trim();
+            if token == "null" {
+                return Ok(None);
             }
+            if let Some(inner) = token.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+                if inner.is_empty() {
+                    return Ok(None);
+                }
+                let radix_input = inner
+                    .strip_prefix("0x")
+                    .or_else(|| inner.strip_prefix("0X"));
+                return match radix_input {
+                    Some(hex) => u128::from_str_radix(hex, 16)
+                        .map(Some)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u128 value")),
+                    None => inner
+                        .parse::<u128>()
+                        .map(Some)
+                        .map_err(|_| D::Error::custom("Failed to deserialize u128 value")),
+                };
+            }
+            token
+                .parse::<u128>()
+                .map(Some)
+                .map_err(|_| D::Error::custom("Failed to deserialize u128 number"))
         }
     }
 }
@@ -712,5 +729,65 @@ pub mod block_access_list {
                 .map(|bytes| format!("0x{}", hex::encode(bytes)));
             Option::<String>::serialize(&bal, serializer)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+
+    #[derive(Deserialize, Debug, PartialEq, Eq)]
+    struct Wrapper {
+        #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
+        ttd: Option<u128>,
+    }
+
+    fn parse(json: &str) -> Option<u128> {
+        serde_json::from_str::<Wrapper>(json).expect("failed to deserialize").ttd
+    }
+
+    #[test]
+    fn u128_hex_str_opt_accepts_decimal_above_u64_max() {
+        // mainnet's terminalTotalDifficulty: 58_750_000_000_000_000_000_000 > u64::MAX
+        let mainnet_ttd: u128 = 58_750_000_000_000_000_000_000;
+        assert_eq!(
+            parse(r#"{"ttd": 58750000000000000000000}"#),
+            Some(mainnet_ttd),
+        );
+    }
+
+    #[test]
+    fn u128_hex_str_opt_accepts_decimal_within_u64() {
+        assert_eq!(parse(r#"{"ttd": 0}"#), Some(0));
+        assert_eq!(parse(r#"{"ttd": 131072}"#), Some(131072));
+    }
+
+    #[test]
+    fn u128_hex_str_opt_accepts_hex_string() {
+        let mainnet_ttd: u128 = 58_750_000_000_000_000_000_000;
+        assert_eq!(
+            parse(r#"{"ttd": "0xc70d808a128d7380000"}"#),
+            Some(mainnet_ttd),
+        );
+        assert_eq!(parse(r#"{"ttd": "0x0"}"#), Some(0));
+    }
+
+    #[test]
+    fn u128_hex_str_opt_accepts_decimal_string() {
+        assert_eq!(parse(r#"{"ttd": "131072"}"#), Some(131072));
+    }
+
+    #[test]
+    fn u128_hex_str_opt_handles_null_and_missing_and_empty() {
+        assert_eq!(parse(r#"{"ttd": null}"#), None);
+        assert_eq!(parse(r#"{}"#), None);
+        assert_eq!(parse(r#"{"ttd": ""}"#), None);
+    }
+
+    #[test]
+    fn u128_hex_str_opt_rejects_invalid_input() {
+        assert!(serde_json::from_str::<Wrapper>(r#"{"ttd": "not a number"}"#).is_err());
+        assert!(serde_json::from_str::<Wrapper>(r#"{"ttd": "0xZZZ"}"#).is_err());
+        assert!(serde_json::from_str::<Wrapper>(r#"{"ttd": -1}"#).is_err());
     }
 }
