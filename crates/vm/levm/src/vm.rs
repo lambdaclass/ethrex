@@ -722,6 +722,14 @@ impl<'a> VM<'a> {
                     depth_before,
                     self.substate.refunded_gas,
                 );
+                // Diagnostic: if depth dropped, log the depth change so we can
+                // see frame transitions in the trace output.
+                if depth_after != depth_before {
+                    eprintln!(
+                        "[trace] depth {}->{} after op {:#x} pc={}",
+                        depth_before, depth_after, opcode, pc_before
+                    );
+                }
             }
 
             let result = match op_result {
