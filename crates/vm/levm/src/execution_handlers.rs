@@ -1,7 +1,7 @@
 use crate::{
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxResult, VMError},
-    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD, COST_PER_STATE_BYTE},
+    gas_cost::{CODE_DEPOSIT_COST, CODE_DEPOSIT_REGULAR_COST_PER_WORD},
     utils::create_eth_transfer_log,
     vm::VM,
 };
@@ -184,7 +184,7 @@ impl<'a> VM<'a> {
                 .checked_mul(CODE_DEPOSIT_REGULAR_COST_PER_WORD)
                 .ok_or(InternalError::Overflow)?;
             let state = code_length
-                .checked_mul(COST_PER_STATE_BYTE)
+                .checked_mul(self.cost_per_state_byte)
                 .ok_or(InternalError::Overflow)?;
 
             // Regular gas (keccak hash cost) before state gas

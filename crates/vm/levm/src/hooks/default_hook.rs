@@ -2,7 +2,9 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{
+        self, STANDARD_TOKEN_COST, floor_tokens_in_access_list, total_cost_floor_per_token,
+    },
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -148,11 +150,11 @@ impl Hook for DefaultHook {
         // intrinsic gas (no execution gas was consumed).
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // Block accounting: gas_used = intrinsic_regular + intrinsic_state
-            // state_gas_used already = intrinsic_state (no execution state gas)
-            let state_gas = vm
-                .state_gas_used
-                .saturating_sub(vm.intrinsic_state_gas_refund);
+            // Block accounting: gas_used = intrinsic_regular + intrinsic_state.
+            // state_gas_used already = intrinsic_state (no execution state gas).
+            // Per EELS, `tx_env.intrinsic_state_gas` is immutable — any auth refund
+            // goes to the reservoir, not to block-accounted state_gas.
+            let state_gas = vm.state_gas_used;
             let floor = vm.get_min_gas_used()?;
             // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
             // = total_intrinsic_gas consumed so far, minus state portion
@@ -175,6 +177,14 @@ impl Hook for DefaultHook {
             pay_coinbase(vm, gas_limit)?;
             // Return 0 gas to sender (they lose everything)
             return Ok(());
+        }
+
+        // EIP-8037 PR #2707: on tx success, refund state gas for same-tx
+        // created accounts that were SELFDESTRUCTed — NEW_ACCOUNT + SSTORE
+        // state gas for created slots + code_length * cpsb. Must run BEFORE
+        // the reservoir subtraction so sender gets the refund.
+        if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_success() {
+            apply_same_tx_selfdestruct_state_refund(vm)?;
         }
 
         // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
@@ -228,7 +238,13 @@ pub fn refund_sender(
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     gas_spent: u64,
-    gas_used_pre_refund: u64,
+    // Historically used pre-Amsterdam for receipt + user refund; Amsterdam+
+    // computes block gas dimensionally from VM fields and the user pays
+    // `gas_spent`, so this parameter is currently unused in both branches.
+    // Kept in the signature for call-site symmetry with pre-Amsterdam usage
+    // and future reintroduction; rename without the `_` prefix once it's
+    // read again.
+    _gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;
 
@@ -238,18 +254,29 @@ pub fn refund_sender(
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
-        // Apply intrinsic state gas refund from existing authorities (EIP-7702/EIP-8037).
-        // This matches EELS where set_delegation permanently reduces tx_env.intrinsic_state_gas
-        // for existing authorities, regardless of execution outcome.
-        let state_gas = vm
-            .state_gas_used
-            .saturating_sub(vm.intrinsic_state_gas_refund);
-        // State gas from reverted children is added back to the reservoir
-        // (matching EELS incorporate_child_on_error), so gas_used_pre_refund
-        // already excludes it after the reservoir subtraction at line 184.
-        // EIP-8037 (bal@v5.4.0): regular_gas = total gas - state gas.
-        // Collision-burned gas counts as regular gas for 2D block accounting.
-        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
+        // EELS block accounting per fork.py:
+        //   tx_regular_gas = intrinsic_regular + regular_gas_used
+        //   tx_state_gas   = intrinsic_state   + state_gas_used (net after refunds)
+        // Reservoir activity (auth refunds, SSTORE 0→N→0 credits) is NEUTRAL to
+        // block accounting — it only affects sender refund. To derive tx_regular_gas
+        // from our raw gas consumption, subtract intrinsic_state, the initial
+        // reservoir (pre-consumed from gas_remaining in add_intrinsic_gas), and any
+        // state-gas spills that reduced gas_remaining (EELS charge_state_gas spills
+        // don't count as regular_gas_used).
+        let execution_state_gas_refund = vm
+            .state_gas_refund_absorbed
+            .saturating_add(vm.state_gas_refund_pending);
+        let state_gas = vm.state_gas_used.saturating_sub(execution_state_gas_refund);
+        // Compute raw consumption from scratch (gas_limit minus gas_remaining)
+        // to avoid interference from any reservoir-current subtraction baked
+        // into the caller's pre-refund number.
+        #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
+        let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
+        let raw_consumed = vm.env.gas_limit.saturating_sub(gas_remaining);
+        let regular_gas = raw_consumed
+            .saturating_sub(vm.intrinsic_state_gas_charged)
+            .saturating_sub(vm.state_gas_reservoir_initial)
+            .saturating_sub(vm.state_gas_spill);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)
@@ -333,6 +360,77 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     Ok(())
 }
 
+/// EIP-8037 PR #2707: same-tx SELFDESTRUCT refunds state gas to the reservoir.
+///
+/// For each SELFDESTRUCTed address that was CREATEd in the same transaction, refund:
+///   - STATE_BYTES_PER_NEW_ACCOUNT * cpsb (account creation)
+///   - STATE_BYTES_PER_STORAGE_SET * cpsb per non-zero storage slot written in this tx
+///   - code_length * cpsb (the deployed code)
+///
+/// Refund is clamped to the net execution state_gas_used (gross minus already-absorbed
+/// and pending credits) so it cannot go negative. Adds to both the reservoir (so the
+/// sender gets it back via the reservoir subtraction in `finalize_execution`) and to
+/// `state_gas_refund_absorbed` (so block-accounted `state_gas` is reduced accordingly).
+pub fn apply_same_tx_selfdestruct_state_refund(vm: &mut VM<'_>) -> Result<(), VMError> {
+    let cpsb = vm.cost_per_state_byte;
+    let new_account_bytes = crate::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT;
+    let storage_set_bytes = crate::gas_cost::STATE_BYTES_PER_STORAGE_SET;
+
+    // Collect (address, refund_amount) first to avoid borrow conflicts with db access.
+    let mut refunds: Vec<u64> = Vec::new();
+    let selfdestruct_addrs: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
+    for addr in &selfdestruct_addrs {
+        if !vm.substate.is_account_created(addr) {
+            continue;
+        }
+        let account = vm.db.get_account(*addr)?;
+        let created_slots: u64 = account
+            .storage
+            .values()
+            .filter(|v| !v.is_zero())
+            .count()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let code_hash = account.info.code_hash;
+        let code = vm.db.get_code(code_hash)?.clone();
+        let code_len: u64 = u64::try_from(code.bytecode.len()).unwrap_or(u64::MAX);
+
+        let per_byte: u64 = new_account_bytes
+            .saturating_add(created_slots.saturating_mul(storage_set_bytes))
+            .saturating_add(code_len);
+        let refund = per_byte.saturating_mul(cpsb);
+        refunds.push(refund);
+    }
+
+    for refund in refunds {
+        // EELS fork.py:1100 clamps against `tx_output.state_gas_used`, which is the
+        // execution-only accumulator (intrinsic lives separately in tx_env.intrinsic_state_gas).
+        // Our `vm.state_gas_used` lumps intrinsic + execution, so subtract the intrinsic
+        // portion here — otherwise a CREATE tx whose initcode SELFDESTRUCTs would refund
+        // its own intrinsic NEW_ACCOUNT charge.
+        let execution_state_gas = vm
+            .state_gas_used
+            .saturating_sub(vm.intrinsic_state_gas_charged);
+        let net_state_gas = execution_state_gas
+            .saturating_sub(vm.state_gas_refund_absorbed)
+            .saturating_sub(vm.state_gas_refund_pending);
+        let clamped = refund.min(net_state_gas);
+        if clamped == 0 {
+            continue;
+        }
+        vm.state_gas_reservoir = vm
+            .state_gas_reservoir
+            .checked_add(clamped)
+            .ok_or(InternalError::Overflow)?;
+        vm.state_gas_refund_absorbed = vm
+            .state_gas_refund_absorbed
+            .checked_add(clamped)
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    Ok(())
+}
+
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
     // EIP-7708: Emit Burn logs for accounts with non-zero balance marked for deletion
@@ -391,15 +489,39 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
-    // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
+    let fork = vm.env.config.fork;
 
-    // same as calculated in gas_used()
-    let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
+    // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
+    // floor_tokens_in_calldata = (zero_bytes + nonzero_bytes) * STANDARD_TOKEN_COST
+    // Pre-Amsterdam uses the weighted EIP-7623 formula: (nonzero * 16 + zero * 4) / 4
+    let mut tokens_in_calldata: u64 = if fork >= Fork::Amsterdam {
+        // EIP-7976: floor tokens = total_bytes * STANDARD_TOKEN_COST (unweighted).
+        let total_bytes: u64 = calldata
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        total_bytes
+            .checked_mul(STANDARD_TOKEN_COST)
+            .ok_or(InternalError::Overflow)?
+    } else {
+        // Pre-Amsterdam: weighted EIP-7623 token count.
+        gas_cost::tx_calldata(&calldata)? / STANDARD_TOKEN_COST
+    };
 
-    // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+    // EIP-7981 (Amsterdam+): access-list data bytes fold into the floor-token count.
+    // floor_tokens_in_access_list = access_list_bytes * STANDARD_TOKEN_COST
+    // where access_list_bytes = 20 * address_count + 32 * storage_key_count.
+    if fork >= Fork::Amsterdam {
+        let al_floor_tokens = floor_tokens_in_access_list(vm.tx.access_list());
+        tokens_in_calldata = tokens_in_calldata
+            .checked_add(al_floor_tokens)
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    // floor_cost_by_tokens = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
+    // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
     let floor_cost_by_tokens = tokens_in_calldata
-        .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+        .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
@@ -567,6 +689,12 @@ pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMEr
 }
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
+    // System contract calls (EIP-2935, EIP-4788, EIP-7002, EIP-7251) bypass the
+    // block-level gas-allowance check — their 30M gas budget is a protocol rule
+    // independent of `block_gas_limit`.
+    if vm.env.is_system_call {
+        return Ok(());
+    }
     if vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded {
             block_gas_limit: vm.env.block_gas_limit,

@@ -117,8 +117,8 @@ pub fn validate_requests_hash(
 
 /// Helper to validate that all indices in an iterator are within bounds.
 fn validate_bal_indices(
-    indices: impl Iterator<Item = u16>,
-    max_valid_index: u16,
+    indices: impl Iterator<Item = u32>,
+    max_valid_index: u32,
 ) -> Result<(), InvalidBlockError> {
     for index in indices {
         if index > max_valid_index {
@@ -139,8 +139,7 @@ pub fn validate_header_bal_indices(
     bal: &crate::types::block_access_list::BlockAccessList,
     transaction_count: usize,
 ) -> Result<(), InvalidBlockError> {
-    #[allow(clippy::cast_possible_truncation)]
-    let max_valid_index = transaction_count as u16 + 1;
+    let max_valid_index = u32::try_from(transaction_count + 1).unwrap_or(u32::MAX);
 
     for account in bal.accounts() {
         validate_bal_indices(
@@ -184,8 +183,7 @@ pub fn validate_block_access_list_hash(
 
     // Per EIP-7928: "Invalidate block if access list...contains indices exceeding len(transactions) + 1"
     // Index semantics: 0=pre-exec, 1..n=tx indices, n+1=post-exec (withdrawals)
-    #[allow(clippy::cast_possible_truncation)]
-    let max_valid_index = transaction_count as u16 + 1;
+    let max_valid_index = u32::try_from(transaction_count + 1).unwrap_or(u32::MAX);
 
     // Validate all indices and compute item count in a single pass over the BAL.
     let mut bal_items: u64 = 0;

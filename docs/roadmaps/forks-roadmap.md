@@ -33,12 +33,12 @@
 | **2780** | Reduce Intrinsic Transaction Gas | 🔴 Not implemented (21000 → 4500) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1940) | 🔴 | 🔴 | CFI |
 | **7904** | General Repricing | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1879) | ⚠️ PR #9619 (Draft) | 🔴 | CFI |
 | **7954** | Increase Max Contract Size | 🔴 Not implemented (24KiB → 32KiB) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2028) | ⚠️ PR #8760 (Draft) | 🔴 | CFI |
-| **7976** | Increase Calldata Floor Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | 🔴 | 🔴 | CFI |
-| **7981** | Increase Access List Cost | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1943) | 🔴 | 🔴 | CFI |
-| **8037** | State Creation Gas Cost Increase | ✅ Implemented ([#6271] merged, PR [#6216] open) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | ✅ bal@v5.4.0 | ⚠️ PR [#6216] | CFI |
+| **7976** | Increase Calldata Floor Cost | ✅ Implemented (PR #6518, bal@v5.7.0) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1942) | 🔴 | 🔴 | CFI |
+| **7981** | Increase Access List Cost | ✅ Implemented (PR #6518, bal@v5.7.0) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1943) | 🔴 | 🔴 | CFI |
+| **8037** | State Creation Gas Cost Increase | ✅ Implemented (dynamic cpsb, clamp-and-spill, 2D inclusion, same-tx SELFDESTRUCT refund — PR #6518 on bal@v5.7.0) · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/2040) | ✅ bal@v5.4.0 | ⚠️ PR [#6216] | CFI |
 | **8038** | State-Access Gas Cost Update | 🔴 Not implemented · [exec-specs tracking](https://github.com/ethereum/execution-specs/issues/1941) | 🔴 | 🔴 | CFI |
 
-> **Priority note:** All core devnet EIPs are merged. EIP-8037 fully implemented with reservoir model, nested revert fixes, and CREATE collision escrow. BAL optimizations shipped: parallel execution ([#6233]), batched reads + parallel state root ([#6227]). bal-devnet-3 tracking PR [#6216] open with bal@v5.4.0 fixtures, Amsterdam consume-engine hive tests in CI. **Up next:** merge PR [#6216], EIP-7954 ([#6214]). Remaining gas repricing EIPs are **low priority** — no other client has started them. Monitor CFI decisions at ACDE calls.
+> **Priority note:** All core devnet EIPs are merged. EIP-8037 fully implemented with reservoir model, clamp-and-spill refunds, 2D inclusion check, and same-tx SELFDESTRUCT refund. EIP-7976 + EIP-7981 shipped with bal-devnet-4 rollup. BAL optimizations shipped: parallel execution ([#6233]), batched reads + parallel state root ([#6227]), shadow-recorder missing-entry detection (PR #6518). bal-devnet-4 tracking PR #6518 open with bal@v5.7.0 fixtures, Amsterdam consume-engine hive 1342/1342 passing. **Up next:** merge PR #6518, EIP-7954 ([#6214]). Remaining gas repricing EIPs are **low priority** — no other client has started them. Monitor CFI decisions at ACDE calls.
 
 ### Other Amsterdam EIPs
 

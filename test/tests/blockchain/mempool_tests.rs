@@ -97,6 +97,57 @@ fn create_transaction_intrinsic_gas() {
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
+/// EIP-8037 / bal-devnet-4: Amsterdam CREATE tx intrinsic must match the VM
+/// charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular portion
+/// drops to `TX_GAS_COST + REGULAR_GAS_CREATE = 30000` and a state portion
+/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`) is folded in. Mempool admission
+/// must return the total so txs whose `gas_limit` is below the VM intrinsic
+/// are rejected before they enter the pool, and txs above it aren't
+/// spuriously rejected.
+#[test]
+fn amsterdam_create_intrinsic_matches_vm_dimensions() {
+    use ethrex_levm::gas_cost::{
+        REGULAR_GAS_CREATE, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
+    };
+
+    let (mut config, header) = build_basic_config_and_header(true, true);
+    // Activate Amsterdam at genesis. Intermediate forks must also be active
+    // so `config.fork(timestamp)` returns Amsterdam, not an earlier variant.
+    config.cancun_time = Some(0);
+    config.prague_time = Some(0);
+    config.osaka_time = Some(0);
+    config.bpo1_time = Some(0);
+    config.bpo2_time = Some(0);
+    config.amsterdam_time = Some(0);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let cpsb = cost_per_state_byte(header.gas_limit);
+    let expected = TX_GAS_COST + REGULAR_GAS_CREATE + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    assert_eq!(
+        intrinsic_gas, expected,
+        "Amsterdam CREATE intrinsic must be TX_BASE + REGULAR_GAS_CREATE + \
+         STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+    );
+    // Guard against regression to the legacy 53000 constant.
+    assert_ne!(
+        intrinsic_gas, TX_CREATE_GAS_COST,
+        "Amsterdam CREATE must NOT use legacy TX_CREATE_GAS_COST"
+    );
+}
+
 #[test]
 fn transaction_intrinsic_data_gas_pre_istanbul() {
     let (config, header) = build_basic_config_and_header(false, false);

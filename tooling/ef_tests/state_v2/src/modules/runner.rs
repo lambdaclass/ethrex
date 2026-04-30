@@ -150,6 +150,7 @@ pub fn get_vm_env_for_test(
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        is_system_call: false,
     })
 }
 
