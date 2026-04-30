@@ -199,18 +199,27 @@ impl Hook for DefaultHook {
             let to_subtract = if ctx_result.is_success() {
                 vm.state_gas_reservoir
             } else {
-                // On top-level failure, refund only the execution-time draws (delta
-                // between post-setup snapshot and current). Intrinsic-time draws
-                // (auth tuples, CREATE-tx target charge) stay charged to the user.
-                let reservoir_drawn = vm
-                    .state_gas_reservoir_post_setup
-                    .saturating_sub(vm.state_gas_reservoir);
-                let spill_drawn = vm
-                    .state_gas_spill
-                    .saturating_sub(vm.state_gas_spill_post_setup);
-                vm.state_gas_reservoir
-                    .saturating_add(reservoir_drawn)
-                    .saturating_add(spill_drawn)
+                // EIP-8037 v8037.0.1 incorporate_tx_on_error: per EELS,
+                // `tx_output.state_gas_reservoir += max(0, state_gas_used);
+                //  state_gas_used = 0` then `total_remaining = gas_left + reservoir`
+                // and `tx_gas_used = tx.gas - total_remaining`. Equivalently:
+                // refund the user for the unspent reservoir PLUS the execution-time
+                // state-gas that was successfully propagated to the top frame
+                // (state_gas_used). State-gas drawn by sub-frames whose state changes
+                // were reverted (incorporate_child_on_error doesn't propagate
+                // state_gas_used) stays charged — those draws are reflected in
+                // raw_consumed but not in top.state_gas_used.
+                #[expect(clippy::as_conversions, reason = "max(0) keeps in u64 range")]
+                let state_gas_used_top = vm.current_call_frame.state_gas_used.max(0) as u64;
+                let intrinsic_state_gas_seed = vm
+                    .state_diff_intrinsic_seed
+                    .bytes()
+                    .saturating_mul(vm.cost_per_state_byte);
+                // Don't refund the intrinsic-state portion (auth tuples, CREATE-tx
+                // target charge) — that's already paid by the user as part of intrinsic.
+                let execution_state_gas_used = state_gas_used_top
+                    .saturating_sub(intrinsic_state_gas_seed);
+                vm.state_gas_reservoir.saturating_add(execution_state_gas_used)
             };
             ctx_result.gas_used = ctx_result.gas_used.saturating_sub(to_subtract);
         }
