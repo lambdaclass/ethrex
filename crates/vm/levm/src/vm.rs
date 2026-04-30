@@ -473,6 +473,14 @@ pub struct VM<'a> {
     /// credit`) stays consistent after the spill side is split between "still outstanding"
     /// and "already cancelled by local credit". Restored from snapshot on child revert.
     pub state_gas_credit_against_drain: u64,
+    /// EIP-8037 (PR #2689): Cumulative state-gas amount reclassified to regular_gas_used
+    /// because of an ExceptionalHalt at any frame. On halt, the spec wipes the frame's
+    /// state-gas usage and adds `state_gas_used + state_gas_left - reservoir_at_entry`
+    /// (the un-cancelled spill) to `regular_gas_used`. This counter accumulates that
+    /// reclassified amount across all halts in the tx, and is added to the regular-gas
+    /// dimension at finalization. Pre-PR-2689 behavior gave the spill back to the
+    /// reservoir; under PR #2689 it becomes regular gas instead.
+    pub regular_gas_reclassified: u64,
     /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
@@ -493,6 +501,13 @@ pub struct VM<'a> {
     /// is charged. On top-level tx failure, only this portion stays charged; the execution
     /// portion (state_gas_used - intrinsic_state_gas_charged) is wiped back to the reservoir.
     pub intrinsic_state_gas_charged: u64,
+    /// EIP-8037 (PR #2689): the `state_gas_reservoir` value at the moment the top-level
+    /// `process_message_call` begins — i.e. AFTER intrinsic gas, AFTER any pre-execution
+    /// adjustments (EIP-7702 auth refunds add to the reservoir before execution starts).
+    /// This is what the spec uses as `message.state_gas_reservoir` for the top-level frame
+    /// when applying the halt rule:
+    ///     excess = (state_gas_used + state_gas_left) - reservoir_at_entry
+    pub state_gas_reservoir_at_top_message_entry: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -551,6 +566,7 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             state_gas_spill_outstanding: 0,
             state_gas_credit_against_drain: 0,
+            regular_gas_reclassified: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
             state_gas_storage_set,
@@ -558,6 +574,7 @@ impl<'a> VM<'a> {
             state_gas_refund_pending: 0,
             state_gas_refund_absorbed: 0,
             intrinsic_state_gas_charged: 0,
+            state_gas_reservoir_at_top_message_entry: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -748,6 +765,12 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
+        // EIP-8037 (PR #2689): snapshot the reservoir AFTER prepare_execution
+        // (intrinsic gas charged + EIP-7702 auth refunds applied). This is the
+        // "state_gas_reservoir" passed to the top-level message in EELS, used
+        // by the halt rule to compute the regular-gas reclassification.
+        self.state_gas_reservoir_at_top_message_entry = self.state_gas_reservoir;
+
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
@@ -921,10 +944,27 @@ impl<'a> VM<'a> {
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
         // EIP-8037 (PR #2689): On top-level tx failure (revert, exceptional halt, or OOG),
-        // the execution portion of state gas must be wiped — only intrinsic state gas stays
-        // charged. We apply the adjustment before hooks so that refund_sender (in the hook)
-        // computes the correct 2D state_gas for ctx_result.gas_used.
-        // Collision is handled separately in the hook via a special accounting path.
+        // the spec applies the per-frame halt rule to the top-level frame:
+        //     total_state = state_gas_used + state_gas_left
+        //     reservoir   = message.state_gas_reservoir   # at frame entry
+        //     if total_state > reservoir:
+        //         regular_gas_used += total_state - reservoir
+        //     state_gas_left  = reservoir
+        //     state_gas_used  = 0
+        // For the top-level frame, "reservoir at entry" is `state_gas_reservoir_initial`
+        // (the reservoir set up in `add_intrinsic_gas` after intrinsic gas was charged).
+        // The "state_gas_used" at halt is gross usage net of refunds already absorbed;
+        // the "state_gas_left" is the current reservoir value. After halt, both are
+        // wiped: state_gas_used → 0 (effectively, by absorbing all of it as refund) and
+        // state_gas_reservoir → reservoir_initial. The excess is reclassified into
+        // `regular_gas_reclassified`, picked up by `refund_sender` in the regular-gas
+        // dimension. Collision is handled separately in the hook.
+        // EIP-8037 (PR #2689): On top-level tx failure (revert, exceptional halt, or OOG),
+        // wipe the EXECUTION portion of state-gas (intrinsic state-gas STAYS charged) so
+        // the block sees only `intrinsic_state_gas_charged` in the state dimension. Then,
+        // for ExceptionalHalt only (not REVERT opcode), reclassify the un-cancelled
+        // spill (`state_gas_spill_outstanding`) to `regular_gas_used` and restore the
+        // reservoir to its entry value. Collision is handled separately in the hook.
         if self.env.config.fork >= Fork::Amsterdam
             && !ctx_result.is_success()
             && !ctx_result.is_collision()
@@ -947,10 +987,29 @@ impl<'a> VM<'a> {
             self.state_gas_refund_absorbed = self
                 .state_gas_refund_absorbed
                 .saturating_add(execution_portion);
-            // EELS PR #2689: `state_gas_left += state_gas_used`. Refill reservoir with the
-            // remaining execution portion so the sender gets it back via the reservoir
-            // subtraction in refund_sender.
-            self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(execution_portion);
+
+            if ctx_result.is_revert_opcode() {
+                // REVERT opcode: pre-PR-2689 behaviour. Refill reservoir with the
+                // execution portion (the user gets the leftover state-gas back via the
+                // reservoir subtraction in refund_sender). No regular-gas reclassification.
+                self.state_gas_reservoir =
+                    self.state_gas_reservoir.saturating_add(execution_portion);
+            } else {
+                // ExceptionalHalt (PR #2689): apply the spec halt rule to the top-level
+                // message. The "reservoir at entry" is the value at the start of
+                // execution (= AFTER intrinsic + auth refunds), captured in
+                // `state_gas_reservoir_at_top_message_entry`. Reclassify any
+                // outstanding spill plus any reservoir surplus over that entry
+                // value, then reset the reservoir to its entry value.
+                let entry = self.state_gas_reservoir_at_top_message_entry;
+                let reservoir_surplus = self.state_gas_reservoir.saturating_sub(entry);
+                let reclassify = self
+                    .state_gas_spill_outstanding
+                    .saturating_add(reservoir_surplus);
+                self.regular_gas_reclassified =
+                    self.regular_gas_reclassified.saturating_add(reclassify);
+                self.state_gas_reservoir = entry;
+            }
         }
 
         for hook in self.hooks.clone() {
