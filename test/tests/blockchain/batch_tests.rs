@@ -80,6 +80,8 @@ async fn build_block(store: &Store, blockchain: &Blockchain, parent_header: &Blo
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        #[cfg(feature = "eip-7805")]
+        inclusion_list_transactions: None,
     };
 
     let block = create_payload(&args, store, Bytes::new()).unwrap();

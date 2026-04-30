@@ -210,6 +210,9 @@ pub enum PayloadValidationStatus {
     Invalid,
     Syncing,
     Accepted,
+    #[cfg(feature = "eip-7805")]
+    #[serde(rename = "INCLUSION_LIST_UNSATISFIED")]
+    InclusionListUnsatisfied,
 }
 
 impl PayloadStatus {
@@ -299,6 +302,15 @@ mod optional_hex_bytes {
                 .map(Some)
                 .map_err(|error| D::Error::custom(error.to_string())),
             _ => Ok(None),
+        }
+    }
+
+    #[cfg(feature = "eip-7805")]
+    pub fn inclusion_list_unsatisfied() -> Self {
+        PayloadStatus {
+            status: PayloadValidationStatus::InclusionListUnsatisfied,
+            latest_valid_hash: None,
+            validation_error: None,
         }
     }
 }
@@ -398,5 +410,25 @@ mod test {
         let json = serde_json::to_value(status).unwrap();
 
         assert_eq!(json["witness"], "0x1234");
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[test]
+    fn inclusion_list_unsatisfied_serializes_to_spec_string() {
+        let status = PayloadValidationStatus::InclusionListUnsatisfied;
+        let value = serde_json::to_value(&status).expect("serialize variant");
+        assert_eq!(value, serde_json::json!("INCLUSION_LIST_UNSATISFIED"));
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[test]
+    fn inclusion_list_unsatisfied_payload_status_matches_spec() {
+        let payload_status = PayloadStatus::inclusion_list_unsatisfied();
+        assert_eq!(
+            payload_status.status,
+            PayloadValidationStatus::InclusionListUnsatisfied
+        );
+        assert!(payload_status.latest_valid_hash.is_none());
+        assert!(payload_status.validation_error.is_none());
     }
 }

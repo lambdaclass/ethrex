@@ -47,6 +47,7 @@ c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
 eip-8025 = ["ethrex-common/eip-8025"]
 testing = []
+eip-7805 = ["ethrex-common/eip-7805"]
 
 [lints.clippy]
 unwrap_used = "deny"

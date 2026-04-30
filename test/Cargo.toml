@@ -13,6 +13,7 @@ l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
 rayon = ["ethrex-levm/rayon"]
 eip-8025 = ["ethrex-levm/eip-8025"]
+eip-7805 = ["ethrex-blockchain/eip-7805", "ethrex-common/eip-7805"]
 
 [dependencies]
 ethrex-common.workspace = true
