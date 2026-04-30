@@ -2167,14 +2167,40 @@ impl Blockchain {
 
         let chain_config: ChainConfig = self.storage.get_chain_config();
 
-        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
-        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+        // Cache block hashes for the full batch so we can access them during
+        // execution without having to store the blocks beforehand.
+        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
+            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let parent_header = self
             .storage
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
+
+        // Walk the parent chain to cache the last 256 block hashes so that
+        // BLOCKHASH can resolve references to blocks from previous batches
+        // (they may not be canonical yet during import).
+        block_hash_cache
+            .entry(parent_header.number)
+            .or_insert_with(|| parent_header.hash());
+        let mut hash = parent_header.parent_hash;
+        let mut number = parent_header.number.saturating_sub(1);
+        let lookback = first_block_header.number.saturating_sub(256);
+        while number > lookback {
+            block_hash_cache.entry(number).or_insert(hash);
+            match self.storage.get_block_header_by_hash(hash) {
+                Ok(Some(header)) => {
+                    hash = header.parent_hash;
+                    number = number.saturating_sub(1);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
+                    break;
+                }
+            }
+        }
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,

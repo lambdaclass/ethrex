@@ -247,6 +247,159 @@ async fn batch_selfdestruct_created_account_no_spurious_state() {
     );
 }
 
+/// Regression test for cross-batch BLOCKHASH resolution during import.
+///
+/// When importing blocks in batches, a block in batch N+1 may execute
+/// BLOCKHASH for a block that was in batch N. Without the fix, the hash
+/// wouldn't be found because batch N's blocks aren't canonical yet and
+/// the block_hash_cache only covers the current batch.
+///
+/// This test builds 3 blocks:
+/// - Block 1: deploy a contract that stores `blockhash(number - 1)` in storage
+/// - Block 2: empty (just advances the chain)
+/// - Block 3: call the contract (reads blockhash of block 2)
+///
+/// Then executes blocks 1-2 in one batch, and block 3 in a second batch.
+/// Block 3 needs `blockhash(2)` which is only in the first batch.
+#[tokio::test]
+async fn batch_cross_batch_blockhash_regression() {
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+
+    let (store_a, chain_id) = setup_store(sender).await;
+    let blockchain_a = Blockchain::default_with_store(store_a.clone());
+    let genesis_header = store_a.get_block_header(0).unwrap().unwrap();
+
+    // Deploy contract: BLOCKHASH(NUMBER - 1) -> SSTORE(0)
+    // Bytecode: NUMBER PUSH1 1 SWAP1 SUB BLOCKHASH PUSH1 0 SSTORE STOP
+    //           43     60 01 90    03  40       60 00 55     00
+    let deploy_code = {
+        let runtime = vec![0x43, 0x60, 0x01, 0x90, 0x03, 0x40, 0x60, 0x00, 0x55, 0x00];
+        let rt_len = runtime.len();
+        // Init code: CODECOPY runtime into memory, then RETURN it.
+        // PUSH1 rt_len  PUSH1 init_len  PUSH1 0  CODECOPY  PUSH1 rt_len  PUSH1 0  RETURN
+        let init_len = 12;
+        let mut init = Vec::new();
+        init.push(0x60);
+        init.push(rt_len as u8); // PUSH1 rt_len
+        init.push(0x60);
+        init.push(init_len as u8); // PUSH1 init_code_len (offset of runtime in full code)
+        init.push(0x60);
+        init.push(0x00); // PUSH1 0 (dest offset in memory)
+        init.push(0x39); // CODECOPY
+        init.push(0x60);
+        init.push(rt_len as u8); // PUSH1 rt_len
+        init.push(0x60);
+        init.push(0x00); // PUSH1 0
+        init.push(0xF3); // RETURN
+        assert_eq!(init.len(), init_len as usize);
+        init.extend_from_slice(&runtime);
+        Bytes::from(init)
+    };
+
+    let contract_address = calculate_create_address(sender, 0);
+
+    // tx1: deploy the contract
+    let mut tx1 = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: deploy_code,
+        ..Default::default()
+    });
+    tx1.sign_inplace(&signer).await.unwrap();
+
+    blockchain_a
+        .add_transaction_to_pool(tx1)
+        .await
+        .expect("tx1 should enter pool");
+
+    // Build block 1 (deploys the contract)
+    let block1 = build_block(&store_a, &blockchain_a, &genesis_header).await;
+    assert!(
+        !block1.body.transactions.is_empty(),
+        "block1 must include tx"
+    );
+    blockchain_a
+        .add_block(block1.clone())
+        .expect("block1 valid");
+    store_a
+        .forkchoice_update(vec![], 1, block1.hash(), None, None)
+        .await
+        .unwrap();
+    blockchain_a
+        .remove_block_transactions_from_pool(&block1)
+        .unwrap();
+
+    // Build block 2 (empty, just advances the chain)
+    let block2 = build_block(&store_a, &blockchain_a, &block1.header).await;
+    blockchain_a
+        .add_block(block2.clone())
+        .expect("block2 valid");
+    store_a
+        .forkchoice_update(vec![], 2, block2.hash(), None, None)
+        .await
+        .unwrap();
+
+    // tx3: call the contract (triggers BLOCKHASH for block 2)
+    let mut tx3 = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce: 1,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: TEST_GAS_LIMIT,
+        to: TxKind::Call(contract_address),
+        value: U256::zero(),
+        data: Bytes::new(),
+        ..Default::default()
+    });
+    tx3.sign_inplace(&signer).await.unwrap();
+
+    blockchain_a
+        .add_transaction_to_pool(tx3)
+        .await
+        .expect("tx3 should enter pool");
+
+    // Build block 3 (calls contract, needs blockhash of block 2)
+    let block3 = build_block(&store_a, &blockchain_a, &block2.header).await;
+    assert!(
+        !block3.body.transactions.is_empty(),
+        "block3 must include tx"
+    );
+    blockchain_a
+        .add_block(block3.clone())
+        .expect("block3 valid");
+
+    // Now re-execute on a fresh store in TWO batches:
+    // Batch 1: blocks 1-2, Batch 2: block 3
+    // Block 3 needs blockhash(2) which is only in batch 1.
+    let (store_b, _) = setup_store(sender).await;
+    let blockchain_b = Blockchain::default_with_store(store_b);
+
+    let result1 = blockchain_b
+        .add_blocks_in_batch(vec![block1, block2], CancellationToken::new())
+        .await;
+    assert!(
+        result1.is_ok(),
+        "batch 1 should succeed — got error: {:?}",
+        result1.err()
+    );
+
+    let result2 = blockchain_b
+        .add_blocks_in_batch(vec![block3], CancellationToken::new())
+        .await;
+    assert!(
+        result2.is_ok(),
+        "batch 2 should succeed (needs blockhash from batch 1) — got error: {:?}",
+        result2.err()
+    );
+}
+
 /// Simpler variant: a single block with a self-destructing contract, executed
 /// in batch. Ensures the basic batch path doesn't regress for single-block
 /// batches containing selfdestruct.
