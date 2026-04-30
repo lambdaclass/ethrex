@@ -1168,43 +1168,47 @@ impl<'a> VM<'a> {
                     self.credit_state_gas_refund(pending)?;
                 }
             }
-            TxResult::Revert(_) => {
-                // EIP-8037 `incorporate_child_on_error`:
-                //   parent.state_gas_left += child.state_gas_used + child.state_gas_left - child.state_gas_refund
-                // Translated into our shared-reservoir model with split spill counters:
-                //   new_reservoir = R_snap + outstanding_delta - credit_against_drain_delta
-                // — the outstanding delta represents spills in this subtree that weren't
-                // cancelled locally (those were already netted inside `credit_state_gas_refund`
-                // against the current frame's spill). `credit_against_drain_delta` is the
-                // credit portion that went to cancel reservoir drains and appears as the
-                // subtraction term. Using the monotonic `state_gas_spill` / `state_gas_refund_absorbed`
-                // counters here would double-count a reverted descendant whose credit already
-                // cancelled its own spill (cf. `sstore_restoration_create_init_revert`).
+            TxResult::Revert(err) => {
                 let outstanding_delta = self
                     .state_gas_spill_outstanding
                     .saturating_sub(state_gas_spill_outstanding_snapshot);
                 let credit_against_drain_delta = self
                     .state_gas_credit_against_drain
                     .saturating_sub(state_gas_credit_against_drain_snapshot);
-                // Invariant: credit_against_drain only accumulates the portion
-                // of a clamped refund that was NOT matched against outstanding
-                // spill, so it can never exceed the spill delta in the same
-                // subtree. If this ever fires, the reservoir math silently
-                // clamps (via saturating_sub) and the block's regular
-                // dimension gets mischarged — loud panic in debug is the goal.
                 debug_assert!(
                     outstanding_delta >= credit_against_drain_delta,
                     "reservoir revert invariant violated: credit_against_drain_delta \
                      ({credit_against_drain_delta}) > outstanding_delta \
                      ({outstanding_delta})"
                 );
+
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
                 self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                self.state_gas_reservoir = state_gas_reservoir_snapshot
-                    .saturating_add(outstanding_delta)
-                    .saturating_sub(credit_against_drain_delta);
+
+                if err.is_revert_opcode() {
+                    // REVERT opcode (intentional): pre-PR-2689 behaviour — give the
+                    // un-cancelled spill back to the reservoir; do NOT reclassify to
+                    // regular_gas. state_gas_spill_outstanding stays elevated so the
+                    // spill counts as state-gas in the regular_gas formula's
+                    // subtraction (i.e. excluded from regular_gas).
+                    self.state_gas_reservoir = state_gas_reservoir_snapshot
+                        .saturating_add(outstanding_delta)
+                        .saturating_sub(credit_against_drain_delta);
+                } else {
+                    // ExceptionalHalt (PR #2689): reclassify the un-cancelled local
+                    // spill to regular_gas_used, restore reservoir to entry value,
+                    // and roll back spill_outstanding so it doesn't propagate as
+                    // state-gas to ancestors.
+                    let local_excess =
+                        outstanding_delta.saturating_sub(credit_against_drain_delta);
+                    self.regular_gas_reclassified = self
+                        .regular_gas_reclassified
+                        .saturating_add(local_excess);
+                    self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
+                    self.state_gas_reservoir = state_gas_reservoir_snapshot;
+                }
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1266,32 +1270,38 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // EIP-8037 `incorporate_child_on_error` (same logic as handle_return_call).
+                // PR #2689 reclassification on child halt — same split as handle_return_call.
                 let outstanding_delta = self
                     .state_gas_spill_outstanding
                     .saturating_sub(state_gas_spill_outstanding_snapshot);
                 let credit_against_drain_delta = self
                     .state_gas_credit_against_drain
                     .saturating_sub(state_gas_credit_against_drain_snapshot);
-                // Invariant: credit_against_drain only accumulates the portion
-                // of a clamped refund that was NOT matched against outstanding
-                // spill, so it can never exceed the spill delta in the same
-                // subtree. If this ever fires, the reservoir math silently
-                // clamps (via saturating_sub) and the block's regular
-                // dimension gets mischarged — loud panic in debug is the goal.
                 debug_assert!(
                     outstanding_delta >= credit_against_drain_delta,
                     "reservoir revert invariant violated: credit_against_drain_delta \
                      ({credit_against_drain_delta}) > outstanding_delta \
                      ({outstanding_delta})"
                 );
+
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
                 self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                self.state_gas_reservoir = state_gas_reservoir_snapshot
-                    .saturating_add(outstanding_delta)
-                    .saturating_sub(credit_against_drain_delta);
+
+                if err.is_revert_opcode() {
+                    self.state_gas_reservoir = state_gas_reservoir_snapshot
+                        .saturating_add(outstanding_delta)
+                        .saturating_sub(credit_against_drain_delta);
+                } else {
+                    let local_excess =
+                        outstanding_delta.saturating_sub(credit_against_drain_delta);
+                    self.regular_gas_reclassified = self
+                        .regular_gas_reclassified
+                        .saturating_add(local_excess);
+                    self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
+                    self.state_gas_reservoir = state_gas_reservoir_snapshot;
+                }
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS
