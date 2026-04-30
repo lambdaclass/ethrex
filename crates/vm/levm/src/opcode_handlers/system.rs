@@ -938,6 +938,12 @@ impl<'a> VM<'a> {
         if precompiles::is_precompile(&code_address, self.env.config.fork, self.vm_type)
             && !is_delegation_7702
         {
+            if crate::opcode_tracer::is_active() {
+                eprintln!(
+                    "[call] PRECOMPILE path to={:?} gas_limit={} value={}",
+                    code_address, gas_limit, value
+                );
+            }
             // Record precompile address touch for BAL per EIP-7928
             if let Some(recorder) = self.db.bal_recorder.as_mut() {
                 recorder.record_touched_address(code_address);
@@ -1004,6 +1010,12 @@ impl<'a> VM<'a> {
 
             self.tracer.exit_context(&ctx_result, false)?;
         } else {
+            if crate::opcode_tracer::is_active() {
+                eprintln!(
+                    "[call] FRAME path to={:?} code_addr={:?} gas_limit={} value={} bytecode_len={}",
+                    to, code_address, gas_limit, value, bytecode.bytecode.len()
+                );
+            }
             // Create BAL checkpoint before entering nested call for potential revert per EIP-7928
             let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
