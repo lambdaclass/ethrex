@@ -829,6 +829,8 @@ impl<'a> VM<'a> {
         new_call_frame.state_gas_spill_outstanding_snapshot = self.state_gas_spill_outstanding;
         new_call_frame.state_gas_credit_against_drain_snapshot =
             self.state_gas_credit_against_drain;
+        new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
+        new_call_frame.regular_gas_reclassified_snapshot = self.regular_gas_reclassified;
 
         self.add_callframe(new_call_frame);
 
@@ -1050,6 +1052,8 @@ impl<'a> VM<'a> {
             new_call_frame.state_gas_spill_outstanding_snapshot = self.state_gas_spill_outstanding;
             new_call_frame.state_gas_credit_against_drain_snapshot =
                 self.state_gas_credit_against_drain;
+            new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
+            new_call_frame.regular_gas_reclassified_snapshot = self.regular_gas_reclassified;
 
             self.add_callframe(new_call_frame);
 
@@ -1122,6 +1126,8 @@ impl<'a> VM<'a> {
             state_gas_reservoir_snapshot,
             state_gas_spill_outstanding_snapshot,
             state_gas_credit_against_drain_snapshot,
+            state_gas_spill_snapshot,
+            regular_gas_reclassified_snapshot,
             call_frame_backup,
             stack,
             ..
@@ -1208,15 +1214,36 @@ impl<'a> VM<'a> {
                         .saturating_sub(credit_against_drain_delta);
                 } else {
                     self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                    // ExceptionalHalt (PR #2689): reclassify the un-cancelled local
-                    // spill to regular_gas_used, restore reservoir to entry value,
-                    // and roll back spill_outstanding so it doesn't propagate as
-                    // state-gas to ancestors.
+                    // ExceptionalHalt (PR #2689): reclassify the subtree's
+                    // un-cancelled local spill PLUS the credit-cancelled spill
+                    // that wasn't already reclassified at a deeper halt boundary.
+                    //
+                    // - `local_excess` = outstanding_delta - credit_against_drain_delta:
+                    //   the un-credited spill in this subtree (un-cancelled).
+                    // - `credit_cancelled_spill` = subtree_gross_spill - outstanding_delta:
+                    //   spill that was credited away (e.g. CREATE-halt's NEW_ACCOUNT
+                    //   refund). Permanently consumed from gas_remaining; default_hook's
+                    //   `regular = raw - state_gas_spill + reclassified` would
+                    //   silently drop it.
+                    // - `already_reclassified_in_subtree` = current reclassified -
+                    //   snapshot at frame entry: amounts already counted at deeper
+                    //   halts. Subtract to avoid double-counting.
                     let local_excess =
                         outstanding_delta.saturating_sub(credit_against_drain_delta);
+                    let subtree_gross_spill = self
+                        .state_gas_spill
+                        .saturating_sub(state_gas_spill_snapshot);
+                    let credit_cancelled_spill =
+                        subtree_gross_spill.saturating_sub(outstanding_delta);
+                    let already_reclassified_in_subtree = self
+                        .regular_gas_reclassified
+                        .saturating_sub(regular_gas_reclassified_snapshot);
+                    let new_reclassify = local_excess
+                        .saturating_add(credit_cancelled_spill)
+                        .saturating_sub(already_reclassified_in_subtree);
                     self.regular_gas_reclassified = self
                         .regular_gas_reclassified
-                        .saturating_add(local_excess);
+                        .saturating_add(new_reclassify);
                     self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
                     self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 }

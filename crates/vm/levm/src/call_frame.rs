@@ -310,6 +310,21 @@ pub struct CallFrame {
     /// Restored on revert so reverted children don't leak drain-credits into the
     /// reservoir math at a grandparent boundary.
     pub state_gas_credit_against_drain_snapshot: u64,
+    /// EIP-8037 PR #2689: snapshot of VM.state_gas_spill (gross monotonic) at
+    /// frame entry. Used by handle_return_call's halt branch to compute the
+    /// `credit_cancelled_spill` for reclassification. Spill that was credited
+    /// away (via `credit_state_gas_refund`'s `applied_to_spill` decrement of
+    /// `state_gas_spill_outstanding`) was permanently consumed from
+    /// gas_remaining but is no longer in spill_outstanding, so default_hook's
+    /// `regular_gas = raw - state_gas_spill + reclassified` permanently
+    /// excludes it from regular dim. Reclassify it here so block.gasUsed
+    /// matches EELS' tx_output.regular_gas_used.
+    pub state_gas_spill_snapshot: u64,
+    /// EIP-8037 PR #2689: snapshot of VM.regular_gas_reclassified at frame
+    /// entry. Used by handle_return_call's halt branch to avoid double-counting
+    /// credit-cancelled spill that was already reclassified at deeper halt
+    /// boundaries within this subtree.
+    pub regular_gas_reclassified_snapshot: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -411,6 +426,8 @@ impl CallFrame {
             state_gas_reservoir_snapshot: 0,
             state_gas_spill_outstanding_snapshot: 0,
             state_gas_credit_against_drain_snapshot: 0,
+            state_gas_spill_snapshot: 0,
+            regular_gas_reclassified_snapshot: 0,
         }
     }
 
