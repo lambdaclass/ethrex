@@ -9,8 +9,18 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(feature = "builder-parity")]
+use ethrex_blockchain::{
+    BlockchainType,
+    payload::{BuildPayloadArgs, HeadTransaction, PayloadBuildContext, create_payload},
+};
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+#[cfg(feature = "builder-parity")]
+use ethrex_common::{
+    U256,
+    types::{ELASTICITY_MULTIPLIER, MempoolTransaction},
+};
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
@@ -18,6 +28,8 @@ use ethrex_common::{
         InvalidBlockHeaderError, block_access_list::BlockAccessList,
     },
 };
+#[cfg(feature = "builder-parity")]
+use ethrex_crypto::NativeCrypto;
 use ethrex_guest_program::input::ProgramInput;
 #[cfg(feature = "sp1")]
 use ethrex_prover::Sp1Backend;
@@ -102,6 +114,8 @@ pub async fn run_ef_test(
     // same final state is reached.
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
+        #[cfg(feature = "builder-parity")]
+        run_builder_parity(test_key, test).await?;
     }
 
     // Run stateless if backend was specified for this.
@@ -240,6 +254,175 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
     // Verify post-state matches expected
     check_poststate_against_db(test_key, test, &store2).await;
     Ok(())
+}
+
+/// Drive the block builder over each fixture's transactions and assert it
+/// produces a block matching the fixture header. Catches builder/validator
+/// drift on EIP-7928 BAL construction and on receipts/state/requests roots,
+/// gas accounting, and bloom.
+///
+/// Skips fixtures with `expect_exception` (validator-side checks) and any
+/// fixture containing 4844 blob txs (no blob bundle in the fixture format).
+#[cfg(feature = "builder-parity")]
+async fn run_builder_parity(test_key: &str, test: &TestUnit) -> Result<(), String> {
+    if test.blocks.iter().any(|b| b.expect_exception.is_some()) {
+        return Ok(());
+    }
+
+    let has_blob_tx = test.blocks.iter().any(|bf| {
+        bf.block().is_some_and(|b| {
+            b.transactions
+                .iter()
+                .any(|t| matches!(&t.transaction_type, Some(ty) if ty.low_u64() == 3))
+        })
+    });
+    if has_blob_tx {
+        return Ok(());
+    }
+
+    let store = build_store_for_test(test).await;
+    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
+
+    for block_fixture in test.blocks.iter() {
+        let expected: CoreBlock = block_fixture.block().unwrap().clone().into();
+        let expected_header = expected.header.clone();
+
+        let args = BuildPayloadArgs {
+            parent: expected_header.parent_hash,
+            timestamp: expected_header.timestamp,
+            fee_recipient: expected_header.coinbase,
+            random: expected_header.prev_randao,
+            withdrawals: expected.body.withdrawals.clone(),
+            beacon_root: expected_header.parent_beacon_block_root,
+            slot_number: expected_header.slot_number,
+            version: 0,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: expected_header.gas_limit,
+        };
+
+        let payload = create_payload(&args, &store, expected_header.extra_data.clone())
+            .map_err(|e| format!("Builder parity {test_key}: create_payload failed: {e:?}"))?;
+        let mut ctx = PayloadBuildContext::new(payload, &store, &BlockchainType::L1)
+            .map_err(|e| format!("Builder parity {test_key}: ctx failed: {e:?}"))?;
+
+        // calc_gas_limit clamps to parent±delta; force exact match for fixtures
+        // that pin a specific gas_limit not reachable by one step from parent.
+        ctx.payload.header.gas_limit = expected_header.gas_limit;
+        ctx.remaining_gas = expected_header.gas_limit;
+
+        blockchain.apply_system_operations(&mut ctx).map_err(|e| {
+            format!("Builder parity {test_key}: apply_system_operations failed: {e:?}")
+        })?;
+
+        for tx in &expected.body.transactions {
+            let sender = tx
+                .sender(&NativeCrypto)
+                .map_err(|e| format!("Builder parity {test_key}: sender recovery failed: {e:?}"))?;
+            let head = HeadTransaction {
+                tx: MempoolTransaction::new(tx.clone(), sender),
+                tip: U256::zero(),
+            };
+            blockchain
+                .apply_tx_to_payload(head, &mut ctx)
+                .map_err(|e| format!("Builder parity {test_key}: apply_tx failed: {e:?}"))?;
+        }
+
+        if ctx.is_amsterdam {
+            #[allow(clippy::cast_possible_truncation)]
+            let post_tx_index = (ctx.payload.body.transactions.len() + 1) as u16;
+            ctx.vm.set_bal_index(post_tx_index);
+            if let Some(recorder) = ctx.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &ctx.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
+
+        blockchain
+            .extract_requests(&mut ctx)
+            .map_err(|e| format!("Builder parity {test_key}: extract_requests failed: {e:?}"))?;
+        blockchain
+            .apply_withdrawals(&mut ctx)
+            .map_err(|e| format!("Builder parity {test_key}: apply_withdrawals failed: {e:?}"))?;
+        blockchain
+            .finalize_payload(&mut ctx)
+            .map_err(|e| format!("Builder parity {test_key}: finalize_payload failed: {e:?}"))?;
+
+        let mismatches = collect_header_mismatches(&ctx.payload.header, &expected_header);
+        if !mismatches.is_empty() {
+            return Err(format!(
+                "Builder parity {test_key} block {}: {}",
+                expected_header.number,
+                mismatches.join("; ")
+            ));
+        }
+
+        // Advance the chain with the (parity-verified) expected block so the
+        // next iteration can use it as parent.
+        let hash = expected.hash();
+        blockchain
+            .add_block_pipeline(expected.clone(), None)
+            .map_err(|e| format!("Builder parity {test_key}: add_block failed: {e:?}"))?;
+        apply_fork_choice(&store, hash, hash, hash)
+            .await
+            .map_err(|e| format!("Builder parity {test_key}: fork choice failed: {e:?}"))?;
+    }
+
+    Ok(())
+}
+
+#[cfg(feature = "builder-parity")]
+fn collect_header_mismatches(
+    produced: &CoreBlockHeader,
+    expected: &CoreBlockHeader,
+) -> Vec<String> {
+    let mut m = Vec::new();
+    if produced.state_root != expected.state_root {
+        m.push(format!(
+            "state_root: got {} expected {}",
+            produced.state_root, expected.state_root
+        ));
+    }
+    if produced.transactions_root != expected.transactions_root {
+        m.push(format!(
+            "transactions_root: got {} expected {}",
+            produced.transactions_root, expected.transactions_root
+        ));
+    }
+    if produced.receipts_root != expected.receipts_root {
+        m.push(format!(
+            "receipts_root: got {} expected {}",
+            produced.receipts_root, expected.receipts_root
+        ));
+    }
+    if produced.withdrawals_root != expected.withdrawals_root {
+        m.push(format!(
+            "withdrawals_root: got {:?} expected {:?}",
+            produced.withdrawals_root, expected.withdrawals_root
+        ));
+    }
+    if produced.requests_hash != expected.requests_hash {
+        m.push(format!(
+            "requests_hash: got {:?} expected {:?}",
+            produced.requests_hash, expected.requests_hash
+        ));
+    }
+    if produced.block_access_list_hash != expected.block_access_list_hash {
+        m.push(format!(
+            "block_access_list_hash: got {:?} expected {:?}",
+            produced.block_access_list_hash, expected.block_access_list_hash
+        ));
+    }
+    if produced.gas_used != expected.gas_used {
+        m.push(format!(
+            "gas_used: got {} expected {}",
+            produced.gas_used, expected.gas_used
+        ));
+    }
+    if produced.logs_bloom != expected.logs_bloom {
+        m.push("logs_bloom mismatch".to_string());
+    }
+    m
 }
 
 fn exception_is_expected(
