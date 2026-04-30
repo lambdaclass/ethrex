@@ -650,81 +650,92 @@ impl Blockchain {
                 continue;
             }
 
-            // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
-            // running block totals. Run BEFORE we touch the BAL recorder so a
-            // rejected tx doesn't even produce a sender/recipient touch. Matches
-            // the validator's check in `execute_block_parallel`; if we skipped
-            // this the builder could include txs the validator would reject,
-            // causing a miss-slot.
-            if context.is_amsterdam
-                && let Err(e) = check_2d_gas_allowance(
-                    &head_tx.tx,
-                    Fork::Amsterdam,
-                    context.block_regular_gas_used,
-                    context.block_state_gas_used,
-                    context.payload.header.gas_limit,
-                )
-            {
-                debug!("Skipping tx {tx_hash:x}: fails 2D inclusion check: {e}");
-                txs.pop();
-                continue;
+            match self.apply_tx_to_payload(head_tx, context) {
+                Ok(()) => txs.shift()?,
+                Err(_) => txs.pop(),
             }
-
-            // Set BAL index for this transaction (1-indexed per EIP-7928)
-            // Index is based on current transaction count + 1
-            // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
-            // filters for the previous (committed) tx, which may insert reads.
-            let tx_index =
-                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
-            context.vm.set_bal_index(tx_index);
-
-            // EIP-7928: Lightweight tx-level checkpoint before trying the tx.
-            // If the tx is rejected, restore so only included txs affect the BAL.
-            // Taken after set_bal_index (which flushes previous tx) but before
-            // this tx's touches, so rejected txs leave no trace.
-            let bal_checkpoint = context
-                .vm
-                .db
-                .bal_recorder
-                .as_ref()
-                .map(|r| r.tx_checkpoint());
-
-            // Record tx sender and recipient for BAL
-            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
-                recorder.record_touched_address(head_tx.tx.sender());
-                if let TxKind::Call(to) = head_tx.to() {
-                    recorder.record_touched_address(to);
-                }
-            }
-
-            // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context) {
-                Ok(receipt) => {
-                    txs.shift()?;
-                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
-                    receipt
-                }
-                // Ignore following txs from sender
-                Err(e) => {
-                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
-                    metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
-                    // Restore BAL recorder to pre-tx state so rejected txs
-                    // don't pollute the block access list.
-                    if let (Some(recorder), Some(checkpoint)) =
-                        (context.vm.db.bal_recorder_mut(), bal_checkpoint)
-                    {
-                        recorder.tx_restore(checkpoint);
-                    }
-                    txs.pop();
-                    continue;
-                }
-            };
-            // Add transaction to block
-            debug!("Adding transaction: {} to payload", tx_hash);
-            context.payload.body.transactions.push(head_tx.into());
-            // Save receipt for hash calculation
-            context.receipts.push(receipt);
         }
+        Ok(())
+    }
+
+    /// Apply a single transaction to the in-progress payload.
+    ///
+    /// Runs the full per-tx pipeline: EIP-8037 2D inclusion check, EIP-7928
+    /// BAL index/checkpoint setup, sender/recipient recording, dispatch to
+    /// blob/plain execution, and on failure rolls the BAL recorder back so
+    /// rejected txs leave no trace. On success the tx is appended to the
+    /// payload body and the receipt to `context.receipts`.
+    ///
+    /// Caller is responsible for mempool bookkeeping (advancing or dropping
+    /// the sender's queue) — this function only mutates the payload context.
+    pub fn apply_tx_to_payload(
+        &self,
+        head: HeadTransaction,
+        context: &mut PayloadBuildContext,
+    ) -> Result<(), ChainError> {
+        let tx_hash = head.tx.hash();
+
+        // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
+        // running block totals. Run BEFORE we touch the BAL recorder so a
+        // rejected tx doesn't even produce a sender/recipient touch.
+        if context.is_amsterdam
+            && let Err(e) = check_2d_gas_allowance(
+                &head.tx,
+                Fork::Amsterdam,
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                context.payload.header.gas_limit,
+            )
+        {
+            debug!("Skipping tx {tx_hash:x}: fails 2D inclusion check: {e}");
+            return Err(e.into());
+        }
+
+        // Set BAL index for this transaction (1-indexed per EIP-7928).
+        // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
+        // filters for the previous (committed) tx, which may insert reads.
+        let tx_index =
+            u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
+        context.vm.set_bal_index(tx_index);
+
+        // EIP-7928: lightweight tx-level checkpoint before trying the tx.
+        // If the tx is rejected, restore so only included txs affect the BAL.
+        // Taken after set_bal_index (which flushes previous tx) but before
+        // this tx's touches, so rejected txs leave no trace.
+        let bal_checkpoint = context
+            .vm
+            .db
+            .bal_recorder
+            .as_ref()
+            .map(|r| r.tx_checkpoint());
+
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head.tx.sender());
+            if let TxKind::Call(to) = head.to() {
+                recorder.record_touched_address(to);
+            }
+        }
+
+        let receipt = match self.apply_transaction(&head, context) {
+            Ok(receipt) => {
+                metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head.tx_type())));
+                receipt
+            }
+            Err(e) => {
+                debug!("Failed to execute transaction: {tx_hash:x}, {e}");
+                metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
+                return Err(e);
+            }
+        };
+
+        debug!("Adding transaction: {} to payload", tx_hash);
+        context.payload.body.transactions.push(head.into());
+        context.receipts.push(receipt);
         Ok(())
     }
 
