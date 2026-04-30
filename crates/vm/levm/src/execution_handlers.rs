@@ -78,19 +78,22 @@ impl<'a> VM<'a> {
 
         // EIP-8037 (Amsterdam+): settle frame-end state gas. residual = state_diff.bytes() *
         // cpsb - state_gas_used. Drains reservoir → spills into gas_remaining → OOG. On
-        // OOG the frame is converted to a Revert with full gas consumed; the call-frame
-        // backup chain rolls back state mutations once the parent processes the failure.
+        // OOG the frame is converted to a Revert; per EELS v8037.0.1 atomic
+        // `charge_state_gas` semantics, gas_remaining is NOT zeroed — the failed
+        // draw left it untouched so the parent can incorporate the child's gas_left
+        // (matches EELS `incorporate_child_on_error: parent.gas_left += child.gas_left`).
+        // Forcing gas_remaining to 0 here would discard that gas, over-charging the
+        // user via inflated raw_consumed at the top frame.
         if self.env.config.fork >= Fork::Amsterdam {
             if let Err(error) = self.apply_frame_state_gas() {
                 if error.should_propagate() {
                     return Err(error);
                 }
                 let callframe = &mut self.current_call_frame;
-                callframe.gas_remaining = 0;
                 #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
                 let gas_used = callframe
                     .gas_limit
-                    .checked_sub(callframe.gas_remaining as u64)
+                    .checked_sub(callframe.gas_remaining.max(0) as u64)
                     .ok_or(InternalError::Underflow)?;
                 return Ok(ContextResult {
                     result: TxResult::Revert(error),

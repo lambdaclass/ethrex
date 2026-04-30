@@ -1191,25 +1191,25 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // EIP-8037 v8037.0.1 discriminator: drop spill_credit when:
-                // - REVERT opcode (committed sub-frame state-gas charged to user), OR
-                // - child had committed state ops (state_gas_used > 0).
-                // Keep spill_credit only for "pure failure" cases (no committed state).
+                // EIP-8037 v8037.0.1 incorporate_child_on_error: discard the child's
+                // state-gas attribution. Reservoir always resets to snapshot. Spill
+                // counter resets only in the "pure failure" case (no committed sub-
+                // frame state ops) so the block-dimensional regular gas computation
+                // does not under-count by the failed child's partial spill. When the
+                // child either explicitly REVERTed or successfully committed any
+                // descendant state ops (state_gas_used > 0), keep the spill counter
+                // so the user is correctly charged for the committed state-gas.
+                //
+                // Critically, the partial spill is NEVER refunded to parent's
+                // gas_remaining: per EELS, a failed child consumed its forwarded
+                // gas regardless, and refunding would inflate the parent's budget —
+                // letting the parent execute operations that EELS would have OOG'd.
+                // Refunding causes recursive cascade inflation in patterns like
+                // stCallCodes/*_abcb_recursive where each deep frame's apply OOG
+                // would otherwise feed the parent extra gas to keep recursing.
                 let is_revert_opcode = err.is_revert_opcode();
                 let child_had_state_ops = child_state_gas_used > 0;
                 let drop_credit = is_revert_opcode || child_had_state_ops;
-                let spilled_during_child = self
-                    .state_gas_spill
-                    .saturating_sub(state_gas_spill_snapshot);
-                if spilled_during_child > 0 && !drop_credit {
-                    let spill_credit =
-                        i64::try_from(spilled_during_child).map_err(|_| InternalError::Overflow)?;
-                    self.current_call_frame.gas_remaining = self
-                        .current_call_frame
-                        .gas_remaining
-                        .checked_add(spill_credit)
-                        .ok_or(InternalError::Overflow)?;
-                }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 if !drop_credit {
                     self.state_gas_spill = state_gas_spill_snapshot;
@@ -1288,22 +1288,11 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // EIP-8037 v8037.0.1: see handle_return_call's matching comment.
+                // EIP-8037 v8037.0.1 incorporate_child_on_error: see
+                // handle_return_call's matching comment.
                 let is_revert_opcode = err.is_revert_opcode();
                 let child_had_state_ops = child_state_gas_used > 0;
                 let drop_credit = is_revert_opcode || child_had_state_ops;
-                let spilled_during_child = self
-                    .state_gas_spill
-                    .saturating_sub(state_gas_spill_snapshot);
-                if spilled_during_child > 0 && !drop_credit {
-                    let spill_credit =
-                        i64::try_from(spilled_during_child).map_err(|_| InternalError::Overflow)?;
-                    self.current_call_frame.gas_remaining = self
-                        .current_call_frame
-                        .gas_remaining
-                        .checked_add(spill_credit)
-                        .ok_or(InternalError::Overflow)?;
-                }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 if !drop_credit {
                     self.state_gas_spill = state_gas_spill_snapshot;

@@ -603,29 +603,31 @@ impl<'a> VM<'a> {
             self.env.config.fork >= Fork::Amsterdam,
             "draw_state_gas called pre-Amsterdam"
         );
-        // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted.
+        // EELS v8037.0.1 charge_state_gas is ATOMIC: if reservoir + gas_remaining
+        // cannot cover `gas`, raise OutOfGas without mutating any state. Otherwise
+        // drain reservoir first, then spill into gas_remaining for the remainder.
+        // The atomicity is critical: a non-atomic implementation that decrements
+        // gas_remaining before the OOG check inflates raw_consumed at the top
+        // level, over-charging the user for the wasted draw attempt — visible as
+        // GasUsedMismatch in stCallCodes/*_abcb_recursive tests.
+        #[expect(clippy::as_conversions, reason = "gas_remaining max(0) fits in u64")]
+        let gas_remaining_before = self.current_call_frame.gas_remaining.max(0) as u64;
+        let total_available = self.state_gas_reservoir.saturating_add(gas_remaining_before);
+        if gas > total_available {
+            return Err(ExceptionalHalt::OutOfGas.into());
+        }
         let from_reservoir = self.state_gas_reservoir.min(gas);
         // Safe: from_reservoir <= gas
         let spill = gas - from_reservoir;
-        if spill > 0 {
-            // Account the spill BEFORE the OOG-able charge so that the regular-gas
-            // dimension stays in sync when `increase_consumed_gas` short-circuits.
-            // Use the available portion (clipped by the current `gas_remaining`) so
-            // the spill counter reflects what was actually drawn from gas_remaining
-            // rather than what was attempted.
-            #[expect(clippy::as_conversions, reason = "gas_remaining max(0) fits in u64")]
-            let gas_remaining_before = self.current_call_frame.gas_remaining.max(0) as u64;
-            let spill_actual = spill.min(gas_remaining_before);
-            self.state_gas_spill = self
-                .state_gas_spill
-                .checked_add(spill_actual)
-                .ok_or(InternalError::Overflow)?;
-            // Charge the requested spill against gas_remaining; OOG short-circuits
-            // and the reservoir stays untouched (matches EELS behaviour).
-            self.current_call_frame.increase_consumed_gas(spill)?;
-        }
         // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
         self.state_gas_reservoir -= from_reservoir;
+        if spill > 0 {
+            self.state_gas_spill = self
+                .state_gas_spill
+                .checked_add(spill)
+                .ok_or(InternalError::Overflow)?;
+            self.current_call_frame.increase_consumed_gas(spill)?;
+        }
         Ok(())
     }
 
