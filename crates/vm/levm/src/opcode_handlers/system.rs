@@ -940,8 +940,12 @@ impl<'a> VM<'a> {
         {
             if crate::opcode_tracer::is_active() {
                 eprintln!(
-                    "[call] PRECOMPILE path to={:?} gas_limit={} value={}",
-                    code_address, gas_limit, value
+                    "[call] PRECOMPILE path to={:?} gas_limit={} value={} calldata_len={} calldata=0x{}",
+                    code_address,
+                    gas_limit,
+                    value,
+                    calldata.len(),
+                    calldata.iter().take(64).map(|b| format!("{:02x}", b)).collect::<String>()
                 );
             }
             // Record precompile address touch for BAL per EIP-7928
