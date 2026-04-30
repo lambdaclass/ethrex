@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Populate cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         id: cache
         with:
           path: bin/ethrex-${{ matrix.branch }}
@@ -69,13 +69,13 @@ jobs:
           tool: hyperfine@1.16
 
       - name: Fetch base binary
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v5
         with:
           path: bin/ethrex-base
           key: binary-base-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Fetch HEAD binary
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v5
         with:
           path: bin/ethrex-head
           key: binary-head-${{ github.run_id }}-${{ github.run_attempt }}
