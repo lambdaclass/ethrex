@@ -5,9 +5,11 @@ use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
 use ethrex_crypto::{Crypto, CryptoError};
-use rustc_hash::FxHashMap;
 use std::borrow::Cow;
-use std::sync::RwLock;
+
+// Re-export so existing callers (and `ethrex_vm::PrecompileCache`) keep
+// working after the cache moved to its own module.
+pub use crate::precompile_cache::PrecompileCache;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
@@ -257,43 +259,6 @@ pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
-}
-
-/// Per-block cache for precompile results shared between warmer and executor.
-pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
-}
-
-impl Default for PrecompileCache {
-    fn default() -> Self {
-        Self {
-            cache: RwLock::new(FxHashMap::default()),
-        }
-    }
-}
-
-impl PrecompileCache {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
-        // Graceful degradation: if the lock is poisoned (a thread panicked while
-        // holding it), skip the cache rather than propagating the panic. The cache
-        // is a pure optimization — missing it only costs a recomputation.
-        self.cache
-            .read()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(*address, calldata.clone()))
-            .cloned()
-    }
-
-    pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
-    }
 }
 
 #[expect(clippy::as_conversions, clippy::indexing_slicing)]

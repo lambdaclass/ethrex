@@ -76,6 +76,7 @@ pub mod hooks;
 pub mod memory;
 pub mod opcode_handlers;
 pub mod opcodes;
+pub mod precompile_cache;
 pub mod precompiles;
 pub mod tracing;
 pub mod utils;
