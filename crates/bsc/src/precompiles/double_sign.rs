@@ -20,7 +20,7 @@ use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Decoder};
 
 use super::PrecompileError;
 use crate::consensus::extra_data::EXTRA_SEAL_LENGTH;
-use crate::consensus::seal::seal_hash;
+use crate::consensus::seal::block_seal_hash;
 
 /// Gas cost for verifyDoubleSignEvidence.  Matches `params.DoubleSignEvidenceVerifyGas`.
 pub const DOUBLE_SIGN_EVIDENCE_GAS: u64 = 10_000;
@@ -102,8 +102,12 @@ fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
     }
 
     // Step 4: Compute the seal hash for each header and verify they differ.
-    let hash1 = seal_hash(&header1, chain_id).ok()?;
-    let hash2 = seal_hash(&header2, chain_id).ok()?;
+    // Uses `block_seal_hash` (mirrors bsc-geth's `core/types.SealHash`), NOT
+    // the Parlia `seal_hash` — the precompile reference calls
+    // `types.SealHash(header, chainId)` which encodes `extra[:-extraSeal]`,
+    // not just the 32-byte vanity prefix.
+    let hash1 = block_seal_hash(&header1, chain_id).ok()?;
+    let hash2 = block_seal_hash(&header2, chain_id).ok()?;
     if hash1 == hash2 {
         return None;
     }

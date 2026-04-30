@@ -60,18 +60,12 @@ fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
     let msg_hash = &input[HASH_OFFSET..];
 
     let pubkey = secp256k1::PublicKey::from_slice(pubkey_bytes).ok()?;
-    let sig = secp256k1::ecdsa::Signature::from_compact(sig_bytes).ok()?;
+    let mut sig = secp256k1::ecdsa::Signature::from_compact(sig_bytes).ok()?;
 
-    // Reject high-S signatures (Tendermint lower-S requirement).
-    {
-        let before = sig.serialize_compact();
-        let mut check_sig = sig;
-        check_sig.normalize_s();
-        let after = check_sig.serialize_compact();
-        if before != after {
-            return None;
-        }
-    }
+    // Tendermint v0.31's `PubKeySecp256k1.VerifyBytesWithMsgHash` does not
+    // enforce low-S — high-S signatures are accepted. Normalize before verify
+    // so we accept the same set of signatures bsc-geth's reference does.
+    sig.normalize_s();
 
     let msg_array: [u8; 32] = msg_hash.try_into().ok()?;
     let message = secp256k1::Message::from_digest(msg_array);
