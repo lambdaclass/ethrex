@@ -269,8 +269,6 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
-            #[cfg(feature = "eip-7805")]
-            crate::rpc::IlConfig::default(),
         )
         .await
         .unwrap()
