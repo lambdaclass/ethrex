@@ -714,7 +714,14 @@ impl<'a> VM<'a> {
                     self.current_call_frame.gas_remaining
                 };
                 let gas_cost = gas_before.saturating_sub(gas_after);
-                crate::opcode_tracer::trace(pc_before, opcode, gas_before, gas_cost, depth_before);
+                crate::opcode_tracer::trace(
+                    pc_before,
+                    opcode,
+                    gas_before,
+                    gas_cost,
+                    depth_before,
+                    self.substate.refunded_gas,
+                );
             }
 
             let result = match op_result {

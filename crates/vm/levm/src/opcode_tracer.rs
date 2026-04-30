@@ -6,8 +6,10 @@
 //! Gated to skip the prewarmer: tracing only fires during real execution
 //! (`env.disable_balance_check == false`).
 //!
-//! Output format matches bsc-geth's vmtrace CSV export:
-//! `Step,PC,Operation,Gas,GasCost,Depth` (quoted values).
+//! Output format: `Step,PC,Operation,Gas,GasCost,Depth,Refund` (quoted values).
+//! `Refund` is the running EIP-3529 refund counter — primarily here so we can
+//! diff against bsc-geth's per-opcode refund accounting and find divergences
+//! in SSTORE refund granting.
 
 use ethrex_common::H256;
 use std::fs::File;
@@ -88,7 +90,7 @@ pub fn begin_tx(tx_hash: H256, is_prewarm: bool) -> bool {
         match File::create(&path) {
             Ok(file) => {
                 let mut writer = BufWriter::new(file);
-                let _ = writeln!(writer, "Step,PC,Operation,Gas,GasCost,Depth");
+                let _ = writeln!(writer, "Step,PC,Operation,Gas,GasCost,Depth,Refund");
                 state.writer = Some(writer);
             }
             Err(e) => {
@@ -110,7 +112,7 @@ pub fn is_active() -> bool {
 }
 
 /// Emit one opcode step. Callers must gate with `is_active()` for the fast path.
-pub fn trace(pc: usize, opcode: u8, gas: i64, gas_cost: i64, depth: usize) {
+pub fn trace(pc: usize, opcode: u8, gas: i64, gas_cost: i64, depth: usize, refund: u64) {
     if !ACTIVE.load(Ordering::Relaxed) {
         return;
     }
@@ -125,7 +127,7 @@ pub fn trace(pc: usize, opcode: u8, gas: i64, gas_cost: i64, depth: usize) {
     if let Some(writer) = state.writer.as_mut() {
         let _ = writeln!(
             writer,
-            "\"{step}\",\"{pc}\",\"{name}\",\"{gas_str}\",\"{cost_str}\",\"{depth}\""
+            "\"{step}\",\"{pc}\",\"{name}\",\"{gas_str}\",\"{cost_str}\",\"{depth}\",\"{refund}\""
         );
     }
 }
