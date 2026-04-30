@@ -1190,17 +1190,18 @@ impl<'a> VM<'a> {
                         .ok_or(InternalError::Overflow)?;
                 }
             }
-            TxResult::Revert(_) => {
-                // EIP-8037: child's state_diff and state_gas_used are dropped (not
-                // merged) on revert. Restore the reservoir and spill counter to their
-                // pre-child snapshots so successful sub-sub-frame charges that were
-                // rolled back along with the child don't leak into block accounting.
-                // Re-credit any spill that landed in the parent's gas_remaining via
-                // a child sub-sub-frame's apply_frame_state_gas.
+            TxResult::Revert(err) => {
+                // EIP-8037 v8037.0.1 discriminator: drop spill_credit when:
+                // - REVERT opcode (committed sub-frame state-gas charged to user), OR
+                // - child had committed state ops (state_gas_used > 0).
+                // Keep spill_credit only for "pure failure" cases (no committed state).
+                let is_revert_opcode = err.is_revert_opcode();
+                let child_had_state_ops = child_state_gas_used > 0;
+                let drop_credit = is_revert_opcode || child_had_state_ops;
                 let spilled_during_child = self
                     .state_gas_spill
                     .saturating_sub(state_gas_spill_snapshot);
-                if spilled_during_child > 0 {
+                if spilled_during_child > 0 && !drop_credit {
                     let spill_credit =
                         i64::try_from(spilled_during_child).map_err(|_| InternalError::Overflow)?;
                     self.current_call_frame.gas_remaining = self
@@ -1210,7 +1211,9 @@ impl<'a> VM<'a> {
                         .ok_or(InternalError::Overflow)?;
                 }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                self.state_gas_spill = state_gas_spill_snapshot;
+                if !drop_credit {
+                    self.state_gas_spill = state_gas_spill_snapshot;
+                }
 
                 // EIP-8037: undo the pre-emptive new_account record on parent for
                 // CALL-with-value-to-empty. The value transfer reverts with the
@@ -1285,15 +1288,14 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // EIP-8037: child's state_diff and state_gas_used are dropped (not
-                // merged) on revert. Restore reservoir and spill snapshots so any
-                // sub-sub-frame charges that were rolled back along with the child
-                // don't leak. Cancel the new-account record that was placed on the
-                // parent's diff before the child frame began.
+                // EIP-8037 v8037.0.1: see handle_return_call's matching comment.
+                let is_revert_opcode = err.is_revert_opcode();
+                let child_had_state_ops = child_state_gas_used > 0;
+                let drop_credit = is_revert_opcode || child_had_state_ops;
                 let spilled_during_child = self
                     .state_gas_spill
                     .saturating_sub(state_gas_spill_snapshot);
-                if spilled_during_child > 0 {
+                if spilled_during_child > 0 && !drop_credit {
                     let spill_credit =
                         i64::try_from(spilled_during_child).map_err(|_| InternalError::Overflow)?;
                     self.current_call_frame.gas_remaining = self
@@ -1303,7 +1305,9 @@ impl<'a> VM<'a> {
                         .ok_or(InternalError::Overflow)?;
                 }
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                self.state_gas_spill = state_gas_spill_snapshot;
+                if !drop_credit {
+                    self.state_gas_spill = state_gas_spill_snapshot;
+                }
 
                 // Cancel only if the parent recorded the new-account at CREATE time.
                 // If the target pre-existed, we never recorded — calling cancel would
