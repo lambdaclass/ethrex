@@ -111,7 +111,29 @@ impl BlockIdentifierOrHash {
     }
 
     pub fn parse(serde_value: Value, arg_index: u64) -> Result<BlockIdentifierOrHash, RpcErr> {
-        // Parse as BlockHash
+        // EIP-1898 object form: {"blockHash": "0x..." [, "requireCanonical": bool]}
+        // or {"blockNumber": "0x..."}.
+        // `requireCanonical` is accepted for compatibility but currently ignored:
+        // ethrex resolves block hashes through the canonical index, so non-canonical
+        // hashes already fail to resolve.
+        if let Value::Object(map) = &serde_value {
+            if let Some(hash_value) = map.get("blockHash") {
+                let hex_str: String = serde_json::from_value(hash_value.clone())
+                    .map_err(|err| RpcErr::BadParams(err.to_string()))?;
+                let block_hash = BlockHash::from_str(&hex_str)
+                    .map_err(|_| RpcErr::BadHexFormat(arg_index))?;
+                return Ok(BlockIdentifierOrHash::Hash(block_hash));
+            }
+            if let Some(number_value) = map.get("blockNumber") {
+                return BlockIdentifier::parse(number_value.clone(), arg_index)
+                    .map(BlockIdentifierOrHash::Identifier);
+            }
+            return Err(RpcErr::BadParams(
+                "expected blockHash or blockNumber field".to_owned(),
+            ));
+        }
+
+        // String form: a 32-byte block hash, a hex block number, or a block tag.
         if let Some(block_hash) = serde_json::from_value::<String>(serde_value.clone())
             .ok()
             .and_then(|hex_str| BlockHash::from_str(&hex_str).ok())
@@ -187,5 +209,87 @@ impl PartialEq<BlockTag> for BlockIdentifierOrHash {
             BlockIdentifierOrHash::Identifier(BlockIdentifier::Tag(tag)) => tag == other,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    const HASH_HEX: &str = "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+    #[test]
+    fn parse_string_block_hash() {
+        let parsed = BlockIdentifierOrHash::parse(json!(HASH_HEX), 0).unwrap();
+        match parsed {
+            BlockIdentifierOrHash::Hash(hash) => {
+                assert_eq!(hash, BlockHash::from_str(HASH_HEX).unwrap());
+            }
+            _ => panic!("expected Hash variant"),
+        }
+    }
+
+    #[test]
+    fn parse_string_block_number() {
+        let parsed = BlockIdentifierOrHash::parse(json!("0x10"), 0).unwrap();
+        assert!(matches!(
+            parsed,
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(16))
+        ));
+    }
+
+    #[test]
+    fn parse_string_block_tag() {
+        let parsed = BlockIdentifierOrHash::parse(json!("latest"), 0).unwrap();
+        assert!(matches!(
+            parsed,
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Tag(BlockTag::Latest))
+        ));
+    }
+
+    // EIP-1898: {"blockHash": "0x..."} — used by go-ethereum's ethclient when
+    // calling eth_getBlockReceipts with rpc.BlockNumberOrHash{BlockHash: ...}.
+    #[test]
+    fn parse_eip1898_block_hash_object() {
+        let parsed = BlockIdentifierOrHash::parse(json!({ "blockHash": HASH_HEX }), 0).unwrap();
+        match parsed {
+            BlockIdentifierOrHash::Hash(hash) => {
+                assert_eq!(hash, BlockHash::from_str(HASH_HEX).unwrap());
+            }
+            _ => panic!("expected Hash variant"),
+        }
+    }
+
+    #[test]
+    fn parse_eip1898_block_hash_object_with_require_canonical() {
+        let parsed = BlockIdentifierOrHash::parse(
+            json!({ "blockHash": HASH_HEX, "requireCanonical": true }),
+            0,
+        )
+        .unwrap();
+        assert!(matches!(parsed, BlockIdentifierOrHash::Hash(_)));
+    }
+
+    // EIP-1898: {"blockNumber": "0x..."}
+    #[test]
+    fn parse_eip1898_block_number_object() {
+        let parsed = BlockIdentifierOrHash::parse(json!({ "blockNumber": "0x2a" }), 0).unwrap();
+        assert!(matches!(
+            parsed,
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(42))
+        ));
+    }
+
+    #[test]
+    fn parse_eip1898_empty_object_errors() {
+        let result = BlockIdentifierOrHash::parse(json!({}), 0);
+        assert!(matches!(result, Err(RpcErr::BadParams(_))));
+    }
+
+    #[test]
+    fn parse_eip1898_bad_hash_errors() {
+        let result = BlockIdentifierOrHash::parse(json!({ "blockHash": "not-a-hash" }), 0);
+        assert!(matches!(result, Err(RpcErr::BadHexFormat(_))));
     }
 }
