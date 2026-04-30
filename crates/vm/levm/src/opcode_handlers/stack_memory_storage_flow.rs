@@ -352,6 +352,21 @@ impl OpcodeHandler for OpSStoreHandler {
                 }
             }
 
+            // Diagnostic: log SSTORE refund deltas only when the opcode tracer is
+            // active (gates this to the target tx hash), so we can correlate with
+            // bsc-geth refund accounting on a single failing tx.
+            if delta != 0 && crate::opcode_tracer::is_active() {
+                eprintln!(
+                    "[sstore] delta={} (orig=0x{:x}, cur=0x{:x}, new=0x{:x}, prev_refund={}, new_refund={})",
+                    delta,
+                    original_value,
+                    current_value,
+                    value,
+                    vm.substate.refunded_gas,
+                    vm.substate.refunded_gas as i64 + delta
+                );
+            }
+
             // Update refunded gas after checking for overflow or underflow.
             match vm.substate.refunded_gas.checked_add_signed(delta) {
                 Some(refunded_gas) => vm.substate.refunded_gas = refunded_gas,
