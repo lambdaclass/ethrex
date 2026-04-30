@@ -1185,7 +1185,6 @@ impl<'a> VM<'a> {
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-                self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
 
                 if err.is_revert_opcode() {
                     // REVERT opcode (intentional): pre-PR-2689 behaviour — give the
@@ -1193,10 +1192,22 @@ impl<'a> VM<'a> {
                     // regular_gas. state_gas_spill_outstanding stays elevated so the
                     // spill counts as state-gas in the regular_gas formula's
                     // subtraction (i.e. excluded from regular_gas).
+                    //
+                    // EELS v1.1.0 burn propagation: do NOT roll back
+                    // `state_gas_credit_against_drain` — leave it at the post-credit
+                    // value so the credit's "burn" propagates up the cascade as
+                    // additional drain_delta in ancestor handle_return_call
+                    // invocations. This implements the
+                    // `parent.state_gas_left += child_used + child_left - child_refund`
+                    // formula across multiple cascade levels, so a subtree's inline
+                    // refund is burned at every incorporate boundary on the way to
+                    // the top (per test_nested_failure_resets_to_tx_reservoir's
+                    // `non_top_refund_burn` sum).
                     self.state_gas_reservoir = state_gas_reservoir_snapshot
                         .saturating_add(outstanding_delta)
                         .saturating_sub(credit_against_drain_delta);
                 } else {
+                    self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
                     // ExceptionalHalt (PR #2689): reclassify the un-cancelled local
                     // spill to regular_gas_used, restore reservoir to entry value,
                     // and roll back spill_outstanding so it doesn't propagate as
@@ -1287,13 +1298,16 @@ impl<'a> VM<'a> {
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-                self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
 
                 if err.is_revert_opcode() {
+                    // REVERT opcode (matching handle_return_call): leave
+                    // `state_gas_credit_against_drain` elevated so the credit's burn
+                    // propagates up the cascade. See handle_return_call REVERT comment.
                     self.state_gas_reservoir = state_gas_reservoir_snapshot
                         .saturating_add(outstanding_delta)
                         .saturating_sub(credit_against_drain_delta);
                 } else {
+                    self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
                     let local_excess =
                         outstanding_delta.saturating_sub(credit_against_drain_delta);
                     self.regular_gas_reclassified = self
