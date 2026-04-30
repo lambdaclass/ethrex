@@ -63,7 +63,7 @@ pub const MAX_WITNESSES: u64 = 128;
 // This is due to tests requiring state older than 128 blocks.
 // TODO: unify these
 #[allow(unused)]
-const DB_COMMIT_THRESHOLD: usize = 10_000;
+const DB_COMMIT_THRESHOLD: usize = 128;
 const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
