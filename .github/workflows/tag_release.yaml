@@ -90,7 +90,7 @@ jobs:
         uses: ./.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: amd64
 
@@ -101,7 +101,7 @@ jobs:
         uses: ./.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
-        uses: Jimver/cuda-toolkit@v0.2.24
+        uses: Jimver/cuda-toolkit@v0.2.35
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
         id: cuda-toolkit
         with:
@@ -385,7 +385,7 @@ jobs:
 
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -444,7 +444,7 @@ jobs:
           writeToFile: false
 
       - name: Finalize Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

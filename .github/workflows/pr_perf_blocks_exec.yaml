@@ -98,7 +98,7 @@ jobs:
       - name: Find comment
         if: ${{ github.event.pull_request.head.repo.fork != true }}
         continue-on-error: true
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@v4
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -107,7 +107,7 @@ jobs:
 
       - name: Create or update comment
         if: ${{ github.event.pull_request.head.repo.fork != true }}
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
