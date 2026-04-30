@@ -466,6 +466,11 @@ impl<'a> VM<'a> {
         crypto: &'a dyn Crypto,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
+        // Tx-scoped EXTCODESIZE/EXTCODECOPY cache: clear on every tx entry so
+        // entries cannot leak across transactions (CREATE/SELFDESTRUCT in a
+        // prior tx would otherwise look stale by hash and invalidate anyway,
+        // but clearing keeps the working set small).
+        db.extcode_cache.clear();
 
         let mut substate = Substate::initialize(&env, tx)?;
 

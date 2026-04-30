@@ -294,8 +294,8 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
                 vm.substate.add_accessed_address(address),
             )?)?;
 
-        // State access AFTER gas check passes (using optimized code length lookup)
-        let account_code_length = vm.db.get_code_length(address)?.into();
+        // State access AFTER gas check passes (tx-scoped EXTCODESIZE cache).
+        let account_code_length = vm.db.get_extcode_size(address)?.into();
 
         // Record address touch for BAL (after gas check passes)
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {
@@ -336,12 +336,10 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
         let _ = vm.db.get_account(address)?;
 
         if len > 0 {
-            let data = vm
-                .db
-                .get_account_code(address)?
-                .bytecode
-                .get(src_offset..)
-                .unwrap_or_default();
+            // Tx-scoped EXTCODECOPY cache: hash-validated Arc<Code> avoids
+            // re-cloning the bytecode handle on repeat copies in the same tx.
+            let code = vm.db.get_extcode_info(address)?;
+            let data = code.bytecode.get(src_offset..).unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;

@@ -24,6 +24,17 @@ use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
 
+/// Per-(address, code_hash) cached resolution for EXTCODESIZE/EXTCODECOPY.
+/// Lifetime is tx-scoped: cleared on `VM::new`. Stale entries are detected
+/// by comparing the stored `code_hash` to the current account's `code_hash`
+/// on every lookup, so same-tx CREATE/CREATE2 redeploys invalidate naturally.
+#[derive(Clone)]
+pub struct ExtCodeCacheEntry {
+    pub code_hash: H256,
+    pub code_len: u32,
+    pub code: Arc<Code>,
+}
+
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
@@ -36,6 +47,9 @@ pub struct GeneralizedDatabase {
     pub codes: FxHashMap<H256, Code>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
     pub tx_backup: Option<CallFrameBackup>,
+    /// Tx-scoped EXTCODESIZE/EXTCODECOPY cache keyed by address. Validated on
+    /// each lookup against the live account `code_hash`. Cleared on `VM::new`.
+    pub extcode_cache: FxHashMap<Address, ExtCodeCacheEntry>,
     /// Optional BAL recorder for EIP-7928 Block Access List recording.
     pub bal_recorder: Option<BlockAccessListRecorder>,
     /// When true, skip cloning accounts into `initial_accounts_state` on load.
@@ -57,6 +71,7 @@ impl GeneralizedDatabase {
             tx_backup: None,
             codes: Default::default(),
             code_metadata: Default::default(),
+            extcode_cache: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
@@ -89,6 +104,7 @@ impl GeneralizedDatabase {
             tx_backup: None,
             codes: FxHashMap::with_capacity_and_hasher(capacity / 4, Default::default()),
             code_metadata: Default::default(),
+            extcode_cache: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: true,
             accessed_accounts: None,
@@ -147,6 +163,7 @@ impl GeneralizedDatabase {
             tx_backup: None,
             codes,
             code_metadata: Default::default(),
+            extcode_cache: Default::default(),
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
@@ -260,6 +277,72 @@ impl GeneralizedDatabase {
         let metadata = self.get_code_metadata(code_hash)?;
         #[expect(clippy::as_conversions, reason = "same sized types (on 64bit)")]
         Ok(metadata.length as usize)
+    }
+
+    /// Tx-scoped EXTCODESIZE fast path. Validates the cache against the live
+    /// `account.info.code_hash` so same-tx redeploys (CREATE/CREATE2) refresh
+    /// the entry on the next call. Falls back to `get_code_length` semantics
+    /// when the cache is cold; uses a single account hash read on hits.
+    pub fn get_extcode_size(&mut self, address: Address) -> Result<usize, InternalError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        let code_hash = self.get_account(address)?.info.code_hash;
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(0);
+        }
+        if let Some(entry) = self.extcode_cache.get(&address)
+            && entry.code_hash == code_hash
+        {
+            #[expect(clippy::as_conversions, reason = "u32 -> usize widening")]
+            return Ok(entry.code_len as usize);
+        }
+        // Cache miss or stale: load full code, populate entry, return length.
+        let code = self.get_code(code_hash)?.clone();
+        let len = code.bytecode.len();
+        #[expect(
+            clippy::as_conversions,
+            reason = "bytecode size fits in u32 by EIP-3860"
+        )]
+        let len_u32 = len as u32;
+        self.extcode_cache.insert(
+            address,
+            ExtCodeCacheEntry {
+                code_hash,
+                code_len: len_u32,
+                code: Arc::new(code),
+            },
+        );
+        Ok(len)
+    }
+
+    /// Tx-scoped EXTCODECOPY fast path. Returns an `Arc<Code>` so the caller
+    /// can read `bytecode` without keeping a borrow on `&mut self.db`.
+    /// Hash-compares against the live account `code_hash` for same-tx
+    /// redeploy invalidation.
+    pub fn get_extcode_info(&mut self, address: Address) -> Result<Arc<Code>, InternalError> {
+        let code_hash = self.get_account(address)?.info.code_hash;
+        if let Some(entry) = self.extcode_cache.get(&address)
+            && entry.code_hash == code_hash
+        {
+            return Ok(entry.code.clone());
+        }
+        let code = self.get_code(code_hash)?.clone();
+        let len = code.bytecode.len();
+        #[expect(
+            clippy::as_conversions,
+            reason = "bytecode size fits in u32 by EIP-3860"
+        )]
+        let len_u32 = len as u32;
+        let arc = Arc::new(code);
+        self.extcode_cache.insert(
+            address,
+            ExtCodeCacheEntry {
+                code_hash,
+                code_len: len_u32,
+                code: arc.clone(),
+            },
+        );
+        Ok(arc)
     }
 
     /// Gets storage slot from Database, storing in initial_accounts_state for efficiency when getting AccountUpdates.
@@ -779,5 +862,204 @@ impl<'a> VM<'a> {
             .or_insert(current_value);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod extcode_cache_tests {
+    //! Tx-scoped EXTCODESIZE/EXTCODECOPY cache tests.
+    //!
+    //! Verifies:
+    //!   1. Repeat EXTCODESIZE on the same address hits the cache.
+    //!   2. A code change (CREATE/CREATE2 path via `update_account_bytecode`)
+    //!      invalidates the cache via the per-call hash compare.
+    //!   3. EXTCODECOPY (`get_extcode_info`) reuses the cached `Arc<Code>` on
+    //!      a hit, without dispatching another `get_account_code` to the
+    //!      underlying store.
+    use super::*;
+    use crate::errors::DatabaseError;
+    use ethrex_common::types::{AccountState, ChainConfig};
+    use ethrex_common::{Address, Bytes, H256, U256};
+    use ethrex_crypto::NativeCrypto;
+    use std::sync::Mutex;
+
+    fn addr(byte: u8) -> Address {
+        let mut a = Address::zero();
+        a.0[19] = byte;
+        a
+    }
+
+    /// Mock store whose hash-keyed code map can be mutated between calls.
+    /// Counts `get_account_code` invocations so tests can assert cache hits.
+    struct MockStore {
+        accounts: Mutex<FxHashMap<Address, AccountState>>,
+        codes: Mutex<FxHashMap<H256, Code>>,
+        get_account_code_calls: Mutex<u32>,
+    }
+
+    impl MockStore {
+        fn new() -> Self {
+            Self {
+                accounts: Mutex::new(FxHashMap::default()),
+                codes: Mutex::new(FxHashMap::default()),
+                get_account_code_calls: Mutex::new(0),
+            }
+        }
+
+        fn with_code(self, address: Address, bytecode: &[u8]) -> Self {
+            let code = Code::from_bytecode(Bytes::copy_from_slice(bytecode), &NativeCrypto);
+            self.accounts.lock().unwrap().insert(
+                address,
+                AccountState {
+                    nonce: 0,
+                    balance: U256::zero(),
+                    code_hash: code.hash,
+                    storage_root: H256::zero(),
+                },
+            );
+            self.codes.lock().unwrap().insert(code.hash, code);
+            self
+        }
+
+        fn account_code_call_count(&self) -> u32 {
+            *self.get_account_code_calls.lock().unwrap()
+        }
+    }
+
+    impl Database for MockStore {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .lock()
+                .unwrap()
+                .get(&address)
+                .copied()
+                .unwrap_or_default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Err(DatabaseError::Custom("not implemented".into()))
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            *self.get_account_code_calls.lock().unwrap() += 1;
+            Ok(self
+                .codes
+                .lock()
+                .unwrap()
+                .get(&code_hash)
+                .cloned()
+                .ok_or_else(|| DatabaseError::Custom("code not found".into()))?)
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            #[expect(clippy::as_conversions, reason = "len fits in u64")]
+            Ok(self
+                .codes
+                .lock()
+                .unwrap()
+                .get(&code_hash)
+                .map(|c| CodeMetadata {
+                    length: c.bytecode.len() as u64,
+                })
+                .unwrap_or(CodeMetadata { length: 0 }))
+        }
+    }
+
+    /// Test 1: Same-address EXTCODESIZE twice in a tx — second call is a cache hit.
+    /// Asserted by checking only one underlying `get_account_code` call across
+    /// both lookups.
+    #[test]
+    fn extcodesize_same_address_hits_cache() {
+        let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x01]; // PUSH1 1 PUSH1 2 ADD
+        let target = addr(1);
+        let store = Arc::new(MockStore::new().with_code(target, &bytecode));
+        let store_ref = store.clone();
+        let mut db = GeneralizedDatabase::new(store);
+
+        let len1 = db.get_extcode_size(target).expect("first call");
+        let len2 = db.get_extcode_size(target).expect("second call (hit)");
+        assert_eq!(len1, bytecode.len());
+        assert_eq!(len2, bytecode.len());
+        assert_eq!(
+            store_ref.account_code_call_count(),
+            1,
+            "second EXTCODESIZE must be a cache hit"
+        );
+        assert!(db.extcode_cache.contains_key(&target));
+    }
+
+    /// Test 2: EXTCODESIZE then code update at same address invalidates the
+    /// cache via the hash compare. The next EXTCODESIZE refreshes the entry
+    /// and reports the new length.
+    ///
+    /// `update_account_bytecode` is a `VM` method; spinning up a VM here
+    /// would pull in the full Environment/Substate scaffolding. Inline the
+    /// two state mutations it performs (set `account.info.code_hash` and
+    /// insert the new `Code` into `db.codes`) so the test exercises the
+    /// cache's hash-compare path directly.
+    #[test]
+    fn extcodesize_invalidates_on_code_change() {
+        let initial = vec![0xfe]; // INVALID
+        let replaced = vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]; // PUSH PUSH ADD STOP
+        let target = addr(2);
+        let store = Arc::new(MockStore::new().with_code(target, &initial));
+        let mut db = GeneralizedDatabase::new(store);
+
+        let len_before = db.get_extcode_size(target).expect("pre-update");
+        assert_eq!(len_before, initial.len());
+
+        // Simulate CREATE2-at-same-address: rewrite the live account's
+        // code_hash and install the new code. This mirrors the two
+        // observable side effects of `VM::update_account_bytecode` from the
+        // cache's point of view.
+        let new_code = Code::from_bytecode(Bytes::copy_from_slice(&replaced), &NativeCrypto);
+        let new_hash = new_code.hash;
+        db.codes.insert(new_hash, new_code);
+        db.get_account_mut(target).expect("load").info.code_hash = new_hash;
+
+        let len_after = db.get_extcode_size(target).expect("post-update");
+        assert_eq!(
+            len_after,
+            replaced.len(),
+            "cache must invalidate on hash mismatch"
+        );
+        let entry = db
+            .extcode_cache
+            .get(&target)
+            .expect("entry must be present after refresh");
+        #[expect(clippy::as_conversions, reason = "u32 -> usize widening")]
+        let cached_len = entry.code_len as usize;
+        assert_eq!(cached_len, replaced.len());
+        assert_eq!(entry.code_hash, new_hash);
+    }
+
+    /// Test 3: EXTCODECOPY (`get_extcode_info`) returns the cached `Arc<Code>`
+    /// on a repeat call without dispatching another `get_account_code`.
+    #[test]
+    fn extcodecopy_reuses_cached_code() {
+        let bytecode = vec![0x60, 0x10, 0x60, 0x20, 0x01, 0x00];
+        let target = addr(3);
+        let store = Arc::new(MockStore::new().with_code(target, &bytecode));
+        let store_ref = store.clone();
+        let mut db = GeneralizedDatabase::new(store);
+
+        let first = db.get_extcode_info(target).expect("first call");
+        let second = db.get_extcode_info(target).expect("second call (hit)");
+
+        assert_eq!(first.bytecode.as_ref(), bytecode.as_slice());
+        assert_eq!(second.bytecode.as_ref(), bytecode.as_slice());
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "cache hit must return the same Arc instance"
+        );
+        assert_eq!(
+            store_ref.account_code_call_count(),
+            1,
+            "second EXTCODECOPY must not re-load bytecode"
+        );
     }
 }
