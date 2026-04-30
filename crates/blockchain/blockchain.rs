@@ -88,7 +88,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
-use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::CrossBlockCache;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -190,7 +190,6 @@ pub struct L2Config {
 ///     // Process transactions from mempool
 /// }
 /// ```
-#[derive(Debug)]
 pub struct Blockchain {
     /// Underlying storage for blocks and state.
     storage: Store,
@@ -211,6 +210,29 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
+    /// Cross-block state cache.
+    ///
+    /// Survives across block executions; invalidated on parent-mismatch (and on
+    /// reorg, once the explicit hook in `apply_fork_choice` lands). The inner
+    /// database is swapped at the start of every block to point at that block's
+    /// parent state, so cache misses always read consistent state. Writes are
+    /// promoted via `CrossBlockCache::promote_block` only after the block has
+    /// been successfully stored.
+    cross_block_cache: Arc<CrossBlockCache>,
+}
+
+impl core::fmt::Debug for Blockchain {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Blockchain")
+            .field("storage", &self.storage)
+            .field("mempool", &self.mempool)
+            .field("is_synced", &self.is_synced)
+            .field("options", &self.options)
+            .field("payloads", &"<...>")
+            .field("merkle_pool", &"<...>")
+            .field("cross_block_cache", &"<...>")
+            .finish()
+    }
 }
 
 /// Configuration options for the blockchain.
@@ -336,6 +358,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            cross_block_cache: Arc::new(CrossBlockCache::unset()),
         }
     }
 
@@ -347,7 +370,22 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
+            cross_block_cache: Arc::new(CrossBlockCache::unset()),
         }
+    }
+
+    /// Cross-block cache shared with execution paths. Cloning the returned
+    /// `Arc` is cheap.
+    pub fn cross_block_cache(&self) -> Arc<CrossBlockCache> {
+        self.cross_block_cache.clone()
+    }
+
+    /// Drop the cross-block cache contents. Used by callers that detect a
+    /// reorg outside the per-block parent-mismatch check (e.g. an explicit
+    /// fork-choice transition that changes canonicality without re-executing
+    /// all the affected blocks).
+    pub fn invalidate_cross_block_cache(&self) {
+        self.cross_block_cache.invalidate();
     }
 
     /// Executes a block withing a new vm instance and state
@@ -444,11 +482,32 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // Point the cross-block cache at the new block's parent state and use
+        // it as the VM's underlying store. The cache survives across blocks, so
+        // both warming and execution benefit from cache hits on accounts/slots/
+        // code touched by recent blocks. Cache misses fall through to
+        // `original_store` (the StoreVmDatabase for `parent_header`).
+        //
+        // Pre-flight: if the cache is stale w.r.t. this block's parent (e.g.
+        // an out-of-band reorg or the first block after an engine_newPayload
+        // for a non-extending block), wipe it. This is the load-bearing
+        // safety net for cross-block reuse — see `track-perf-commit/cross-
+        // block-caches/plan.md`.
+        let parent_number = parent_header.number;
+        let parent_hash = parent_header.hash();
+        if !self
+            .cross_block_cache
+            .is_valid_for_parent(parent_number, parent_hash)
+        {
+            self.cross_block_cache.invalidate();
+        }
+
         let original_store = vm.db.store.clone();
+        self.cross_block_cache
+            .set_inner(original_store)
+            .map_err(|e| ChainError::Custom(format!("set cross-block cache inner: {e}")))?;
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            Arc::new(CachingDatabase::new(original_store));
+            self.cross_block_cache.clone();
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -675,13 +734,11 @@ impl Blockchain {
             let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            // Accumulator for witness generation (only used if precompute_witnesses is true)
+            // Accumulator for the merged per-address AccountUpdate. Used by
+            // both the witness generator (`precompute_witnesses`) and the
+            // cross-block cache promotion path; always populated.
             let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                if self.options.precompute_witnesses {
-                    Some(FxHashMap::default())
-                } else {
-                    None
-                };
+                Some(FxHashMap::default());
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -855,12 +912,10 @@ impl Blockchain {
             }
         }
 
-        // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
-        } else {
-            None
-        };
+        // Snapshot merged updates before consuming the map. Used by both the
+        // witness generator (`precompute_witnesses`) and the cross-block cache
+        // promotion path; always populated.
+        let accumulated_updates = Some(all_updates.values().cloned().collect::<Vec<_>>());
 
         // Extract code updates and build work items with pre-hashed addresses
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
@@ -1882,8 +1937,15 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        // Witness generation only runs when precompute_witnesses is enabled.
+        // The accumulator is always populated now (cross-block cache also
+        // consumes it), so we still need to share `account_updates` between the
+        // witness path and the promotion path. Take it via reference so we can
+        // hand it to both consumers.
+        let account_updates_for_cache = accumulated_updates.as_deref();
+
         if let Some(logger) = logger
-            && let Some(account_updates) = accumulated_updates
+            && let Some(account_updates) = accumulated_updates.clone()
         {
             let block_hash = block.hash();
             let witness = self.generate_witness_from_account_updates(
@@ -1896,9 +1958,31 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
+        // Compute hash before `store_block` consumes `block`. Used both for
+        // the cross-block cache promotion below and (later) as input to any
+        // post-store hook.
+        let stored_block_hash = block.hash();
         let result = self.store_block(block, account_updates_list, res);
 
         let stored = Instant::now();
+
+        // Promote the post-state of this block into the cross-block cache only
+        // after `store_block` succeeded. If anything failed earlier (state-root
+        // mismatch, disk error, ...), we don't poison the cache: the cache
+        // still reflects the previous block's state, and the next block's
+        // parent-mismatch check will invalidate if needed.
+        if result.is_ok()
+            && let Some(updates) = account_updates_for_cache
+            && let Err(e) =
+                self.cross_block_cache
+                    .promote_block(block_number, stored_block_hash, updates)
+        {
+            // Promotion failure should never happen in practice (only lock
+            // poisoning), but if it does we drop the cache rather than
+            // continuing with a half-promoted state.
+            warn!("cross-block cache promotion failed; invalidating: {e}");
+            self.cross_block_cache.invalidate();
+        }
 
         let instants = std::array::from_fn(move |i| {
             if i < instants.len() {
