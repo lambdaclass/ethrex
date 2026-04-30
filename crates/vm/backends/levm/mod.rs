@@ -120,6 +120,10 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        // Per-tx gas trace, dumped via warn! if final block gas mismatches the header.
+        // Only used for diagnosing post-execution gas-mismatch errors; otherwise discarded.
+        let mut per_tx_gas_trace: Vec<(usize, ethrex_common::H256, u64, u64, bool, bool)> =
+            Vec::new();
         let transactions_with_sender =
             block
                 .body
@@ -177,6 +181,15 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
+            per_tx_gas_trace.push((
+                tx_idx,
+                tx.hash(),
+                report.gas_used,
+                report.gas_spent,
+                is_bsc_system_tx,
+                matches!(report.result, TxResult::Success),
+            ));
+
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
 
@@ -221,6 +234,33 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // Diagnostic: if our computed block gas doesn't match the header, dump the
+        // per-tx breakdown so we can compare with canonical receipts and isolate
+        // which tx (or txs) is gas-divergent. Only fires on actual mismatch so
+        // logs stay quiet during normal sync.
+        if block_gas_used != block.header.gas_used {
+            ::tracing::warn!(
+                block_number = block.header.number,
+                block_hash = ?block.hash(),
+                our_block_gas_used = block_gas_used,
+                header_gas_used = block.header.gas_used,
+                tx_count = per_tx_gas_trace.len(),
+                "Block gas mismatch — per-tx breakdown follows"
+            );
+            for (idx, hash, gas_used, gas_spent, is_sys, success) in &per_tx_gas_trace {
+                ::tracing::warn!(
+                    block_number = block.header.number,
+                    tx_idx = idx,
+                    tx_hash = ?hash,
+                    gas_used,
+                    gas_spent,
+                    is_bsc_system_tx = is_sys,
+                    success,
+                    "tx gas"
+                );
+            }
         }
 
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
@@ -468,6 +508,9 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        // Per-tx gas trace, dumped via warn! if final block gas mismatches the header.
+        let mut per_tx_gas_trace: Vec<(usize, ethrex_common::H256, u64, u64, bool, bool)> =
+            Vec::new();
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
@@ -527,6 +570,16 @@ impl LEVM {
                 false,
                 crypto,
             )?;
+
+            per_tx_gas_trace.push((
+                tx_idx,
+                tx.hash(),
+                report.gas_used,
+                report.gas_spent,
+                is_bsc_system_tx,
+                matches!(report.result, TxResult::Success),
+            ));
+
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
@@ -573,6 +626,33 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // Diagnostic: if our computed block gas doesn't match the header, dump the
+        // per-tx breakdown so we can compare with canonical receipts and isolate
+        // which tx (or txs) is gas-divergent. Only fires on actual mismatch so
+        // logs stay quiet during normal sync.
+        if block_gas_used != block.header.gas_used {
+            ::tracing::warn!(
+                block_number = block.header.number,
+                block_hash = ?block.hash(),
+                our_block_gas_used = block_gas_used,
+                header_gas_used = block.header.gas_used,
+                tx_count = per_tx_gas_trace.len(),
+                "Block gas mismatch — per-tx breakdown follows"
+            );
+            for (idx, hash, gas_used, gas_spent, is_sys, success) in &per_tx_gas_trace {
+                ::tracing::warn!(
+                    block_number = block.header.number,
+                    tx_idx = idx,
+                    tx_hash = ?hash,
+                    gas_used,
+                    gas_spent,
+                    is_bsc_system_tx = is_sys,
+                    success,
+                    "tx gas"
+                );
+            }
         }
 
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
