@@ -260,9 +260,13 @@ fn pre_storage_value(
         .and_then(|a| a.storage.get(slot).copied())
 }
 
-/// Builds the pre-tx state map. For accounts cached before this tx, `pre_snapshot`
-/// only holds slots loaded by previous txs; slots first read in this tx come from
-/// `initial_accounts_state`, so we merge both then keep only slots touched here.
+/// Builds the pre-tx state map. Pre storage is restricted to slots accessed by THIS
+/// tx — for accounts cached before this tx that means slots first loaded here or slots
+/// whose value changed; for accounts first accessed here, every slot in `post.storage`.
+/// The final `post.storage` membership check is a defensive guard: it bounds pre to
+/// the set of slots that ended up in the post cache, so unrelated slots that ever leak
+/// into `initial_accounts_state` (e.g. via more eager caching upstream) cannot leak into
+/// pre output.
 fn build_pre_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
@@ -273,22 +277,31 @@ fn build_pre_state_map(
     for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
         let mut state = build_account_output(pre_account, db);
 
-        if let Some(pre_cached) = pre_snapshot.get(&addr) {
-            if let Some(initial) = db.initial_accounts_state.get(&addr) {
-                for (k, v) in &initial.storage {
-                    state
-                        .storage
-                        .entry(*k)
-                        .or_insert_with(|| H256::from_uint(v));
-                }
+        // For already-cached accounts, the pre-tx values of slots first loaded in this
+        // tx live in `initial_accounts_state` rather than in `pre_snapshot`. Newly-accessed
+        // accounts already have those values via `pre_account` (which comes from
+        // `initial_accounts_state` in `find_touched_accounts`).
+        if pre_snapshot.contains_key(&addr)
+            && let Some(initial) = db.initial_accounts_state.get(&addr)
+        {
+            for (k, v) in &initial.storage {
+                state
+                    .storage
+                    .entry(*k)
+                    .or_insert_with(|| H256::from_uint(v));
             }
-            state.storage.retain(|k, _| {
-                if !pre_cached.storage.contains_key(k) {
-                    return true;
-                }
-                pre_cached.storage.get(k) != post_account.storage.get(k)
-            });
         }
+
+        let pre_cached_storage = pre_snapshot.get(&addr).map(|a| &a.storage);
+        state.storage.retain(|k, _| {
+            if !post_account.storage.contains_key(k) {
+                return false;
+            }
+            match pre_cached_storage {
+                Some(pre) if pre.contains_key(k) => pre.get(k) != post_account.storage.get(k),
+                _ => true,
+            }
+        });
 
         result.insert(addr, state);
     }

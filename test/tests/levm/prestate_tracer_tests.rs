@@ -1068,3 +1068,89 @@ fn prestate_diff_post_emits_zero_balance_when_changed() {
         "balance change to zero must be emitted as Some(0), not omitted"
     );
 }
+
+/// Defensive: even if `initial_accounts_state.storage[addr]` ever held slots that the
+/// current tx didn't access (e.g. via more eager upstream caching), pre output for that
+/// account must not leak them. The pre map is bounded by what the current tx actually
+/// touched (which is reflected in `post.storage`). Today the upstream cache only holds
+/// this-tx slots, so this scenario is constructed by manually planting an extra slot
+/// into `initial_accounts_state` before tracing.
+#[test]
+fn prestate_pre_storage_excludes_slots_not_present_in_post() {
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+    let extra_slot = H256::from_low_u64_be(0x42);
+    let dummy_slot = H256::from_low_u64_be(0);
+
+    // Contract whose runtime is just STOP — never touches storage on call.
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(vec![0x00]), &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    // Run a first tx so the contract is cached in both initial and current state.
+    let warmup = call_contract_tx(contract_addr, sender_addr, dummy_slot, 0);
+    LEVM::execute_tx(
+        &warmup,
+        sender_addr,
+        &header,
+        &mut db,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("warmup tx should succeed");
+
+    // Plant an extra slot into `initial_accounts_state` only — the equivalent of an
+    // upstream change that pre-loads slots the current tx never asks for.
+    db.initial_accounts_state
+        .get_mut(&contract_addr)
+        .expect("contract must be in initial after warmup")
+        .storage
+        .insert(extra_slot, U256::from(0x99));
+
+    // Trace a second tx that touches the contract again. The contract's bytecode is
+    // STOP, so the second call accesses nothing storage-side; pre output for the
+    // contract should not include `extra_slot`.
+    let traced = call_contract_tx(contract_addr, sender_addr, dummy_slot, 1);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &traced,
+        false,
+        true,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let prestate = match result {
+        PrestateResult::Prestate(p) => p,
+        PrestateResult::Diff(_) => panic!("expected Prestate variant"),
+    };
+
+    if let Some(contract_state) = prestate.get(&contract_addr) {
+        assert!(
+            !contract_state.storage.contains_key(&extra_slot),
+            "extra_slot was never accessed by this tx — it must not appear in pre"
+        );
+    }
+}
