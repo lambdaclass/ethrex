@@ -133,8 +133,16 @@ fn prestate_trace_includes_newly_accessed_storage_slots() {
 
     // Tx B: calls contract with slot1 → loads slot1 from DB, writes 0xFF
     let tx_b = call_contract_tx(contract_addr, sender_addr, slot1, 1);
-    let result = LEVM::trace_tx_prestate(&mut db, &header, &tx_b, false, VMType::L1, &NativeCrypto)
-        .expect("trace should succeed");
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx_b,
+        false,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
 
     let prestate = match result {
         PrestateResult::Prestate(p) => p,
@@ -202,8 +210,16 @@ fn prestate_diff_mode_includes_newly_accessed_storage_slots() {
 
     // Tx B: access slot1 (new slot) in diff mode
     let tx_b = call_contract_tx(contract_addr, sender_addr, slot1, 1);
-    let result = LEVM::trace_tx_prestate(&mut db, &header, &tx_b, true, VMType::L1, &NativeCrypto)
-        .expect("trace should succeed");
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx_b,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
 
     let diff = match result {
         PrestateResult::Diff(d) => d,
@@ -271,8 +287,16 @@ fn prestate_trace_excludes_storage_slots_from_previous_txs() {
 
     // Tx B: touches only slot1 → should NOT include slot0 in prestate
     let tx_b = call_contract_tx(contract_addr, sender_addr, slot1, 1);
-    let result = LEVM::trace_tx_prestate(&mut db, &header, &tx_b, false, VMType::L1, &NativeCrypto)
-        .expect("trace should succeed");
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx_b,
+        false,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
 
     let prestate = match result {
         PrestateResult::Prestate(p) => p,
@@ -380,8 +404,16 @@ fn prestate_diff_includes_created_account() {
         Transaction::EIP1559Transaction(inner)
     };
 
-    let result = LEVM::trace_tx_prestate(&mut db, &header, &tx, true, VMType::L1, &NativeCrypto)
-        .expect("trace should succeed");
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
 
     let diff = match result {
         PrestateResult::Diff(d) => d,
@@ -395,38 +427,41 @@ fn prestate_diff_includes_created_account() {
         "factory nonce should be 2 after CREATE (started at 1)"
     );
 
-    // The child account should appear in both pre (empty state) and post (created state).
-    // Find it as the address with nonce=0 in pre and nonce=1 in post that isn't sender/factory/coinbase.
+    // Find the child address as the only newly-touched address in post that isn't
+    // sender/factory/coinbase.
     let known_addrs = [sender_addr, factory_addr, header.coinbase];
     let child_addr = diff
         .post
         .keys()
         .find(|addr| !known_addrs.contains(addr))
+        .copied()
         .expect("child contract should appear in post state");
 
-    let child_pre = diff
-        .pre
-        .get(child_addr)
-        .expect("child should appear in pre (empty state before creation)");
-    assert_eq!(child_pre.nonce, 0, "child pre-state nonce should be 0");
-    assert_eq!(
-        child_pre.balance,
-        U256::zero(),
-        "child pre-state balance should be 0"
+    // Diff mode drops accounts whose pre-state was empty (zero balance, zero nonce,
+    // no code, no storage worth keeping). A newly-CREATE'd account fits that, so it
+    // should be absent from pre even though it appears in post.
+    assert!(
+        !diff.pre.contains_key(&child_addr),
+        "newly-created child should NOT appear in diff pre (its pre-state is empty)"
     );
 
     let child_post = diff
         .post
-        .get(child_addr)
+        .get(&child_addr)
         .expect("child should appear in post");
     assert_eq!(
         child_post.nonce, 1,
         "child post-state nonce should be 1 after creation"
     );
+    assert!(
+        !child_post.code.is_empty(),
+        "child post-state code should be the deployed runtime"
+    );
 }
 
-/// Read-only access (Geth compat): a contract whose state isn't modified by the tx
-/// must still appear in non-diff `pre`, and must be absent from diff `post`.
+/// Read-only access: a contract whose state isn't modified by the tx must appear
+/// in non-diff `pre` (every accessed account is captured), but must be absent from
+/// both `pre` and `post` in diff mode (unmodified accounts are pruned in diff output).
 #[test]
 fn prestate_trace_includes_read_only_account() {
     // Oracle: read slot from calldata, SLOAD it, return the value. No SSTORE.
@@ -480,9 +515,16 @@ fn prestate_trace_includes_read_only_account() {
         let header = default_header();
 
         let tx = call_contract_tx(oracle_addr, sender_addr, slot0, 0);
-        let result =
-            LEVM::trace_tx_prestate(&mut db, &header, &tx, false, VMType::L1, &NativeCrypto)
-                .expect("trace should succeed");
+        let result = LEVM::trace_tx_prestate(
+            &mut db,
+            &header,
+            &tx,
+            false,
+            false,
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("trace should succeed");
 
         let prestate = match result {
             PrestateResult::Prestate(p) => p,
@@ -503,16 +545,23 @@ fn prestate_trace_includes_read_only_account() {
         assert_eq!(*slot0_val, H256::from_uint(&oracle_value));
     }
 
-    // ── diff mode: oracle must appear in pre but NOT in post ───────────────
+    // ── diff mode: oracle is unmodified → absent from BOTH pre and post ───
     {
         let test_db = TestDatabase { accounts };
         let mut db = GeneralizedDatabase::new(Arc::new(test_db));
         let header = default_header();
 
         let tx = call_contract_tx(oracle_addr, sender_addr, slot0, 0);
-        let result =
-            LEVM::trace_tx_prestate(&mut db, &header, &tx, true, VMType::L1, &NativeCrypto)
-                .expect("trace should succeed");
+        let result = LEVM::trace_tx_prestate(
+            &mut db,
+            &header,
+            &tx,
+            true,
+            false,
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("trace should succeed");
 
         let diff = match result {
             PrestateResult::Diff(d) => d,
@@ -520,12 +569,502 @@ fn prestate_trace_includes_read_only_account() {
         };
 
         assert!(
-            diff.pre.contains_key(&oracle_addr),
-            "oracle must appear in diff pre"
+            !diff.pre.contains_key(&oracle_addr),
+            "oracle must NOT appear in diff pre (state was unchanged)"
         );
         assert!(
             !diff.post.contains_key(&oracle_addr),
             "oracle must NOT appear in diff post (state was unchanged)"
         );
     }
+}
+
+/// Geth `processDiffState` filters slots whose post value equals the pre value.
+/// When a contract is first accessed in this tx and SLOADs slot A while SSTORE-ing slot B,
+/// only slot B should appear in diff `post` — slot A was read-only.
+#[test]
+fn prestate_diff_post_excludes_unchanged_storage_for_newly_accessed_account() {
+    // Contract: SLOAD slot0 (discarded), SSTORE 0xFF to slot1, STOP.
+    //   60 00 PUSH1 0    ; slot 0
+    //   54    SLOAD
+    //   50    POP        ; discard
+    //   60 FF PUSH1 0xFF ; value
+    //   60 01 PUSH1 1    ; slot 1
+    //   55    SSTORE
+    //   00    STOP
+    let bytecode = Bytes::from(vec![
+        0x60, 0x00, 0x54, 0x50, 0x60, 0xFF, 0x60, 0x01, 0x55, 0x00,
+    ]);
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+
+    let slot0 = H256::from_low_u64_be(0);
+    let slot1 = H256::from_low_u64_be(1);
+
+    let mut contract_storage = FxHashMap::default();
+    contract_storage.insert(slot0, U256::from(100));
+    contract_storage.insert(slot1, U256::from(200));
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(bytecode, &NativeCrypto),
+            1,
+            contract_storage,
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    let tx = call_contract_tx(contract_addr, sender_addr, slot0, 0);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let diff = match result {
+        PrestateResult::Diff(d) => d,
+        PrestateResult::Prestate(_) => panic!("expected Diff variant"),
+    };
+
+    let post = diff
+        .post
+        .get(&contract_addr)
+        .expect("contract should appear in post (slot1 was modified)");
+
+    assert!(
+        !post.storage.contains_key(&slot0),
+        "slot0 was SLOAD-only — must NOT appear in diff post"
+    );
+    let slot1_post = post
+        .storage
+        .get(&slot1)
+        .expect("slot1 was SSTORE'd — must appear in diff post");
+    assert_eq!(*slot1_post, H256::from_uint(&U256::from(0xFF)));
+}
+
+/// Geth keeps zero-valued accessed slots in non-diff `pre` (the original SLOAD value
+/// of an empty slot is `0x0`, and that's what's recorded). Test that ethrex now
+/// matches by including the zero pre value of a slot that SLOAD'd from an empty store.
+#[test]
+fn prestate_trace_includes_zero_value_storage_in_non_diff_pre() {
+    // Contract: SLOAD slot0, POP, STOP.
+    //   60 00 PUSH1 0
+    //   54    SLOAD
+    //   50    POP
+    //   00    STOP
+    let bytecode = Bytes::from(vec![0x60, 0x00, 0x54, 0x50, 0x00]);
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+
+    let slot0 = H256::from_low_u64_be(0);
+
+    // Contract storage is intentionally empty — slot0 reads as zero from the DB.
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(bytecode, &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    let tx = call_contract_tx(contract_addr, sender_addr, slot0, 0);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let prestate = match result {
+        PrestateResult::Prestate(p) => p,
+        PrestateResult::Diff(_) => panic!("expected Prestate variant"),
+    };
+
+    let contract_state = prestate
+        .get(&contract_addr)
+        .expect("contract should appear in prestate");
+
+    let slot0_val = contract_state
+        .storage
+        .get(&slot0)
+        .expect("zero-valued accessed slot must be present in non-diff pre");
+    assert_eq!(*slot0_val, H256::zero());
+}
+
+/// Pre-state of a contract account carries its code hash alongside the bytecode.
+#[test]
+fn prestate_trace_includes_code_hash_for_contract_account() {
+    let bytecode = Bytes::from(vec![0x60, 0x00, 0x54, 0x50, 0x00]);
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+    let slot0 = H256::from_low_u64_be(0);
+
+    let code = Code::from_bytecode(bytecode.clone(), &NativeCrypto);
+    let expected_code_hash = code.hash;
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(U256::zero(), code, 1, FxHashMap::default()),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    let tx = call_contract_tx(contract_addr, sender_addr, slot0, 0);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        false,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let prestate = match result {
+        PrestateResult::Prestate(p) => p,
+        PrestateResult::Diff(_) => panic!("expected Prestate variant"),
+    };
+
+    let contract_state = prestate
+        .get(&contract_addr)
+        .expect("contract should appear in prestate");
+    assert_eq!(
+        contract_state.code_hash, expected_code_hash,
+        "contract pre-state must carry the code hash"
+    );
+    assert_eq!(contract_state.code, bytecode);
+}
+
+/// An account whose pre-state is fully default (no code, no nonce, no balance, no storage)
+/// must be dropped from non-diff pre when `include_empty` is false. Setting `include_empty`
+/// keeps it in the map.
+#[test]
+fn prestate_trace_filters_empty_pre_account_unless_include_empty() {
+    let empty_addr = Address::from_low_u64_be(0xDEAD);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+    let dummy_slot = H256::from_low_u64_be(0);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+    // No entry for empty_addr — read returns default (no code, no balance, nonce 0).
+
+    // include_empty = false → empty_addr filtered.
+    {
+        let test_db = TestDatabase {
+            accounts: accounts.clone(),
+        };
+        let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+        let header = default_header();
+
+        let tx = call_contract_tx(empty_addr, sender_addr, dummy_slot, 0);
+        let result = LEVM::trace_tx_prestate(
+            &mut db,
+            &header,
+            &tx,
+            false,
+            false,
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("trace should succeed");
+
+        let prestate = match result {
+            PrestateResult::Prestate(p) => p,
+            PrestateResult::Diff(_) => panic!("expected Prestate variant"),
+        };
+
+        assert!(
+            !prestate.contains_key(&empty_addr),
+            "empty account must be filtered from non-diff pre when include_empty=false"
+        );
+    }
+
+    // include_empty = true → empty_addr kept.
+    {
+        let test_db = TestDatabase { accounts };
+        let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+        let header = default_header();
+
+        let tx = call_contract_tx(empty_addr, sender_addr, dummy_slot, 0);
+        let result = LEVM::trace_tx_prestate(
+            &mut db,
+            &header,
+            &tx,
+            false,
+            true,
+            VMType::L1,
+            &NativeCrypto,
+        )
+        .expect("trace should succeed");
+
+        let prestate = match result {
+            PrestateResult::Prestate(p) => p,
+            PrestateResult::Diff(_) => panic!("expected Prestate variant"),
+        };
+
+        assert!(
+            prestate.contains_key(&empty_addr),
+            "empty account must be retained when include_empty=true"
+        );
+    }
+}
+
+/// Diff post entries carry only the fields whose value actually changed. A contract that
+/// only receives ETH (balance changes, nonce stays at 1, code unchanged) must serialize
+/// with `balance` set and `nonce` / `code` / `code_hash` at their default (skipped).
+#[test]
+fn prestate_diff_post_emits_only_changed_fields() {
+    // Contract whose runtime accepts incoming calls without reverting.
+    //   STOP (00)
+    let bytecode = Bytes::from(vec![0x00]);
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+    let dummy_slot = H256::from_low_u64_be(0);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(bytecode, &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    // Tx that sends 1 wei to the contract — only its balance should change.
+    let tx = {
+        let inner = EIP1559Transaction {
+            chain_id: 1,
+            nonce: 0,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 10,
+            gas_limit: 100_000,
+            to: TxKind::Call(contract_addr),
+            value: U256::one(),
+            data: Bytes::from(dummy_slot.0.to_vec()),
+            access_list: vec![],
+            signature_y_parity: false,
+            signature_r: U256::one(),
+            signature_s: U256::one(),
+            inner_hash: OnceCell::new(),
+            sender_cache: {
+                let cell = OnceCell::new();
+                let _ = cell.set(sender_addr);
+                cell
+            },
+            cached_canonical: OnceCell::new(),
+        };
+        Transaction::EIP1559Transaction(inner)
+    };
+
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let diff = match result {
+        PrestateResult::Diff(d) => d,
+        PrestateResult::Prestate(_) => panic!("expected Diff variant"),
+    };
+
+    let post = diff
+        .post
+        .get(&contract_addr)
+        .expect("contract should appear in diff post (balance changed)");
+
+    assert_eq!(
+        post.balance,
+        Some(U256::one()),
+        "balance change must be emitted"
+    );
+    assert_eq!(
+        post.nonce, 0,
+        "nonce did not change → must be at default (skipped from JSON)"
+    );
+    assert!(
+        post.code.is_empty(),
+        "code did not change → must be at default (skipped from JSON)"
+    );
+    assert!(
+        post.code_hash.is_zero(),
+        "code_hash did not change → must be at default (skipped from JSON)"
+    );
+    assert!(
+        post.storage.is_empty(),
+        "no storage change → storage map must be empty"
+    );
+}
+
+/// When an account's balance changes to exactly zero, the post entry must still
+/// carry `Some(0)` so JSON consumers see `"balance": "0x0"`. Dropping the field
+/// would silently hide the balance change.
+#[test]
+fn prestate_diff_post_emits_zero_balance_when_changed() {
+    // Sender drains its entire balance into the recipient via `value`.
+    // After paying gas + transferring, sender's balance won't be exactly zero
+    // (gas refund, fees), so we exercise the contract side: a contract with
+    // a non-zero starting balance whose runtime drains itself to a third party.
+    //
+    // Drain bytecode: CALL(beneficiary, balance, ...) with all funds, return.
+    //   PUSH1 0x00          ; retLen
+    //   PUSH1 0x00          ; retOff
+    //   PUSH1 0x00          ; argLen
+    //   PUSH1 0x00          ; argOff
+    //   SELFBALANCE         ; value = self balance
+    //   PUSH20 <addr>       ; to
+    //   GAS                 ; gas
+    //   CALL                ; pops: gas, to, value, argOff, argLen, retOff, retLen
+    //   STOP
+    let beneficiary = Address::from_low_u64_be(0xBEEF);
+    let mut bytecode = vec![
+        0x60, 0x00, // PUSH1 0
+        0x60, 0x00, // PUSH1 0
+        0x60, 0x00, // PUSH1 0
+        0x60, 0x00, // PUSH1 0
+        0x47, // SELFBALANCE
+        0x73, // PUSH20
+    ];
+    bytecode.extend_from_slice(beneficiary.as_bytes());
+    bytecode.extend_from_slice(&[
+        0x5A, // GAS
+        0xF1, // CALL
+        0x00, // STOP
+    ]);
+
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+    let dummy_slot = H256::from_low_u64_be(0);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::from(1_000_000u64),
+            Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    let tx = call_contract_tx(contract_addr, sender_addr, dummy_slot, 0);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let diff = match result {
+        PrestateResult::Diff(d) => d,
+        PrestateResult::Prestate(_) => panic!("expected Diff variant"),
+    };
+
+    let post = diff
+        .post
+        .get(&contract_addr)
+        .expect("contract whose balance changed must appear in diff post");
+
+    assert_eq!(
+        post.balance,
+        Some(U256::zero()),
+        "balance change to zero must be emitted as Some(0), not omitted"
+    );
 }

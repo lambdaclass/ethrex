@@ -61,6 +61,19 @@ struct CallTracerConfig {
 struct PrestateTracerConfig {
     #[serde(default)]
     diff_mode: bool,
+    #[serde(default)]
+    include_empty: bool,
+}
+
+impl PrestateTracerConfig {
+    fn validate(&self) -> Result<(), RpcErr> {
+        if self.diff_mode && self.include_empty {
+            return Err(RpcErr::BadParams(
+                "cannot use diffMode with includeEmpty".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 type BlockTrace<TxTrace> = Vec<BlockTraceComponent<TxTrace>>;
@@ -135,14 +148,22 @@ impl RpcHandler for TraceTransactionRequest {
                 Ok(serde_json::to_value(top_frame)?)
             }
             TracerType::PrestateTracer => {
-                let config = if let Some(value) = &self.trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
-                } else {
-                    PrestateTracerConfig::default()
-                };
+                let config: PrestateTracerConfig =
+                    if let Some(value) = &self.trace_config.tracer_config {
+                        serde_json::from_value(value.clone())?
+                    } else {
+                        PrestateTracerConfig::default()
+                    };
+                config.validate()?;
                 let result = context
                     .blockchain
-                    .trace_transaction_prestate(self.tx_hash, reexec, timeout, config.diff_mode)
+                    .trace_transaction_prestate(
+                        self.tx_hash,
+                        reexec,
+                        timeout,
+                        config.diff_mode,
+                        config.include_empty,
+                    )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 match result {
@@ -226,14 +247,22 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 Ok(serde_json::to_value(block_trace)?)
             }
             TracerType::PrestateTracer => {
-                let config = if let Some(value) = &self.trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
-                } else {
-                    PrestateTracerConfig::default()
-                };
+                let config: PrestateTracerConfig =
+                    if let Some(value) = &self.trace_config.tracer_config {
+                        serde_json::from_value(value.clone())?
+                    } else {
+                        PrestateTracerConfig::default()
+                    };
+                config.validate()?;
                 let prestate_traces = context
                     .blockchain
-                    .trace_block_prestate(block, reexec, timeout, config.diff_mode)
+                    .trace_block_prestate(
+                        block,
+                        reexec,
+                        timeout,
+                        config.diff_mode,
+                        config.include_empty,
+                    )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 // Each trace result is already the correct variant (Prestate or Diff)

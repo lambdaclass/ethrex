@@ -1,7 +1,7 @@
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
 use ethrex_common::types::{Block, Transaction};
-use ethrex_common::{Address, BigEndianHash, H256, tracing::CallTrace, types::BlockHeader};
+use ethrex_common::{Address, BigEndianHash, H256, U256, tracing::CallTrace, types::BlockHeader};
 use ethrex_crypto::Crypto;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
@@ -48,12 +48,15 @@ impl LEVM {
     }
 
     /// Executes `tx` and returns the prestateTracer result. `diff_mode` toggles between
-    /// pre-only and pre+post output. Assumes `db` already reflects all prior txs in the block.
+    /// pre-only and pre+post output. `include_empty` keeps entries that would otherwise
+    /// be all-default (must be false in diff mode). Assumes `db` already reflects all
+    /// prior txs in the block.
     pub fn trace_tx_prestate(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
         tx: &Transaction,
         diff_mode: bool,
+        include_empty: bool,
         vm_type: VMType,
         crypto: &dyn Crypto,
     ) -> Result<PrestateResult, EvmError> {
@@ -68,15 +71,27 @@ impl LEVM {
 
         preload_touched_codes(&pre_snapshot, db)?;
 
-        let pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db);
+        let mut pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db);
 
         if diff_mode {
             let post_map = build_post_state_map(&pre_snapshot, &db.current_accounts_state, db);
+            // Storage in diff pre keeps only slots that changed AND have a non-zero pre value.
+            filter_diff_pre_storage(&mut pre_map, &db.current_accounts_state);
+            // Pre keeps only accounts that ended up in post (modified) or were destroyed
+            // in this tx (those appear in pre but not post).
+            let kept =
+                modified_or_destroyed_addresses(&pre_snapshot, &db.current_accounts_state, db);
+            pre_map.retain(|addr, _| kept.contains(addr));
+            // Empty entries are always dropped in diff mode.
+            pre_map.retain(|_, state| !state.is_empty());
             Ok(PrestateResult::Diff(PrePostState {
                 pre: pre_map,
                 post: post_map,
             }))
         } else {
+            if !include_empty {
+                pre_map.retain(|_, state| !state.is_empty());
+            }
             Ok(PrestateResult::Prestate(pre_map))
         }
     }
@@ -146,29 +161,103 @@ fn find_touched_accounts<'a>(
 }
 
 /// Reads code from `db.codes`; caller must `preload_touched_codes` first.
+/// Storage values are passed through as-is (including zero); per-field filtering
+/// for diff-mode post is applied by `build_post_output`.
 fn build_account_output(account: &LevmAccount, db: &GeneralizedDatabase) -> PrestateAccountState {
-    let code = if account.info.code_hash != *EMPTY_KECCACK_HASH {
+    let has_code = account.info.code_hash != *EMPTY_KECCACK_HASH;
+    let code = if has_code {
         db.codes
             .get(&account.info.code_hash)
             .map(|c| c.bytecode.clone())
-            .unwrap_or_default()
+            .expect("code preloaded by preload_touched_codes")
     } else {
         bytes::Bytes::new()
+    };
+    let code_hash = if has_code {
+        account.info.code_hash
+    } else {
+        H256::zero()
     };
 
     let storage = account
         .storage
         .iter()
-        .filter(|(_, v)| !v.is_zero())
         .map(|(k, v)| (*k, H256::from_uint(v)))
         .collect();
 
     PrestateAccountState {
-        balance: account.info.balance,
+        balance: Some(account.info.balance),
         nonce: account.info.nonce,
         code,
+        code_hash,
         storage,
     }
+}
+
+/// Builds the diff-mode post entry for a touched account, emitting only fields whose
+/// value differs from the pre-tx state. Storage entries are limited to slots that
+/// actually changed and have a non-zero post value. Returns `None` if nothing changed.
+fn build_post_output(
+    addr: Address,
+    pre_account: &LevmAccount,
+    post_account: &LevmAccount,
+    pre_snapshot: &CacheDB,
+    db: &GeneralizedDatabase,
+) -> Option<PrestateAccountState> {
+    let mut state = PrestateAccountState::default();
+    let mut modified = false;
+
+    if pre_account.info.balance != post_account.info.balance {
+        state.balance = Some(post_account.info.balance);
+        modified = true;
+    }
+    if pre_account.info.nonce != post_account.info.nonce {
+        state.nonce = post_account.info.nonce;
+        modified = true;
+    }
+    if pre_account.info.code_hash != post_account.info.code_hash {
+        if post_account.info.code_hash != *EMPTY_KECCACK_HASH {
+            state.code_hash = post_account.info.code_hash;
+            state.code = db
+                .codes
+                .get(&post_account.info.code_hash)
+                .map(|c| c.bytecode.clone())
+                .expect("code preloaded by preload_touched_codes");
+        }
+        modified = true;
+    }
+
+    for (key, post_val) in &post_account.storage {
+        if post_val.is_zero() {
+            continue;
+        }
+        let pre_val = pre_storage_value(addr, key, pre_snapshot, db).unwrap_or_default();
+        if pre_val == *post_val {
+            continue;
+        }
+        state.storage.insert(*key, H256::from_uint(post_val));
+        modified = true;
+    }
+
+    modified.then_some(state)
+}
+
+/// Resolves the pre-tx value of `slot` for `addr`. Slots accessed in earlier txs are in
+/// `pre_snapshot`; slots first loaded in this tx live only in `initial_accounts_state`.
+fn pre_storage_value(
+    addr: Address,
+    slot: &H256,
+    pre_snapshot: &CacheDB,
+    db: &GeneralizedDatabase,
+) -> Option<U256> {
+    if let Some(account) = pre_snapshot.get(&addr)
+        && let Some(value) = account.storage.get(slot)
+    {
+        return Some(*value);
+    }
+    db.initial_accounts_state
+        .get(&addr)
+        .and_then(|a| a.storage.get(slot).copied())
 }
 
 /// Builds the pre-tx state map. For accounts cached before this tx, `pre_snapshot`
@@ -234,7 +323,9 @@ fn preload_touched_codes(
     Ok(())
 }
 
-/// Builds the diff-mode post-state: only changed accounts; destroyed accounts omitted.
+/// Builds the diff-mode post map. Only accounts whose state actually changed are emitted,
+/// destroyed accounts are dropped, and each entry carries only the fields that differ
+/// from the pre-tx state.
 fn build_post_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
@@ -250,23 +341,51 @@ fn build_post_state_map(
             continue;
         }
 
-        if pre_account.info == post_account.info && pre_account.storage == post_account.storage {
-            continue;
+        if let Some(state) = build_post_output(addr, pre_account, post_account, pre_snapshot, db) {
+            result.insert(addr, state);
         }
-
-        let mut state = build_account_output(post_account, db);
-
-        if let Some(pre_cached) = pre_snapshot.get(&addr) {
-            state.storage.retain(|k, _| {
-                if !pre_cached.storage.contains_key(k) {
-                    return true;
-                }
-                pre_cached.storage.get(k) != post_account.storage.get(k)
-            });
-        }
-
-        result.insert(addr, state);
     }
 
     result
+}
+
+/// Trims storage entries in a diff-mode pre map: drops slots whose pre value is zero
+/// or whose pre value equals the post value (unchanged in this tx).
+fn filter_diff_pre_storage(pre: &mut PrestateTrace, post_cache: &CacheDB) {
+    for (addr, state) in pre.iter_mut() {
+        let post_storage = post_cache.get(addr).map(|a| &a.storage);
+        state.storage.retain(|k, v| {
+            if v.is_zero() {
+                return false;
+            }
+            let post_val = post_storage
+                .and_then(|s| s.get(k).copied())
+                .unwrap_or_default();
+            *v != H256::from_uint(&post_val)
+        });
+    }
+}
+
+/// Returns the set of addresses whose state changed in this tx (i.e. would appear
+/// in diff `post`). Used to prune diff `pre` to the same set, plus destroyed accounts
+/// which appear only in `pre`.
+fn modified_or_destroyed_addresses(
+    pre_snapshot: &CacheDB,
+    post_cache: &CacheDB,
+    db: &GeneralizedDatabase,
+) -> std::collections::HashSet<Address> {
+    let mut set = std::collections::HashSet::new();
+    for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
+        if matches!(
+            post_account.status,
+            AccountStatus::Destroyed | AccountStatus::DestroyedModified,
+        ) {
+            set.insert(addr);
+            continue;
+        }
+        if build_post_output(addr, pre_account, post_account, pre_snapshot, db).is_some() {
+            set.insert(addr);
+        }
+    }
+    set
 }

@@ -67,13 +67,15 @@ pub struct CallLog {
     pub position: u64,
 }
 
-/// Account state as captured by the prestateTracer.
-/// Matches Geth's prestateTracer output format.
-/// https://geth.ethereum.org/docs/developers/evm-tracing/built-in-tracers#prestate-tracer
+/// Per-account state entry emitted by the prestateTracer.
+///
+/// `balance` is `Option<U256>`: `None` means "field absent from output",
+/// `Some(0)` still serializes (lets diff post emit a balance that became zero).
 #[derive(Debug, Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct PrestateAccountState {
-    #[serde(default, skip_serializing_if = "U256::is_zero")]
-    pub balance: U256,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance: Option<U256>,
     #[serde(default, skip_serializing_if = "is_zero_nonce")]
     pub nonce: u64,
     #[serde(
@@ -82,8 +84,24 @@ pub struct PrestateAccountState {
         with = "crate::serde_utils::bytes"
     )]
     pub code: Bytes,
+    #[serde(default, skip_serializing_if = "H256::is_zero")]
+    pub code_hash: H256,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub storage: HashMap<H256, H256>,
+}
+
+impl PrestateAccountState {
+    /// True when the entry conveys no information (no balance set, no nonce, no code,
+    /// no code hash, no storage). Used to drop entries that would serialize to `{}`.
+    /// A `Some(0)` balance is treated as no balance for emptiness purposes — it carries
+    /// no diff information beyond what the absence of the field would imply.
+    pub fn is_empty(&self) -> bool {
+        self.balance.unwrap_or_default().is_zero()
+            && self.nonce == 0
+            && self.code.is_empty()
+            && self.code_hash.is_zero()
+            && self.storage.is_empty()
+    }
 }
 
 /// Per-transaction prestate trace (non-diff mode).

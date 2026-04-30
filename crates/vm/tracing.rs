@@ -42,6 +42,7 @@ impl Evm {
         block: &Block,
         tx_index: usize,
         diff_mode: bool,
+        include_empty: bool,
     ) -> Result<PrestateResult, EvmError> {
         let tx = block
             .body
@@ -56,6 +57,7 @@ impl Evm {
             &block.header,
             tx,
             diff_mode,
+            include_empty,
             self.vm_type,
             self.crypto.as_ref(),
         )

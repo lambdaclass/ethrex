@@ -88,6 +88,7 @@ impl Blockchain {
 
     /// Outputs the prestate trace for the given transaction.
     /// If `diff_mode` is true, returns both pre and post state; otherwise returns only pre state.
+    /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
     /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`.
     pub async fn trace_transaction_prestate(
         &self,
@@ -95,6 +96,7 @@ impl Blockchain {
         reexec: u32,
         timeout: Duration,
         diff_mode: bool,
+        include_empty: bool,
     ) -> Result<PrestateResult, ChainError> {
         let Some((_, block_hash, tx_index)) =
             self.storage.get_transaction_location(tx_hash).await?
@@ -112,13 +114,14 @@ impl Blockchain {
         vm.rerun_block(&block, Some(tx_index))?;
         // Trace the transaction
         timeout_trace_operation(timeout, move || {
-            vm.trace_tx_prestate(&block, tx_index, diff_mode)
+            vm.trace_tx_prestate(&block, tx_index, diff_mode, include_empty)
         })
         .await
     }
 
     /// Outputs the prestate trace for each transaction in the block along with the transaction's hash.
     /// If `diff_mode` is true, returns both pre and post state per tx; otherwise returns only pre state.
+    /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
     /// May need to re-execute blocks in order to rebuild the block's prestate, up to the amount given by `reexec`.
     /// Returns prestate traces from oldest to newest transaction.
     pub async fn trace_block_prestate(
@@ -127,6 +130,7 @@ impl Blockchain {
         reexec: u32,
         timeout: Duration,
         diff_mode: bool,
+        include_empty: bool,
     ) -> Result<Vec<(H256, PrestateResult)>, ChainError> {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
@@ -145,7 +149,7 @@ impl Blockchain {
             let result = timeout_trace_operation(timeout, move || {
                 vm.lock()
                     .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_prestate(block.as_ref(), index, diff_mode)
+                    .trace_tx_prestate(block.as_ref(), index, diff_mode, include_empty)
             })
             .await?;
             traces.push((tx_hash, result));
