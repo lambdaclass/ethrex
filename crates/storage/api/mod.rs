@@ -51,6 +51,18 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Switches the backend to sync mode for higher write throughput during
+    /// bulk ingestion (e.g. snap sync). No-op for non-RocksDB backends.
+    fn set_sync_mode(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    /// Restores normal backend settings after sync and triggers compaction.
+    /// No-op for non-RocksDB backends.
+    fn set_normal_mode(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Read-only transaction interface.
