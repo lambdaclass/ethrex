@@ -722,12 +722,19 @@ impl<'a> VM<'a> {
                     depth_before,
                     self.substate.refunded_gas,
                 );
-                // Diagnostic: if depth dropped, log the depth change so we can
-                // see frame transitions in the trace output.
-                if depth_after != depth_before {
+            }
+            // Diagnostic: count ALL opcode iterations when tracer is active,
+            // regardless of trace_pre. If this count exceeds the trace step
+            // count, child frames are running but not being traced.
+            if crate::opcode_tracer::is_active() {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static TOTAL: AtomicU64 = AtomicU64::new(0);
+                let v = TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+                if v % 100 == 0 || v < 5 {
                     eprintln!(
-                        "[trace] depth {}->{} after op {:#x} pc={}",
-                        depth_before, depth_after, opcode, pc_before
+                        "[trace-counter] total_op_iter={} current_depth={}",
+                        v,
+                        self.call_frames.len() + 1
                     );
                 }
             }
