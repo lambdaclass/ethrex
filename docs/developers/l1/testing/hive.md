@@ -287,9 +287,9 @@ HIVE_BRANCH ?= master
 The workflow uses fork-specific fixtures to ensure comprehensive test coverage:
 
 ```yaml
-# Amsterdam tests use fixtures_snobal-devnet-4 (includes BAL-specific tests)
+# Amsterdam tests use fixtures_bal (includes BAL-specific tests)
 if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/sn%C3%B8bal-devnet-4%40v1.0.0/fixtures_snobal-devnet-4.tar.gz"
+  FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal%40v6.0.0/fixtures_bal.tar.gz"
   FLAGS+=" --sim.buildarg branch=devnets/bal/4"
 else
   # Other forks use fixtures_develop (comprehensive coverage including static tests)
@@ -310,10 +310,10 @@ Contents:
 https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz
 
 # .fixtures_url_amsterdam
-https://github.com/ethereum/execution-spec-tests/releases/download/sn%C3%B8bal-devnet-4%40v1.0.0/fixtures_snobal-devnet-4.tar.gz
+https://github.com/ethereum/execution-spec-tests/releases/download/bal%40v6.0.0/fixtures_bal.tar.gz
 ```
 
-**Note**: The CI workflow uses `fixtures_snobal-devnet-4` with `branch=devnets/bal/4` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
+**Note**: The CI workflow uses `fixtures_bal` with `branch=devnets/bal/4` for Amsterdam tests, and `fixtures_develop` with `branch=forks/osaka` for other forks.
 
 ## Updating Repository Versions
 
@@ -327,10 +327,10 @@ To update to a different fork or newer versions:
 
 2. **Update execution-spec-tests versions** in `.github/workflows/daily_hive_report.yaml`:
 
-   For Amsterdam tests (fixtures_snobal-devnet-4):
+   For Amsterdam tests (fixtures_bal):
 
    ```yaml
-   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/sn%C3%B8bal-devnet-4%40<version>/fixtures_snobal-devnet-4.tar.gz"
+   FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal%40<version>/fixtures_bal.tar.gz"
    FLAGS+=" --sim.buildarg branch=devnets/bal/4"
    ```
 
@@ -345,7 +345,7 @@ To update to a different fork or newer versions:
 
    ```bash
    # For Amsterdam fixtures
-   echo "https://github.com/ethereum/execution-spec-tests/releases/download/sn%C3%B8bal-devnet-4%40<version>/fixtures_snobal-devnet-4.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url_amsterdam
+   echo "https://github.com/ethereum/execution-spec-tests/releases/download/bal%40<version>/fixtures_bal.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url_amsterdam
    # For other forks
    echo "https://github.com/ethereum/execution-spec-tests/releases/download/v<version>/fixtures_develop.tar.gz" > tooling/ef_tests/blockchain/.fixtures_url
    ```
