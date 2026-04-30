@@ -998,14 +998,17 @@ impl<'a> VM<'a> {
                 // ExceptionalHalt (PR #2689): apply the spec halt rule to the top-level
                 // message. The "reservoir at entry" is the value at the start of
                 // execution (= AFTER intrinsic + auth refunds), captured in
-                // `state_gas_reservoir_at_top_message_entry`. Reclassify any
-                // outstanding spill plus any reservoir surplus over that entry
-                // value, then reset the reservoir to its entry value.
+                // `state_gas_reservoir_at_top_message_entry`. Reclassify the larger
+                // of `state_gas_spill_outstanding` and the reservoir-over-entry
+                // surplus — they are two views of the same un-cancelled spill (one
+                // counter, one in the reservoir after a child REVERT propagated it
+                // back), so taking the max avoids double-counting when both
+                // accumulators describe the same byte.
                 let entry = self.state_gas_reservoir_at_top_message_entry;
                 let reservoir_surplus = self.state_gas_reservoir.saturating_sub(entry);
                 let reclassify = self
                     .state_gas_spill_outstanding
-                    .saturating_add(reservoir_surplus);
+                    .max(reservoir_surplus);
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
                 self.state_gas_reservoir = entry;
