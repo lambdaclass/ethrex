@@ -54,6 +54,12 @@ crossterm = { version = "0.29.0", features = ["event-stream"] }
 ratatui = "0.29.0"
 tui-logger.workspace = true
 axum.workspace = true
+k256 = { workspace = true, optional = true }
+ethrex-crypto = { workspace = true, optional = true }
+rustc-hash = { workspace = true, optional = true }
+libssz = { workspace = true, optional = true }
+libssz-types = { workspace = true, optional = true }
+
 ethrex-guest-program = { path = "../guest-program", optional = true }
 
 [build-dependencies]
@@ -85,3 +91,17 @@ rocksdb = []
 metrics = ["ethrex-blockchain/metrics"]
 
 l2 = []
+
+experimental-devnet = [
+    "ethrex-vm/experimental-devnet",
+    "ethrex-common/experimental-devnet",
+    "ethrex-blockchain/experimental-devnet",
+    "ethrex-l2-rpc/experimental-devnet",
+    "dep:k256",
+    "dep:ethrex-crypto",
+    "dep:rustc-hash",
+    "dep:libssz",
+    "dep:libssz-types",
+    "dep:ethrex-guest-program",
+    "ethrex-guest-program/experimental-devnet",
+]

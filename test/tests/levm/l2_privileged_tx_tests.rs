@@ -124,6 +124,7 @@ fn test_privileged_tx_to_precompile_with_insufficient_gas_fails_gracefully() {
         LevmCallTracer::disabled(),
         VMType::L2(FeeConfig::default()),
         &NativeCrypto,
+        None,
     )
     .expect("Failed to create VM");
 
@@ -180,6 +181,7 @@ fn test_privileged_tx_to_precompile_with_sufficient_gas_succeeds() {
         LevmCallTracer::disabled(),
         VMType::L2(FeeConfig::default()),
         &NativeCrypto,
+        None,
     )
     .expect("Failed to create VM");
 
@@ -232,6 +234,7 @@ fn test_negative_gas_remaining_causes_immediate_failure() {
         LevmCallTracer::disabled(),
         VMType::L2(FeeConfig::default()),
         &NativeCrypto,
+        None,
     )
     .expect("Failed to create VM");
 

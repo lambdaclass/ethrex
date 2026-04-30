@@ -60,7 +60,7 @@ zisk-build-elf = ["zisk"]
 openvm-build-elf = ["openvm"]
 
 l2 = []
-eip-8025 = ["ethrex-common/eip-8025", "dep:libssz", "dep:libssz-merkle"]
+experimental-devnet = ["ethrex-common/experimental-devnet", "dep:libssz", "dep:libssz-merkle"]
 c-kzg = ["ethrex-vm/c-kzg", "ethrex-common/c-kzg"]
 secp256k1 = [
     "ethrex-common/secp256k1",

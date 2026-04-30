@@ -454,6 +454,11 @@ pub struct VM<'a> {
     pub(crate) opcode_table: [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
+    /// Optional stateless validator for the EXECUTE precompile.
+    /// `None` on VMs that never dispatch EXECUTE (guest program, witness
+    /// generation, the stateless validator itself) — those paths can't supply
+    /// one without a dependency cycle or recursion.
+    pub stateless_validator: Option<&'a dyn crate::StatelessValidator>,
 }
 
 impl<'a> VM<'a> {
@@ -464,6 +469,7 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
+        stateless_validator: Option<&'a dyn crate::StatelessValidator>,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -507,6 +513,7 @@ impl<'a> VM<'a> {
             env,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
+            stateless_validator,
         };
 
         let call_type = if is_create {
@@ -634,6 +641,7 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
                 self.crypto,
+                self.stateless_validator,
             );
 
             call_frame.gas_remaining = gas_remaining as i64;
@@ -683,6 +691,7 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_precompile(
         code_address: H160,
         calldata: &Bytes,
@@ -691,6 +700,7 @@ impl<'a> VM<'a> {
         fork: Fork,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
+        stateless_validator: Option<&dyn crate::StatelessValidator>,
     ) -> Result<ContextResult, VMError> {
         Self::handle_precompile_result(
             precompiles::execute_precompile(
@@ -700,6 +710,7 @@ impl<'a> VM<'a> {
                 fork,
                 cache,
                 crypto,
+                stateless_validator,
             ),
             gas_limit,
             *gas_remaining,

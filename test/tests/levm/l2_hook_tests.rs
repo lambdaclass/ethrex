@@ -299,6 +299,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -412,6 +413,7 @@ fn finalize_mutation_failure_reverts_all_changes() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -532,6 +534,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
@@ -645,6 +648,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         LevmCallTracer::disabled(),
         VMType::L2(fee_config),
         &NativeCrypto,
+        None,
     )
     .expect("VM creation should succeed");
 

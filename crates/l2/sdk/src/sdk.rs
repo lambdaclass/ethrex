@@ -1130,6 +1130,13 @@ pub async fn get_last_committed_batch(
     _call_u64_variable(client, b"lastCommittedBatch()", on_chain_proposer_address).await
 }
 
+pub async fn get_native_rollup_block_number(
+    client: &EthClient,
+    contract_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"blockNumber()", contract_address).await
+}
+
 pub async fn get_last_verified_batch(
     client: &EthClient,
     on_chain_proposer_address: Address,

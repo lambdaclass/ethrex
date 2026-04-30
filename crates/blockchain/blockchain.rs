@@ -47,6 +47,8 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+#[cfg(feature = "experimental-devnet")]
+pub mod stateless;
 pub mod tracing;
 pub mod vm;
 
@@ -454,11 +456,13 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        let stateless_validator_for_warmer = vm.stateless_validator.clone();
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                let stateless_validator_ref = stateless_validator_for_warmer.as_deref();
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -480,6 +484,7 @@ impl Blockchain {
                                 vm_type,
                                 &NativeCrypto,
                                 cancelled_ref,
+                                stateless_validator_ref,
                             ) {
                                 debug!("Block warming failed (non-fatal): {e}");
                             }
@@ -1846,7 +1851,7 @@ impl Blockchain {
 
             let logger = Arc::new(DatabaseLogger::new(Arc::new(vm_db)));
 
-            let vm = match self.options.r#type.clone() {
+            let mut vm = match self.options.r#type.clone() {
                 BlockchainType::L1 => {
                     Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
                 }
@@ -1858,6 +1863,7 @@ impl Blockchain {
                     Arc::new(NativeCrypto),
                 ),
             };
+            attach_stateless_validator(&mut vm);
             (vm, Some(logger))
         } else {
             let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
@@ -3055,7 +3061,7 @@ fn handle_subtrie(
 }
 
 pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
-    let evm = match blockchain_type {
+    let mut evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
             let fee_config = *l2_config
@@ -3066,7 +3072,30 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
     };
+    attach_stateless_validator(&mut evm);
     Ok(evm)
+}
+
+/// Attach the stateless validator to an `Evm` so its `EXECUTE` precompile
+/// can delegate to `verify_stateless_new_payload` when processing native-rollup
+/// `advance()` calls.
+///
+/// Lives here (not in `Evm`'s constructor) because `StatelessExecutor` is
+/// implemented by the blockchain crate and calls back into `Evm::new_for_l1`
+/// when verifying — an auto-inject in the constructor would recurse. Other
+/// callers that build `Evm::new_for_l1` without blockchain access (the
+/// guest-program crate, the stateless verifier itself, witness generation,
+/// the prover backend) also rely on the constructor staying validator-less.
+///
+/// No-op when `experimental-devnet` is disabled.
+#[allow(unused_variables)]
+fn attach_stateless_validator(evm: &mut Evm) {
+    #[cfg(feature = "experimental-devnet")]
+    {
+        evm.stateless_validator = Some(Arc::new(stateless::StatelessExecutor {
+            crypto: Arc::new(NativeCrypto),
+        }));
+    }
 }
 
 /// Performs post-execution checks
