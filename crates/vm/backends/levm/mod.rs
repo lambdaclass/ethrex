@@ -962,6 +962,23 @@ impl LEVM {
                 }
             }
 
+            // EIP-6780 reconciliation: when seeding from BAL, an account whose
+            // post-state under the seed is empty (balance 0, nonce 0, code empty)
+            // AND whose only BAL change at this index zeros its balance was
+            // SELFDESTRUCTed in a prior tx (created+destroyed in same tx, deleted
+            // per EIP-6780). The BAL doesn't carry an explicit "deleted" marker —
+            // the deletion is implied by the empty state. Mark `exists=false` so
+            // CREATE2 in a subsequent tx sees the address as available (matches
+            // sequential pass-1's `target_existed_at_tx_entry = false` path).
+            // Without this, parallel pass-2's tx 1 sees the address as existing,
+            // skips `record_new_account`, and produces a different state_diff /
+            // gas profile than the BAL builder's sequential pass-1.
+            if let Some(acc) = db.current_accounts_state.get_mut(&addr)
+                && acc.is_empty()
+            {
+                acc.exists = false;
+            }
+
             // Insert code object after acc borrow is released
             if let Some((hash, Some(code_obj))) = code_update {
                 db.codes.entry(hash).or_insert(code_obj);
