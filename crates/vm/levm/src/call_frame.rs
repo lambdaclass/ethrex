@@ -10,6 +10,7 @@ use bytes::Bytes;
 use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
 use ethrex_common::{Address, H256, U256, types::Code};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::{
     fmt,
     hash::{Hash, Hasher},
@@ -291,10 +292,15 @@ pub struct CallFrame {
     pub state_gas_used_snapshot: u64,
 }
 
+/// Inline capacity for per-address storage backup vectors.
+/// Sized for the typical sparse-touch workload (≤4 slots per address) — keeps
+/// the inner buffer on the HashMap value cell with zero heap allocation.
+pub type StorageSlotBackup = SmallVec<[(H256, U256); 4]>;
+
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
     pub original_accounts_info: FxHashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
+    pub original_account_storage_slots: FxHashMap<Address, StorageSlotBackup>,
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
@@ -326,8 +332,28 @@ impl CallFrameBackup {
     }
 
     pub fn extend(&mut self, other: CallFrameBackup) {
-        self.original_account_storage_slots
-            .extend(other.original_account_storage_slots);
+        // Storage slots: per-address dedup-merge so existing self entries
+        // (parent backup) win over `other` (incoming) for the same slot.
+        // The previous nested-HashMap `.extend()` would clobber the parent's
+        // inner map for an address present in both; in practice this only
+        // runs at tx-finalize where the maps are non-overlapping, so the
+        // dedup-skip semantics match the realistic case while being safer
+        // when both sides happen to share an (address, slot).
+        for (address, slots) in other.original_account_storage_slots {
+            match self.original_account_storage_slots.entry(address) {
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(slots);
+                }
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    let parent = e.get_mut();
+                    for (k, v) in slots {
+                        if !parent.iter().any(|(existing_k, _)| *existing_k == k) {
+                            parent.push((k, v));
+                        }
+                    }
+                }
+            }
+        }
         self.original_accounts_info
             .extend(other.original_accounts_info);
         // Don't extend bal_checkpoint - it's specific to each call frame
@@ -483,9 +509,12 @@ impl<'a> VM<'a> {
             .iter()
         {
             let parent_storage = parent_backup_storage.entry(*address).or_default();
-            for (key, value) in storage {
-                if parent_storage.get(key).is_none() {
-                    parent_storage.insert(*key, *value);
+            for (key, value) in storage.iter() {
+                if !parent_storage
+                    .iter()
+                    .any(|(existing_k, _)| *existing_k == *key)
+                {
+                    parent_storage.push((*key, *value));
                 }
             }
         }

@@ -770,13 +770,19 @@ impl<'a> VM<'a> {
         key: H256,
         current_value: U256,
     ) -> Result<(), InternalError> {
-        self.current_call_frame
+        let slots = self
+            .current_call_frame
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_default()
-            .entry(key)
-            .or_insert(current_value);
+            .or_default();
+        // Linear scan instead of nested-HashMap entry to keep the inner buffer
+        // inline (SmallVec). Typical sparse-touch case has ≤4 slots/address so
+        // the scan is O(N) over a tiny inline array. Equivalent to the previous
+        // `entry(key).or_insert(current_value)` (first-write-wins).
+        if !slots.iter().any(|(existing_k, _)| *existing_k == key) {
+            slots.push((key, current_value));
+        }
 
         Ok(())
     }
