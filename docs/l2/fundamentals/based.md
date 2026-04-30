@@ -417,7 +417,7 @@ The following links, repos, and projects have been important in the development 
 
 - [Based Rollups by Justin Drake (current accepted definition)](https://ethresear.ch/t/based-rollups-superpowers-from-l1-sequencing/15016)
 - [Based Rollups by Spire](https://docs.spire.dev/education-hub/what-is-a-based-rollup)
-- [Based Rollups by Taiko](https://docs.taiko.xyz/taiko-alethia-protocol/protocol-design/based-rollups/)
+- [Based Rollups by Taiko](https://docs.taiko.xyz/protocol/based-rollups)
 - [Based Rollups by Gattaca](https://ethresear.ch/t/becoming-based-a-path-towards-decentralised-sequencing/21733)
   - [Analysis on Gattaca's Based Rollup Approach by Spire](https://docs.spire.dev/education-hub/based-rollups-overview)
 
@@ -429,7 +429,6 @@ The following links, repos, and projects have been important in the development 
 
 - [Based Ticketing Rollup by George Spasov](https://hackmd.io/@Perseverance/Syk2oQU36)
 - [Based Contestable Rollup by Taiko (Taiko Alethia)](https://taiko.mirror.xyz/Z4I5ZhreGkyfdaL5I9P0Rj0DNX4zaWFmcws-0CVMJ2A)
-- [Native Based Rollup by Taiko (Taiko Gwyneth)](https://docs.taiko.xyz/taiko-gwyneth-protocol/what-is-taiko-gwyneth/)
 
 ### Misc
 
