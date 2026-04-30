@@ -1,0 +1,29 @@
+[package]
+name = "ef_tests-statetest"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex-levm.workspace = true
+ethrex-common.workspace = true
+ethrex-crypto.workspace = true
+ethrex-rlp.workspace = true
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+clap.workspace = true
+rayon.workspace = true
+regex = "1"
+rustc-hash = "2.1.1"
+secp256k1.workspace = true
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ethrex-levm/c-kzg", "ethrex-common/c-kzg"]
+
+[[bin]]
+name = "ef_tests-statetest"
+path = "src/main.rs"
