@@ -172,8 +172,12 @@ async fn run(
                         "Warning: Returned exception {error:?} does not match expected {expected_exception:?}",
                     );
                 }
-                // Expected exception matched — stop processing further blocks of this test.
-                break;
+                // Expected exception matched — block was rejected, but the test may
+                // still expect subsequent blocks to be processed (e.g. fork-transition
+                // tests where a block at the pre-fork timestamp fails and a block at
+                // the post-fork timestamp succeeds, both built on the same parent).
+                // Continue with the next block in the fixture.
+                continue;
             }
             Ok(_) => {
                 if expects_exception {
