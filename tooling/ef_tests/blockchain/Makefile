@@ -74,6 +74,9 @@ test-stateless: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
 test-stateless-zkevm: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
 	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
 
-test: ## 🧪 Run blockchain tests with LEVM both with state and stateless 
+test-builder-parity: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Cross-check builder vs validator on Amsterdam fixtures
+	cargo test --profile release-with-debug --features builder-parity
+
+test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
 	$(MAKE) test-stateless

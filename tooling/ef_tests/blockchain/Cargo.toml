@@ -34,6 +34,10 @@ c-kzg = ["ethrex-blockchain/c-kzg"]
 sp1 = ["ethrex-guest-program/sp1-build-elf", "ethrex-prover/sp1"]
 stateless = []
 l2 = ["ethrex-guest-program/l2", "ethrex-prover/l2"]
+# Cross-checks the block builder against ef-test fixtures: for each Amsterdam
+# fixture, runs the builder over the fixture txs and asserts the produced
+# block matches the fixture header. Off by default — keep `make test` runtime intact.
+builder-parity = []
 
 [[test]]
 name = "all"
