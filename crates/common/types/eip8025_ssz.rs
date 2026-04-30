@@ -17,6 +17,10 @@ use super::requests::EncodedRequests;
 /// `MAX_TRANSACTIONS_PER_PAYLOAD` (Electra).
 const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1_048_576;
 /// `MAX_WITHDRAWALS_PER_PAYLOAD` (Electra).
+/// TODO: the specs have a non-compliant value compared to consensus
+/// specs. Whenever the specs can resolve an underlying issue,
+/// this value should be updated.
+/// See https://github.com/ethereum/execution-specs/blob/ec23140720d6a9257a907c470ba1874623bd7b50/src/ethereum/forks/amsterdam/stateless_ssz.py#L40-L43
 const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 65536;
 /// `MAX_BYTES_PER_TRANSACTION`.
 const MAX_BYTES_PER_TRANSACTION: usize = 1_073_741_824;
