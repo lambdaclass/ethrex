@@ -1256,6 +1256,61 @@ mod tests {
     }
 
     #[test]
+    fn test_hegota_after_amsterdam() {
+        // Discriminant ordering: Hegota strictly follows Amsterdam.
+        assert!(Fork::Hegota > Fork::Amsterdam);
+        assert_eq!(Fork::Hegota as u8, 26);
+        assert_eq!(Fork::Amsterdam as u8, 25);
+
+        // String conversion.
+        let hegota_str: &str = Fork::Hegota.into();
+        assert_eq!(hegota_str, "Hegota");
+
+        // Activation predicate boundary behavior.
+        let mut config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            ..Default::default()
+        };
+        config.hegota_time = Some(1000);
+        assert!(!config.is_hegota_activated(999));
+        assert!(config.is_hegota_activated(1000));
+        assert!(config.is_hegota_activated(1001));
+
+        // None means inactive.
+        config.hegota_time = None;
+        assert!(!config.is_hegota_activated(0));
+        assert!(!config.is_hegota_activated(u64::MAX));
+
+        // get_fork returns Hegota when both Amsterdam and Hegota are active.
+        let mut config = ChainConfig {
+            chain_id: 1,
+            deposit_contract_address: Address::default(),
+            ..Default::default()
+        };
+        config.amsterdam_time = Some(500);
+        config.hegota_time = Some(1000);
+        assert_eq!(config.get_fork(499), Fork::Paris);
+        assert_eq!(config.get_fork(500), Fork::Amsterdam);
+        assert_eq!(config.get_fork(999), Fork::Amsterdam);
+        assert_eq!(config.get_fork(1000), Fork::Hegota);
+        assert_eq!(config.get_fork(2000), Fork::Hegota);
+
+        // next_fork transitions correctly.
+        assert_eq!(config.next_fork(500), Some(Fork::Hegota));
+        assert_eq!(config.next_fork(1000), None);
+
+        // get_last_scheduled_fork picks Hegota when scheduled.
+        assert_eq!(config.get_last_scheduled_fork(), Fork::Hegota);
+
+        // get_activation_timestamp_for_fork returns the right value.
+        assert_eq!(
+            config.get_activation_timestamp_for_fork(Fork::Hegota),
+            Some(1000)
+        );
+    }
+
+    #[test]
     fn deserialize_chain_config_missing_deposit_contract_address() {
         let json = r#"
             {

@@ -134,6 +134,8 @@ pub async fn bind_api(
             block_worker_channel,
             ws: ws.clone(),
             allowed_namespaces: Arc::new(allowed_namespaces),
+            #[cfg(feature = "eip-7805")]
+            il_config: ethrex_rpc::IlConfig::default(),
         },
         valid_delegation_addresses,
         sponsor_pk,

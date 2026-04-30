@@ -6,6 +6,12 @@ use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::debug::set_head::SetHeadRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
+#[cfg(feature = "eip-7805")]
+use crate::engine::fork_choice::ForkChoiceUpdatedV5;
+#[cfg(feature = "eip-7805")]
+use crate::engine::inclusion_list::GetInclusionListV1Request;
+#[cfg(feature = "eip-7805")]
+use crate::engine::payload::NewPayloadV6Request;
 use crate::engine::payload::{
     GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
 };
@@ -227,6 +233,12 @@ pub struct RpcApiContext {
     /// The `engine` namespace is always served via the authenticated RPC port
     /// and is not gated here.
     pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
+    /// EIP-7805 (FOCIL) inclusion-list builder configuration. Threaded from
+    /// CLI flags `--il-policy`, `--il-per-sender-cap`, `--il-max-bytes`.
+    /// `engine_getInclusionListV1` reads this when constructing
+    /// `InclusionListBuilder` on each request.
+    #[cfg(feature = "eip-7805")]
+    pub il_config: IlConfig,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -236,6 +248,27 @@ pub struct WebSocketConfig {
     pub addr: SocketAddr,
     /// Actor handle for managing `eth_subscribe` / `eth_unsubscribe` connections.
     pub subscription_manager: ActorRef<SubscriptionManager>,
+}
+
+/// EIP-7805 (FOCIL) inclusion-list builder configuration. Defaults match
+/// the production policy mandated by `design.md`.
+#[cfg(feature = "eip-7805")]
+#[derive(Debug, Clone)]
+pub struct IlConfig {
+    pub policy: ethrex_blockchain::inclusion_list_builder::IlPolicy,
+    pub per_sender_cap: usize,
+    pub max_bytes: usize,
+}
+
+#[cfg(feature = "eip-7805")]
+impl Default for IlConfig {
+    fn default() -> Self {
+        Self {
+            policy: ethrex_blockchain::inclusion_list_builder::IlPolicy::default(),
+            per_sender_cap: ethrex_blockchain::inclusion_list_builder::DEFAULT_PER_SENDER_CAP,
+            max_bytes: ethrex_blockchain::inclusion_list_builder::MAX_BYTES_PER_INCLUSION_LIST,
+        }
+    }
 }
 
 impl std::fmt::Debug for RpcApiContext {
@@ -414,6 +447,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::InvalidPayloadAttributes(_) => "InvalidPayloadAttributes",
         RpcErr::TooDeepReorg(_) => "TooDeepReorg",
         RpcErr::UnknownPayload(_) => "UnknownPayload",
+        RpcErr::UnknownParent(_) => "UnknownParent",
         RpcErr::InvalidProofFormat(_) => "InvalidProofFormat",
         RpcErr::InvalidHeaderFormat(_) => "InvalidHeaderFormat",
         RpcErr::InvalidPayload(_) => "InvalidPayload",
@@ -562,6 +596,7 @@ pub async fn bind_api(
     gas_ceil: u64,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
+    #[cfg(feature = "eip-7805")] il_config: IlConfig,
 ) -> Result<BoundRpc, RpcStartupError> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -586,6 +621,8 @@ pub async fn bind_api(
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
+        #[cfg(feature = "eip-7805")]
+        il_config,
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -777,6 +814,7 @@ pub async fn start_api(
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
     cancel_token: CancellationToken,
+    #[cfg(feature = "eip-7805")] il_config: IlConfig,
 ) -> Result<(), RpcErr> {
     bind_api(
         cancel_token,
@@ -795,6 +833,8 @@ pub async fn start_api(
         gas_ceil,
         extra_data,
         allowed_namespaces,
+        #[cfg(feature = "eip-7805")]
+        il_config,
     )
     .await?
     .serve()
@@ -1471,7 +1511,13 @@ pub async fn map_engine_requests(
         "engine_newPayloadWithWitnessV5" => {
             Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
         }
+        #[cfg(feature = "eip-7805")]
+        "engine_forkchoiceUpdatedV5" => ForkChoiceUpdatedV5::call(req, context).await,
         "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
+        #[cfg(feature = "eip-7805")]
+        "engine_newPayloadV6" => Box::pin(NewPayloadV6Request::call(req, context)).await,
+        #[cfg(feature = "eip-7805")]
+        "engine_getInclusionListV1" => GetInclusionListV1Request::call(req, context).await,
         "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
         "engine_newPayloadV3" => Box::pin(NewPayloadV3Request::call(req, context)).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
@@ -2058,5 +2104,45 @@ mod tests {
         });
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[tokio::test]
+    async fn exchange_capabilities_advertises_focil_when_hegota_configured() {
+        let body =
+            r#"{"jsonrpc":"2.0", "method":"engine_exchangeCapabilities", "params":[[]], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage = Store::new("", EngineType::InMemory).expect("Failed to create test DB");
+        let mut config = example_chain_config();
+        config.hegota_time = Some(0);
+        storage.set_chain_config(&config).await.unwrap();
+        let context = default_context_with_storage(storage).await;
+
+        let result = map_engine_requests(&request, context).await.unwrap();
+        let caps: Vec<String> = serde_json::from_value(result).expect("capabilities array");
+
+        assert!(caps.contains(&"engine_getInclusionListV1".to_string()));
+        assert!(caps.contains(&"engine_forkchoiceUpdatedV5".to_string()));
+        assert!(caps.contains(&"engine_newPayloadV6".to_string()));
+    }
+
+    #[cfg(feature = "eip-7805")]
+    #[tokio::test]
+    async fn exchange_capabilities_omits_focil_without_hegota_time() {
+        let body =
+            r#"{"jsonrpc":"2.0", "method":"engine_exchangeCapabilities", "params":[[]], "id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage = Store::new("", EngineType::InMemory).expect("Failed to create test DB");
+        let mut config = example_chain_config();
+        config.hegota_time = None;
+        storage.set_chain_config(&config).await.unwrap();
+        let context = default_context_with_storage(storage).await;
+
+        let result = map_engine_requests(&request, context).await.unwrap();
+        let caps: Vec<String> = serde_json::from_value(result).expect("capabilities array");
+
+        assert!(!caps.contains(&"engine_getInclusionListV1".to_string()));
+        assert!(!caps.contains(&"engine_forkchoiceUpdatedV5".to_string()));
+        assert!(!caps.contains(&"engine_newPayloadV6".to_string()));
     }
 }
