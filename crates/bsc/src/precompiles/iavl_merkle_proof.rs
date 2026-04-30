@@ -92,32 +92,23 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < IAVL_MERKLE_PROOF_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
+    Ok((IAVL_MERKLE_PROOF_GAS, run_inner(input).unwrap_or_default()))
+}
 
-    // Parse outer envelope: 32-byte metadata word + payload.
+fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
     if input.len() <= OUTER_META_LENGTH {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
-    let payload_length = u64::from_be_bytes(
-        input[PAYLOAD_LEN_OFFSET..OUTER_META_LENGTH]
-            .try_into()
-            .expect("slice is exactly 8 bytes"),
-    ) as usize;
-
+    let payload_length =
+        u64::from_be_bytes(input[PAYLOAD_LEN_OFFSET..OUTER_META_LENGTH].try_into().ok()?) as usize;
     if input.len() != OUTER_META_LENGTH + payload_length {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
-
     let payload = &input[OUTER_META_LENGTH..];
-
-    // Parse the KeyValueMerkleProof binary structure.
-    parse_kv_merkle_proof(payload)?;
-
-    // TODO: Port proof verification from `core/vm/lightclient/v1/types.go`
-    // and `core/vm/lightclient/v1/ics23_proof.go`.  The proof bytes are either
-    // Amino-encoded Tendermint Merkle Proof or ICS23 CommitmentProof (Plato+).
-    // Verification requires running the full proof-op chain (IAVL leaf → IAVL
-    // inner nodes → SimpleMultiStore root) and checking against `appHash`.
-    Err(PrecompileError::NotImplemented)
+    parse_kv_merkle_proof(payload).ok()?;
+    // TODO: Port proof verification from bsc-geth lightclient/v1/types.go and
+    // ics23_proof.go. Until implemented, return None (predictable-failure path).
+    None
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

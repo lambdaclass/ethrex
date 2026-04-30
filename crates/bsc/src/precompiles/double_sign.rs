@@ -63,86 +63,76 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < DOUBLE_SIGN_EVIDENCE_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
+    Ok((DOUBLE_SIGN_EVIDENCE_GAS, run_inner(input).unwrap_or_default()))
+}
+
+/// Compute the precompile output. Returns `None` for any input-validation or
+/// recovery failure — callers should treat that as the EVM "predictable
+/// failure" path: precompile consumes the required gas, returns empty output.
+/// Mirrors bsc-geth's pattern (ECRECOVER, modexp, etc.) where bad input does
+/// NOT burn the caller's forwarded gas.
+fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
     if input.is_empty() {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
     // Step 1: RLP-decode the outer DoubleSignEvidence envelope.
-    let evidence =
-        DoubleSignEvidence::decode(input).map_err(|_| PrecompileError::ExecutionReverted)?;
-
-    let chain_id: u64 = evidence
-        .chain_id
-        .try_into()
-        .map_err(|_| PrecompileError::InvalidInput)?;
+    let evidence = DoubleSignEvidence::decode(input).ok()?;
+    let chain_id: u64 = evidence.chain_id.try_into().ok()?;
 
     // Step 2: RLP-decode each header from its byte payload.
-    let header1 = BlockHeader::decode(&evidence.header_bytes1)
-        .map_err(|_| PrecompileError::ExecutionReverted)?;
-    let header2 = BlockHeader::decode(&evidence.header_bytes2)
-        .map_err(|_| PrecompileError::ExecutionReverted)?;
+    let header1 = BlockHeader::decode(&evidence.header_bytes1).ok()?;
+    let header2 = BlockHeader::decode(&evidence.header_bytes2).ok()?;
 
     // Step 3: Basic validity checks (mirrors BSC Go source).
-    // Block numbers must be identical.
     if header1.number != header2.number {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
-    // Parent hashes must be identical.
     if header1.parent_hash != header2.parent_hash {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
-    // Both extra fields must be long enough to hold a 65-byte seal.
     if header1.extra_data.len() < EXTRA_SEAL_LENGTH || header2.extra_data.len() < EXTRA_SEAL_LENGTH
     {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
-    // Seals must differ (otherwise it is not evidence of equivocation).
     let sig1 = &header1.extra_data[header1.extra_data.len() - EXTRA_SEAL_LENGTH..];
     let sig2 = &header2.extra_data[header2.extra_data.len() - EXTRA_SEAL_LENGTH..];
     if sig1 == sig2 {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
     // Step 4: Compute the seal hash for each header and verify they differ.
-    let hash1 = seal_hash(&header1, chain_id).map_err(|_| PrecompileError::InvalidInput)?;
-    let hash2 = seal_hash(&header2, chain_id).map_err(|_| PrecompileError::InvalidInput)?;
+    let hash1 = seal_hash(&header1, chain_id).ok()?;
+    let hash2 = seal_hash(&header2, chain_id).ok()?;
     if hash1 == hash2 {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
     // Step 5: Recover uncompressed public keys from each header seal.
-    // We use secp256k1 directly (same library as ethrex-crypto's NativeCrypto) to
-    // get the raw uncompressed public key bytes for Ethereum address derivation.
-    let sig1_bytes: [u8; 65] = sig1.try_into().expect("sig1 is exactly 65 bytes");
-    let sig2_bytes: [u8; 65] = sig2.try_into().expect("sig2 is exactly 65 bytes");
-
-    let pubkey1 = recover_pubkey_uncompressed(&sig1_bytes, hash1.as_fixed_bytes())
-        .map_err(|_| PrecompileError::ExecutionReverted)?;
-    let pubkey2 = recover_pubkey_uncompressed(&sig2_bytes, hash2.as_fixed_bytes())
-        .map_err(|_| PrecompileError::ExecutionReverted)?;
+    let sig1_bytes: [u8; 65] = sig1.try_into().ok()?;
+    let sig2_bytes: [u8; 65] = sig2.try_into().ok()?;
+    let pubkey1 = recover_pubkey_uncompressed(&sig1_bytes, hash1.as_fixed_bytes()).ok()?;
+    let pubkey2 = recover_pubkey_uncompressed(&sig2_bytes, hash2.as_fixed_bytes()).ok()?;
 
     // Step 6: Both uncompressed public keys must be the same.
     if pubkey1 != pubkey2 {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
     // Step 7: Build the 52-byte output.
-    // Signer address = keccak256(pubkey[1..])[12..] (standard Ethereum address).
-    // Evidence height as big-endian U256 (zero-padded).
     use ethrex_crypto::keccak::keccak_hash;
     let addr_hash = keccak_hash(&pubkey1[1..]);
-    let signer_addr = &addr_hash[12..]; // last 20 bytes of keccak256
+    let signer_addr = &addr_hash[12..];
 
     let mut output = vec![0u8; 52];
     output[..20].copy_from_slice(signer_addr);
 
-    // Encode the block number as a 32-byte big-endian value.
     let mut height_bytes = [0u8; 32];
-    let number_be = header1.number.to_be_bytes(); // u64 → 8 bytes
+    let number_be = header1.number.to_be_bytes();
     height_bytes[24..].copy_from_slice(&number_be);
     output[20..].copy_from_slice(&height_bytes);
 
-    Ok((DOUBLE_SIGN_EVIDENCE_GAS, output))
+    Some(output)
 }
 
 /// Recover the 65-byte uncompressed public key from a 65-byte compact signature

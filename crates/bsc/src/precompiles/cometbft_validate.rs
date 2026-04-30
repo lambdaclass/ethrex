@@ -103,54 +103,32 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < COMETBFT_VALIDATE_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
+    Ok((COMETBFT_VALIDATE_GAS, run_inner(input).unwrap_or_default()))
+}
 
-    if input.is_empty() {
-        return Err(PrecompileError::InvalidInput);
+fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
+    if input.is_empty() || input.len() <= CS_LEN_WORD {
+        return None;
     }
 
-    // The input starts directly with a 32-byte cs_length word (no outer
-    // payload-length envelope, unlike 0x64 and 0x65).
-    // Reference: `DecodeLightBlockValidationInput` in lightclient/v2/lightclient.go.
-    if input.len() <= CS_LEN_WORD {
-        return Err(PrecompileError::InvalidInput);
-    }
-
-    let cs_length = u64::from_be_bytes(
-        input[CS_LEN_OFFSET..CS_LEN_WORD]
-            .try_into()
-            .expect("slice is exactly 8 bytes"),
-    ) as usize;
-
-    // Guard against overflow and ensure light-block bytes follow.
-    let cs_end = CS_LEN_WORD
-        .checked_add(cs_length)
-        .ok_or(PrecompileError::InvalidInput)?;
+    let cs_length = u64::from_be_bytes(input[CS_LEN_OFFSET..CS_LEN_WORD].try_into().ok()?) as usize;
+    let cs_end = CS_LEN_WORD.checked_add(cs_length)?;
     if input.len() <= cs_end {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
     let cs_bytes = &input[CS_LEN_WORD..cs_end];
     let light_block_bytes = &input[cs_end..];
 
-    // Validate the consensus-state structure.
-    parse_consensus_state_v2(cs_bytes)?;
+    parse_consensus_state_v2(cs_bytes).ok()?;
 
-    // The light block is protobuf-encoded (cometbft.types.v1.LightBlock).
-    // Without the full CometBFT protobuf schema, decoding is not possible.
     if light_block_bytes.is_empty() {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
-    // TODO: Decode the protobuf LightBlock (cometbft.types.v1.LightBlock) and
-    // run `ConsensusState.ApplyLightBlock` from lightclient/v2/lightclient.go.
-    // This includes:
-    //   1. Parsing the SignedHeader, ValidatorSet, and NextValidatorSet from
-    //      the protobuf LightBlock message.
-    //   2. VerifyCommitLight / VerifyCommitLightTrusting for adjacent/non-adjacent
-    //      blocks using Ed25519 signatures.
-    //   3. Computing the new consensus state and encoding it via
-    //      `EncodeLightBlockValidationResult`.
-    Err(PrecompileError::NotImplemented)
+    // TODO: Decode protobuf LightBlock and run ConsensusState.ApplyLightBlock.
+    // Until then, return None (treated as predictable-failure: empty output).
+    None
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

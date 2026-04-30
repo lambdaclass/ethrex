@@ -47,51 +47,39 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < SECP256K1_RECOVER_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
+    Ok((SECP256K1_RECOVER_GAS, run_inner(input).unwrap_or_default()))
+}
+
+fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
     if input.len() != INPUT_LENGTH {
-        return Err(PrecompileError::InvalidInput);
+        return None;
     }
 
     let pubkey_bytes = &input[..SIG_OFFSET];
     let sig_bytes = &input[SIG_OFFSET..HASH_OFFSET];
     let msg_hash = &input[HASH_OFFSET..];
 
-    // Parse the compressed public key (33 bytes: 0x02/0x03 prefix + 32-byte x).
-    let pubkey = secp256k1::PublicKey::from_slice(pubkey_bytes)
-        .map_err(|_| PrecompileError::InvalidInput)?;
+    let pubkey = secp256k1::PublicKey::from_slice(pubkey_bytes).ok()?;
+    let sig = secp256k1::ecdsa::Signature::from_compact(sig_bytes).ok()?;
 
-    // Parse the compact (r||s) signature.
-    let sig = secp256k1::ecdsa::Signature::from_compact(sig_bytes)
-        .map_err(|_| PrecompileError::InvalidInput)?;
-
-    // Reject high-S signatures (matches Tendermint's lower-S requirement).
-    // normalize_s() normalises in-place; if the compact form changed, S was
-    // above the half-order and the signature is malleable — reject it.
+    // Reject high-S signatures (Tendermint lower-S requirement).
     {
         let before = sig.serialize_compact();
         let mut check_sig = sig;
         check_sig.normalize_s();
         let after = check_sig.serialize_compact();
         if before != after {
-            return Err(PrecompileError::InvalidInput);
+            return None;
         }
     }
 
-    // Verify the signature against the raw message hash.
-    // `secp256k1::Message::from_digest` treats the 32 bytes as a pre-computed
-    // hash, matching Tendermint's `VerifyBytesWithMsgHash` behaviour.
-    let msg_array: [u8; 32] = msg_hash
-        .try_into()
-        .map_err(|_| PrecompileError::InvalidInput)?;
+    let msg_array: [u8; 32] = msg_hash.try_into().ok()?;
     let message = secp256k1::Message::from_digest(msg_array);
+    sig.verify(&message, &pubkey).ok()?;
 
-    sig.verify(&message, &pubkey)
-        .map_err(|_| PrecompileError::ExecutionReverted)?;
-
-    // Derive the Tendermint address: RIPEMD-160(SHA-256(compressed_pubkey)).
     let sha256_hash = <Sha256 as Sha2Digest>::digest(pubkey_bytes);
     let ripemd_hash = <Ripemd160 as RipemdDigest>::digest(sha256_hash);
-
-    Ok((SECP256K1_RECOVER_GAS, ripemd_hash.to_vec()))
+    Some(ripemd_hash.to_vec())
 }
 
 #[cfg(test)]

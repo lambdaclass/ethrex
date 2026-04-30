@@ -75,43 +75,43 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < gas_cost {
         return Err(PrecompileError::NotEnoughGas);
     }
+    Ok((gas_cost, run_inner(input).unwrap_or_default()))
+}
 
+/// Compute the BLS verify result. Returns `None` for any input-validation or
+/// parse failure — caller treats that as the precompile having executed and
+/// returned empty output, consuming only `required_gas` (matching bsc-geth).
+fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
     let input_len = input.len();
-
-    // Validate: must have msg + sig + at least one pubkey, and pubkey section
-    // must be a multiple of PUBKEY_LENGTH.
     if input_len <= MSG_AND_SIG_LENGTH
         || !(input_len - MSG_AND_SIG_LENGTH).is_multiple_of(PUBKEY_LENGTH)
     {
-        return Err(PrecompileError::ExecutionReverted);
+        return None;
     }
 
     let msg = &input[..MSG_LENGTH];
     let sig_bytes: &[u8; SIGNATURE_LENGTH] = input[MSG_LENGTH..MSG_AND_SIG_LENGTH]
         .try_into()
-        .expect("slice is exactly SIGNATURE_LENGTH bytes");
+        .ok()?;
 
     let pub_key_count = (input_len - MSG_AND_SIG_LENGTH) / PUBKEY_LENGTH;
 
-    // Parse signature (G2 compressed, 96 bytes).
-    let sig_g2 = parse_g2_compressed(sig_bytes).ok_or(PrecompileError::ExecutionReverted)?;
+    let sig_g2 = parse_g2_compressed(sig_bytes)?;
 
-    // Parse and (if multiple keys) aggregate public keys.
     let agg_pubkey: G1Affine = if pub_key_count == 1 {
         let pk_bytes: &[u8; PUBKEY_LENGTH] = input
             [MSG_AND_SIG_LENGTH..MSG_AND_SIG_LENGTH + PUBKEY_LENGTH]
             .try_into()
-            .expect("slice is exactly PUBKEY_LENGTH bytes");
-        parse_g1_compressed(pk_bytes).ok_or(PrecompileError::ExecutionReverted)?
+            .ok()?;
+        parse_g1_compressed(pk_bytes)?
     } else {
         let mut agg = G1Affine::identity();
         for i in 0..pub_key_count {
             let offset = MSG_AND_SIG_LENGTH + i * PUBKEY_LENGTH;
             let pk_bytes: &[u8; PUBKEY_LENGTH] = input[offset..offset + PUBKEY_LENGTH]
                 .try_into()
-                .expect("slice is exactly PUBKEY_LENGTH bytes");
-            let pk = parse_g1_compressed(pk_bytes).ok_or(PrecompileError::ExecutionReverted)?;
-            // Aggregate: agg += pk
+                .ok()?;
+            let pk = parse_g1_compressed(pk_bytes)?;
             use bls12_381::G1Projective;
             #[allow(clippy::arithmetic_side_effects)]
             let sum = G1Projective::from(agg) + G1Projective::from(pk);
@@ -120,15 +120,8 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
         agg
     };
 
-    // Hash message to G2 using hash_to_curve.
     let msg_g2 = hash_msg_to_g2(msg);
 
-    // Verify: e(agg_pk, H(msg)) == e(G1_generator, sig)
-    //
-    // Equivalent check using the pairing:
-    //   e(-G1_gen, sig) * e(agg_pk, H(msg)) == Gt::identity()
-    //
-    // We negate the generator to avoid computing two full pairings separately.
     let g1_neg = G1Affine::from(-bls12_381::G1Projective::generator());
     let gt = multi_miller_loop(&[
         (&g1_neg, &bls12_381::G2Prepared::from(sig_g2)),
@@ -136,16 +129,13 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     ])
     .final_exponentiation();
 
-    // bsc-geth returns `common.Big{0,1}.Bytes()` directly, i.e. an empty
-    // slice on failure and `[0x01]` on success. Match that exactly so
-    // callers observing `returndatasize()` see the same value.
-    let result = if gt == Gt::identity() {
-        vec![0x01]
+    // bsc-geth returns `common.Big{0,1}.Bytes()` directly: empty slice on
+    // failure, [0x01] on success. Match that exactly.
+    if gt == Gt::identity() {
+        Some(vec![0x01])
     } else {
-        Vec::new()
-    };
-
-    Ok((gas_cost, result))
+        Some(Vec::new())
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
