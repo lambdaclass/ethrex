@@ -273,10 +273,16 @@ pub fn refund_sender(
         #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
         let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
         let raw_consumed = vm.env.gas_limit.saturating_sub(gas_remaining);
+        // PR #2689: state-gas charges that were halted (top-level or sub-frame) get
+        // reclassified to regular_gas_used via `regular_gas_reclassified`. The base
+        // formula subtracts every spill (treats them all as state-gas); the
+        // reclassification term adds back the halted portion so it counts toward the
+        // regular dimension.
         let regular_gas = raw_consumed
             .saturating_sub(vm.intrinsic_state_gas_charged)
             .saturating_sub(vm.state_gas_reservoir_initial)
-            .saturating_sub(vm.state_gas_spill);
+            .saturating_sub(vm.state_gas_spill)
+            .saturating_add(vm.regular_gas_reclassified);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)
