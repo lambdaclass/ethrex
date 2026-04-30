@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-04-29
+
+- Use fixed-width RECEIPTS keys and cursor iteration with early stop for eth_getTransactionReceipt; fix prefix iterator scan in get_transaction_location [#6548](https://github.com/lambdaclass/ethrex/pull/6548)
+
 ### 2026-03-30
 
 - Replace per-block thread spawning with persistent thread pool for merkleization [#6344](https://github.com/lambdaclass/ethrex/pull/6344)

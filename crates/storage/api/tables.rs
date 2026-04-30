@@ -31,8 +31,9 @@ pub const ACCOUNT_CODES: &str = "account_codes";
 pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
 
 /// Receipts column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `(block_hash, index).encode_to_vec()`
-/// - [`Vec<u8>`] = `receipt.encode_to_vec()`
+/// - Key: `block_hash (32B) || index (8B big-endian u64)` — fixed-width raw key
+///   enabling cursor-based prefix iteration by block hash.
+/// - Value: `receipt.encode_to_vec()`
 pub const RECEIPTS: &str = "receipts";
 
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
