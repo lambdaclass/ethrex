@@ -1207,13 +1207,15 @@ impl<'a> VM<'a> {
                 // Refunding causes recursive cascade inflation in patterns like
                 // stCallCodes/*_abcb_recursive where each deep frame's apply OOG
                 // would otherwise feed the parent extra gas to keep recursing.
-                let is_revert_opcode = err.is_revert_opcode();
-                let child_had_state_ops = child_state_gas_used > 0;
-                let drop_credit = is_revert_opcode || child_had_state_ops;
+                // EIP-8037 v8037.0.1: NEVER reset spill counter on revert.
+                // With atomic draw_state_gas, apply OOG contributes 0 to spill,
+                // so there's no "wasted" partial increment to refund. Resetting
+                // to the snapshot would lose deeper-frame successful applies'
+                // contributions when an intermediate frame reverts (their gas
+                // was actually spent, even if the state changes were undone).
+                let _ = err.is_revert_opcode();
+                let _ = child_state_gas_used;
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                if !drop_credit {
-                    self.state_gas_spill = state_gas_spill_snapshot;
-                }
 
                 // EIP-8037: undo the pre-emptive new_account record on parent for
                 // CALL-with-value-to-empty. The value transfer reverts with the
@@ -1290,13 +1292,15 @@ impl<'a> VM<'a> {
             TxResult::Revert(err) => {
                 // EIP-8037 v8037.0.1 incorporate_child_on_error: see
                 // handle_return_call's matching comment.
-                let is_revert_opcode = err.is_revert_opcode();
-                let child_had_state_ops = child_state_gas_used > 0;
-                let drop_credit = is_revert_opcode || child_had_state_ops;
+                // EIP-8037 v8037.0.1: NEVER reset spill counter on revert.
+                // With atomic draw_state_gas, apply OOG contributes 0 to spill,
+                // so there's no "wasted" partial increment to refund. Resetting
+                // to the snapshot would lose deeper-frame successful applies'
+                // contributions when an intermediate frame reverts (their gas
+                // was actually spent, even if the state changes were undone).
+                let _ = err.is_revert_opcode();
+                let _ = child_state_gas_used;
                 self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                if !drop_credit {
-                    self.state_gas_spill = state_gas_spill_snapshot;
-                }
 
                 // Cancel only if the parent recorded the new-account at CREATE time.
                 // If the target pre-existed, we never recorded — calling cancel would
