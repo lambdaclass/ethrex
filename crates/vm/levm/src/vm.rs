@@ -996,19 +996,34 @@ impl<'a> VM<'a> {
                     self.state_gas_reservoir.saturating_add(execution_portion);
             } else {
                 // ExceptionalHalt (PR #2689): apply the spec halt rule to the top-level
-                // message. The "reservoir at entry" is the value at the start of
-                // execution (= AFTER intrinsic + auth refunds), captured in
-                // `state_gas_reservoir_at_top_message_entry`. Reclassify the larger
-                // of `state_gas_spill_outstanding` and the reservoir-over-entry
-                // surplus — they are two views of the same un-cancelled spill (one
-                // counter, one in the reservoir after a child REVERT propagated it
-                // back), so taking the max avoids double-counting when both
-                // accumulators describe the same byte.
+                // message.
+                //
+                // For CREATE TX (intrinsic_state > 0) that halts: the wipe leaves
+                // block.state_dim at intrinsic_state, so the gross spill that was
+                // permanently consumed from gas_remaining must surface in regular
+                // dim. Apply the per-frame halt formula symmetrically at the top
+                // (snapshots = 0): `gross_spill - credit_against_drain -
+                // already_reclassified`. `credit_against_drain` is excluded
+                // because it represents credit applied to drain (state-dim
+                // accounting), not regular-dim. The `already_reclassified` dedup
+                // matters when sub-frame halts already moved parts of the spill
+                // into the regular dimension.
+                //
+                // For non-CREATE TX top-halt (intrinsic_state == 0): use the
+                // pre-existing `max(spill_outstanding, reservoir_surplus)` rule.
+                // Switching to gross-spill here regresses tests like
+                // random_statetest296 / call_goes_oog_on_second_level2 where the
+                // gross spill represents legitimate state-gas that should NOT be
+                // reclassified to regular dim.
                 let entry = self.state_gas_reservoir_at_top_message_entry;
                 let reservoir_surplus = self.state_gas_reservoir.saturating_sub(entry);
-                let reclassify = self
-                    .state_gas_spill_outstanding
-                    .max(reservoir_surplus);
+                let reclassify = if self.intrinsic_state_gas_charged > 0 {
+                    self.state_gas_spill
+                        .saturating_sub(self.state_gas_credit_against_drain)
+                        .saturating_sub(self.regular_gas_reclassified)
+                } else {
+                    self.state_gas_spill_outstanding.max(reservoir_surplus)
+                };
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
                 self.state_gas_reservoir = entry;
