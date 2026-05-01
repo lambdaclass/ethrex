@@ -2159,6 +2159,33 @@ impl Blockchain {
         blocks: Vec<Block>,
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+        // Enable the flat LRU trie cache for this batch. This bypasses the
+        // diff-layer chain, bloom filter rebuild, and RCU cloning overhead
+        // that are unnecessary during full sync (no reorgs).
+        self.storage
+            .enable_batch_trie_cache()
+            .map_err(|e| (ChainError::StoreError(e), None))?;
+
+        let result = self
+            .add_blocks_in_batch_inner(blocks, cancellation_token)
+            .await;
+
+        // Always disable the batch cache, even on error, so subsequent
+        // normal block processing uses the layered cache.
+        self.storage
+            .disable_batch_trie_cache()
+            .map_err(|e| (ChainError::StoreError(e), None))?;
+
+        result
+    }
+
+    /// Inner implementation of batch block processing, separated so the caller
+    /// can manage the batch trie cache lifecycle around it.
+    async fn add_blocks_in_batch_inner(
+        &self,
+        blocks: Vec<Block>,
+        cancellation_token: CancellationToken,
+    ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {

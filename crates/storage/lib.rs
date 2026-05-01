@@ -74,7 +74,7 @@ pub mod store;
 pub mod trie;
 pub mod utils;
 
-pub use layering::apply_prefix;
+pub use layering::{FlatTrieCache, TrieCacheRef, apply_prefix};
 pub use store::{
     AccountUpdatesList, EngineType, Store, UpdateBatch, has_valid_db, hash_address, hash_key,
     read_chain_id_from_db,
