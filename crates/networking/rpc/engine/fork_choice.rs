@@ -1,6 +1,6 @@
 use ethrex_blockchain::{
     error::{ChainError, InvalidForkChoice},
-    fork_choice::apply_fork_choice,
+    fork_choice::apply_fork_choice_with_deep_reorg,
     payload::{BuildPayloadArgs, create_payload},
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
@@ -270,8 +270,8 @@ async fn handle_forkchoice(
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
-    match apply_fork_choice(
-        &context.storage,
+    match apply_fork_choice_with_deep_reorg(
+        &context.blockchain,
         fork_choice_state.head_block_hash,
         fork_choice_state.safe_block_hash,
         fork_choice_state.finalized_block_hash,

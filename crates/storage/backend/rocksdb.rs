@@ -1,7 +1,7 @@
 use crate::api::tables::{
     ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
-    STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STATE_HISTORY,
+    STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
     PrefixResult, StorageBackend, StorageLockedView, StorageReadView, StorageWriteBatch,
@@ -172,6 +172,20 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    block_opts.set_block_cache(&block_cache);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                STATE_HISTORY => {
+                    // Small CF bounded by finality depth. Sequential big-endian keys
+                    // (one per block), heavy use of range deletion at finality. Reads
+                    // are rare (only during deep reorgs) but bursty.
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -365,6 +379,21 @@ impl StorageWriteBatch for RocksDBWriteTx {
         Ok(())
     }
 
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        self.batch.delete_range_cf(&cf, start_key, end_key);
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         let batch = std::mem::take(&mut self.batch);
@@ -401,5 +430,80 @@ impl Drop for RocksDBLocked {
                     as *mut Arc<DBWithThreadMode<MultiThreaded>>,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::tables::STATE_HISTORY;
+
+    #[test]
+    fn delete_range_only_applies_after_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path()).unwrap();
+
+        // Seed five keys.
+        let mut tx = backend.begin_write().unwrap();
+        for i in 0u64..5 {
+            tx.put(STATE_HISTORY, &i.to_be_bytes(), &[i as u8]).unwrap();
+        }
+        tx.commit().unwrap();
+
+        // Stage a range delete of [1, 4) but do NOT commit.
+        let mut tx = backend.begin_write().unwrap();
+        tx.delete_range(STATE_HISTORY, &1u64.to_be_bytes(), &4u64.to_be_bytes())
+            .unwrap();
+
+        // A fresh read view must still see all five entries — the range delete
+        // is buffered in the write batch, not yet visible.
+        let read = backend.begin_read().unwrap();
+        for i in 0u64..5 {
+            assert!(
+                read.get(STATE_HISTORY, &i.to_be_bytes()).unwrap().is_some(),
+                "key {i} should still be visible before commit"
+            );
+        }
+
+        tx.commit().unwrap();
+
+        // After commit: keys 1,2,3 are gone; 0 and 4 remain.
+        let read = backend.begin_read().unwrap();
+        assert!(read.get(STATE_HISTORY, &0u64.to_be_bytes()).unwrap().is_some());
+        assert!(read.get(STATE_HISTORY, &1u64.to_be_bytes()).unwrap().is_none());
+        assert!(read.get(STATE_HISTORY, &2u64.to_be_bytes()).unwrap().is_none());
+        assert!(read.get(STATE_HISTORY, &3u64.to_be_bytes()).unwrap().is_none());
+        assert!(read.get(STATE_HISTORY, &4u64.to_be_bytes()).unwrap().is_some());
+    }
+
+    #[test]
+    fn delete_range_atomic_with_other_writes() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path()).unwrap();
+
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(STATE_HISTORY, &10u64.to_be_bytes(), b"v10").unwrap();
+        tx.put(STATE_HISTORY, &20u64.to_be_bytes(), b"v20").unwrap();
+        tx.commit().unwrap();
+
+        // Single transaction: insert 30, delete range [10, 20), update 20.
+        // All four effects must land together.
+        let mut tx = backend.begin_write().unwrap();
+        tx.put(STATE_HISTORY, &30u64.to_be_bytes(), b"v30").unwrap();
+        tx.delete_range(STATE_HISTORY, &10u64.to_be_bytes(), &20u64.to_be_bytes())
+            .unwrap();
+        tx.put(STATE_HISTORY, &20u64.to_be_bytes(), b"v20-new").unwrap();
+        tx.commit().unwrap();
+
+        let read = backend.begin_read().unwrap();
+        assert_eq!(read.get(STATE_HISTORY, &10u64.to_be_bytes()).unwrap(), None);
+        assert_eq!(
+            read.get(STATE_HISTORY, &20u64.to_be_bytes()).unwrap().as_deref(),
+            Some(&b"v20-new"[..])
+        );
+        assert_eq!(
+            read.get(STATE_HISTORY, &30u64.to_be_bytes()).unwrap().as_deref(),
+            Some(&b"v30"[..])
+        );
     }
 }

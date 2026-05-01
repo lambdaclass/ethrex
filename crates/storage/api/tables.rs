@@ -102,7 +102,14 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+/// State history column family: per-block reverse-diffs for deep reorg support.
+/// Written on every layer commit during regular block-by-block execution,
+/// pruned at finality. Skipped during full-sync batch execution.
+/// - [`u8; 8`] = `block_number.to_be_bytes()` (big-endian for chain-ordered iteration)
+/// - [`Vec<u8>`] = serialized `JournalEntry` (custom compact codec, version-prefixed)
+pub const STATE_HISTORY: &str = "state_history";
+
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -122,4 +129,5 @@ pub const TABLES: [&str; 19] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    STATE_HISTORY,
 ];
