@@ -20,6 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
+#[cfg(not(feature = "eip-8025"))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -326,8 +327,17 @@ impl BlockBody {
     ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
-        self.transactions
+        // In eip-8025 builds, use sequential iteration
+        #[cfg(not(feature = "eip-8025"))]
+        return self
+            .transactions
             .par_iter()
+            .map(|tx| Ok((tx, tx.sender(crypto)?)))
+            .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>();
+
+        #[cfg(feature = "eip-8025")]
+        self.transactions
+            .iter()
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }

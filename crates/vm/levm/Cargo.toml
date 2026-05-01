@@ -19,12 +19,13 @@ serde = { workspace = true, features = ["derive", "rc"] }
 malachite = "0.6.1"
 strum = { version = "0.27.1", features = ["derive"] }
 rustc-hash.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 
 
 [features]
 default = []
 c-kzg = ["ethrex-common/c-kzg", "ethrex-crypto/c-kzg"]
+eip-8025 = ["ethrex-common/eip-8025"]
 ethereum_foundation_tests = []
 debug = []
 openvm = ["ethrex-common/openvm"]
@@ -33,7 +34,8 @@ perf_opcode_timings = []
 sp1 = []
 risc0 = ["c-kzg"]
 zisk = []
-secp256k1 = []
+rayon = ["dep:rayon"]
+secp256k1 = ["rayon"]
 
 [lints.rust]
 unsafe_code = "warn"

@@ -9,32 +9,45 @@ use crate::system_contracts::{
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::types::block_access_list::BlockAccessList;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::block_access_list::{
-    BalAddressIndex, BlockAccessList, find_exact_change_balance, find_exact_change_code,
-    find_exact_change_nonce, find_exact_change_storage, has_exact_change_balance,
-    has_exact_change_code, has_exact_change_nonce, has_exact_change_storage,
+    BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
+    find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
+    has_exact_change_nonce, has_exact_change_storage,
 };
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
+use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::Code;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, BigEndianHash, H256, U256,
+    Address, BigEndianHash, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
-        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
         requests::Requests,
     },
-    validate_block_access_list_size, validate_header_bal_indices,
 };
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::H256;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::TxType;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::{validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
 use ethrex_levm::db::Database;
-use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_levm::db::gen_db::CacheDB;
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -46,8 +59,11 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use rustc_hash::FxHashSet;
 use std::cmp::min;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -78,6 +94,7 @@ fn check_gas_limit(
 
 /// Error type for BAL validation failures, distinguishing state mismatches
 /// from database errors.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 #[derive(Debug, thiserror::Error)]
 enum BalValidationError {
     #[error("{0}")]
@@ -271,7 +288,11 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
-        // When BAL is provided (Amsterdam+ validation path): use parallel execution
+        // eip-8025 (zkVM guest) is intentionally sequential.
+        // For non-eip-8025 native builds, BAL path may use rayon if enabled.
+        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        let _ = header_bal;
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if let Some(bal) = header_bal {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
@@ -594,6 +615,7 @@ impl LEVM {
 
     /// Convert BAL into `Vec<AccountUpdate>` for the merkleizer.
     /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
         if new_code.is_empty() {
             (*EMPTY_KECCACK_HASH, None)
@@ -608,6 +630,7 @@ impl LEVM {
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -744,6 +767,7 @@ impl LEVM {
     /// `max_idx` is the BAL block_access_index of the last tx whose effects
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -872,6 +896,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
@@ -1105,6 +1130,7 @@ impl LEVM {
 
     /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seeded_balance(
         seed_idx: u16,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1133,6 +1159,7 @@ impl LEVM {
 
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seeded_nonce(
         seed_idx: u16,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1174,6 +1201,7 @@ impl LEVM {
     /// `index`: pre-built validation index
     /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
     /// `store`: database (fallback for pre-state lookups)
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     #[allow(clippy::too_many_arguments)]
     fn validate_tx_execution(
         bal_idx: u16,
@@ -1519,6 +1547,7 @@ impl LEVM {
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
     ///         change.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -1839,17 +1868,46 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
-        // Parallel across sender groups, sequential within each group
-        sender_groups.into_par_iter().for_each_with(
-            Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        {
+            // Parallel across sender groups, sequential within each group
+            let sender_groups: Vec<(Address, Vec<&Transaction>)> =
+                sender_groups.into_iter().collect();
+            sender_groups.into_par_iter().for_each_with(
+                Vec::with_capacity(STACK_LIMIT),
+                |stack_pool, (sender, txs)| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    // Each sender group gets its own db instance for state propagation
+                    let mut group_db = GeneralizedDatabase::new(store.clone());
+                    // Execute transactions sequentially within sender group
+                    // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                    for tx in txs {
+                        let _ = Self::execute_tx_in_block(
+                            tx,
+                            sender,
+                            &block.header,
+                            &mut group_db,
+                            vm_type,
+                            stack_pool,
+                            true,
+                            crypto,
+                        );
+                    }
+                },
+            );
+        }
+
+        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        {
+            // Sequential fallback for eip-8025 
+            for (sender, txs) in sender_groups {
                 if cancelled.load(Ordering::Relaxed) {
-                    return;
+                    break;
                 }
-                // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
-                // Execute transactions sequentially within sender group
-                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                let mut stack_pool = Vec::with_capacity(STACK_LIMIT);
                 for tx in txs {
                     let _ = Self::execute_tx_in_block(
                         tx,
@@ -1857,13 +1915,13 @@ impl LEVM {
                         &block.header,
                         &mut group_db,
                         vm_type,
-                        stack_pool,
+                        &mut stack_pool,
                         true,
                         crypto,
                     );
                 }
-            },
-        );
+            }
+        }
 
         if cancelled.load(Ordering::Relaxed) {
             return Ok(());
@@ -1936,22 +1994,43 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        // Uses par_iter for collection since blocks can have thousands of accounts.
-        let code_hashes: Vec<ethrex_common::H256> = accounts
-            .par_iter()
-            .filter_map(|ac| {
-                store
-                    .get_account_state(ac.address)
-                    .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
-                    .map(|s| s.code_hash)
-            })
-            .collect();
-        code_hashes.par_iter().for_each(|&h| {
-            let _ = store.get_account_code(h);
-        });
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        {
+            // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
+            // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
+            // Uses par_iter for collection since blocks can have thousands of accounts.
+            let code_hashes: Vec<ethrex_common::H256> = accounts
+                .par_iter()
+                .filter_map(|ac| {
+                    store
+                        .get_account_state(ac.address)
+                        .ok()
+                        .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                        .map(|s| s.code_hash)
+                })
+                .collect();
+            code_hashes.par_iter().for_each(|&h| {
+                let _ = store.get_account_code(h);
+            });
+        }
+
+        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        {
+            // Phase 3: sequential fallback
+            let code_hashes: Vec<ethrex_common::H256> = accounts
+                .iter()
+                .filter_map(|ac| {
+                    store
+                        .get_account_state(ac.address)
+                        .ok()
+                        .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                        .map(|s| s.code_hash)
+                })
+                .collect();
+            for h in code_hashes {
+                let _ = store.get_account_code(h);
+            }
+        }
 
         Ok(())
     }
