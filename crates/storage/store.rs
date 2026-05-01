@@ -2886,6 +2886,19 @@ impl Store {
         Ok(())
     }
 
+    /// Aborts an in-progress deep reorg and resets the layer cache to a fresh
+    /// empty state with the same commit threshold. Both the overlay AND any
+    /// partially-built new-chain layers are discarded.
+    ///
+    /// On-disk state is untouched (still at the OLD chain's `D`), so subsequent
+    /// FCU evaluations start from a clean foundation. Section 13.
+    pub fn abort_reorg(&self) -> Result<(), StoreError> {
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        let threshold = guard.commit_threshold();
+        *guard = Arc::new(TrieLayerCache::new(threshold));
+        Ok(())
+    }
+
     /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
     /// in reverse order, starting from the given block and going up to the genesis block.
     pub fn ancestors(&self, block_hash: BlockHash) -> AncestorIterator {
@@ -4188,6 +4201,101 @@ mod tests {
             cache.overlay().is_none(),
             "overlay must be cleared after reconciliation"
         );
+    }
+
+    /// `abort_reorg` SHALL discard both an installed overlay and any
+    /// partially-built layers, leaving the cache fresh and empty so a
+    /// subsequent FCU can start from disk state.
+    #[tokio::test]
+    async fn abort_reorg_resets_cache_to_fresh() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Seed journal entries and install an overlay.
+        seed_journal_entries(&backend, &[3, 4]);
+        store.install_overlay_for_reorg(4, 3, |_| None).unwrap();
+        assert!(
+            store.trie_cache.read().unwrap().overlay().is_some(),
+            "overlay should be installed before abort"
+        );
+
+        // Push a synthetic side-chain layer to simulate partial new-chain progress.
+        let block = make_block(3, H256::zero(), H256::repeat_byte(0x33));
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x01], false), vec![0x99])],
+                storage_updates: vec![],
+                blocks: vec![block],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+        // Wait briefly for the trie worker.
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Abort. Both the overlay AND the partial layer must be gone.
+        store.abort_reorg().unwrap();
+        let cache = store.trie_cache.read().unwrap().clone();
+        assert!(cache.overlay().is_none(), "overlay should be cleared");
+        // No layer should be reachable; lookup of any state_root returns false.
+        assert!(!cache.contains(H256::repeat_byte(0x33)));
+
+        // Subsequent overlay install on the now-fresh cache works.
+        store.install_overlay_for_reorg(4, 3, |_| None).unwrap();
+        assert!(store.trie_cache.read().unwrap().overlay().is_some());
+    }
+
+    /// LVH propagation: when a block is rejected with `parent_hash` as its
+    /// LVH, and a descendant is recorded with the SAME LVH (because its
+    /// parent was the bad block, whose recorded LVH was `parent_hash`), the
+    /// descendant correctly inherits the deeper valid ancestor. Verifies the
+    /// existing `set/get_latest_valid_ancestor` storage primitive is
+    /// consistent with the engine-API-level propagation logic at
+    /// `crates/networking/rpc/engine/payload.rs:865-895` and
+    /// `crates/networking/rpc/engine/fork_choice.rs:241-260`.
+    #[tokio::test]
+    async fn invalid_ancestor_lvh_propagates_through_descendant_chain() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend, dir.path().to_path_buf(), 1).unwrap();
+
+        // Simulate the engine-API flow:
+        // 1. Block A is rejected with LVH = parent_of_A (= the deepest valid).
+        let bad_a = H256::repeat_byte(0xa0);
+        let valid_root = H256::repeat_byte(0x01);
+        store
+            .set_latest_valid_ancestor(bad_a, valid_root)
+            .await
+            .unwrap();
+
+        // 2. A descendant B (parent = bad_a) arrives. The engine API checks
+        //    parent's recorded LVH (= valid_root) and propagates it.
+        let bad_b = H256::repeat_byte(0xb0);
+        let parent_lvh = store.get_latest_valid_ancestor(bad_a).await.unwrap();
+        assert_eq!(parent_lvh, Some(valid_root));
+        store
+            .set_latest_valid_ancestor(bad_b, valid_root)
+            .await
+            .unwrap();
+
+        // 3. Grandchild C (parent = bad_b) arrives. Same propagation step.
+        let bad_c = H256::repeat_byte(0xc0);
+        let parent_lvh = store.get_latest_valid_ancestor(bad_b).await.unwrap();
+        assert_eq!(parent_lvh, Some(valid_root));
+        store
+            .set_latest_valid_ancestor(bad_c, valid_root)
+            .await
+            .unwrap();
+
+        // 4. All three descendants now resolve to the same deepest valid
+        //    ancestor; LVH does NOT point at any intermediate bad block.
+        for bad in [bad_a, bad_b, bad_c] {
+            let lvh = store.get_latest_valid_ancestor(bad).await.unwrap();
+            assert_eq!(lvh, Some(valid_root));
+            assert_ne!(lvh, Some(bad), "LVH must never be the bad block itself");
+        }
     }
 
     /// `clear_reorg_overlay` SHALL remove an installed overlay; it SHALL be

@@ -328,6 +328,13 @@ async fn reorg_apply_deep(
             InvalidForkChoice::StateNotReachable
         })?;
 
+    // From this point on, ANY error must reset the layer cache to a fresh
+    // empty state — otherwise the half-installed overlay + partial new-chain
+    // layers would leak into subsequent FCU evaluations. The guard fires
+    // `store.abort_reorg()` on drop unless `disarm()` is called below after
+    // a successful canonical-hash update. (Section 13.)
+    let mut abort_guard = AbortReorgGuard::new(store);
+
     // Execute the side-chain blocks in CHAIN order (oldest first). The
     // existing `add_block` path handles execution + storage; layer cache
     // reads cascade through the freshly-installed overlay.
@@ -367,6 +374,11 @@ async fn reorg_apply_deep(
         )
         .await?;
 
+    // forkchoice_update succeeded — the new chain is canonical. Disarm the
+    // abort guard so the now-correct cache is preserved on this function's
+    // return.
+    abort_guard.disarm();
+
     metrics!(
         use ethrex_metrics::blocks::METRICS_BLOCKS;
         METRICS_BLOCKS.set_head_height(head.number);
@@ -380,6 +392,38 @@ async fn reorg_apply_deep(
     );
 
     Ok(head)
+}
+
+/// RAII guard that calls `Store::abort_reorg()` on drop — resetting the layer
+/// cache to a fresh empty state — UNLESS `disarm()` is called first.
+///
+/// The deep-reorg apply path arms this guard immediately after
+/// `install_overlay_for_reorg` succeeds, so any subsequent failure (side-chain
+/// execution error, missing block body, fork-choice update error, panic via
+/// unwinding) leaves the store in a recoverable state for the next FCU.
+struct AbortReorgGuard<'a> {
+    store: &'a Store,
+    armed: bool,
+}
+
+impl<'a> AbortReorgGuard<'a> {
+    fn new(store: &'a Store) -> Self {
+        Self { store, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl<'a> Drop for AbortReorgGuard<'a> {
+    fn drop(&mut self) {
+        if self.armed
+            && let Err(e) = self.store.abort_reorg()
+        {
+            error!(error = %e, "AbortReorgGuard: abort_reorg failed during cleanup");
+        }
+    }
 }
 
 /// Maps a `ChainError` from a side-chain block execution into the
