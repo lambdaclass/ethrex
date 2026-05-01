@@ -810,3 +810,93 @@ fn test_top_halt_after_partial_credit_to_spill_diverges_from_eels() {
     // (Held back from causing a second failure but documented.)
     let _ = expected_gas_used_ethrex_buggy;
 }
+
+// ==================== Test: phantom drain credit must not cancel real spill ====================
+
+/// Regression for the bal-devnet-6 block-21 fork between ethrex and geth on a
+/// CREATE TX whose initcode performs two failing inner CREATEs.
+///
+/// Scenario (CREATE TX; intrinsic_state = STATE_NEW; reservoir_initial = 0):
+///   1. First inner CREATE charges `STATE_NEW` of state-gas. With reservoir = 0,
+///      it spills the full amount to `gas_remaining`.
+///        After: state_gas_spill = STATE_NEW, state_gas_spill_outstanding = STATE_NEW.
+///   2. Inner-1 child halts on INVALID. `handle_return_create`'s halt branch
+///      runs (no local_excess) and then `credit_state_gas_refund(STATE_NEW)`:
+///        applied_to_spill = STATE_NEW, applied_to_drain = 0.
+///        After: spill_outstanding = 0, reservoir = STATE_NEW.
+///   3. Second inner CREATE charges `STATE_NEW` of state-gas. With reservoir =
+///      STATE_NEW, the charge is absorbed entirely from the reservoir — NO
+///      spill. state_gas_spill stays at STATE_NEW.
+///   4. Inner-2 child halts on INVALID. `credit_state_gas_refund(STATE_NEW)`:
+///        frame_outstanding_delta = 0, applied_to_spill = 0,
+///        applied_to_drain = STATE_NEW (the credit can't cancel spill that
+///        doesn't exist in this frame).
+///        After: state_gas_credit_against_drain = STATE_NEW.
+///   5. Outer initcode hits INVALID → top-level halt.
+///
+/// At top-halt, the gross spill (STATE_NEW) was real — it was permanently
+/// drawn from `gas_remaining` in step 1 and the user paid for it. Per EELS
+/// `total_state - reservoir`, it must surface in the regular dimension.
+///
+/// The pre-fix formula
+///   `state_gas_spill - state_gas_credit_against_drain - regular_gas_reclassified`
+/// evaluates to `STATE_NEW - STATE_NEW - 0 = 0` because the phantom drain
+/// credit (step 4, against a charge that itself didn't spill) cancels the
+/// real spill. Capping `credit_against_drain` by `regular_gas_reclassified`
+/// (the only legitimate-drain ledger — populated by deeper-frame halt
+/// reclassifications) gives 0 here, so the gross spill flows through to
+/// `regular_gas_reclassified` as required.
+///
+/// Block-level expected (EELS): `tx_regular = gas_limit - intrinsic_state`,
+/// `tx_state = intrinsic_state`, so `report.gas_used = gas_limit`.
+/// Pre-fix ethrex: `tx_regular = gas_limit - 2*STATE_NEW`, hence
+/// `report.gas_used = gas_limit - STATE_NEW` (off by one NEW_ACCOUNT charge).
+#[test]
+fn test_top_halt_phantom_drain_does_not_cancel_real_spill() {
+    use ethrex_levm::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT;
+
+    // Outer initcode for the CREATE TX:
+    //   CREATE(0,0,1) where memory[0]=0xfe   — 1st inner CREATE, child halts
+    //   CREATE(0,0,1) where memory[0]=0xfe   — 2nd inner CREATE, child halts
+    //   INVALID                              — top-level halt
+    let mut initcode = create_failing_bytecode(0xfe);
+    initcode.extend(create_failing_bytecode(0xfe));
+    initcode.extend(invalid_bytecode());
+
+    let report = TestRunner::create(initcode)
+        .with_account(Address::from_low_u64_be(SENDER), eoa(U256::from(1_000_000)))
+        .run();
+
+    assert!(
+        !report.is_success(),
+        "CREATE tx should halt on INVALID: {:?}",
+        report.result
+    );
+
+    // CREATE tx: intrinsic_state_gas = STATE_NEW; survives top-level wipe.
+    let cpsb = cost_per_state_byte(GAS_LIMIT * 2);
+    let state_new = STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    assert_eq!(
+        report.state_gas_used, state_new,
+        "block state_gas_used should equal intrinsic_state (one NEW_ACCOUNT) for a halted CREATE tx"
+    );
+
+    // Block-level gas_used per EELS: every byte of regular gas was burned by
+    // the halt and the gross-spill from step 1 is reclassified to regular.
+    // tx_regular = gas_limit - intrinsic_state; tx_state = intrinsic_state
+    // ⇒ report.gas_used = gas_limit.
+    let expected_gas_used_eels = GAS_LIMIT;
+    let expected_gas_used_ethrex_buggy = GAS_LIMIT - state_new;
+
+    assert_eq!(
+        report.gas_used, expected_gas_used_eels,
+        "block gas_used divergence: ethrex={} expected_eels={} diff={} (== one NEW_ACCOUNT state-gas charge); \
+         the phantom drain credit from refunding the reservoir-funded second inner CREATE \
+         must not cancel the real spill from the first inner CREATE",
+        report.gas_used,
+        expected_gas_used_eels,
+        expected_gas_used_eels.saturating_sub(report.gas_used),
+    );
+
+    let _ = expected_gas_used_ethrex_buggy;
+}
