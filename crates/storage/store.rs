@@ -1459,7 +1459,7 @@ impl Store {
             let version = read_store_schema_version(&db_path)?;
 
             match version {
-                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                None if has_pre_metadata_db_marker(&db_path) => {
                     // Pre-metadata DB — cannot migrate safely
                     return Err(StoreError::NotFoundDBVersion);
                 }
@@ -3267,9 +3267,17 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
-    let is_empty = std::fs::read_dir(path)?.next().is_none();
-    Ok(is_empty)
+/// Returns whether `path` looks like a pre-existing RocksDB database that
+/// predates the metadata.json file. RocksDB always writes a `CURRENT` file
+/// when a database is opened, so its presence (without a metadata.json)
+/// indicates a pre-metadata DB that we cannot safely auto-migrate.
+///
+/// We avoid asking whether the directory has any contents at all because
+/// the datadir legitimately holds non-DB files (signer keys, node config)
+/// and may also contain user-configured subdirectories like the path passed
+/// to `--log.dir`, which would otherwise trip a fresh node, see #6513.
+fn has_pre_metadata_db_marker(path: &Path) -> bool {
+    path.join("CURRENT").is_file()
 }
 
 /// Checks whether a valid (or migratable) database exists at the given path
@@ -3350,5 +3358,37 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn pre_metadata_db_marker_empty_dir() {
+        let dir = TempDir::new().unwrap();
+        assert!(!has_pre_metadata_db_marker(dir.path()));
+    }
+
+    #[test]
+    fn pre_metadata_db_marker_unrelated_subdir() {
+        // Reproduces #6513: `--log.dir` pointed inside `--datadir` creates a
+        // logs/ subdirectory before init_store runs. The datadir is non-empty
+        // but contains no DB files, so we should still treat it as fresh.
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("logs")).unwrap();
+        std::fs::write(dir.path().join("logs").join("ethrex.log"), b"").unwrap();
+        assert!(!has_pre_metadata_db_marker(dir.path()));
+    }
+
+    #[test]
+    fn pre_metadata_db_marker_with_current_file() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("CURRENT"), b"MANIFEST-000001
+").unwrap();
+        assert!(has_pre_metadata_db_marker(dir.path()));
     }
 }
