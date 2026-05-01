@@ -9,7 +9,10 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 use crate::{
     api::{
         StorageBackend,
-        tables::{ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STATE_HISTORY, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES},
+        tables::{
+            ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, STATE_HISTORY, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES,
+        },
     },
     error::StoreError,
     journal::{JournalDecodeError, JournalEntry},
@@ -128,7 +131,10 @@ impl TrieLayerCache {
     /// Returns a reference to the installed overlay, if any. Used by tests
     /// and by the reconciliation path to fold the overlay into the first
     /// new-chain commit.
-    #[allow(dead_code, reason = "consumed by Section 9 (overlay reconciliation) and tests")]
+    #[allow(
+        dead_code,
+        reason = "consumed by Section 9 (overlay reconciliation) and tests"
+    )]
     pub fn overlay(&self) -> Option<&Arc<Overlay>> {
         self.overlay.as_ref()
     }
@@ -329,10 +335,7 @@ impl TrieLayerCache {
     /// committed block's pre-state). In normal operation only one layer is removed; ancestors
     /// are evicted as orphans without contributing to the merged nodes (caught by the `id`
     /// retain below).
-    pub fn commit(
-        &mut self,
-        state_root: H256,
-    ) -> Option<CommitResult> {
+    pub fn commit(&mut self, state_root: H256) -> Option<CommitResult> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
         while let Some(layer) = self.layers.remove(&current_state_root) {
@@ -461,7 +464,10 @@ impl TrieDB for TrieWrapper {
 /// Identifier of which on-disk column family an [`Overlay`] entry targets.
 /// Returned by classifier helpers; used by callers to route a key to the right
 /// internal map without re-doing the length classification.
-#[allow(dead_code, reason = "consumed by the read cascade in Section 7 / reorg apply in Section 8")]
+#[allow(
+    dead_code,
+    reason = "consumed by the read cascade in Section 7 / reorg apply in Section 8"
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayCf {
     AccountTrie,
@@ -506,7 +512,9 @@ impl OverlayCf {
 pub enum OverlayError {
     #[error("missing journal entry for block {0}")]
     MissingEntry(BlockNumber),
-    #[error("journal block_hash mismatch at block {block_number}: expected {expected:?}, found {found:?}")]
+    #[error(
+        "journal block_hash mismatch at block {block_number}: expected {expected:?}, found {found:?}"
+    )]
     HashMismatch {
         block_number: BlockNumber,
         expected: H256,
@@ -693,7 +701,10 @@ impl Overlay {
     }
 
     /// Highest block number covered by the overlay (= the cache edge `D` at install time).
-    #[allow(clippy::wrong_self_convention, reason = "field accessor: name matches struct field")]
+    #[allow(
+        clippy::wrong_self_convention,
+        reason = "field accessor: name matches struct field"
+    )]
     pub fn from_block(&self) -> BlockNumber {
         self.from_block
     }
@@ -706,7 +717,9 @@ impl Overlay {
     /// Iterates every overlay entry across the four CFs as
     /// `(cf, key, value)` triples. Used by Section 9's reconciliation to fold
     /// overlay-only entries into the first new-chain commit.
-    pub fn iter_all_entries(&self) -> impl Iterator<Item = (OverlayCf, &Vec<u8>, &Option<Vec<u8>>)> {
+    pub fn iter_all_entries(
+        &self,
+    ) -> impl Iterator<Item = (OverlayCf, &Vec<u8>, &Option<Vec<u8>>)> {
         self.account_trie
             .iter()
             .map(|(k, v)| (OverlayCf::AccountTrie, k, v))
@@ -772,10 +785,9 @@ mod overlay_tests {
                 (5, h(0x05), vec![(vec![0xc], Some(vec![0x55]))]),
             ],
         );
-        let overlay = Overlay::from_journal(backend.as_ref(), 5, 3, |n| {
-            Some(H256::repeat_byte(n as u8))
-        })
-        .unwrap();
+        let overlay =
+            Overlay::from_journal(backend.as_ref(), 5, 3, |n| Some(H256::repeat_byte(n as u8)))
+                .unwrap();
         assert_eq!(overlay.len(), 3);
         assert_eq!(
             overlay.lookup(OverlayCf::AccountTrie, &[0xa]),
@@ -926,12 +938,30 @@ mod overlay_tests {
         // BackendTrieDB::table_for_key (account leaf at 65, storage leaf at 131,
         // anything else routed by length comparison to 65).
         assert_eq!(OverlayCf::classify_by_key_length(0), OverlayCf::AccountTrie);
-        assert_eq!(OverlayCf::classify_by_key_length(64), OverlayCf::AccountTrie);
-        assert_eq!(OverlayCf::classify_by_key_length(65), OverlayCf::AccountFlat);
-        assert_eq!(OverlayCf::classify_by_key_length(66), OverlayCf::StorageTrie);
-        assert_eq!(OverlayCf::classify_by_key_length(130), OverlayCf::StorageTrie);
-        assert_eq!(OverlayCf::classify_by_key_length(131), OverlayCf::StorageFlat);
-        assert_eq!(OverlayCf::classify_by_key_length(132), OverlayCf::StorageTrie);
+        assert_eq!(
+            OverlayCf::classify_by_key_length(64),
+            OverlayCf::AccountTrie
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(65),
+            OverlayCf::AccountFlat
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(66),
+            OverlayCf::StorageTrie
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(130),
+            OverlayCf::StorageTrie
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(131),
+            OverlayCf::StorageFlat
+        );
+        assert_eq!(
+            OverlayCf::classify_by_key_length(132),
+            OverlayCf::StorageTrie
+        );
     }
 
     #[test]
@@ -941,9 +971,6 @@ mod overlay_tests {
         let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
         seed(&backend, &[(7, h(0xab), vec![(vec![0x01], None)])]);
         let overlay = Overlay::from_journal(backend.as_ref(), 7, 7, |_| None).unwrap();
-        assert_eq!(
-            overlay.lookup(OverlayCf::AccountTrie, &[0x01]),
-            Some(None)
-        );
+        assert_eq!(overlay.lookup(OverlayCf::AccountTrie, &[0x01]), Some(None));
     }
 }

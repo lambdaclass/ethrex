@@ -398,7 +398,6 @@ impl<'a> Drop for ReorgGuard<'a> {
 }
 
 impl Blockchain {
-
     /// Executes a block withing a new vm instance and state
     fn execute_block(
         &self,

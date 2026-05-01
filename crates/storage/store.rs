@@ -3117,7 +3117,11 @@ fn apply_trie_updates(
     // atomic write (no intermediate "rolled back" disk state). After the
     // commit succeeds, the overlay is cleared and obsolete old-chain journal
     // entries in `[T, D]` are deleted via `delete_range`.
-    let overlay_for_reconciliation = if !is_batch { trie.overlay().cloned() } else { None };
+    let overlay_for_reconciliation = if !is_batch {
+        trie.overlay().cloned()
+    } else {
+        None
+    };
 
     let mut result = Ok(());
 
@@ -3748,7 +3752,8 @@ mod tests {
             "journal block_hash must match the committed block"
         );
         assert_eq!(
-            entry.parent_state_root, H256::zero(),
+            entry.parent_state_root,
+            H256::zero(),
             "first block's parent state root is zero (no header for parent_hash=0)"
         );
         assert!(
@@ -3968,7 +3973,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         // A different state root remains absent.
-        assert!(!store.is_state_in_layer_cache(H256::repeat_byte(0xee)).unwrap());
+        assert!(
+            !store
+                .is_state_in_layer_cache(H256::repeat_byte(0xee))
+                .unwrap()
+        );
     }
 
     /// `install_overlay_for_reorg` SHALL atomically swap the in-memory layer
@@ -3988,13 +3997,7 @@ mod tests {
 
         // Pre-condition: layer cache is empty (no put_batch happened) and no
         // overlay installed.
-        assert!(store
-            .trie_cache
-            .read()
-            .unwrap()
-            .clone()
-            .overlay()
-            .is_none());
+        assert!(store.trie_cache.read().unwrap().clone().overlay().is_none());
 
         store
             .install_overlay_for_reorg(4, 3, |_| None)
@@ -4013,10 +4016,7 @@ mod tests {
         );
         assert_eq!(cache.lookup_overlay(&[4u8]), Some(None));
         // OverlayCf::AccountTrie classification is correct for these short paths.
-        assert_eq!(
-            OverlayCf::classify_by_key_length(1),
-            OverlayCf::AccountTrie
-        );
+        assert_eq!(OverlayCf::classify_by_key_length(1), OverlayCf::AccountTrie);
     }
 
     /// `install_overlay_for_reorg` SHALL leave the existing cache intact when
@@ -4106,10 +4106,7 @@ mod tests {
         let block_t_hash = block_t.hash();
         store
             .store_block_updates(UpdateBatch {
-                account_updates: vec![(
-                    Nibbles::from_raw(&[0xab], false),
-                    vec![0x77],
-                )],
+                account_updates: vec![(Nibbles::from_raw(&[0xab], false), vec![0x77])],
                 storage_updates: vec![],
                 blocks: vec![block_t],
                 receipts: vec![],
@@ -4136,10 +4133,7 @@ mod tests {
         let block_t1 = make_block(6, block_t_hash, t1_state_root);
         store
             .store_block_updates(UpdateBatch {
-                account_updates: vec![(
-                    Nibbles::from_raw(&[0xab, 0xcd], false),
-                    vec![0x88],
-                )],
+                account_updates: vec![(Nibbles::from_raw(&[0xab, 0xcd], false), vec![0x88])],
                 storage_updates: vec![],
                 blocks: vec![block_t1],
                 receipts: vec![],

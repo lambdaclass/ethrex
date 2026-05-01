@@ -72,7 +72,9 @@ pub enum JournalDecodeError {
     VersionMismatch { expected: u8, found: u8 },
     #[error("journal entry varint overflow at offset {offset}")]
     VarintOverflow { offset: usize },
-    #[error("journal entry presence byte invalid: expected 0 or 1, found {found} at offset {offset}")]
+    #[error(
+        "journal entry presence byte invalid: expected 0 or 1, found {found} at offset {offset}"
+    )]
     InvalidPresenceByte { offset: usize, found: u8 },
 }
 
@@ -80,7 +82,9 @@ impl JournalEntry {
     /// Encode this entry into its on-disk byte representation.
     pub fn encode(&self) -> Vec<u8> {
         // Heuristic: ~70 bytes overhead + ~50 bytes per typical small entry.
-        let approx = 1 + 32 + 32
+        let approx = 1
+            + 32
+            + 32
             + diff_byte_estimate(&self.account_trie_diff)
             + diff_byte_estimate(&self.storage_trie_diff)
             + diff_byte_estimate(&self.account_flat_diff)
@@ -297,10 +301,7 @@ mod tests {
                 (vec![0x00, 0x01], Some(vec![0xde, 0xad, 0xbe, 0xef])),
                 (vec![0x02], None),
             ],
-            storage_trie_diff: vec![
-                (vec![0x0a; 67], Some(vec![0xff])),
-                (vec![0x0b; 68], None),
-            ],
+            storage_trie_diff: vec![(vec![0x0a; 67], Some(vec![0xff])), (vec![0x0b; 68], None)],
             account_flat_diff: vec![(vec![0xaa; 65], Some(vec![0x01, 0x02, 0x03]))],
             storage_flat_diff: vec![(vec![0xbb; 131], None)],
         };
@@ -326,11 +327,7 @@ mod tests {
         let entry = JournalEntry {
             block_hash: h(0x55),
             parent_state_root: h(0x66),
-            account_trie_diff: vec![
-                (vec![0x00], None),
-                (vec![0x01], None),
-                (vec![0x02], None),
-            ],
+            account_trie_diff: vec![(vec![0x00], None), (vec![0x01], None), (vec![0x02], None)],
             storage_trie_diff: vec![],
             account_flat_diff: vec![(vec![0xaa; 32], None)],
             storage_flat_diff: vec![],
@@ -406,7 +403,10 @@ mod tests {
         bytes.push(0xab); // path
         bytes.push(2); // presence = 2 (invalid)
         let err = JournalEntry::decode(&bytes).unwrap_err();
-        assert!(matches!(err, JournalDecodeError::InvalidPresenceByte { found: 2, .. }));
+        assert!(matches!(
+            err,
+            JournalDecodeError::InvalidPresenceByte { found: 2, .. }
+        ));
     }
 
     #[test]

@@ -194,9 +194,7 @@ impl StorageWriteBatch for InMemoryWriteTx {
 
         let db_mut = Arc::make_mut(&mut *db);
         if let Some(table_ref) = db_mut.get_mut(table) {
-            table_ref.retain(|key, _| {
-                key.as_slice() < start_key || key.as_slice() >= end_key
-            });
+            table_ref.retain(|key, _| key.as_slice() < start_key || key.as_slice() >= end_key);
         }
         Ok(())
     }

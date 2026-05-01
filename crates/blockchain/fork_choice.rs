@@ -305,8 +305,8 @@ async fn reorg_apply_deep(
         // handled this as a shallow reorg. If we reach here, something is
         // off; punt.
         warn!(
-            edge, to_block,
-            "deep-reorg path entered but pivot is above cache edge"
+            edge,
+            to_block, "deep-reorg path entered but pivot is above cache edge"
         );
         return Err(InvalidForkChoice::StateNotReachable);
     }

@@ -469,11 +469,31 @@ mod tests {
 
         // After commit: keys 1,2,3 are gone; 0 and 4 remain.
         let read = backend.begin_read().unwrap();
-        assert!(read.get(STATE_HISTORY, &0u64.to_be_bytes()).unwrap().is_some());
-        assert!(read.get(STATE_HISTORY, &1u64.to_be_bytes()).unwrap().is_none());
-        assert!(read.get(STATE_HISTORY, &2u64.to_be_bytes()).unwrap().is_none());
-        assert!(read.get(STATE_HISTORY, &3u64.to_be_bytes()).unwrap().is_none());
-        assert!(read.get(STATE_HISTORY, &4u64.to_be_bytes()).unwrap().is_some());
+        assert!(
+            read.get(STATE_HISTORY, &0u64.to_be_bytes())
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            read.get(STATE_HISTORY, &1u64.to_be_bytes())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            read.get(STATE_HISTORY, &2u64.to_be_bytes())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            read.get(STATE_HISTORY, &3u64.to_be_bytes())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            read.get(STATE_HISTORY, &4u64.to_be_bytes())
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]
@@ -492,17 +512,22 @@ mod tests {
         tx.put(STATE_HISTORY, &30u64.to_be_bytes(), b"v30").unwrap();
         tx.delete_range(STATE_HISTORY, &10u64.to_be_bytes(), &20u64.to_be_bytes())
             .unwrap();
-        tx.put(STATE_HISTORY, &20u64.to_be_bytes(), b"v20-new").unwrap();
+        tx.put(STATE_HISTORY, &20u64.to_be_bytes(), b"v20-new")
+            .unwrap();
         tx.commit().unwrap();
 
         let read = backend.begin_read().unwrap();
         assert_eq!(read.get(STATE_HISTORY, &10u64.to_be_bytes()).unwrap(), None);
         assert_eq!(
-            read.get(STATE_HISTORY, &20u64.to_be_bytes()).unwrap().as_deref(),
+            read.get(STATE_HISTORY, &20u64.to_be_bytes())
+                .unwrap()
+                .as_deref(),
             Some(&b"v20-new"[..])
         );
         assert_eq!(
-            read.get(STATE_HISTORY, &30u64.to_be_bytes()).unwrap().as_deref(),
+            read.get(STATE_HISTORY, &30u64.to_be_bytes())
+                .unwrap()
+                .as_deref(),
             Some(&b"v30"[..])
         );
     }
