@@ -8,13 +8,15 @@ use crate::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
             FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            SNAP_STATE, STATE_HISTORY, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
-    layering::{TrieLayerCache, TrieWrapper},
+    journal::{FlatDiff, JournalEntry},
+    layering::{CommitResult, TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -1046,7 +1048,31 @@ impl Store {
 
             if let Some(finalized) = finalized {
                 let finalized_key = chain_data_key(ChainDataIndex::FinalizedBlockNumber);
+
+                // Read the previous finalized number before overwriting it, so
+                // we can decide whether to prune the state-history journal.
+                // Pre-merge or fresh chains have no entry; treat as 0.
+                let prev_finalized = db
+                    .begin_read()?
+                    .get(CHAIN_DATA, &finalized_key)?
+                    .and_then(|bytes| {
+                        bytes
+                            .try_into()
+                            .ok()
+                            .map(|arr: [u8; 8]| BlockNumber::from_le_bytes(arr))
+                    })
+                    .unwrap_or(0);
+
                 txn.put(CHAIN_DATA, &finalized_key, &finalized.to_le_bytes())?;
+
+                // If finality advanced, prune every STATE_HISTORY entry at or
+                // below the new finalized number in the same atomic txn.
+                // delete_range is half-open: [start, end), so end is F+1.
+                if finalized > prev_finalized {
+                    let start = 0u64.to_be_bytes();
+                    let end = finalized.saturating_add(1).to_be_bytes();
+                    txn.delete_range(STATE_HISTORY, &start, &end)?;
+                }
             }
 
             txn.commit()
@@ -1370,12 +1396,13 @@ impl Store {
             )?
             .map(|header| header.state_root)
             .unwrap_or_default();
-        let last_state_root = update_batch
+        let last_block = update_batch
             .blocks
             .last()
-            .ok_or(StoreError::UpdateBatchNoBlocks)?
-            .header
-            .state_root;
+            .ok_or(StoreError::UpdateBatchNoBlocks)?;
+        let last_state_root = last_block.header.state_root;
+        let last_block_number = last_block.header.number;
+        let last_block_hash = last_block.hash();
         let trie_upd_worker_tx = self.trie_update_worker_tx.clone();
 
         let is_batch = update_batch.batch_mode;
@@ -1396,6 +1423,8 @@ impl Store {
             result_sender: notify_tx,
             child_state_root: last_state_root,
             is_batch,
+            block_number: last_block_number,
+            block_hash: last_block_hash,
         };
         trie_upd_worker_tx.send(trie_update).map_err(|e| {
             StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
@@ -2749,6 +2778,127 @@ impl Store {
         Ok(state_root == root_hash)
     }
 
+    // ===========================================================================
+    // Deep-reorg primitives (Section 8 storage side).
+    // ===========================================================================
+
+    /// Returns `true` if the in-memory layer cache currently has a layer with
+    /// the given `state_root`. Used by the engine API and the deep-reorg
+    /// dispatcher to decide whether the head's state can be reached through
+    /// forward execution (cache pivot or cache hit) or whether a deep-reorg
+    /// path with overlay construction is required.
+    pub fn is_state_in_layer_cache(&self, state_root: H256) -> Result<bool, StoreError> {
+        let trie = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        Ok(trie.contains(state_root))
+    }
+
+    /// Atomically prepares the store for a deep-reorg apply pass.
+    ///
+    /// Builds an [`Overlay`] from `STATE_HISTORY` entries for blocks
+    /// `[to_block, from_block]` (descending), verifies each entry's
+    /// `block_hash` against `expected_hash`, then swaps the in-memory layer
+    /// cache for a fresh one with the overlay installed. After this call:
+    ///
+    /// - The layer cache contains zero forward layers.
+    /// - The overlay is in place; subsequent `TrieWrapper::get` calls cascade
+    ///   layer cache → overlay → disk.
+    /// - The on-disk trie/flat-KV state is **unchanged** (still at the old
+    ///   chain's edge).
+    ///
+    /// Side-chain blocks `[pivot+1 .. new_head]` should now be executed in
+    /// order via the existing `Blockchain::add_block` path; each block's
+    /// state reads will see the overlay, and each block's commit produces a
+    /// new forward layer in the (initially empty) cache.
+    ///
+    /// Errors abort the swap: if overlay construction fails (missing entry,
+    /// hash mismatch, decode error), the existing layer cache is left intact
+    /// and the caller can fall back to other recovery (e.g. `SYNCING`).
+    pub fn install_overlay_for_reorg(
+        &self,
+        from_block: BlockNumber,
+        to_block: BlockNumber,
+        expected_hash: impl Fn(BlockNumber) -> Option<H256>,
+    ) -> Result<(), StoreError> {
+        // Build the overlay first so any error aborts before mutating the
+        // trie cache.
+        let overlay = crate::layering::Overlay::from_journal(
+            self.backend.as_ref(),
+            from_block,
+            to_block,
+            expected_hash,
+        )
+        .map_err(|e| StoreError::Custom(format!("overlay construction failed: {e}")))?;
+
+        // Atomically swap the layer cache. The lock excludes any in-flight
+        // trie worker activity; the caller is responsible for ensuring no new
+        // `store_block_updates` are dispatched until side-chain execution
+        // begins (the engine API's `ReorgInProgress` flag, Section 11).
+        let threshold = {
+            let current = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
+            current.commit_threshold()
+        };
+        let mut fresh = TrieLayerCache::new(threshold);
+        fresh.set_overlay(Arc::new(overlay));
+
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        *guard = Arc::new(fresh);
+        Ok(())
+    }
+
+    /// Returns the highest block number with a `STATE_HISTORY` entry, i.e.,
+    /// the cache edge `D` (the deepest block whose post-state is on disk).
+    /// Returns `None` if the journal is empty (pre-finality fresh chain or
+    /// post-finality fully-pruned).
+    ///
+    /// Used by the deep-reorg orchestrator to determine the overlay's
+    /// `from_block` parameter.
+    pub fn highest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let read = self.backend.begin_read()?;
+        // STATE_HISTORY uses big-endian keys, so prefix-iterating from the
+        // empty prefix yields entries in ascending block-number order. We
+        // want the max — collect all and take the last. For the bounded
+        // depths we expect (≤ finality, mainnet ~64 entries), this is fine.
+        let mut max: Option<BlockNumber> = None;
+        for entry in read.prefix_iterator(STATE_HISTORY, &[])? {
+            let (key, _) = entry?;
+            if let Ok(arr) = <[u8; 8]>::try_from(key.as_ref()) {
+                let n = BlockNumber::from_be_bytes(arr);
+                max = Some(max.map_or(n, |m| m.max(n)));
+            }
+        }
+        Ok(max)
+    }
+
+    /// Removes any installed overlay from the layer cache.
+    ///
+    /// Called by Section 9's reconciliation path after the first new-chain
+    /// commit folds the overlay into disk. Idempotent: a no-op if no overlay
+    /// is currently installed.
+    pub fn clear_reorg_overlay(&self) -> Result<(), StoreError> {
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        let mut updated = (**guard).clone();
+        updated.clear_overlay();
+        *guard = Arc::new(updated);
+        Ok(())
+    }
+
+    /// Aborts an in-progress deep reorg and resets the layer cache to a fresh
+    /// empty state with the same commit threshold. Both the overlay AND any
+    /// partially-built new-chain layers are discarded.
+    ///
+    /// On-disk state is untouched (still at the OLD chain's `D`), so subsequent
+    /// FCU evaluations start from a clean foundation. Section 13.
+    pub fn abort_reorg(&self) -> Result<(), StoreError> {
+        let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
+        let threshold = guard.commit_threshold();
+        *guard = Arc::new(TrieLayerCache::new(threshold));
+        Ok(())
+    }
+
     /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned
     /// in reverse order, starting from the given block and going up to the genesis block.
     pub fn ancestors(&self, block_hash: BlockHash) -> AncestorIterator {
@@ -2864,6 +3014,14 @@ struct TrieUpdate {
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
     is_batch: bool,
+    /// Number of the block whose layer this update represents.
+    /// For a non-batch update this is exactly the single block being committed;
+    /// for a batch update it is the last block in the batch (matching
+    /// `child_state_root`). Used by the journal write path; harmless for batch
+    /// updates since journal writes are skipped when `is_batch == true`.
+    block_number: BlockNumber,
+    /// Hash of the block whose layer this update represents (see `block_number`).
+    block_hash: H256,
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
@@ -2881,6 +3039,8 @@ fn apply_trie_updates(
         account_updates,
         storage_updates,
         is_batch,
+        block_number,
+        block_hash,
     } = trie_update;
 
     // Phase 1: update the in-memory diff-layers only, then notify block production.
@@ -2899,7 +3059,13 @@ fn apply_trie_updates(
         .map_err(|_| StoreError::LockError)?
         .clone();
     let mut trie_mut = (*trie).clone();
-    trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
+    trie_mut.put_batch(
+        parent_state_root,
+        child_state_root,
+        block_number,
+        block_hash,
+        new_layer,
+    );
     let trie = Arc::new(trie_mut);
     *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
     // Update finished, signal block processing.
@@ -2924,8 +3090,8 @@ fn apply_trie_updates(
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
     let mut trie_mut = (*trie).clone();
 
-    let last_written = backend
-        .begin_read()?
+    let read_view = backend.begin_read()?;
+    let last_written = read_view
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
@@ -2934,10 +3100,74 @@ fn apply_trie_updates(
     // Before encoding, accounts have only the account address as their path, while storage keys have
     // the account address (32 bytes) + storage path (up to 32 bytes).
 
-    // Commit removes the bottom layer and returns it, this is the mutation step.
-    let nodes = trie_mut.commit(root).unwrap_or_default();
+    // Reverse-diff accumulators for the journal entry, one per CF. Populated
+    // only when `!is_batch`. Each entry stores the on-disk key as-is, so
+    // rollback can apply diffs directly without further interpretation. For
+    // full sync (`is_batch == true`), no journal entry is written — reorgs
+    // aren't supported during full sync, and journaling would slow it down.
+    let mut journal_account_trie: FlatDiff = Vec::new();
+    let mut journal_storage_trie: FlatDiff = Vec::new();
+    let mut journal_account_flat: FlatDiff = Vec::new();
+    let mut journal_storage_flat: FlatDiff = Vec::new();
+
+    // Commit removes the bottom layer and returns the committed block's
+    // identity plus the merged k/v. In normal operation this is the block one
+    // commit-cadence behind the just-added block, NOT the just-added block.
+    let CommitResult {
+        block_number: committed_block_number,
+        block_hash: committed_block_hash,
+        parent_state_root: committed_parent_state_root,
+        nodes,
+    } = trie_mut.commit(root).unwrap_or_default();
+
+    // Section 9 — overlay reconciliation on first new-chain commit.
+    //
+    // If an overlay is installed AND we're committing in non-batch mode, this
+    // is the first new-chain commit after a deep reorg. The overlay holds the
+    // reverse-diff bridging on-disk state (at the OLD chain's edge `D`) to
+    // the pivot at `to_block - 1`. We must fold overlay-only entries into the
+    // commit so disk advances directly from D-old to T-new in a single
+    // atomic write (no intermediate "rolled back" disk state). After the
+    // commit succeeds, the overlay is cleared and obsolete old-chain journal
+    // entries in `[T, D]` are deleted via `delete_range`.
+    let overlay_for_reconciliation = if !is_batch {
+        trie.overlay().cloned()
+    } else {
+        None
+    };
+
     let mut result = Ok(());
-    for (key, value) in nodes {
+
+    // Build a key set for fast "is this key in layer_T?" lookups so overlay
+    // entries that the new chain has ALSO touched can be skipped (layer_T
+    // wins — its value is the post-T state, which is what we want on disk).
+    let layer_keys: rustc_hash::FxHashSet<Vec<u8>> = if overlay_for_reconciliation.is_some() {
+        nodes.iter().map(|(k, _)| k.clone()).collect()
+    } else {
+        rustc_hash::FxHashSet::default()
+    };
+
+    // Combined write iterator: layer_T first, then overlay-only entries.
+    // Overlay entries are converted to layer-style format (empty value = delete).
+    let extra_writes: Vec<(Vec<u8>, Vec<u8>)> = match &overlay_for_reconciliation {
+        Some(overlay) => overlay
+            .iter_all_entries()
+            .filter(|(_, key, _)| !layer_keys.contains(*key))
+            .map(|(_, key, value)| {
+                // None (absent at pivot) → empty Vec → "delete" downstream.
+                // Some(v) → use v as-is. Empty values written through this path
+                // are extremely rare; treat them consistently with layer values.
+                let v = value.clone().unwrap_or_default();
+                (key.clone(), v)
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+
+    let combined_writes_len = nodes.len() + extra_writes.len();
+    let combined_writes = nodes.into_iter().chain(extra_writes);
+
+    for (key, value) in combined_writes {
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
 
@@ -2955,6 +3185,22 @@ fn apply_trie_updates(
         } else {
             &STORAGE_TRIE_NODES
         };
+
+        // Read the pre-image before overwriting. The read view was opened
+        // before the write transaction so it sees the on-disk state we are
+        // about to mutate. Skipped for batch (full-sync) commits.
+        let prev_value = if !is_batch {
+            match read_view.get(table, &key) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    result = Err(e);
+                    break;
+                }
+            }
+        } else {
+            None
+        };
+
         if value.is_empty() {
             result = write_tx.delete(table, &key);
         } else {
@@ -2963,13 +3209,78 @@ fn apply_trie_updates(
         if result.is_err() {
             break;
         }
+
+        // Record the reverse-diff entry. Done after the put/delete so that on
+        // a write error we don't accumulate state we won't actually persist.
+        // Keys are stored as-is (with their nibble-encoded prefix for storage
+        // CFs); rollback applies them directly without interpretation.
+        if let Some(prev) = prev_value {
+            let bucket = match (is_leaf, is_account) {
+                (false, true) => &mut journal_account_trie,
+                (false, false) => &mut journal_storage_trie,
+                (true, true) => &mut journal_account_flat,
+                (true, false) => &mut journal_storage_flat,
+            };
+            bucket.push((key, prev));
+        }
     }
+    // Silence the unused-variable warning when the size hint isn't consumed by
+    // a tracing log; kept available for future observability.
+    let _ = combined_writes_len;
+
+    // Stage the journal entry into the same write batch as the trie/flat-KV
+    // overwrites. `delete_range_cf` and `put_cf` are both buffered until
+    // `commit`, so all four CFs land atomically (or none do on commit failure).
+    // The entry is keyed and identified by the COMMITTED block (not the
+    // in-flight block whose insertion triggered this commit) — the in-flight
+    // block's own commit happens later when the next block's insertion pushes
+    // it past the threshold.
+    // Section 9 reconciliation: stage `delete_range` for obsolete old-chain
+    // journal entries `[T, D]` BEFORE the new T-new entry put, so the new
+    // entry isn't clobbered by the range delete.
+    if result.is_ok()
+        && let Some(overlay) = &overlay_for_reconciliation
+    {
+        let t = overlay.to_block();
+        let d = overlay.from_block();
+        debug_assert_eq!(
+            committed_block_number, t,
+            "first new-chain commit must be at the pivot's T height (overlay.to_block)"
+        );
+        let start = t.to_be_bytes();
+        let end = d.saturating_add(1).to_be_bytes();
+        result = write_tx.delete_range(STATE_HISTORY, &start, &end);
+    }
+
+    if result.is_ok() && !is_batch {
+        let entry = JournalEntry {
+            block_hash: committed_block_hash,
+            parent_state_root: committed_parent_state_root,
+            account_trie_diff: journal_account_trie,
+            storage_trie_diff: journal_storage_trie,
+            account_flat_diff: journal_account_flat,
+            storage_flat_diff: journal_storage_flat,
+        };
+        result = write_tx.put(
+            STATE_HISTORY,
+            &committed_block_number.to_be_bytes(),
+            &entry.encode(),
+        );
+    }
+
     if result.is_ok() {
         result = write_tx.commit();
     }
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
+
+    // Section 9: on successful commit of the reconciliation, clear the overlay
+    // from the cache. Subsequent commits revert to the normal one-block path.
+    if overlay_for_reconciliation.is_some() {
+        trie_mut.clear_overlay();
+    }
+
     // Phase 3: update diff layers with the removal of bottom layer.
     *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
@@ -3350,5 +3661,729 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::tables::STATE_HISTORY;
+    use crate::backend::in_memory::InMemoryBackend;
+    use crate::journal::JournalEntry;
+    use ethrex_common::types::{BlockBody, BlockHeader};
+    use ethrex_trie::Nibbles;
+    use std::time::{Duration, Instant};
+
+    fn make_block(number: BlockNumber, parent_hash: H256, state_root: H256) -> Block {
+        let header = BlockHeader {
+            number,
+            parent_hash,
+            state_root,
+            ..Default::default()
+        };
+        Block::new(header, BlockBody::default())
+    }
+
+    /// Polls `STATE_HISTORY` for an entry at the given block number, up to
+    /// `timeout`. The trie worker commits to disk asynchronously after
+    /// `store_block_updates` returns, so a small wait window is required.
+    fn await_journal_entry(
+        backend: &Arc<dyn StorageBackend>,
+        block_number: BlockNumber,
+        timeout: Duration,
+    ) -> Option<Vec<u8>> {
+        let key = block_number.to_be_bytes();
+        let deadline = Instant::now() + timeout;
+        loop {
+            let read = backend.begin_read().ok()?;
+            if let Ok(Some(v)) = read.get(STATE_HISTORY, &key) {
+                return Some(v);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn assert_no_journal_entry(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) {
+        // Give the worker a generous window to confirm absence isn't just a race.
+        std::thread::sleep(Duration::from_millis(50));
+        let key = block_number.to_be_bytes();
+        let read = backend.begin_read().expect("read view");
+        let v = read.get(STATE_HISTORY, &key).expect("get");
+        assert!(
+            v.is_none(),
+            "expected no STATE_HISTORY entry for block {block_number}, got {v:?}"
+        );
+    }
+
+    /// With `commit_threshold = 1`, the first batch seeds the layer cache and
+    /// the second batch commits the first layer to disk. So pushing N batches
+    /// produces N-1 journal entries. We verify entries for block 1 and block 2
+    /// after pushing 3 batches.
+    #[test]
+    fn journal_entry_written_per_block_in_regular_mode() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Block 1: distinct state_root, single non-leaf trie node update.
+        let state_root_1 = H256::repeat_byte(0x11);
+        let block1 = make_block(1, H256::zero(), state_root_1);
+        let block1_hash = block1.hash();
+        let update_1 = UpdateBatch {
+            account_updates: vec![(Nibbles::from_raw(&[0x00, 0x01], false), vec![0xab, 0xcd])],
+            storage_updates: vec![],
+            blocks: vec![block1],
+            receipts: vec![],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(update_1).unwrap();
+
+        // Block 2: parented to block 1. This is what triggers the commit of
+        // block 1's layer.
+        let state_root_2 = H256::repeat_byte(0x22);
+        let block2 = make_block(2, block1_hash, state_root_2);
+        let block2_hash = block2.hash();
+        let update_2 = UpdateBatch {
+            account_updates: vec![(Nibbles::from_raw(&[0x00, 0x02], false), vec![0xef, 0x11])],
+            storage_updates: vec![],
+            blocks: vec![block2],
+            receipts: vec![],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(update_2).unwrap();
+
+        let bytes = await_journal_entry(&backend, 1, Duration::from_secs(2))
+            .expect("STATE_HISTORY entry for block 1 should appear after block 2 commits it");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+        assert_eq!(
+            entry.block_hash, block1_hash,
+            "journal block_hash must match the committed block"
+        );
+        assert_eq!(
+            entry.parent_state_root,
+            H256::zero(),
+            "first block's parent state root is zero (no header for parent_hash=0)"
+        );
+        assert!(
+            !entry.account_trie_diff.is_empty(),
+            "non-empty trie update must produce non-empty account_trie_diff"
+        );
+        // The pre-image is None because the path didn't exist on disk before this commit.
+        let (path, prev) = &entry.account_trie_diff[0];
+        assert_eq!(prev, &None, "first-time write means previous value is None");
+        // Path length is small (non-leaf), classified as ACCOUNT_TRIE_NODES.
+        assert!(path.len() < 65);
+
+        // Block 3 commits block 2's layer.
+        let state_root_3 = H256::repeat_byte(0x33);
+        let block3 = make_block(3, block2_hash, state_root_3);
+        let update_3 = UpdateBatch {
+            account_updates: vec![(Nibbles::from_raw(&[0x00, 0x03], false), vec![0x77])],
+            storage_updates: vec![],
+            blocks: vec![block3],
+            receipts: vec![],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(update_3).unwrap();
+
+        let bytes = await_journal_entry(&backend, 2, Duration::from_secs(2))
+            .expect("STATE_HISTORY entry for block 2 should appear after block 3 commits it");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+        assert_eq!(entry.block_hash, block2_hash);
+        // Block 2's parent state root is block 1's post-state root.
+        assert_eq!(entry.parent_state_root, state_root_1);
+        assert!(!entry.account_trie_diff.is_empty());
+    }
+
+    /// `batch_mode = true` SHALL skip the journal entirely (full sync does not
+    /// support reorgs and the read-pre-image cost would slow it down). To
+    /// actually exercise the gating we need to push enough batches to trigger
+    /// a commit under `BATCH_COMMIT_THRESHOLD = 4`, then verify no
+    /// STATE_HISTORY entry materializes despite the commit happening.
+    #[test]
+    fn journal_skipped_in_batch_mode() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // 5 batches in batch mode → commit fires for block 1 on the 5th call.
+        let mut prev_hash = H256::zero();
+        for n in 1..=5u64 {
+            let state_root = H256::repeat_byte(0xa0 | (n as u8));
+            let block = make_block(n, prev_hash, state_root);
+            prev_hash = block.hash();
+            let update = UpdateBatch {
+                account_updates: vec![(
+                    Nibbles::from_raw(&[(n as u8)], false),
+                    vec![0xde, 0xad, n as u8],
+                )],
+                storage_updates: vec![],
+                blocks: vec![block],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: true,
+            };
+            store.store_block_updates(update).unwrap();
+        }
+
+        // Despite a commit having fired (block 1's layer was flushed), no
+        // STATE_HISTORY entries should exist for any block.
+        for n in 1..=5u64 {
+            assert_no_journal_entry(&backend, n);
+        }
+    }
+
+    /// Helper: seed the journal with synthetic entries at the given block
+    /// numbers so we can test pruning without driving real layer commits.
+    fn seed_journal_entries(backend: &Arc<dyn StorageBackend>, block_numbers: &[BlockNumber]) {
+        let mut tx = backend.begin_write().unwrap();
+        for n in block_numbers {
+            let entry = JournalEntry {
+                block_hash: H256::repeat_byte(*n as u8),
+                parent_state_root: H256::zero(),
+                account_trie_diff: vec![(vec![*n as u8], None)],
+                storage_trie_diff: vec![],
+                account_flat_diff: vec![],
+                storage_flat_diff: vec![],
+            };
+            tx.put(STATE_HISTORY, &n.to_be_bytes(), &entry.encode())
+                .unwrap();
+        }
+        tx.commit().unwrap();
+    }
+
+    fn journal_entry_exists(backend: &Arc<dyn StorageBackend>, block_number: BlockNumber) -> bool {
+        backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &block_number.to_be_bytes())
+            .unwrap()
+            .is_some()
+    }
+
+    /// Finality advance SHALL prune every STATE_HISTORY entry at or below the
+    /// new finalized number, in the same atomic txn as the finalized-number
+    /// update.
+    #[tokio::test]
+    async fn finality_advance_prunes_journal_below_boundary() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Seed journal entries for blocks 1..=10.
+        seed_journal_entries(&backend, &(1..=10).collect::<Vec<_>>());
+        for n in 1..=10 {
+            assert!(journal_entry_exists(&backend, n), "seed entry {n} present");
+        }
+
+        // Advance finalized to 5. Entries 1..=5 should be pruned; 6..=10 retained.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        for n in 1..=5 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "entry {n} should have been pruned (≤ finalized)"
+            );
+        }
+        for n in 6..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} should remain (> finalized)"
+            );
+        }
+    }
+
+    /// Forkchoice updates that don't advance finalized SHALL NOT prune the
+    /// journal. Re-asserting the same finalized value is a no-op.
+    #[tokio::test]
+    async fn finality_no_op_does_not_prune() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Establish prev_finalized = 5.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        // Now seed entries for 6..=10 (representing post-finality history that
+        // accumulated since the last advance).
+        seed_journal_entries(&backend, &(6..=10).collect::<Vec<_>>());
+
+        // FCU re-asserting finalized = 5: must not prune anything.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, Some(5))
+            .await
+            .unwrap();
+
+        for n in 6..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} should still exist after no-op finality update"
+            );
+        }
+
+        // FCU with finalized = None: also a no-op for pruning.
+        store
+            .forkchoice_update_inner(vec![], 100, H256::zero(), None, None)
+            .await
+            .unwrap();
+
+        for n in 6..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "entry {n} should still exist when finalized is None"
+            );
+        }
+    }
+
+    /// `is_state_in_layer_cache` returns true for state_roots that the trie
+    /// cache currently has a layer for, and false otherwise. Used by the
+    /// engine API and the deep-reorg dispatcher.
+    #[tokio::test]
+    async fn is_state_in_layer_cache_reflects_current_cache_contents() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        // Use a high commit threshold (3) so the layers stay in cache after
+        // the first call — we want to inspect cache contents, not flushed state.
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 3).unwrap();
+
+        let state_root_1 = H256::repeat_byte(0x11);
+        let block1 = make_block(1, H256::zero(), state_root_1);
+
+        // Before any updates, no state roots are in the cache.
+        assert!(!store.is_state_in_layer_cache(state_root_1).unwrap());
+
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x00], false), vec![0xab])],
+                storage_updates: vec![],
+                blocks: vec![block1],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // After the update, the layer for state_root_1 is in the cache.
+        // Poll briefly because the trie worker is asynchronous.
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            if store.is_state_in_layer_cache(state_root_1).unwrap() {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "layer never appeared");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // A different state root remains absent.
+        assert!(
+            !store
+                .is_state_in_layer_cache(H256::repeat_byte(0xee))
+                .unwrap()
+        );
+    }
+
+    /// `install_overlay_for_reorg` SHALL atomically swap the in-memory layer
+    /// cache for a fresh empty one with the constructed overlay installed.
+    /// On-disk state SHALL remain untouched, and reads through the new cache
+    /// SHALL cascade to the overlay (then disk).
+    #[tokio::test]
+    async fn install_overlay_replaces_cache_with_fresh_one() {
+        use crate::layering::OverlayCf;
+
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Seed two journal entries so the overlay constructor has data to load.
+        seed_journal_entries(&backend, &[3, 4]);
+
+        // Pre-condition: layer cache is empty (no put_batch happened) and no
+        // overlay installed.
+        assert!(store.trie_cache.read().unwrap().clone().overlay().is_none());
+
+        store
+            .install_overlay_for_reorg(4, 3, |_| None)
+            .expect("overlay install should succeed");
+
+        // Post-condition: an overlay is installed and contains the seeded
+        // entries. Verify via the cache's own lookup_overlay path.
+        let cache = store.trie_cache.read().unwrap().clone();
+        assert!(cache.overlay().is_some(), "overlay must be installed");
+        // The seed_journal_entries helper writes one account_trie entry per
+        // block at path [block_number as u8] — verify both are visible.
+        assert_eq!(
+            cache.lookup_overlay(&[3u8]),
+            Some(None),
+            "block 3's seeded path should be in the overlay (with None pre-image)"
+        );
+        assert_eq!(cache.lookup_overlay(&[4u8]), Some(None));
+        // OverlayCf::AccountTrie classification is correct for these short paths.
+        assert_eq!(OverlayCf::classify_by_key_length(1), OverlayCf::AccountTrie);
+    }
+
+    /// `install_overlay_for_reorg` SHALL leave the existing cache intact when
+    /// overlay construction fails (e.g. missing journal entry).
+    #[tokio::test]
+    async fn install_overlay_aborts_cleanly_on_missing_entry() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Only seed block 5; ask for [5, 3]. Blocks 4 and 3 are missing.
+        seed_journal_entries(&backend, &[5]);
+
+        let err = store
+            .install_overlay_for_reorg(5, 3, |_| None)
+            .expect_err("missing-entry must abort");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("MissingEntry") || msg.contains("missing"),
+            "error message should mention missing entry: {msg}"
+        );
+
+        // Cache and overlay unchanged.
+        let cache = store.trie_cache.read().unwrap().clone();
+        assert!(cache.overlay().is_none(), "no overlay should be installed");
+    }
+
+    /// First-new-chain commit reconciliation: overlay-only entries SHALL be
+    /// folded into the disk write, the new T journal entry SHALL be written,
+    /// obsolete old-chain entries `[T, D]` SHALL be deleted, and the overlay
+    /// SHALL be cleared after the commit succeeds.
+    #[tokio::test]
+    async fn first_new_chain_commit_reconciles_overlay() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Seed STATE_HISTORY with synthetic old-chain entries at blocks 5..=10.
+        // Each entry's account_trie_diff has one path-only entry so the
+        // overlay's `iter_all_entries` produces something to fold.
+        seed_journal_entries(&backend, &(5u64..=10).collect::<Vec<_>>());
+        for n in 5..=10 {
+            assert!(journal_entry_exists(&backend, n));
+        }
+
+        // We need the pivot block (number 4) header in HEADERS so apply_updates
+        // can resolve parent_state_root for the first side-chain block (number 5).
+        let pivot_state_root = H256::repeat_byte(0xee);
+        let pivot = make_block(4, H256::zero(), pivot_state_root);
+        let pivot_hash = pivot.hash();
+        // Use the regular put-header path. We can do this by storing block 4
+        // through store_block_updates with batch_mode=true (which skips the
+        // journal). This populates HEADERS / BODIES without producing a
+        // STATE_HISTORY entry that would conflict with our seeded ones.
+        // BUT — store_block_updates with batch_mode=true at threshold=1 would
+        // also try to commit. To keep this surgical, we just write to HEADERS
+        // directly via the backend.
+        let mut tx = backend.begin_write().unwrap();
+        use ethrex_rlp::encode::RLPEncode;
+        tx.put(
+            crate::api::tables::HEADERS,
+            &pivot_hash.encode_to_vec(),
+            crate::rlp::BlockHeaderRLP::from(pivot.header).bytes(),
+        )
+        .unwrap();
+        tx.commit().unwrap();
+
+        // Install the overlay. from_block=10, to_block=5.
+        store
+            .install_overlay_for_reorg(10, 5, |_| None)
+            .expect("overlay install");
+
+        // The overlay was built; confirm before any side-chain commit.
+        {
+            let cache = store.trie_cache.read().unwrap().clone();
+            let overlay = cache.overlay().expect("overlay installed");
+            assert_eq!(overlay.from_block(), 10);
+            assert_eq!(overlay.to_block(), 5);
+        }
+
+        // Push side-chain block T = 5. This adds a layer to the new (fresh)
+        // cache but does NOT commit yet (with threshold=1, get_commitable
+        // checks the parent's state root, which is pivot_state_root and is
+        // NOT in the fresh cache, so returns None).
+        let t_state_root = H256::repeat_byte(0x55);
+        let block_t = make_block(5, pivot_hash, t_state_root);
+        let block_t_hash = block_t.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0xab], false), vec![0x77])],
+                storage_updates: vec![],
+                blocks: vec![block_t],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // No commit fired yet → overlay still installed, T-new entry not yet
+        // written, old-chain entries still present.
+        std::thread::sleep(Duration::from_millis(30));
+        for n in 5..=10 {
+            assert!(
+                journal_entry_exists(&backend, n),
+                "old-chain entry at {n} should still exist before commit fires"
+            );
+        }
+
+        // Push side-chain block T+1 = 6. Its parent is T's state root, which
+        // IS in the fresh cache. get_commitable(t_state_root) walks 1 step
+        // (counter=1>=threshold=1) and returns t_state_root → commits T's
+        // layer → triggers reconciliation.
+        let t1_state_root = H256::repeat_byte(0x56);
+        let block_t1 = make_block(6, block_t_hash, t1_state_root);
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0xab, 0xcd], false), vec![0x88])],
+                storage_updates: vec![],
+                blocks: vec![block_t1],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // Wait for the reconciliation commit to land. The trie worker runs
+        // asynchronously after store_block_updates returns. Sync on the
+        // delete_range firing — when block 10's seeded entry is gone, the
+        // reconciliation has written the new T-new entry too (same atomic
+        // write batch).
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            if !journal_entry_exists(&backend, 10) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "delete_range never fired (reconciliation didn't complete)"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let bytes = backend
+            .begin_read()
+            .unwrap()
+            .get(STATE_HISTORY, &5u64.to_be_bytes())
+            .unwrap()
+            .expect("STATE_HISTORY[5] should still exist (overwritten by T-new put)");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+
+        // The new T-new entry's block_hash matches the new chain's block T.
+        assert_eq!(entry.block_hash, block_t_hash);
+        assert_eq!(entry.parent_state_root, pivot_state_root);
+
+        // Old-chain entries for blocks 6..=10 are deleted by the
+        // `delete_range(STATE_HISTORY, &5.to_be_bytes(), &11.to_be_bytes())`
+        // staged in the same write batch. Block 5 itself was overwritten by
+        // the new T-new entry put.
+        for n in 6..=10 {
+            assert!(
+                !journal_entry_exists(&backend, n),
+                "old-chain entry at {n} should be deleted by reconciliation"
+            );
+        }
+
+        // The overlay is cleared after the successful commit.
+        let cache = store.trie_cache.read().unwrap().clone();
+        assert!(
+            cache.overlay().is_none(),
+            "overlay must be cleared after reconciliation"
+        );
+    }
+
+    /// `abort_reorg` SHALL discard both an installed overlay and any
+    /// partially-built layers, leaving the cache fresh and empty so a
+    /// subsequent FCU can start from disk state.
+    #[tokio::test]
+    async fn abort_reorg_resets_cache_to_fresh() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // Seed journal entries and install an overlay.
+        seed_journal_entries(&backend, &[3, 4]);
+        store.install_overlay_for_reorg(4, 3, |_| None).unwrap();
+        assert!(
+            store.trie_cache.read().unwrap().overlay().is_some(),
+            "overlay should be installed before abort"
+        );
+
+        // Push a synthetic side-chain layer to simulate partial new-chain progress.
+        let block = make_block(3, H256::zero(), H256::repeat_byte(0x33));
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: vec![(Nibbles::from_raw(&[0x01], false), vec![0x99])],
+                storage_updates: vec![],
+                blocks: vec![block],
+                receipts: vec![],
+                code_updates: vec![],
+                batch_mode: false,
+            })
+            .unwrap();
+        // Wait briefly for the trie worker.
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Abort. Both the overlay AND the partial layer must be gone.
+        store.abort_reorg().unwrap();
+        let cache = store.trie_cache.read().unwrap().clone();
+        assert!(cache.overlay().is_none(), "overlay should be cleared");
+        // No layer should be reachable; lookup of any state_root returns false.
+        assert!(!cache.contains(H256::repeat_byte(0x33)));
+
+        // Subsequent overlay install on the now-fresh cache works.
+        store.install_overlay_for_reorg(4, 3, |_| None).unwrap();
+        assert!(store.trie_cache.read().unwrap().overlay().is_some());
+    }
+
+    /// LVH propagation: when a block is rejected with `parent_hash` as its
+    /// LVH, and a descendant is recorded with the SAME LVH (because its
+    /// parent was the bad block, whose recorded LVH was `parent_hash`), the
+    /// descendant correctly inherits the deeper valid ancestor. Verifies the
+    /// existing `set/get_latest_valid_ancestor` storage primitive is
+    /// consistent with the engine-API-level propagation logic at
+    /// `crates/networking/rpc/engine/payload.rs:865-895` and
+    /// `crates/networking/rpc/engine/fork_choice.rs:241-260`.
+    #[tokio::test]
+    async fn invalid_ancestor_lvh_propagates_through_descendant_chain() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend, dir.path().to_path_buf(), 1).unwrap();
+
+        // Simulate the engine-API flow:
+        // 1. Block A is rejected with LVH = parent_of_A (= the deepest valid).
+        let bad_a = H256::repeat_byte(0xa0);
+        let valid_root = H256::repeat_byte(0x01);
+        store
+            .set_latest_valid_ancestor(bad_a, valid_root)
+            .await
+            .unwrap();
+
+        // 2. A descendant B (parent = bad_a) arrives. The engine API checks
+        //    parent's recorded LVH (= valid_root) and propagates it.
+        let bad_b = H256::repeat_byte(0xb0);
+        let parent_lvh = store.get_latest_valid_ancestor(bad_a).await.unwrap();
+        assert_eq!(parent_lvh, Some(valid_root));
+        store
+            .set_latest_valid_ancestor(bad_b, valid_root)
+            .await
+            .unwrap();
+
+        // 3. Grandchild C (parent = bad_b) arrives. Same propagation step.
+        let bad_c = H256::repeat_byte(0xc0);
+        let parent_lvh = store.get_latest_valid_ancestor(bad_b).await.unwrap();
+        assert_eq!(parent_lvh, Some(valid_root));
+        store
+            .set_latest_valid_ancestor(bad_c, valid_root)
+            .await
+            .unwrap();
+
+        // 4. All three descendants now resolve to the same deepest valid
+        //    ancestor; LVH does NOT point at any intermediate bad block.
+        for bad in [bad_a, bad_b, bad_c] {
+            let lvh = store.get_latest_valid_ancestor(bad).await.unwrap();
+            assert_eq!(lvh, Some(valid_root));
+            assert_ne!(lvh, Some(bad), "LVH must never be the bad block itself");
+        }
+    }
+
+    /// `clear_reorg_overlay` SHALL remove an installed overlay; it SHALL be
+    /// a no-op when no overlay is installed.
+    #[tokio::test]
+    async fn clear_reorg_overlay_removes_overlay_and_is_idempotent() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        // No-op when nothing installed.
+        store.clear_reorg_overlay().unwrap();
+        assert!(store.trie_cache.read().unwrap().overlay().is_none());
+
+        // Install and clear.
+        seed_journal_entries(&backend, &[7]);
+        store.install_overlay_for_reorg(7, 7, |_| None).unwrap();
+        assert!(store.trie_cache.read().unwrap().overlay().is_some());
+        store.clear_reorg_overlay().unwrap();
+        assert!(store.trie_cache.read().unwrap().overlay().is_none());
+
+        // A second clear is a no-op.
+        store.clear_reorg_overlay().unwrap();
+        assert!(store.trie_cache.read().unwrap().overlay().is_none());
+    }
+
+    /// Storage trie updates SHALL appear in `storage_trie_diff` (not
+    /// `account_trie_diff`), with their on-disk keys as written. The keys
+    /// carry the nibble-encoded account-hash prefix; we only verify that two
+    /// distinct accounts produce two distinct entries with first-time `None`
+    /// pre-images.
+    #[test]
+    fn journal_storage_updates_appear_in_storage_diff() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        let account_hash_a = H256::repeat_byte(0xa0);
+        let account_hash_b = H256::repeat_byte(0xb0);
+
+        // Block 1 carries the storage updates we want to verify on disk.
+        let state_root_1 = H256::repeat_byte(0x33);
+        let block1 = make_block(1, H256::zero(), state_root_1);
+        let block1_hash = block1.hash();
+        let update_1 = UpdateBatch {
+            account_updates: vec![],
+            storage_updates: vec![
+                (
+                    account_hash_a,
+                    vec![(Nibbles::from_raw(&[0x05], false), vec![0x01])],
+                ),
+                (
+                    account_hash_b,
+                    vec![(Nibbles::from_raw(&[0x06], false), vec![0x02])],
+                ),
+            ],
+            blocks: vec![block1],
+            receipts: vec![],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(update_1).unwrap();
+
+        // Block 2 triggers commit of block 1's layer.
+        let state_root_2 = H256::repeat_byte(0x44);
+        let block2 = make_block(2, block1_hash, state_root_2);
+        let update_2 = UpdateBatch {
+            account_updates: vec![(Nibbles::from_raw(&[0xee], false), vec![0xff])],
+            storage_updates: vec![],
+            blocks: vec![block2],
+            receipts: vec![],
+            code_updates: vec![],
+            batch_mode: false,
+        };
+        store.store_block_updates(update_2).unwrap();
+
+        let bytes = await_journal_entry(&backend, 1, Duration::from_secs(2))
+            .expect("STATE_HISTORY entry for block 1");
+        let entry = JournalEntry::decode(&bytes).unwrap();
+        assert_eq!(entry.block_hash, block1_hash);
+        assert_eq!(
+            entry.storage_trie_diff.len(),
+            2,
+            "two distinct account hashes must produce two storage_trie entries"
+        );
+        for (_key, prev) in &entry.storage_trie_diff {
+            assert_eq!(prev, &None, "first-time storage write has None pre-image");
+        }
+        assert!(entry.account_trie_diff.is_empty());
     }
 }

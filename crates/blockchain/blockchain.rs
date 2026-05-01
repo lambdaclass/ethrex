@@ -201,6 +201,13 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Whether a deep-reorg apply is currently in flight (Section 11).
+    ///
+    /// Set on entry to `reorg_apply_deep`, cleared on exit (via the
+    /// `ReorgGuard` drop). While set, engine API `forkchoiceUpdated` calls
+    /// short-circuit to `SYNCING` (matching Reth's `BackfillSyncState::Active`
+    /// gating at `crates/engine/tree/src/tree/mod.rs:1173-1178`).
+    reorg_in_progress: AtomicBool,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -333,10 +340,18 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
         }
+    }
+
+    /// Returns a reference to the underlying [`Store`]. Used by code that
+    /// orchestrates storage-side operations (e.g. the deep-reorg apply path)
+    /// alongside `Blockchain`'s execution capabilities.
+    pub fn store(&self) -> &Store {
+        &self.storage
     }
 
     pub fn default_with_store(store: Store) -> Self {
@@ -344,12 +359,45 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
 
+    /// Returns `true` if a deep-reorg apply is currently in flight.
+    /// While true, `apply_fork_choice_with_deep_reorg` short-circuits to
+    /// `InvalidForkChoice::Syncing` and the engine API responds `SYNCING`.
+    pub fn is_reorg_in_progress(&self) -> bool {
+        self.reorg_in_progress
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Internal: marks a deep-reorg apply as in flight. Returns a guard whose
+    /// `Drop` clears the flag — use this to ensure the flag is cleared on
+    /// every exit path (success, error, panic).
+    pub(crate) fn enter_reorg(&self) -> ReorgGuard<'_> {
+        self.reorg_in_progress
+            .store(true, std::sync::atomic::Ordering::Release);
+        ReorgGuard { blockchain: self }
+    }
+}
+
+/// RAII guard that clears `Blockchain::reorg_in_progress` on drop.
+pub(crate) struct ReorgGuard<'a> {
+    blockchain: &'a Blockchain,
+}
+
+impl<'a> Drop for ReorgGuard<'a> {
+    fn drop(&mut self) {
+        self.blockchain
+            .reorg_in_progress
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+impl Blockchain {
     /// Executes a block withing a new vm instance and state
     fn execute_block(
         &self,
