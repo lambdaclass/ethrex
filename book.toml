@@ -27,6 +27,7 @@ additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 # keep README links working in mdBook output
 [output.html.redirect]
+"/ROADMAP.html" = "/roadmap.html"
 "/getting-started/README.html" = "/getting-started/index.html"
 "/getting-started/installation/README.html" = "/getting-started/installation/index.html"
 "/l1/running/README.html" = "/l1/running/index.html"
