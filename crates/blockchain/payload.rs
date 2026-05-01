@@ -754,7 +754,7 @@ impl Blockchain {
 
             // BAL index + per-tx checkpoint, then record touched addresses.
             #[allow(clippy::cast_possible_truncation)]
-            let tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            let tx_index = (context.payload.body.transactions.len() + 1) as u32;
             context.vm.set_bal_index(tx_index);
             let bal_checkpoint = context
                 .vm

@@ -203,6 +203,7 @@ fn build_args(parent_header: &BlockHeader) -> BuildPayloadArgs {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     }
 }
 
