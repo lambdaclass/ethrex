@@ -207,7 +207,7 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 
 **Scroll** became the first ZK rollup to achieve Stage 1 (April 2025) through the Euclid upgrade, which introduced permissionless sequencing fallback and a 12-member Security Council with 75% threshold.
 
-**zkSync Era** is currently experiencing a **proof system pause** due to a vulnerability, causing partial liveness failure. Previously, a critical bug in zk-circuits was discovered that could have led to $1.9B in potential losses if exploited.
+**zkSync Era** is currently experiencing a **proof system pause** due to a vulnerability, causing partial liveness failure. Previously, a critical bug in zk-circuits was discovered that could have led to \$1.9B in potential losses if exploited.
 
 > *L2BEAT states they "haven't finished evaluation" of zkSync Era's Stage 1 elements - not that zkSync fails requirements. The main pending item is a forced inclusion mechanism. With 75% of proving already delegated to external provers and decentralized sequencing (ChonkyBFT) underway, zkSync appears architecturally Stage 1-ready.
 
@@ -230,7 +230,7 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 |---------|-------------------|
 | Taiko Alethia | Funds at risk from compromised SGX; ZK optional; unverified contracts |
 | Scroll | No upgrade delay; emergency verifier upgrade occurred Aug 2025 |
-| zkSync Era | Proof system currently paused; prior $1.9B bug discovered |
+| zkSync Era | Proof system currently paused; prior \$1.9B bug discovered |
 | Starknet | Shared SHARP verifier; SC has instant upgrade power |
 | Arbitrum One | Malicious upgrade risk; optimistic delay (~6.4 days) |
 | Optimism | No exit window for SC upgrades; dispute game vulnerabilities |
