@@ -139,6 +139,25 @@ fn call_bytecode(target: Address) -> Vec<u8> {
     b
 }
 
+/// Inline CREATE-with-failing-initcode bytecode.
+///
+/// Stores a one-byte initcode at memory[0] and invokes CREATE(value=0, offset=0, size=1).
+/// The chosen initcode byte determines how the child frame ends:
+/// - 0xfe (INVALID) → exceptional halt
+/// - 0xfd (REVERT)  → revert (note: REVERT alone with empty stack is itself a halt)
+fn create_failing_bytecode(initcode_byte: u8) -> Vec<u8> {
+    vec![
+        0x60, initcode_byte, // PUSH1 <byte>
+        0x60, 0x00, // PUSH1 0
+        0x53, // MSTORE8 — memory[0] = byte
+        0x60, 0x01, // PUSH1 1   (size)
+        0x60, 0x00, // PUSH1 0   (offset)
+        0x60, 0x00, // PUSH1 0   (value)
+        0xf0, // CREATE
+        0x50, // POP (discard returned address / 0)
+    ]
+}
+
 /// RETURN(0, 0)
 fn return_bytecode() -> Vec<u8> {
     vec![0x60, 0x00, 0x60, 0x00, 0xf3]
@@ -684,4 +703,110 @@ fn test_top_level_failure_after_credit_does_not_double_refund() {
         report.state_gas_used, 0,
         "state_gas_used must be 0 (no double-refund)"
     );
+}
+
+// ==================== Test: divergence from EELS on partially-credited spill at top halt ====================
+
+/// Reproduces the geth↔ethrex bal-devnet-6 block-level `gas_used` divergence.
+///
+/// Scenario (plain CALL tx; intrinsic_state = 0, reservoir = 0):
+///   1. Contract A SSTOREs slot 0 → spills `SSTORE_STATE` units of state-gas to
+///      `gas_remaining`. After the charge: `state_gas_spill = SSTORE_STATE`,
+///      `state_gas_spill_outstanding = SSTORE_STATE`.
+///   2. Contract A executes a CREATE opcode with a 1-byte INVALID initcode. The
+///      CREATE op charges `STATE_NEW` (= STATE_BYTES_PER_NEW_ACCOUNT * cpsb) of
+///      state-gas — also fully spilled. After: spill = SSTORE_STATE + STATE_NEW,
+///      spill_outstanding = SSTORE_STATE + STATE_NEW.
+///   3. The child frame halts immediately on the INVALID opcode (no further
+///      state-gas activity). Returning to the parent in `handle_return_create`
+///      runs the halt branch (snapshot restore, no local_excess) followed by
+///      `credit_state_gas_refund(STATE_NEW)` — applied entirely to spill since
+///      spill_outstanding is well above STATE_NEW. After the credit:
+///      spill_outstanding = SSTORE_STATE, reservoir = STATE_NEW.
+///   4. Contract A then executes INVALID itself → top-level halt.
+///
+/// On the top-level halt, ethrex's non-CREATE-tx reclassify formula is
+///   `max(state_gas_spill_outstanding, reservoir_surplus)`
+///       = max(SSTORE_STATE, STATE_NEW)
+///       = STATE_NEW              (STATE_NEW > SSTORE_STATE)
+///
+/// The reference EELS rule re-classifies the *total gross spill* on halt
+/// (`total_state - reservoir` = `state_gas_used + state_gas_left - reservoir`,
+/// which after the credit cancellation simplifies to total spill `S`):
+///   `reclassify_eels = SSTORE_STATE + STATE_NEW`
+///
+/// The block-dimension `regular_gas` is then computed in `refund_sender` as
+///   `raw_consumed - intrinsic_state - reservoir_initial - state_gas_spill + regular_gas_reclassified`
+/// which expands (using raw = gas_limit on halt, both intrinsic_state and
+/// reservoir_initial = 0) to:
+///   ethrex: gas_limit - (SSTORE_STATE + STATE_NEW) + STATE_NEW       = gas_limit - SSTORE_STATE
+///   EELS  : gas_limit - (SSTORE_STATE + STATE_NEW) + (SSTORE_STATE+STATE_NEW) = gas_limit
+///
+/// Hence `report.gas_used` should equal `gas_limit` per EELS but currently
+/// equals `gas_limit - SSTORE_STATE` in ethrex. The asserted difference
+/// (== `state_gas_storage_set()`) is exactly the amount of outstanding spill
+/// that the credit did NOT cancel — the term ethrex's `max(.,.)` formula drops.
+#[test]
+fn test_top_halt_after_partial_credit_to_spill_diverges_from_eels() {
+    use ethrex_levm::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT;
+
+    let addr_a = Address::from_low_u64_be(CONTRACT_A);
+
+    // Parent contract A:
+    //   SSTORE(slot 0, 5)   — charges SSTORE_STATE state-gas (spills, since reservoir = 0)
+    //   CREATE(0, 0, 1) where memory[0] = 0xfe — child halts on INVALID
+    //   INVALID             — top-level halt
+    let mut code = sstore_byte(0, 5);
+    code.extend(create_failing_bytecode(0xfe));
+    code.extend(invalid_bytecode());
+
+    let report = TestRunner::call(addr_a)
+        .with_account(Address::from_low_u64_be(SENDER), eoa(U256::from(1_000_000)))
+        .with_account(addr_a, contract(code))
+        .run();
+
+    assert!(
+        !report.is_success(),
+        "tx should halt on INVALID: {:?}",
+        report.result
+    );
+
+    // Plain CALL tx: intrinsic_state_gas = 0 → state dimension wipes to 0 on top-level failure.
+    assert_eq!(
+        report.state_gas_used, 0,
+        "block state_gas_used should be 0 for a top-level halted plain CALL tx"
+    );
+
+    // Block-level gas_used per EELS reference: equals the entire tx gas_limit, because
+    // every byte of charged state-gas (including the credit-refunded portion) and every
+    // byte of regular gas was burned by the halt.
+    let cpsb = cost_per_state_byte(GAS_LIMIT * 2);
+    let _state_new = STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+    let sstore_state = STATE_BYTES_PER_STORAGE_SET * cpsb;
+    let expected_gas_used_eels = GAS_LIMIT;
+    let expected_gas_used_ethrex_buggy = GAS_LIMIT - sstore_state;
+
+    // Sanity: the formulas only diverge when the credit-applied-to-spill portion
+    // (STATE_NEW) is strictly less than the total outstanding spill at halt
+    // (SSTORE_STATE + STATE_NEW). That is, SSTORE_STATE > 0 — a trivial check.
+    assert!(
+        sstore_state > 0,
+        "test scenario requires nonzero SSTORE state-gas to leave residual spill after credit"
+    );
+
+    // Currently fails on bal-devnet-6: ethrex reports `gas_limit - sstore_state`
+    // instead of `gas_limit`. The `min(report.gas_used, _)` line below is the
+    // diagnostic showing both candidate values for easier triage.
+    assert_eq!(
+        report.gas_used, expected_gas_used_eels,
+        "block gas_used divergence: ethrex={} expected_eels={} diff={} (== one SSTORE state-gas charge); \
+         ethrex's `max(spill_outstanding, reservoir_surplus)` halt formula drops the \
+         residual outstanding spill that wasn't cancelled by the CREATE-failure refund",
+        report.gas_used,
+        expected_gas_used_eels,
+        expected_gas_used_eels.saturating_sub(report.gas_used),
+    );
+
+    // (Held back from causing a second failure but documented.)
+    let _ = expected_gas_used_ethrex_buggy;
 }
