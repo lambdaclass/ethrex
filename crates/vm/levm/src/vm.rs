@@ -1024,10 +1024,27 @@ impl<'a> VM<'a> {
                 // formula diverged from EELS by `min(applied_to_spill, S - applied_to_spill)`
                 // whenever a credit only partially cancelled outstanding spill — see
                 // `test_top_halt_after_partial_credit_to_spill_diverges_from_eels`.
+                //
+                // `credit_against_drain` is capped by `regular_gas_reclassified` to
+                // distinguish "real drain" (a credit against a deeper-frame spill that
+                // has already been reclassified to regular dim) from "phantom drain"
+                // (a credit against a charge that itself didn't spill — e.g., a charge
+                // funded entirely from a reservoir refilled by an earlier spill-refund).
+                // Real drain SHOULD be excluded from regular reclassification (it's
+                // already counted in `regular_gas_reclassified` from the deeper halt).
+                // Phantom drain MUST NOT be excluded — doing so would lose the original
+                // gross spill from regular dim. The cap keeps EELS parity for the cases
+                // motivating PR #2689 / #6558 while fixing the
+                // refund-of-un-spilled-charge case where `credit_against_drain` exceeds
+                // `regular_gas_reclassified` and should not subtract from the gross
+                // spill — see `test_top_halt_phantom_drain_does_not_cancel_real_spill`.
                 let entry = self.state_gas_reservoir_at_top_message_entry;
+                let drain_cap = self
+                    .state_gas_credit_against_drain
+                    .min(self.regular_gas_reclassified);
                 let reclassify = self
                     .state_gas_spill
-                    .saturating_sub(self.state_gas_credit_against_drain)
+                    .saturating_sub(drain_cap)
                     .saturating_sub(self.regular_gas_reclassified);
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
