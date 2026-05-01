@@ -130,7 +130,7 @@
 
 # Roadmap
 
-- [Roadmap](../ROADMAP.md)
+- [Roadmap](./roadmap.md)
 
 # Why ethrex
 
