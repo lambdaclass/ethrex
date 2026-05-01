@@ -249,10 +249,17 @@ for json_file in "${json_files[@]}"; do
         fi
 
         case_slug="$(slugify "${raw_case_name}")"
+        case_suffix="case-${case_id}"
         if [ -n "${case_slug}" ]; then
-          case_slug="${case_slug}-case-${case_id}"
+          # Truncate the name part so the full component stays under the
+          # 255-char filesystem limit (leave room for suffix + separator).
+          max_name_len=$(( 250 - ${#case_suffix} - 1 ))
+          if [ "${#case_slug}" -gt "${max_name_len}" ]; then
+            case_slug="${case_slug:0:${max_name_len}}"
+          fi
+          case_slug="${case_slug}-${case_suffix}"
         else
-          case_slug="case-${case_id}"
+          case_slug="${case_suffix}"
         fi
 
         client_slug="$(slugify "${client_id}")"

@@ -107,9 +107,14 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
+
+      --nat.extip <IP>
+          The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
+
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -206,7 +211,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 9.0.0"]
+          [default: "ethrex 10.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -324,9 +329,14 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
+
+      --nat.extip <IP>
+          The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
+
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -405,7 +415,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 9.0.0"]
+          [default: "ethrex 10.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -490,12 +500,6 @@ Block producer options:
 
       --block-producer.l1-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
-
-      --block-producer.block-gas-limit <UINT64>
-          Maximum gas limit for the L2 blocks.
-
-          [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
-          [default: 30000000]
 
 Proposer options:
       --elasticity-multiplier <UINT64>
@@ -626,6 +630,11 @@ Aligned options:
           Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.
 
           [env: ETHREX_ALIGNED_FROM_BLOCK=]
+
+      --aligned.resubmission-timeout <SECONDS>
+          Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).
+
+          [env: ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS=]
 
       --aligned.fee-estimate <FEE_ESTIMATE>
           Fee estimate for Aligned sdk

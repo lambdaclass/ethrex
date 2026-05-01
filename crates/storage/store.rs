@@ -31,7 +31,7 @@ use ethrex_common::{
     },
     utils::keccak,
 };
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::{
     decode::{RLPDecode, decode_bytes},
     encode::RLPEncode,
@@ -52,6 +52,8 @@ use std::{
     },
     thread::JoinHandle,
 };
+#[cfg(feature = "rocksdb")]
+use tracing::warn;
 use tracing::{debug, error, info};
 
 /// Maximum number of execution witnesses to keep in the database
@@ -1451,12 +1453,51 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
-        // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
 
         if engine_type != EngineType::InMemory {
-            // Check that the last used DB version matches the current version
-            validate_store_schema_version(&db_path)?;
+            let version = read_store_schema_version(&db_path)?;
+
+            match version {
+                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                    // Pre-metadata DB — cannot migrate safely
+                    return Err(StoreError::NotFoundDBVersion);
+                }
+                None => {
+                    // Fresh / empty directory — write initial metadata
+                    init_metadata_file(&db_path)?;
+                }
+                Some(v) if v < 1 => {
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!("DB version v{v} is invalid (predates migrations)"),
+                    });
+                }
+                Some(v) if v > STORE_SCHEMA_VERSION => {
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!(
+                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
+                        ),
+                    });
+                }
+                #[cfg(feature = "rocksdb")]
+                Some(v) if v < STORE_SCHEMA_VERSION => {
+                    // Open backend, run migrations, then proceed with the same Arc
+                    let backend: Arc<dyn crate::api::StorageBackend> =
+                        Arc::new(RocksDBBackend::open(&path)?);
+                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
+                }
+                Some(_) => {
+                    // version == STORE_SCHEMA_VERSION, proceed normally.
+                    // Without the `rocksdb` feature this also covers v < target,
+                    // but that path is unreachable since InMemory is the only
+                    // engine type and the outer guard excludes it.
+                }
+            }
         }
 
         match engine_type {
@@ -1715,7 +1756,7 @@ impl Store {
     ) -> Result<AccountUpdatesList, StoreError> {
         let mut ret_storage_updates = Vec::new();
         let mut code_updates = Vec::new();
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
         for update in account_updates {
             let hashed_address = hash_address_fixed(&update.address);
             if update.removed {
@@ -1754,7 +1795,7 @@ impl Store {
                     }
                 }
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
                 account_state.storage_root = storage_hash;
                 ret_storage_updates.push((hashed_address, storage_updates));
             }
@@ -1763,7 +1804,8 @@ impl Store {
                 account_state.encode_to_vec(),
             )?;
         }
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         Ok(AccountUpdatesList {
             state_trie_hash,
@@ -1785,7 +1827,7 @@ impl Store {
 
         let mut code_updates = Vec::new();
 
-        let state_root = state_trie.hash_no_commit();
+        let state_root = state_trie.hash_no_commit(&NativeCrypto);
 
         for update in account_updates.iter() {
             let hashed_address = hash_address(&update.address);
@@ -1846,7 +1888,7 @@ impl Store {
                 }
 
                 let (storage_hash, storage_updates) =
-                    storage_trie.collect_changes_since_last_hash();
+                    storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
                 account_state.storage_root = storage_hash;
 
@@ -1856,7 +1898,8 @@ impl Store {
             state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_trie_hash, state_updates) = state_trie.collect_changes_since_last_hash();
+        let (state_trie_hash, state_updates) =
+            state_trie.collect_changes_since_last_hash(&NativeCrypto);
 
         let account_updates_list = AccountUpdatesList {
             state_trie_hash,
@@ -1880,7 +1923,7 @@ impl Store {
             let h256_hashed_address = H256::from_slice(&hashed_address);
 
             // Store account code (as this won't be stored in the trie)
-            let code = Code::from_bytecode(account.code);
+            let code = Code::from_bytecode(account.code, &NativeCrypto);
             let code_hash = code.hash;
             self.add_account_code(code).await?;
 
@@ -1894,7 +1937,8 @@ impl Store {
                 }
             }
 
-            let (storage_root, storage_nodes) = storage_trie.collect_changes_since_last_hash();
+            let (storage_root, storage_nodes) =
+                storage_trie.collect_changes_since_last_hash(&NativeCrypto);
 
             storage_trie_nodes.extend(
                 storage_nodes
@@ -1912,7 +1956,8 @@ impl Store {
             genesis_state_trie.insert(hashed_address, account_state.encode_to_vec())?;
         }
 
-        let (state_root, account_trie_nodes) = genesis_state_trie.collect_changes_since_last_hash();
+        let (state_root, account_trie_nodes) =
+            genesis_state_trie.collect_changes_since_last_hash(&NativeCrypto);
         let account_trie_nodes = account_trie_nodes
             .into_iter()
             .map(|(path, n)| (apply_prefix(None, path).into_vec(), n))
@@ -2698,7 +2743,9 @@ impl Store {
         let Some(root) = trie.db().get(Nibbles::default())? else {
             return Ok(false);
         };
-        let root_hash = ethrex_trie::Node::decode(&root)?.compute_hash().finalize();
+        let root_hash = ethrex_trie::Node::decode(&root)?
+            .compute_hash(&NativeCrypto)
+            .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
     }
 
@@ -2959,7 +3006,7 @@ fn flatkeyvalue_generator(
             .get(ACCOUNT_TRIE_NODES, &[])?
             .ok_or(StoreError::MissingLatestBlockNumber)?;
         let root: Node = ethrex_trie::Node::decode(&root)?;
-        let state_root = root.compute_hash().finalize();
+        let state_root = root.compute_hash(&NativeCrypto).finalize(&NativeCrypto);
 
         let last_written = read_tx
             .get(MISC_VALUES, "last_written".as_bytes())?
@@ -3180,29 +3227,24 @@ impl LatestBlockHeaderCache {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct StoreMetadata {
-    schema_version: u64,
+pub struct StoreMetadata {
+    pub schema_version: u64,
 }
 
 impl StoreMetadata {
-    fn new(schema_version: u64) -> Self {
+    pub fn new(schema_version: u64) -> Self {
         Self { schema_version }
     }
 }
 
-fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+/// Reads the schema version from the metadata file, if it exists.
+///
+/// Returns `Some(version)` when metadata.json is present and valid,
+/// or `None` when the file does not exist.
+fn read_store_schema_version(path: &Path) -> Result<Option<u64>, StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
-    // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
-        // If datadir exists but is not empty, this is probably a DB for an
-        // old ethrex version and we should return an error
-        if path.exists() && !dir_is_empty(path)? {
-            return Err(StoreError::NotFoundDBVersion {
-                expected: STORE_SCHEMA_VERSION,
-            });
-        }
-        init_metadata_file(path)?;
-        return Ok(());
+        return Ok(None);
     }
     if !metadata_path.is_file() {
         return Err(StoreError::Custom(
@@ -3211,15 +3253,7 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     }
     let file_contents = std::fs::read_to_string(metadata_path)?;
     let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
-
-    // Check schema version matches the expected one
-    if metadata.schema_version != STORE_SCHEMA_VERSION {
-        return Err(StoreError::IncompatibleDBVersion {
-            found: metadata.schema_version,
-            expected: STORE_SCHEMA_VERSION,
-        });
-    }
-    Ok(())
+    Ok(Some(metadata.schema_version))
 }
 
 fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
@@ -3238,8 +3272,9 @@ fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     Ok(is_empty)
 }
 
-/// Checks whether a valid database exists at the given path by looking for
-/// a metadata.json file with a matching schema version.
+/// Checks whether a valid (or migratable) database exists at the given path
+/// by looking for a metadata.json file with a schema version between 1 and
+/// `STORE_SCHEMA_VERSION` (inclusive).
 pub fn has_valid_db(path: &Path) -> bool {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     if !metadata_path.is_file() {
@@ -3251,25 +3286,65 @@ pub fn has_valid_db(path: &Path) -> bool {
     let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
         return false;
     };
-    metadata.schema_version == STORE_SCHEMA_VERSION
+    metadata.schema_version >= 1 && metadata.schema_version <= STORE_SCHEMA_VERSION
 }
 
 /// Reads the chain ID from an existing database without performing a full
 /// store initialization. Returns `None` if the database doesn't exist or
 /// the chain config can't be read. Always returns `None` when compiled
 /// without the `rocksdb` feature.
+///
+/// Each failure mode logs a warning so callers (and operators) can diagnose
+/// why an existing database was not usable — previously every error was
+/// silently swallowed by `.ok()?`.
 pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     if !has_valid_db(path) {
         return None;
     }
     #[cfg(feature = "rocksdb")]
     {
-        let backend = RocksDBBackend::open(path).ok()?;
-        let read = backend.begin_read().ok()?;
+        let backend = match RocksDBBackend::open(path) {
+            Ok(backend) => backend,
+            Err(e) => {
+                warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");
+                return None;
+            }
+        };
+        let read = match backend.begin_read() {
+            Ok(read) => read,
+            Err(e) => {
+                warn!("Failed to begin read transaction at {path:?}: {e}");
+                return None;
+            }
+        };
         let key = chain_data_key(ChainDataIndex::ChainConfig);
-        let bytes = read.get(CHAIN_DATA, &key).ok()??;
-        let config: ethrex_common::types::ChainConfig = serde_json::from_slice(&bytes).ok()?;
-        Some(config.chain_id)
+        let bytes = match read.get(CHAIN_DATA, &key) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => {
+                warn!("Chain config entry not found in database at {path:?}");
+                return None;
+            }
+            Err(e) => {
+                warn!("Failed to read chain config from database at {path:?}: {e}");
+                return None;
+            }
+        };
+        // Only extract chain_id here: the stored `ChainConfig` JSON may include
+        // fields whose serialization changed across releases (e.g. pre-v10 wrote
+        // `terminal_total_difficulty` as a plain number, v10 expects hex string).
+        // Deserializing the full struct would reject otherwise-migratable v9 data.
+        #[derive(serde::Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct ChainIdOnly {
+            chain_id: u64,
+        }
+        match serde_json::from_slice::<ChainIdOnly>(&bytes) {
+            Ok(partial) => Some(partial.chain_id),
+            Err(e) => {
+                warn!("Failed to deserialize chain ID from database at {path:?}: {e}");
+                None
+            }
+        }
     }
     #[cfg(not(feature = "rocksdb"))]
     {

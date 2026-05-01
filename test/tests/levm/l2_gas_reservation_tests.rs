@@ -345,7 +345,7 @@ fn test_contract_execution_with_l1_gas_reservation() {
     ]);
     let contract_account = Account::new(
         U256::zero(),
-        Code::from_bytecode(bytecode),
+        Code::from_bytecode(bytecode, &NativeCrypto),
         1,
         FxHashMap::default(),
     );
@@ -405,7 +405,7 @@ fn test_oog_revert_still_pays_l1_fee_vault() {
     ]);
     let contract_account = Account::new(
         U256::zero(),
-        Code::from_bytecode(bytecode),
+        Code::from_bytecode(bytecode, &NativeCrypto),
         1,
         FxHashMap::default(),
     );

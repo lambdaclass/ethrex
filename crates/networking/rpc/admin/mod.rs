@@ -10,7 +10,7 @@ use crate::{
     utils::{RpcErr, RpcRequest},
 };
 mod peers;
-pub use peers::{add_peer, peers};
+pub use peers::{add_peer, peer_scores, peers, sync_status};
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]

@@ -13,8 +13,8 @@ pub enum BackendError {
     #[error("Verification error: {0}")]
     Verification(String),
 
-    #[error("Batch proof conversion error: {0}")]
-    BatchProofConversion(String),
+    #[error("Proof conversion error: {0}")]
+    ProofConversion(String),
 
     #[error("Not implemented: {0}")]
     NotImplemented(String),
@@ -37,8 +37,8 @@ impl BackendError {
         Self::Verification(e.to_string())
     }
 
-    pub fn batch_proof(e: impl std::fmt::Display) -> Self {
-        Self::BatchProofConversion(e.to_string())
+    pub fn proof_conversion(e: impl std::fmt::Display) -> Self {
+        Self::ProofConversion(e.to_string())
     }
 
     pub fn not_implemented(msg: impl Into<String>) -> Self {

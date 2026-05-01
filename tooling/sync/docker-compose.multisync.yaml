@@ -28,9 +28,13 @@
 x-ethrex-common: &ethrex-common
   image: "${ETHREX_IMAGE:-ghcr.io/lambdaclass/ethrex:main}"
   pull_policy: "${ETHREX_PULL_POLICY:-always}"
+  environment:
+    RUST_LOG: "${RUST_LOG:-info,ethrex_p2p::sync=debug}"
   ulimits:
     nofile: 1000000
   restart: unless-stopped
+  # Metrics are exposed via --metrics in each container's command.
+  # Only mainnet maps to host port 3701 (scraped by centralized Prometheus).
 
 x-consensus-common: &consensus-common
   image: sigp/lighthouse:v8.0.1
@@ -58,7 +62,7 @@ services:
       --http --http-address 0.0.0.0
       --execution-endpoint http://ethrex-hoodi:8551
       --execution-jwt /secrets/jwt.hex
-      --checkpoint-sync-url https://hoodi-checkpoint-sync.stakely.io/
+      --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
       --checkpoint-sync-url-timeout 600
       --purge-db
     depends_on:
@@ -70,6 +74,7 @@ services:
     container_name: ethrex-hoodi
     ports:
       - "8545:8545"  # RPC
+      - "3702:3701"  # Metrics
     volumes:
       - secrets-hoodi:/secrets
       - ethrex-hoodi:/data
@@ -80,6 +85,7 @@ services:
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode snap
       --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
     depends_on:
       setup-jwt-hoodi:
         condition: service_completed_successfully
@@ -117,6 +123,7 @@ services:
     container_name: ethrex-sepolia
     ports:
       - "8546:8545"  # RPC on different host port
+      - "3703:3701"  # Metrics
     volumes:
       - secrets-sepolia:/secrets
       - ethrex-sepolia:/data
@@ -127,6 +134,7 @@ services:
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode snap
       --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
     depends_on:
       setup-jwt-sepolia:
         condition: service_completed_successfully
@@ -164,6 +172,7 @@ services:
     container_name: ethrex-mainnet
     ports:
       - "8547:8545"  # RPC on different host port
+      - "3701:3701"  # Metrics (scraped by centralized Prometheus)
     volumes:
       - secrets-mainnet:/secrets
       - ethrex-mainnet:/data
@@ -174,6 +183,7 @@ services:
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode snap
       --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
     depends_on:
       setup-jwt-mainnet:
         condition: service_completed_successfully
@@ -199,7 +209,7 @@ services:
       --http --http-address 0.0.0.0
       --execution-endpoint http://ethrex-hoodi-2:8551
       --execution-jwt /secrets/jwt.hex
-      --checkpoint-sync-url https://hoodi-checkpoint-sync.stakely.io/
+      --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
       --checkpoint-sync-url-timeout 600
       --purge-db
     depends_on:
@@ -221,6 +231,7 @@ services:
       --authrpc.jwtsecret /secrets/jwt.hex
       --syncmode snap
       --datadir /data
+      --metrics --metrics.addr 0.0.0.0 --metrics.port 3701
     depends_on:
       setup-jwt-hoodi-2:
         condition: service_completed_successfully

@@ -214,7 +214,7 @@ jobs:
             artifact_prefix: rpc_compat
           - name: "Devp2p tests"
             simulation: devp2p
-            limit: discv4|eth|snap
+            limit: discv4|discv5|eth|snap
             artifact_prefix: devp2p
           - name: "Engine Auth and EC tests"
             simulation: ethereum/engine
@@ -232,6 +232,12 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
+          # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
+          - name: "Consume Engine Amsterdam"
+            simulation: ethereum/eels/consume-engine
+            limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
+            amsterdam: true
+            artifact_prefix: consume_engine_amsterdam
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -261,20 +267,35 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
+      - name: Load Amsterdam config
+        id: amsterdam-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
+          AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
+          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
+          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
-          if [[ -n "$SIM_BUILDARG" ]]; then
-            FLAGS+=" --sim.buildarg $SIM_BUILDARG"
+          if [[ "$AMSTERDAM" == "true" ]]; then
+            FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+          else
+            for arg in $SIM_BUILDARG; do
+              FLAGS+=" --sim.buildarg $arg"
+            done
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
@@ -290,7 +311,7 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          hive_version: 0921fb7833e3de180eacdc9f26de6e51dcab0dba
+          hive_version: 88786d9744dabb08bdaec8d8b53142cde6e6b79a
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}

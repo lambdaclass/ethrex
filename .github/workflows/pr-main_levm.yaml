@@ -8,6 +8,7 @@ on:
     paths:
       - "tooling/ef_tests/state/**"
       - "crates/vm/levm/**"
+      - "crates/common/crypto/**"
       - ".github/workflows/pr-main_levm.yaml"
       - "tooling/ef_tests/state"
   workflow_dispatch:
@@ -72,6 +73,19 @@ jobs:
               echo "Percentage is not 100%."
               # exit 1 # uncomment when we expect 100% pass-rate
           fi
+
+  ef-test-nostd-crypto:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests (no_std crypto)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run EF state tests with no_std crypto fallbacks
+        run: make -C tooling/ef_tests/state test-levm-nostd-crypto
 
   ef-test-main:
     if: ${{ github.event_name != 'merge_group' }}
