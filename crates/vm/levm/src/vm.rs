@@ -996,34 +996,39 @@ impl<'a> VM<'a> {
                     self.state_gas_reservoir.saturating_add(execution_portion);
             } else {
                 // ExceptionalHalt (PR #2689): apply the spec halt rule to the top-level
-                // message.
+                // message uniformly, regardless of whether intrinsic_state was charged.
                 //
-                // For CREATE TX (intrinsic_state > 0) that halts: the wipe leaves
-                // block.state_dim at intrinsic_state, so the gross spill that was
-                // permanently consumed from gas_remaining must surface in regular
-                // dim. Apply the per-frame halt formula symmetrically at the top
-                // (snapshots = 0): `gross_spill - credit_against_drain -
-                // already_reclassified`. `credit_against_drain` is excluded
-                // because it represents credit applied to drain (state-dim
-                // accounting), not regular-dim. The `already_reclassified` dedup
-                // matters when sub-frame halts already moved parts of the spill
-                // into the regular dimension.
+                // Per EELS amsterdam/vm/interpreter.py::process_message:
+                //   total_state = evm.state_gas_used + evm.state_gas_left
+                //   reservoir   = evm.message.state_gas_reservoir   # at frame entry
+                //   if total_state > reservoir:
+                //       evm.regular_gas_used += total_state - reservoir
                 //
-                // For non-CREATE TX top-halt (intrinsic_state == 0): use the
-                // pre-existing `max(spill_outstanding, reservoir_surplus)` rule.
-                // Switching to gross-spill here regresses tests like
-                // random_statetest296 / call_goes_oog_on_second_level2 where the
-                // gross spill represents legitimate state-gas that should NOT be
-                // reclassified to regular dim.
+                // Because EELS's `credit_state_gas_refund` decrements `state_gas_used`
+                // and increments `state_gas_left` by the same amount, `total_state` is
+                // invariant under credits. Hence `total_state - reservoir` reduces to
+                // the gross spill `S` that originally exceeded the entry reservoir.
+                //
+                // In ethrex's flat-reservoir model: `state_gas_spill` accumulates the
+                // gross lifetime spill (never decremented). At the top message:
+                //   `gross_spill - credit_against_drain - already_reclassified`
+                // gives the residual still to be re-classified, where:
+                //   - `credit_against_drain` excludes credits applied to drain (which
+                //     belong in the state dimension, not regular).
+                //   - `already_reclassified` deduplicates against deeper-frame halts
+                //     that already moved parts of the spill into the regular dim.
+                //
+                // The previous non-CREATE-tx branch used
+                // `max(spill_outstanding, reservoir_surplus)`, which dropped the
+                // residual outstanding spill that wasn't cancelled by a credit. That
+                // formula diverged from EELS by `min(applied_to_spill, S - applied_to_spill)`
+                // whenever a credit only partially cancelled outstanding spill — see
+                // `test_top_halt_after_partial_credit_to_spill_diverges_from_eels`.
                 let entry = self.state_gas_reservoir_at_top_message_entry;
-                let reservoir_surplus = self.state_gas_reservoir.saturating_sub(entry);
-                let reclassify = if self.intrinsic_state_gas_charged > 0 {
-                    self.state_gas_spill
-                        .saturating_sub(self.state_gas_credit_against_drain)
-                        .saturating_sub(self.regular_gas_reclassified)
-                } else {
-                    self.state_gas_spill_outstanding.max(reservoir_surplus)
-                };
+                let reclassify = self
+                    .state_gas_spill
+                    .saturating_sub(self.state_gas_credit_against_drain)
+                    .saturating_sub(self.regular_gas_reclassified);
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
                 self.state_gas_reservoir = entry;
