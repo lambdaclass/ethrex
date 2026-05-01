@@ -58,27 +58,23 @@ pub struct CachingDatabase {
     storage: RwLock<StorageCache>,
     /// Cached contract code
     code: RwLock<CodeCache>,
-    /// Shared precompile result cache (warmer populates, executor reuses)
-    precompile_cache: PrecompileCache,
+    /// Shared precompile result cache (warmer populates, executor reuses).
+    /// `None` when the cache is disabled via `BlockchainOptions::precompile_cache_enabled = false`.
+    precompile_cache: Option<PrecompileCache>,
     /// Cached chain config (constant for the lifetime of this database)
     chain_config: OnceLock<ChainConfig>,
 }
 
 impl CachingDatabase {
-    pub fn new(inner: Arc<dyn Database>) -> Self {
+    pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
         Self {
             inner,
             accounts: RwLock::new(FxHashMap::default()),
             storage: RwLock::new(FxHashMap::default()),
             code: RwLock::new(FxHashMap::default()),
-            precompile_cache: PrecompileCache::new(),
+            precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
-    }
-
-    /// Access the shared precompile result cache.
-    pub fn precompile_cache(&self) -> &PrecompileCache {
-        &self.precompile_cache
     }
 
     fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
@@ -180,7 +176,7 @@ impl Database for CachingDatabase {
     }
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
-        Some(&self.precompile_cache)
+        self.precompile_cache.as_ref()
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {

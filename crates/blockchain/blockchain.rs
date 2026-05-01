@@ -227,6 +227,10 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If true (default), per-block execution caches precompile results between the
+    /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
+    /// disable the cache for benchmarking purposes.
+    pub precompile_cache_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -237,6 +241,7 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            precompile_cache_enabled: true,
         }
     }
 }
@@ -447,8 +452,9 @@ impl Blockchain {
         // Wrap the store with CachingDatabase so both warming and execution
         // can benefit from shared caching of state lookups
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            Arc::new(CachingDatabase::new(original_store));
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(
+            CachingDatabase::new(original_store, self.options.precompile_cache_enabled),
+        );
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
