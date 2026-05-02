@@ -47,7 +47,6 @@ c-kzg = ["ethrex-crypto/c-kzg"]
 rayon = ["dep:rayon"]
 secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1", "rayon"]
 eip-8025 = ["dep:libssz", "dep:libssz-types", "dep:libssz-merkle", "dep:libssz-derive"]
-eip-7805 = []
 
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []

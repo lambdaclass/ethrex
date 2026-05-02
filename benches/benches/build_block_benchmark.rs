@@ -150,6 +150,7 @@ fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
         version: 3,
         elasticity_multiplier: 1,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let id = payload_args.id();
     let block = create_payload(&payload_args, store, Bytes::new()).unwrap();
@@ -190,7 +191,7 @@ pub async fn bench_payload(input: &(Arc<Blockchain>, Block, &Store)) -> (Duratio
     let (payload_block, payload_id) = create_payload_block(genesis_block, store);
     blockchain
         .clone()
-        .initiate_payload_build(payload_block, payload_id)
+        .initiate_payload_build(payload_block, payload_id, Vec::new())
         .await;
     // 2. engine_getPayload is called, this code path ends up calling Blockchain::get_payload(id),
     // so we also mimic that here without the RPC part.

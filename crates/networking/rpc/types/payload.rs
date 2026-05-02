@@ -204,7 +204,6 @@ pub enum PayloadValidationStatus {
     Invalid,
     Syncing,
     Accepted,
-    #[cfg(feature = "eip-7805")]
     #[serde(rename = "INCLUSION_LIST_UNSATISFIED")]
     InclusionListUnsatisfied,
 }
@@ -264,7 +263,6 @@ impl PayloadStatus {
         }
     }
 
-    #[cfg(feature = "eip-7805")]
     pub fn inclusion_list_unsatisfied() -> Self {
         PayloadStatus {
             status: PayloadValidationStatus::InclusionListUnsatisfied,
@@ -353,7 +351,6 @@ mod test {
         assert!(payload.into_block(Some(H256::zero()), None, None).is_ok());
     }
 
-    #[cfg(feature = "eip-7805")]
     #[test]
     fn inclusion_list_unsatisfied_serializes_to_spec_string() {
         let status = PayloadValidationStatus::InclusionListUnsatisfied;
@@ -361,7 +358,6 @@ mod test {
         assert_eq!(value, serde_json::json!("INCLUSION_LIST_UNSATISFIED"));
     }
 
-    #[cfg(feature = "eip-7805")]
     #[test]
     fn inclusion_list_unsatisfied_payload_status_matches_spec() {
         let payload_status = PayloadStatus::inclusion_list_unsatisfied();
