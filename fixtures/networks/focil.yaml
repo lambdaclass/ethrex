@@ -1,0 +1,47 @@
+# focil devnet — pandaops-team-supplied config
+# Source: pandaops team, 2026-05-02
+#
+# Matrix expanded with ethrex+lodestar / ethrex+lighthouse pairings using a
+# locally-built ethrex:local image from the `focil` branch.
+#
+# Fork schedule:
+#   * gloas at epoch 1 (post-Glamsterdam ePBS layer)
+#   * heze (= our Hegota / EIP-7805 FOCIL) at epoch 2
+#     ethrex's chain config accepts hezeTime/heze_time as aliases for
+#     hegota_time (see crates/common/types/genesis.rs serde alias).
+#
+# Run with:
+#   KURTOSIS_CONFIG_FILE=./fixtures/networks/focil.yaml make localnet
+
+participants_matrix:
+  el:
+    - el_type: besu
+      el_image: ethpandaops/besu:focil
+    - el_type: ethrex
+      el_image: ethrex:local
+  cl:
+    - cl_type: lodestar
+      cl_image: ethpandaops/lodestar:focil
+    - cl_type: lighthouse
+      cl_image: ethpandaops/lighthouse:focil
+  count: 2
+
+network_params:
+  preset: minimal
+  gloas_fork_epoch: 1
+  heze_fork_epoch: 2
+
+spamoor_params:
+  image: ethpandaops/spamoor:master
+  spammers: []
+
+additional_services:
+  - dora
+  - spamoor
+
+dora_params:
+  image: bbusa/dora:focil-fix
+
+port_publisher:
+  additional_services:
+    enabled: true
