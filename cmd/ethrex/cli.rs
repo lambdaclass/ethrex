@@ -468,7 +468,6 @@ pub struct Options {
         env = "ETHREX_MAX_REORG_DEPTH"
     )]
     pub max_reorg_depth: Option<u64>,
-    #[cfg(feature = "eip-7805")]
     #[arg(
         long = "il-policy",
         default_value = "production",
@@ -478,7 +477,6 @@ pub struct Options {
         env = "ETHREX_IL_POLICY"
     )]
     pub il_policy: String,
-    #[cfg(feature = "eip-7805")]
     #[arg(
         long = "il-per-sender-cap",
         default_value_t = 2,
@@ -488,7 +486,6 @@ pub struct Options {
         env = "ETHREX_IL_PER_SENDER_CAP"
     )]
     pub il_per_sender_cap: usize,
-    #[cfg(feature = "eip-7805")]
     #[arg(
         long = "il-max-bytes",
         default_value_t = 8192,
@@ -593,11 +590,8 @@ impl Default for Options {
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
             max_reorg_depth: None,
-            #[cfg(feature = "eip-7805")]
             il_policy: "production".to_string(),
-            #[cfg(feature = "eip-7805")]
             il_per_sender_cap: 2,
-            #[cfg(feature = "eip-7805")]
             il_max_bytes: 8192,
         }
     }

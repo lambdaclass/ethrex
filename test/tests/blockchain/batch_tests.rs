@@ -84,7 +84,7 @@ async fn build_block(store: &Store, blockchain: &Blockchain, parent_header: &Blo
     };
 
     let block = create_payload(&args, store, Bytes::new()).unwrap();
-    let result = blockchain.build_payload(block).unwrap();
+    let result = blockchain.build_payload(block, &[]).unwrap();
     result.payload
 }
 

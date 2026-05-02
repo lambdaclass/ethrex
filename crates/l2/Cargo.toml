@@ -86,4 +86,3 @@ metrics = ["ethrex-blockchain/metrics"]
 
 l2 = []
 
-eip-7805 = ["ethrex-blockchain/eip-7805"]

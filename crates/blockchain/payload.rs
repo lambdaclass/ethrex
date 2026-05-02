@@ -95,14 +95,12 @@ pub struct BuildPayloadArgs {
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
-    /// EIP-7805 (FOCIL) inclusion list. When `Some(non_empty)` AND the
-    /// `eip-7805` Cargo feature is enabled on `ethrex-blockchain`, the
-    /// payload builder sequences these transactions first per Decision 5 in
-    /// `design.md`. RLP-decoded form (not bytes), populated by the V5
-    /// FCU handler from `PayloadAttributesV5::inclusion_list_transactions`.
-    /// Always present (not feature-gated) so cross-crate `BuildPayloadArgs`
-    /// constructors don't need to thread the FOCIL feature flag; the field
-    /// is silently ignored when the feature is off on the consumer crate.
+    /// EIP-7805 (FOCIL) inclusion list. When `Some(non_empty)` and the
+    /// chain is Hegotá-active, the payload builder sequences these
+    /// transactions first per Decision 5 in `design.md`. RLP-decoded form
+    /// (not bytes), populated by the V5 FCU handler from
+    /// `PayloadAttributesV5::inclusion_list_transactions`. `None` for
+    /// non-V5 callers (V1-V4 FCU, dev-mode block production, P2P sync).
     pub inclusion_list_transactions: Option<Vec<ethrex_common::types::Transaction>>,
 }
 
@@ -403,26 +401,13 @@ impl Blockchain {
     }
 
     /// Starts a payload build process. The built payload can be retrieved by calling `get_payload`.
-    /// The build process will run for the full block building timeslot or until `get_payload` is called
-    pub async fn initiate_payload_build(self: Arc<Blockchain>, payload: Block, payload_id: u64) {
-        let self_clone = self.clone();
-        let cancel_token = CancellationToken::new();
-        let cancel_token_clone = cancel_token.clone();
-        let payload_build_task = tokio::task::spawn(async move {
-            self_clone
-                .build_payload_loop(payload, cancel_token_clone)
-                .await
-        });
-        self.register_payload_build_task(payload_id, payload_build_task, cancel_token)
-            .await;
-    }
-
-    /// EIP-7805 (FOCIL) variant of [`initiate_payload_build`]: stashes the IL
-    /// alongside the empty payload so each rebuild iteration in
-    /// `build_payload_loop_with_il` can sequence IL transactions first before
-    /// falling through to mempool ordering.
-    #[cfg(feature = "eip-7805")]
-    pub async fn initiate_payload_build_with_il(
+    /// The build process will run for the full block building timeslot or until `get_payload` is called.
+    ///
+    /// `inclusion_list` carries the EIP-7805 (FOCIL) transactions stashed by
+    /// the V5 FCU handler. Pre-Hegotá and non-V5 callers pass `Vec::new()`,
+    /// which makes the IL pre-pass a zero-iteration no-op (byte-equivalent to
+    /// the pre-FOCIL build path).
+    pub async fn initiate_payload_build(
         self: Arc<Blockchain>,
         payload: Block,
         payload_id: u64,
@@ -433,7 +418,7 @@ impl Blockchain {
         let cancel_token_clone = cancel_token.clone();
         let payload_build_task = tokio::task::spawn(async move {
             self_clone
-                .build_payload_loop_with_il(payload, cancel_token_clone, inclusion_list)
+                .build_payload_loop(payload, cancel_token_clone, inclusion_list)
                 .await
         });
         self.register_payload_build_task(payload_id, payload_build_task, cancel_token)
@@ -460,39 +445,16 @@ impl Blockchain {
     }
 
     /// Build the given payload and keep on rebuilding it until either the time slot
-    /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled
+    /// given by `SECONDS_PER_SLOT` is up or the `cancel_token` is cancelled.
+    ///
+    /// `inclusion_list` carries the EIP-7805 (FOCIL) transactions sequenced
+    /// before the priority-fee mempool fill phase. Empty slice = pre-FOCIL
+    /// behavior (zero-iteration IL pre-pass).
     pub async fn build_payload_loop(
         self: Arc<Blockchain>,
         payload: Block,
         cancel_token: CancellationToken,
-    ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_loop_inner(payload, cancel_token, &[])
-            .await
-    }
-
-    /// EIP-7805 (FOCIL) variant of [`build_payload_loop`]: each rebuild
-    /// iteration sequences `inclusion_list` transactions first, then falls
-    /// through to the mempool fill phase.
-    #[cfg(feature = "eip-7805")]
-    pub async fn build_payload_loop_with_il(
-        self: Arc<Blockchain>,
-        payload: Block,
-        cancel_token: CancellationToken,
         inclusion_list: Vec<ethrex_common::types::Transaction>,
-    ) -> Result<PayloadBuildResult, ChainError> {
-        self.build_payload_loop_inner(payload, cancel_token, &inclusion_list)
-            .await
-    }
-
-    /// Shared loop body. `inclusion_list` is `&[]` for non-FOCIL callers.
-    /// The empty-slice path is byte-equivalent to the pre-FOCIL behavior
-    /// because `build_payload_inner` skips the IL pre-pass when the slice is
-    /// empty.
-    async fn build_payload_loop_inner(
-        self: Arc<Blockchain>,
-        payload: Block,
-        cancel_token: CancellationToken,
-        inclusion_list: &[ethrex_common::types::Transaction],
     ) -> Result<PayloadBuildResult, ChainError> {
         let start = Instant::now();
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
@@ -564,7 +526,7 @@ impl Blockchain {
             && (!cancel_token.is_cancelled() || res.payload.body.transactions.is_empty())
         {
             let blockchain = self.clone();
-            let il_clone = inclusion_list.to_vec();
+            let il_clone = inclusion_list.clone();
             match tokio::task::spawn_blocking(move || {
                 blockchain.build_payload_inner(payload, None, &il_clone)
             })
@@ -601,7 +563,6 @@ impl Blockchain {
 
     /// EIP-7805 (FOCIL) variant of [`build_payload`]: sequences the IL
     /// transactions before the priority-fee-ordered mempool fill phase.
-    #[cfg(feature = "eip-7805")]
     pub fn build_payload_with_il(
         &self,
         payload: Block,
@@ -641,7 +602,6 @@ impl Blockchain {
                 // `insufficient_gas` and counts them as satisfied). When
                 // `inclusion_list` is empty (the non-FOCIL case), the call is a
                 // zero-iteration no-op.
-                #[cfg(feature = "eip-7805")]
                 if !inclusion_list.is_empty() {
                     self.apply_inclusion_list_transactions(&mut context, inclusion_list)?;
                 }
@@ -649,8 +609,6 @@ impl Blockchain {
             }
             Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
         }
-        #[cfg(not(feature = "eip-7805"))]
-        let _ = inclusion_list; // silence unused-arg lint when feature is off
         // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if context
@@ -779,7 +737,6 @@ impl Blockchain {
     /// `insufficient_gas` and counts them as satisfied. Per Decision 5 in
     /// `design.md`, fee maximization is explicitly NOT a goal here; the IL
     /// list ordering is preserved.
-    #[cfg(feature = "eip-7805")]
     pub fn apply_inclusion_list_transactions(
         &self,
         context: &mut PayloadBuildContext,

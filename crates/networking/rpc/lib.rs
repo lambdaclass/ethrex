@@ -77,10 +77,9 @@ pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
 pub use rpc::{
-    BoundRpc, RpcRole, RpcStartupError, bind_api, bind_listener, start_api, start_block_executor,
+    BoundRpc, IlConfig, RpcRole, RpcStartupError, bind_api, bind_listener, start_api,
+    start_block_executor,
 };
-#[cfg(feature = "eip-7805")]
-pub use rpc::IlConfig;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
