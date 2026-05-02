@@ -296,6 +296,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
             all_namespaces_for_tests(),
+            crate::rpc::IlConfig::default(),
         )
         .await
         .unwrap()
@@ -347,7 +348,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         block_worker_channel,
         ws: None,
         allowed_namespaces: Arc::new(all_namespaces_for_tests()),
-        #[cfg(feature = "eip-7805")]
         il_config: crate::rpc::IlConfig::default(),
     }
 }

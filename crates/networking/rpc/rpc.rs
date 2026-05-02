@@ -4,11 +4,8 @@ use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-#[cfg(feature = "eip-7805")]
 use crate::engine::fork_choice::ForkChoiceUpdatedV5;
-#[cfg(feature = "eip-7805")]
 use crate::engine::inclusion_list::GetInclusionListV1Request;
-#[cfg(feature = "eip-7805")]
 use crate::engine::payload::NewPayloadV6Request;
 use crate::engine::payload::{
     GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
@@ -233,7 +230,6 @@ pub struct RpcApiContext {
     /// CLI flags `--il-policy`, `--il-per-sender-cap`, `--il-max-bytes`.
     /// `engine_getInclusionListV1` reads this when constructing
     /// `InclusionListBuilder` on each request.
-    #[cfg(feature = "eip-7805")]
     pub il_config: IlConfig,
 }
 
@@ -248,7 +244,6 @@ pub struct WebSocketConfig {
 
 /// EIP-7805 (FOCIL) inclusion-list builder configuration. Defaults match
 /// the production policy mandated by `design.md`.
-#[cfg(feature = "eip-7805")]
 #[derive(Debug, Clone)]
 pub struct IlConfig {
     pub policy: ethrex_blockchain::inclusion_list_builder::IlPolicy,
@@ -256,7 +251,6 @@ pub struct IlConfig {
     pub max_bytes: usize,
 }
 
-#[cfg(feature = "eip-7805")]
 impl Default for IlConfig {
     fn default() -> Self {
         Self {
@@ -536,6 +530,8 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// * `log_filter_handler` - Optional handler for dynamic log level changes
 /// * `gas_ceil` - Maximum gas limit for payload building
 /// * `extra_data` - Extra data to include in mined blocks
+/// * `il_config` - EIP-7805 (FOCIL) inclusion-list builder configuration. Pass
+///   `IlConfig::default()` if the operator has not overridden the defaults.
 ///
 /// # Errors
 ///
@@ -546,63 +542,6 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// All servers shut down gracefully on SIGINT (Ctrl+C).
 #[allow(clippy::too_many_arguments)]
 pub async fn start_api(
-    http_addr: SocketAddr,
-    ws: Option<WebSocketConfig>,
-    authrpc_addr: SocketAddr,
-    storage: Store,
-    blockchain: Arc<Blockchain>,
-    jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
-    syncer: SyncManager,
-    peer_handler: PeerHandler,
-    client_version: ClientVersion,
-    log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: u64,
-    extra_data: String,
-    allowed_namespaces: HashSet<RpcNamespace>,
-) -> Result<(), RpcErr> {
-    let active_filters = Arc::new(Mutex::new(HashMap::new()));
-    let block_worker_channel = start_block_executor(blockchain.clone());
-    let service_context = RpcApiContext {
-        storage,
-        blockchain,
-        active_filters: active_filters.clone(),
-        syncer: Some(Arc::new(syncer)),
-        peer_handler: Some(peer_handler),
-        node_data: NodeData {
-            jwt_secret,
-            local_p2p_node,
-            local_node_record,
-            client_version,
-            extra_data: extra_data.into(),
-        },
-        gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
-        log_filter_handler,
-        gas_ceil,
-        block_worker_channel,
-        ws: ws.clone(),
-        allowed_namespaces: Arc::new(allowed_namespaces),
-        #[cfg(feature = "eip-7805")]
-        il_config: IlConfig::default(),
-    };
-    start_api_with_context(
-        http_addr,
-        ws,
-        authrpc_addr,
-        active_filters,
-        service_context,
-    )
-    .await
-}
-
-/// EIP-7805 (FOCIL) variant of [`start_api`]. Accepts an additional
-/// `IlConfig` (sourced from CLI flags `--il-policy`, `--il-per-sender-cap`,
-/// `--il-max-bytes`) and wires it into the `RpcApiContext` so the
-/// `engine_getInclusionListV1` handler can read operator overrides.
-#[cfg(feature = "eip-7805")]
-#[allow(clippy::too_many_arguments)]
-pub async fn start_api_with_il_config(
     http_addr: SocketAddr,
     ws: Option<WebSocketConfig>,
     authrpc_addr: SocketAddr,
@@ -653,9 +592,8 @@ pub async fn start_api_with_il_config(
     .await
 }
 
-/// Shared body for both `start_api` variants — wires HTTP, WS, and authrpc
-/// servers off of an already-constructed `RpcApiContext`. No feature-gated
-/// arguments; `RpcApiContext` carries any conditional state internally.
+/// Shared body for `start_api` — wires HTTP, WS, and authrpc servers off of an
+/// already-constructed `RpcApiContext`.
 async fn start_api_with_context(
     http_addr: SocketAddr,
     ws: Option<WebSocketConfig>,
@@ -663,7 +601,6 @@ async fn start_api_with_context(
     active_filters: ActiveFilters,
     service_context: RpcApiContext,
 ) -> Result<(), RpcErr> {
-
     // Periodically clean up the active filters for the filters endpoints.
     tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(FILTER_DURATION);
@@ -1316,12 +1253,9 @@ pub async fn map_engine_requests(
         "engine_newPayloadWithWitnessV5" => {
             Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
         }
-        #[cfg(feature = "eip-7805")]
         "engine_forkchoiceUpdatedV5" => ForkChoiceUpdatedV5::call(req, context).await,
         "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
-        #[cfg(feature = "eip-7805")]
         "engine_newPayloadV6" => Box::pin(NewPayloadV6Request::call(req, context)).await,
-        #[cfg(feature = "eip-7805")]
         "engine_getInclusionListV1" => GetInclusionListV1Request::call(req, context).await,
         "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
         "engine_newPayloadV3" => Box::pin(NewPayloadV3Request::call(req, context)).await,
@@ -1891,7 +1825,6 @@ mod tests {
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
     }
 
-    #[cfg(feature = "eip-7805")]
     #[tokio::test]
     async fn exchange_capabilities_advertises_focil_when_hegota_configured() {
         let body =
@@ -1911,7 +1844,6 @@ mod tests {
         assert!(caps.contains(&"engine_newPayloadV6".to_string()));
     }
 
-    #[cfg(feature = "eip-7805")]
     #[tokio::test]
     async fn exchange_capabilities_omits_focil_without_hegota_time() {
         let body =

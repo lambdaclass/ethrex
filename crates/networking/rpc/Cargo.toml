@@ -74,4 +74,3 @@ eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025"]
 # Exposes the `test_utils` module (test scaffolding) to other crates' test
 # builds. Off by default so it is excluded from the published library.
 test-utils = []
-eip-7805 = ["ethrex-blockchain/eip-7805", "ethrex-common/eip-7805"]
