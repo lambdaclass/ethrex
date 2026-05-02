@@ -40,7 +40,10 @@ additional_services:
   - spamoor
 
 dora_params:
-  image: bbusa/dora:focil-fix
+  # Pandaops-supplied config specified bbusa/dora:focil-fix, which does not
+  # exist on Docker Hub (only :focil, :sql, :hot-fix tags are published).
+  # Using :focil which was pushed 2026-05-01 — the closest available match.
+  image: bbusa/dora:focil
 
 port_publisher:
   additional_services:
