@@ -258,11 +258,19 @@ pub struct ChainConfig {
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
     pub amsterdam_time: Option<u64>,
-    /// EIP-7805 (FOCIL) activation timestamp. Accepts `hegotaTime`, `hezeTime`,
-    /// or `heze_time` in genesis JSON to track upstream rename of the post-
-    /// Glamsterdam fork (Bogotá → Hegotá → Hezé). Internal name stays
-    /// `hegota_time` until upstream picks a final name.
-    #[serde(alias = "hezeTime", alias = "heze_time")]
+    /// EIP-7805 (FOCIL) activation timestamp. Accepts `hegotaTime`,
+    /// `hezeTime`/`heze_time`, and `bogotaTime`/`bogota_time` in genesis JSON
+    /// to track upstream rename of the post-Glamsterdam fork
+    /// (Bogotá → Hegotá → Hezé). The ethereum-genesis-generator (6.0.5)
+    /// currently emits `bogotaTime` regardless of which name kurtosis args
+    /// use. Internal name stays `hegota_time` until upstream picks a final
+    /// name; this is purely a parsing alias.
+    #[serde(
+        alias = "hezeTime",
+        alias = "heze_time",
+        alias = "bogotaTime",
+        alias = "bogota_time"
+    )]
     pub hegota_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -1248,6 +1256,17 @@ mod tests {
         let cfg: ChainConfig =
             serde_json::from_str(json_canonical).expect("hegotaTime canonical must deserialize");
         assert_eq!(cfg.hegota_time, Some(1900000000));
+
+        // bogotaTime — what ethereum-genesis-generator 6.0.5 actually emits
+        // for the post-Amsterdam fork as of 2026-05-02 pandaops devnets.
+        let json_bogota = r#"{
+            "chainId": 1,
+            "depositContractAddress": "0x0000000000000000000000000000000000000000",
+            "bogotaTime": 2000000000
+        }"#;
+        let cfg: ChainConfig =
+            serde_json::from_str(json_bogota).expect("bogotaTime alias must deserialize");
+        assert_eq!(cfg.hegota_time, Some(2000000000));
     }
 
     #[test]
