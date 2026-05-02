@@ -57,7 +57,7 @@ dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 		--dev \
 		--datadir memory
 
-ETHEREUM_PACKAGE_REVISION := 71b02f6e4a57ad19629c729cb2989e7f868866d2
+ETHEREUM_PACKAGE_REVISION := eac08c0
 ETHEREUM_PACKAGE_DIR := ethereum-package
 
 checkout-ethereum-package: ## 📦 Checkout specific Ethereum package revision
