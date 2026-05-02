@@ -217,7 +217,7 @@ fn build_and_validate(
 ) -> PayloadBuildResult {
     let block =
         create_payload(&build_args(parent_header), store, Bytes::new()).expect("create_payload");
-    let result = blockchain.build_payload(block).expect("build_payload");
+    let result = blockchain.build_payload(block, &[]).expect("build_payload");
 
     // Sanity: Amsterdam blocks must carry a BAL and the header hash must match.
     let bal = result
@@ -282,7 +282,7 @@ fn build_only(
 ) -> PayloadBuildResult {
     let block =
         create_payload(&build_args(parent_header), store, Bytes::new()).expect("create_payload");
-    blockchain.build_payload(block).expect("build_payload")
+    blockchain.build_payload(block, &[]).expect("build_payload")
 }
 
 /// Takes a legitimate `PayloadBuildResult`, applies a BAL-corrupting `mutator`

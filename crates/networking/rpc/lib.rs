@@ -74,9 +74,7 @@ pub mod types;
 pub mod utils;
 pub use clients::{EngineClient, EthClient};
 
-pub use rpc::{start_api, start_block_executor};
-#[cfg(feature = "eip-7805")]
-pub use rpc::{IlConfig, start_api_with_il_config};
+pub use rpc::{IlConfig, start_api, start_block_executor};
 
 pub mod test_utils;
 

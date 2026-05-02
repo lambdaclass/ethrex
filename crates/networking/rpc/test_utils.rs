@@ -259,6 +259,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
+            crate::rpc::IlConfig::default(),
         )
         .await
         .unwrap()
@@ -293,7 +294,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
-        #[cfg(feature = "eip-7805")]
         il_config: crate::rpc::IlConfig::default(),
     }
 }

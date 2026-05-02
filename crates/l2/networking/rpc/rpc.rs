@@ -118,7 +118,6 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil: l2_gas_limit,
             block_worker_channel,
-            #[cfg(feature = "eip-7805")]
             il_config: ethrex_rpc::IlConfig::default(),
         },
         valid_delegation_addresses,

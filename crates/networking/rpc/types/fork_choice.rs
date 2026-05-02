@@ -1,5 +1,4 @@
 use super::payload::PayloadStatus;
-#[cfg(feature = "eip-7805")]
 use bytes::Bytes;
 use ethrex_common::{Address, H256, serde_utils, types::Withdrawal};
 use serde::{Deserialize, Serialize};
@@ -39,7 +38,6 @@ pub struct PayloadAttributesV4 {
     pub slot_number: u64,
 }
 
-#[cfg(feature = "eip-7805")]
 #[derive(Debug, Deserialize, Default, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 #[allow(unused)]
@@ -56,7 +54,6 @@ pub struct PayloadAttributesV5 {
     pub inclusion_list_transactions: Vec<Bytes>,
 }
 
-#[cfg(feature = "eip-7805")]
 impl From<&PayloadAttributesV5> for PayloadAttributesV4 {
     fn from(value: &PayloadAttributesV5) -> Self {
         Self {
@@ -93,7 +90,7 @@ impl From<PayloadStatus> for ForkChoiceResponse {
     }
 }
 
-#[cfg(all(test, feature = "eip-7805"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

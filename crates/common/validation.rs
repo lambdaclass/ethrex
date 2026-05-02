@@ -334,7 +334,6 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
 /// (FOCIL is a CL/EL hybrid; the block on-chain has no notion of an IL).
 /// This struct is request-scoped, populated only by V6 callers, and dropped
 /// after validation. Non-V6 callers pass `BlockValidationContext::empty()`.
-#[cfg(feature = "eip-7805")]
 #[derive(Debug, Clone, Default)]
 pub struct BlockValidationContext {
     /// RLP-decoded IL transactions from `engine_newPayloadV6`'s
@@ -343,7 +342,6 @@ pub struct BlockValidationContext {
     pub inclusion_list: Option<Vec<crate::types::Transaction>>,
 }
 
-#[cfg(feature = "eip-7805")]
 impl BlockValidationContext {
     /// Construct a context with no inclusion list. Use this for non-V6
     /// callers (V1-V5 newPayload, P2P sync, snap sync, devnet imports).

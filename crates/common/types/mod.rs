@@ -9,7 +9,6 @@ mod constants;
 pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
-#[cfg(feature = "eip-7805")]
 pub mod inclusion_list;
 pub mod l2;
 pub mod payload;
@@ -26,7 +25,6 @@ pub use block::*;
 pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;
-#[cfg(feature = "eip-7805")]
 pub use inclusion_list::*;
 pub use l2::*;
 pub use prover::*;

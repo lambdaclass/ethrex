@@ -214,65 +214,39 @@ pub async fn init_rpc_api(
         None
     };
 
-    #[cfg(feature = "eip-7805")]
-    {
-        use ethrex_blockchain::inclusion_list_builder::IlPolicy;
-        let policy = match opts.il_policy.as_str() {
-            "production" => IlPolicy::Production,
-            "priority-fee" => IlPolicy::PriorityFee,
-            "random" => IlPolicy::Random,
-            other => {
-                tracing::warn!(
-                    "unknown --il-policy '{other}', falling back to production"
-                );
-                IlPolicy::Production
-            }
-        };
-        let il_config = ethrex_rpc::IlConfig {
-            policy,
-            per_sender_cap: opts.il_per_sender_cap,
-            max_bytes: opts.il_max_bytes,
-        };
-        let rpc_api = ethrex_rpc::start_api_with_il_config(
-            get_http_socket_addr(opts),
-            ws_socket_opts,
-            get_authrpc_socket_addr(opts),
-            store,
-            blockchain,
-            read_jwtsecret_file(&opts.authrpc_jwtsecret),
-            local_p2p_node,
-            local_node_record,
-            syncer,
-            peer_handler,
-            get_client_version(),
-            log_filter_handler,
-            opts.gas_limit,
-            opts.extra_data.clone(),
-            il_config,
-        );
-        tracker.spawn(rpc_api);
-    }
-
-    #[cfg(not(feature = "eip-7805"))]
-    {
-        let rpc_api = ethrex_rpc::start_api(
-            get_http_socket_addr(opts),
-            ws_socket_opts,
-            get_authrpc_socket_addr(opts),
-            store,
-            blockchain,
-            read_jwtsecret_file(&opts.authrpc_jwtsecret),
-            local_p2p_node,
-            local_node_record,
-            syncer,
-            peer_handler,
-            get_client_version(),
-            log_filter_handler,
-            opts.gas_limit,
-            opts.extra_data.clone(),
-        );
-        tracker.spawn(rpc_api);
-    }
+    use ethrex_blockchain::inclusion_list_builder::IlPolicy;
+    let policy = match opts.il_policy.as_str() {
+        "production" => IlPolicy::Production,
+        "priority-fee" => IlPolicy::PriorityFee,
+        "random" => IlPolicy::Random,
+        other => {
+            tracing::warn!("unknown --il-policy '{other}', falling back to production");
+            IlPolicy::Production
+        }
+    };
+    let il_config = ethrex_rpc::IlConfig {
+        policy,
+        per_sender_cap: opts.il_per_sender_cap,
+        max_bytes: opts.il_max_bytes,
+    };
+    let rpc_api = ethrex_rpc::start_api(
+        get_http_socket_addr(opts),
+        ws_socket_opts,
+        get_authrpc_socket_addr(opts),
+        store,
+        blockchain,
+        read_jwtsecret_file(&opts.authrpc_jwtsecret),
+        local_p2p_node,
+        local_node_record,
+        syncer,
+        peer_handler,
+        get_client_version(),
+        log_filter_handler,
+        opts.gas_limit,
+        opts.extra_data.clone(),
+        il_config,
+    );
+    tracker.spawn(rpc_api);
 }
 
 #[allow(clippy::too_many_arguments)]

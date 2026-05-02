@@ -8,13 +8,12 @@ use ethrex_p2p::sync::SyncMode;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "eip-7805")]
-use crate::types::fork_choice::PayloadAttributesV5;
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
     types::{
         fork_choice::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
+            PayloadAttributesV5,
         },
         payload::PayloadStatus,
     },
@@ -172,14 +171,12 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
     }
 }
 
-#[cfg(feature = "eip-7805")]
 #[derive(Debug)]
 pub struct ForkChoiceUpdatedV5 {
     pub fork_choice_state: ForkChoiceState,
     pub payload_attributes: Option<PayloadAttributesV5>,
 }
 
-#[cfg(feature = "eip-7805")]
 impl From<ForkChoiceUpdatedV5> for RpcRequest {
     fn from(val: ForkChoiceUpdatedV5) -> Self {
         RpcRequest {
@@ -193,7 +190,6 @@ impl From<ForkChoiceUpdatedV5> for RpcRequest {
     }
 }
 
-#[cfg(feature = "eip-7805")]
 impl RpcHandler for ForkChoiceUpdatedV5 {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let (fork_choice_state, payload_attributes) = parse_v5(params)?;
@@ -511,7 +507,7 @@ async fn build_payload(
     };
     context
         .blockchain
-        .initiate_payload_build(payload, payload_id)
+        .initiate_payload_build(payload, payload_id, Vec::new())
         .await;
     Ok(payload_id)
 }
@@ -620,12 +616,11 @@ async fn build_payload_v4(
     };
     context
         .blockchain
-        .initiate_payload_build(payload, payload_id)
+        .initiate_payload_build(payload, payload_id, Vec::new())
         .await;
     Ok(payload_id)
 }
 
-#[cfg(feature = "eip-7805")]
 fn parse_v5(
     params: &Option<Vec<Value>>,
 ) -> Result<(ForkChoiceState, Option<PayloadAttributesV5>), RpcErr> {
@@ -652,7 +647,6 @@ fn parse_v5(
     Ok((forkchoice_state, payload_attributes))
 }
 
-#[cfg(feature = "eip-7805")]
 fn validate_attributes_v5(
     attributes: &PayloadAttributesV5,
     head_block: &BlockHeader,
@@ -689,7 +683,6 @@ fn validate_attributes_v5(
 /// the locally-built block does not honor the IL during construction; the
 /// remote-validation path in `engine_newPayloadV6` is the authoritative
 /// satisfaction check.
-#[cfg(feature = "eip-7805")]
 async fn build_payload_v5(
     attributes: &PayloadAttributesV5,
     context: RpcApiContext,
@@ -745,17 +738,10 @@ async fn build_payload_v5(
         Err(ChainError::EvmError(error)) => return Err(error.into()),
         Err(error) => return Err(RpcErr::Internal(error.to_string())),
     };
-    if decoded_il.is_empty() {
-        context
-            .blockchain
-            .initiate_payload_build(payload, payload_id)
-            .await;
-    } else {
-        context
-            .blockchain
-            .initiate_payload_build_with_il(payload, payload_id, decoded_il)
-            .await;
-    }
+    context
+        .blockchain
+        .initiate_payload_build(payload, payload_id, decoded_il)
+        .await;
     Ok(payload_id)
 }
 
@@ -870,7 +856,6 @@ mod tests {
             .expect("validate_attributes_v4 should accept Amsterdam-only chain");
     }
 
-    #[cfg(feature = "eip-7805")]
     #[test]
     fn validate_v5_rejects_pre_hegota_timestamp_with_unsupported_fork() {
         use super::validate_attributes_v5;
@@ -906,7 +891,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "eip-7805")]
     #[test]
     fn validate_v5_accepts_hegota_timestamp_with_empty_il() {
         use super::validate_attributes_v5;
@@ -938,7 +922,6 @@ mod tests {
             .expect("V5 must accept Hegotá-active timestamp with empty IL");
     }
 
-    #[cfg(feature = "eip-7805")]
     #[test]
     fn validate_v5_rejects_missing_withdrawals() {
         use super::validate_attributes_v5;

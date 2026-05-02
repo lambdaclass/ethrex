@@ -46,7 +46,6 @@ default = ["secp256k1"]
 c-kzg = ["ethrex-crypto/c-kzg"]
 secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1"]
 eip-8025 = ["dep:libssz", "dep:libssz-types", "dep:libssz-merkle", "dep:libssz-derive"]
-eip-7805 = []
 
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []

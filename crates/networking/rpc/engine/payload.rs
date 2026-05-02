@@ -358,7 +358,6 @@ impl RpcHandler for NewPayloadV5Request {
 /// passes it through. (Today the V6 handler accepts the same payloads V5 would
 /// accept on a Hegotá chain; once Phase 5.2 lands, IL satisfaction is enforced
 /// at block-import time.)
-#[cfg(feature = "eip-7805")]
 pub struct NewPayloadV6Request {
     pub payload: ExecutionPayload,
     pub expected_blob_versioned_hashes: Vec<H256>,
@@ -368,7 +367,6 @@ pub struct NewPayloadV6Request {
     pub raw_bal_hash: Option<H256>,
 }
 
-#[cfg(feature = "eip-7805")]
 impl From<NewPayloadV6Request> for RpcRequest {
     fn from(val: NewPayloadV6Request) -> Self {
         RpcRequest {
@@ -385,7 +383,6 @@ impl From<NewPayloadV6Request> for RpcRequest {
     }
 }
 
-#[cfg(feature = "eip-7805")]
 impl RpcHandler for NewPayloadV6Request {
     fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
         let params = params
@@ -512,18 +509,14 @@ impl RpcHandler for NewPayloadV6Request {
                 .get_block_header_by_hash(block_hash_for_il)
                 .map_err(|e| RpcErr::Internal(e.to_string()))?
                 .ok_or_else(|| {
-                    RpcErr::Internal(
-                        "stored block missing for IL satisfaction check".to_string(),
-                    )
+                    RpcErr::Internal("stored block missing for IL satisfaction check".to_string())
                 })?;
             let parent_header = context
                 .storage
                 .get_block_header_by_hash(stored_header.parent_hash)
                 .map_err(|e| RpcErr::Internal(e.to_string()))?
                 .ok_or_else(|| {
-                    RpcErr::Internal(
-                        "parent block missing for IL satisfaction check".to_string(),
-                    )
+                    RpcErr::Internal("parent block missing for IL satisfaction check".to_string())
                 })?;
 
             let pre_state = ethrex_blockchain::inclusion_list_validator::StoreIlStateProvider {
@@ -557,23 +550,26 @@ impl RpcHandler for NewPayloadV6Request {
                         "stored block body missing for IL satisfaction check".to_string(),
                     )
                 })?;
-            let block_tx_hashes: std::collections::HashSet<H256> =
-                stored_body.transactions.iter().map(|tx| tx.hash()).collect();
-            let gas_left = stored_header.gas_limit.saturating_sub(stored_header.gas_used);
+            let block_tx_hashes: std::collections::HashSet<H256> = stored_body
+                .transactions
+                .iter()
+                .map(|tx| tx.hash())
+                .collect();
+            let gas_left = stored_header
+                .gas_limit
+                .saturating_sub(stored_header.gas_used);
 
             match validator.check(&decoded_il, &block_tx_hashes, gas_left, &crypto) {
                 Ok(()) => {
                     // Satisfied → pass through the V4-equivalent status.
                 }
-                Err(
-                    ethrex_blockchain::inclusion_list_validator::IlCheckError::Unsatisfied(_),
-                ) => {
+                Err(ethrex_blockchain::inclusion_list_validator::IlCheckError::Unsatisfied(_)) => {
                     return serde_json::to_value(PayloadStatus::inclusion_list_unsatisfied())
                         .map_err(|e| RpcErr::Internal(e.to_string()));
                 }
-                Err(
-                    ethrex_blockchain::inclusion_list_validator::IlCheckError::SenderRecovery(e),
-                ) => {
+                Err(ethrex_blockchain::inclusion_list_validator::IlCheckError::SenderRecovery(
+                    e,
+                )) => {
                     return Err(RpcErr::Internal(format!(
                         "IL satisfaction check failed during sender recovery: {e}"
                     )));
@@ -585,7 +581,6 @@ impl RpcHandler for NewPayloadV6Request {
     }
 }
 
-#[cfg(feature = "eip-7805")]
 fn parse_il_transactions(value: &Value) -> Result<Vec<bytes::Bytes>, RpcErr> {
     let array = value.as_array().ok_or_else(|| {
         RpcErr::WrongParam("inclusionListTransactions: expected array".to_string())
@@ -1452,7 +1447,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
     Ok(new_payload)
 }
 
-#[cfg(all(test, feature = "eip-7805"))]
+#[cfg(test)]
 mod v6_tests {
     use super::*;
     use serde_json::json;

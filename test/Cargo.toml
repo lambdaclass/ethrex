@@ -11,7 +11,6 @@ path = "src/lib.rs"
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
-eip-7805 = ["ethrex-blockchain/eip-7805", "ethrex-common/eip-7805", "ethrex-rpc/eip-7805", "ethrex-l2-rpc/eip-7805"]
 
 [dependencies]
 ethrex-common.workspace = true

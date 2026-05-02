@@ -45,9 +45,7 @@
 pub mod constants;
 pub mod error;
 pub mod fork_choice;
-#[cfg(feature = "eip-7805")]
 pub mod inclusion_list_builder;
-#[cfg(feature = "eip-7805")]
 pub mod inclusion_list_validator;
 pub mod mempool;
 pub mod payload;
@@ -1835,7 +1833,6 @@ impl Blockchain {
     /// than incrementally tracked during execution; this keeps the hot path
     /// untouched while preserving spec correctness (a missing IL tx is
     /// classified by post-state regardless of how it was reached).
-    #[cfg(feature = "eip-7805")]
     pub fn add_block_pipeline_with_il(
         &self,
         block: Block,
@@ -1908,11 +1905,11 @@ impl Blockchain {
                     tx_hash: unsat.tx_hash,
                 })
             }
-            Err(inclusion_list_validator::IlCheckError::SenderRecovery(e)) => Err(
-                ChainError::Custom(format!(
+            Err(inclusion_list_validator::IlCheckError::SenderRecovery(e)) => {
+                Err(ChainError::Custom(format!(
                     "IL satisfaction check failed during sender recovery: {e}"
-                )),
-            ),
+                )))
+            }
         }
     }
 
