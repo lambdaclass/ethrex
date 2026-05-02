@@ -48,3 +48,4 @@ dora_params:
 port_publisher:
   additional_services:
     enabled: true
+    public_port_start: 30000
