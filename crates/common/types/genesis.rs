@@ -258,6 +258,11 @@ pub struct ChainConfig {
     pub bpo4_time: Option<u64>,
     pub bpo5_time: Option<u64>,
     pub amsterdam_time: Option<u64>,
+    /// EIP-7805 (FOCIL) activation timestamp. Accepts `hegotaTime`, `hezeTime`,
+    /// or `heze_time` in genesis JSON to track upstream rename of the post-
+    /// Glamsterdam fork (Bogotá → Hegotá → Hezé). Internal name stays
+    /// `hegota_time` until upstream picks a final name.
+    #[serde(alias = "hezeTime", alias = "heze_time")]
     pub hegota_time: Option<u64>,
 
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
@@ -1210,6 +1215,39 @@ mod tests {
             config.get_activation_timestamp_for_fork(Fork::Hegota),
             Some(1000)
         );
+    }
+
+    #[test]
+    fn chain_config_accepts_heze_time_aliases_for_hegota_time() {
+        // hezeTime (camelCase, matches `rename_all = "camelCase"` style)
+        let json_camel = r#"{
+            "chainId": 1,
+            "depositContractAddress": "0x0000000000000000000000000000000000000000",
+            "hezeTime": 1700000000
+        }"#;
+        let cfg: ChainConfig =
+            serde_json::from_str(json_camel).expect("hezeTime alias must deserialize");
+        assert_eq!(cfg.hegota_time, Some(1700000000));
+
+        // heze_time (snake_case, matches kurtosis YAML conventions)
+        let json_snake = r#"{
+            "chainId": 1,
+            "depositContractAddress": "0x0000000000000000000000000000000000000000",
+            "heze_time": 1800000000
+        }"#;
+        let cfg: ChainConfig =
+            serde_json::from_str(json_snake).expect("heze_time alias must deserialize");
+        assert_eq!(cfg.hegota_time, Some(1800000000));
+
+        // hegotaTime (canonical) still works.
+        let json_canonical = r#"{
+            "chainId": 1,
+            "depositContractAddress": "0x0000000000000000000000000000000000000000",
+            "hegotaTime": 1900000000
+        }"#;
+        let cfg: ChainConfig =
+            serde_json::from_str(json_canonical).expect("hegotaTime canonical must deserialize");
+        assert_eq!(cfg.hegota_time, Some(1900000000));
     }
 
     #[test]
