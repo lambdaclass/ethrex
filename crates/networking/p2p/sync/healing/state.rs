@@ -16,6 +16,7 @@ use std::{
 };
 
 use ethrex_common::{H256, constants::EMPTY_KECCACK_HASH, types::AccountState};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::Store;
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, TrieDB, TrieError};
@@ -24,6 +25,7 @@ use tracing::{debug, trace};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
+    peer_table::PeerTableServerProtocol as _,
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
         SnapError,
@@ -77,7 +79,7 @@ pub async fn heal_state_trie_wrap(
 async fn heal_state_trie(
     state_root: H256,
     store: Store,
-    mut peers: PeerHandler,
+    peers: PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut healing_queue: StateHealingQueue,
@@ -116,7 +118,7 @@ async fn heal_state_trie(
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
-                .peer_count_by_capabilities(&SUPPORTED_SNAP_CAPABILITIES)
+                .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                 .await
                 .unwrap_or(0);
             last_update = Instant::now();
@@ -188,7 +190,7 @@ async fn heal_state_trie(
                         .count() as u64;
                     nodes_to_heal.push((nodes, batch));
                     downloads_success += 1;
-                    peers.peer_table.record_success(&peer_id).await?;
+                    peers.peer_table.record_success(peer_id)?;
                 }
                 // If the peers failed to respond, reschedule the task by adding the batch to the paths vector
                 Err(_) => {
@@ -197,7 +199,7 @@ async fn heal_state_trie(
                     // Or with a VecDequeue
                     paths.extend(batch);
                     downloads_fail += 1;
-                    peers.peer_table.record_failure(&peer_id).await?;
+                    peers.peer_table.record_failure(peer_id)?;
                 }
             }
         }
@@ -214,9 +216,9 @@ async fn heal_state_trie(
                         .unwrap_or_default(),
                     longest_path_seen,
                 );
-                let Some((peer_id, connection)) = peers
+                let Some((peer_id, connection, permit)) = peers
                     .peer_table
-                    .get_best_peer(&SUPPORTED_SNAP_CAPABILITIES)
+                    .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
                     .await
                     .inspect_err(
                         |err| debug!(err=?err, "Error requesting a peer to perform state healing"),
@@ -241,17 +243,11 @@ async fn heal_state_trie(
                 let tx = task_sender.clone();
                 inflight_tasks += 1;
 
-                let peer_table = peers.peer_table.clone();
                 tokio::spawn(async move {
                     // TODO: check errors to determine whether the current block is stale
-                    let response = request_state_trienodes(
-                        peer_id,
-                        connection,
-                        peer_table,
-                        state_root,
-                        batch.clone(),
-                    )
-                    .await;
+                    let response =
+                        request_state_trienodes(connection, permit, state_root, batch.clone())
+                            .await;
                     // TODO: add error handling
                     tx.send((peer_id, response, batch)).await.inspect_err(
                         |err| debug!(error=?err, "Failed to send state trie nodes response"),
@@ -284,13 +280,12 @@ async fn heal_state_trie(
             let to_write = std::mem::take(&mut nodes_to_write);
             let store = store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
-            if !db_joinset.is_empty() {
-                db_joinset
-                    .join_next()
-                    .await
-                    .expect("we just checked joinset is not empty")?;
+            if !db_joinset.is_empty()
+                && let Some(result) = db_joinset.join_next().await
+            {
+                result??;
             }
-            db_joinset.spawn_blocking(move || {
+            db_joinset.spawn_blocking(move || -> Result<(), SyncError> {
                 let mut encoded_to_write = BTreeMap::new();
                 for (path, node) in to_write {
                     for i in 0..path.len() {
@@ -298,20 +293,20 @@ async fn heal_state_trie(
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
-                let trie_db = store
-                    .open_direct_state_trie(*EMPTY_TRIE_HASH)
-                    .expect("Store should open");
+                let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
-                db.put_batch(encoded_to_write.into_iter().collect())
-                    .expect("The put batch on the store failed");
+                db.put_batch(encoded_to_write.into_iter().collect())?;
+                Ok(())
             });
         }
 
         // End loop if we have no more paths to fetch nor nodes to heal and no inflight tasks
         if is_done {
             debug!("Nothing more to heal found");
-            db_joinset.join_all().await;
+            for result in db_joinset.join_all().await {
+                result?;
+            }
             break;
         }
 
@@ -323,7 +318,9 @@ async fn heal_state_trie(
 
         if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
             debug!("Finished inflight tasks");
-            db_joinset.join_all().await;
+            for result in db_joinset.join_all().await {
+                result?;
+            }
             break;
         }
     }
@@ -357,7 +354,7 @@ fn heal_state_batch(
                 &path.parent_path,
                 healing_queue,
                 nodes_to_write,
-            );
+            )?;
         } else {
             let entry = HealingQueueEntry {
                 node: node.clone(),
@@ -376,16 +373,16 @@ fn commit_node(
     parent_path: &Nibbles,
     healing_queue: &mut StateHealingQueue,
     nodes_to_write: &mut Vec<(Nibbles, Node)>,
-) {
+) -> Result<(), SyncError> {
     nodes_to_write.push((path.clone(), node));
 
     if parent_path == path {
-        return; // Case where we're saving the root
+        return Ok(()); // Case where we're saving the root
     }
 
-    let mut healing_queue_entry = healing_queue.remove(parent_path).unwrap_or_else(|| {
-        panic!("The parent should exist. Parent: {parent_path:?}, path: {path:?}")
-    });
+    let mut healing_queue_entry = healing_queue.remove(parent_path).ok_or_else(|| {
+        SyncError::HealingQueueInconsistency(format!("{parent_path:?}"), format!("{path:?}"))
+    })?;
 
     healing_queue_entry.pending_children_count -= 1;
     if healing_queue_entry.pending_children_count == 0 {
@@ -395,10 +392,11 @@ fn commit_node(
             &healing_queue_entry.parent_path,
             healing_queue,
             nodes_to_write,
-        );
+        )?;
     } else {
         healing_queue.insert(parent_path.clone(), healing_queue_entry);
     }
+    Ok(())
 }
 
 /// Returns the partial paths to the node's children if they are not already part of the trie state
@@ -428,7 +426,7 @@ pub fn node_pending_children(
 
                 pending_children_count += 1;
                 paths.extend(vec![RequestMetadata {
-                    hash: child.compute_hash().finalize(),
+                    hash: child.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                     path: child_path,
                     parent_path: path.clone(),
                 }]);
@@ -450,7 +448,10 @@ pub fn node_pending_children(
             pending_children_count += 1;
 
             paths.extend(vec![RequestMetadata {
-                hash: node.child.compute_hash().finalize(),
+                hash: node
+                    .child
+                    .compute_hash(&NativeCrypto)
+                    .finalize(&NativeCrypto),
                 path: child_path,
                 parent_path: path.clone(),
             }]);

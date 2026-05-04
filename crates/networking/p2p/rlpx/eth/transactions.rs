@@ -7,9 +7,9 @@ use bytes::BufMut;
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::MempoolError;
-use ethrex_common::types::BlobsBundle;
 use ethrex_common::types::Fork;
 use ethrex_common::types::P2PTransaction;
+use ethrex_common::types::WrappedEIP4844Transaction;
 use ethrex_common::{H256, types::Transaction};
 use ethrex_rlp::{
     error::{RLPDecodeError, RLPEncodeError},
@@ -66,12 +66,25 @@ impl RLPxMessage for Transactions {
 // Broadcast message
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NewPooledTransactionHashes {
-    transaction_types: Bytes,
-    transaction_sizes: Vec<usize>,
+    pub(crate) transaction_types: Bytes,
+    pub(crate) transaction_sizes: Vec<usize>,
     pub transaction_hashes: Vec<H256>,
 }
 
 impl NewPooledTransactionHashes {
+    /// Build from pre-computed raw fields (used when constructing trimmed announcements).
+    pub fn from_raw(
+        transaction_types: Bytes,
+        transaction_sizes: Vec<usize>,
+        transaction_hashes: Vec<H256>,
+    ) -> Self {
+        Self {
+            transaction_types,
+            transaction_sizes,
+            transaction_hashes,
+        }
+    }
+
     pub fn new(
         transactions: Vec<Transaction>,
         blockchain: &Blockchain,
@@ -85,18 +98,26 @@ impl NewPooledTransactionHashes {
             transaction_types.push(transaction_type as u8);
             let transaction_hash = transaction.hash();
             transaction_hashes.push(transaction_hash);
-            // size is defined as the len of the concatenation of tx_type and the tx_data
-            // as the tx_type goes from 0x00 to 0xff, the size of tx_type is 1 byte
+            // size is defined as the len of the canonical encoding of the transaction
+            // as it would appear in a PooledTransactions response.
             // https://eips.ethereum.org/EIPS/eip-2718
             let transaction_size = match transaction {
-                // Network representation for PooledTransactions
+                // Blob transactions use the network (wrapped) representation
+                // which includes the blobs bundle.
                 // https://eips.ethereum.org/EIPS/eip-4844#networking
                 Transaction::EIP4844Transaction(eip4844_tx) => {
                     let tx_blobs_bundle = blockchain
                         .mempool
                         .get_blobs_bundle(transaction_hash)?
-                        .unwrap_or(BlobsBundle::empty());
-                    eip4844_tx.rlp_length_as_pooled_tx(&tx_blobs_bundle)
+                        .unwrap_or_default();
+                    let p2p_tx =
+                        P2PTransaction::EIP4844TransactionWithBlobs(WrappedEIP4844Transaction {
+                            tx: eip4844_tx,
+                            wrapper_version: (tx_blobs_bundle.version != 0)
+                                .then_some(tx_blobs_bundle.version),
+                            blobs_bundle: tx_blobs_bundle,
+                        });
+                    p2p_tx.encode_canonical_to_vec().len()
                 }
                 _ => transaction.encode_canonical_to_vec().len(),
             };
@@ -115,7 +136,27 @@ impl NewPooledTransactionHashes {
     ) -> Result<Vec<H256>, StoreError> {
         blockchain
             .mempool
-            .filter_unknown_transactions(&self.transaction_hashes)
+            .reserve_unknown_hashes(&self.transaction_hashes)
+    }
+
+    /// Extract only the entries for the given `requested` hashes from this announcement.
+    /// Returns a trimmed announcement containing just those hashes with their types and sizes.
+    pub fn filter_to(&self, requested: &[H256]) -> NewPooledTransactionHashes {
+        let mut types = Vec::with_capacity(requested.len());
+        let mut sizes = Vec::with_capacity(requested.len());
+        let mut hashes = Vec::with_capacity(requested.len());
+        for &hash in requested {
+            if let Some(pos) = self.transaction_hashes.iter().position(|h| *h == hash) {
+                types.push(self.transaction_types[pos]);
+                sizes.push(self.transaction_sizes[pos]);
+                hashes.push(hash);
+            }
+        }
+        NewPooledTransactionHashes {
+            transaction_types: types.into(),
+            transaction_sizes: sizes,
+            transaction_hashes: hashes,
+        }
     }
 }
 
@@ -336,58 +377,5 @@ impl RLPxMessage for PooledTransactions {
             decoder.decode_field("pooledTransactions")?;
 
         Ok(Self::new(id, pooled_transactions))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use ethrex_common::{H256, types::P2PTransaction};
-
-    use crate::rlpx::{
-        eth::transactions::{GetPooledTransactions, PooledTransactions},
-        message::RLPxMessage,
-    };
-
-    #[test]
-    fn get_pooled_transactions_empty_message() {
-        let transaction_hashes = vec![];
-        let get_pooled_transactions = GetPooledTransactions::new(1, transaction_hashes.clone());
-
-        let mut buf = Vec::new();
-        get_pooled_transactions.encode(&mut buf).unwrap();
-
-        let decoded = GetPooledTransactions::decode(&buf).unwrap();
-        assert_eq!(decoded.id, 1);
-        assert_eq!(decoded.transaction_hashes, transaction_hashes);
-    }
-
-    #[test]
-    fn get_pooled_transactions_not_empty_message() {
-        let transaction_hashes = vec![
-            H256::from_low_u64_be(1),
-            H256::from_low_u64_be(2),
-            H256::from_low_u64_be(3),
-        ];
-        let get_pooled_transactions = GetPooledTransactions::new(1, transaction_hashes.clone());
-
-        let mut buf = Vec::new();
-        get_pooled_transactions.encode(&mut buf).unwrap();
-
-        let decoded = GetPooledTransactions::decode(&buf).unwrap();
-        assert_eq!(decoded.id, 1);
-        assert_eq!(decoded.transaction_hashes, transaction_hashes);
-    }
-
-    #[test]
-    fn pooled_transactions_of_one_type() {
-        let transaction1 = P2PTransaction::LegacyTransaction(Default::default());
-        let pooled_transactions = vec![transaction1.clone()];
-        let pooled_transactions = PooledTransactions::new(1, pooled_transactions);
-
-        let mut buf = Vec::new();
-        pooled_transactions.encode(&mut buf).unwrap();
-        let decoded = PooledTransactions::decode(&buf).unwrap();
-        assert_eq!(decoded.id, 1);
-        assert_eq!(decoded.pooled_transactions, vec![transaction1]);
     }
 }

@@ -5,6 +5,7 @@ use ethrex_common::{
     constants::EMPTY_TRIE_HASH,
     types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::errors::VMError;
 use ethrex_levm::{
     Environment,
@@ -64,7 +65,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         Address::from_low_u64_be(CONTRACT_ADDRESS),
         Account::new(
             U256::MAX,
-            Code::from_bytecode(bytecode.clone()),
+            Code::from_bytecode(bytecode.clone(), &ethrex_crypto::NativeCrypto),
             0,
             FxHashMap::default(),
         ),
@@ -73,7 +74,7 @@ fn init_db(bytecode: Bytes) -> GeneralizedDatabase {
         Address::from_low_u64_be(SENDER_ADDRESS),
         Account::new(
             U256::MAX,
-            Code::from_bytecode(Bytes::new()),
+            Code::from_bytecode(Bytes::new(), &ethrex_crypto::NativeCrypto),
             0,
             FxHashMap::default(),
         ),
@@ -100,5 +101,5 @@ fn init_vm(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, &NativeCrypto)
 }

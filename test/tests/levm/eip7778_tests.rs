@@ -9,6 +9,7 @@
 
 use bytes::Bytes;
 use ethrex_common::types::{Receipt, TxType};
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::errors::{ExecutionReport, TxResult};
 
 /// Test that Receipt RLP encoding/decoding works correctly
@@ -17,7 +18,7 @@ fn test_receipt_encoding() {
     let receipt = Receipt::new(TxType::EIP1559, true, 21000, vec![]);
 
     // Encode and decode
-    let encoded = receipt.encode_inner_with_bloom();
+    let encoded = receipt.encode_inner_with_bloom(&NativeCrypto);
     let decoded = ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded).unwrap();
 
     assert!(decoded.succeeded);
@@ -34,6 +35,7 @@ fn test_execution_report_has_both_gas_fields() {
         gas_used: 50000,    // Pre-refund
         gas_spent: 45200,   // Post-refund
         gas_refunded: 4800, // The refund amount
+        state_gas_used: 0,
         output: Bytes::new(),
         logs: vec![],
     };
@@ -58,8 +60,8 @@ fn test_receipt_backward_compatibility() {
     let receipt_eip1559 = Receipt::new(TxType::EIP1559, true, 25000, vec![]);
 
     // Both should encode/decode correctly
-    let encoded_legacy = receipt_legacy.encode_inner_with_bloom();
-    let encoded_eip1559 = receipt_eip1559.encode_inner_with_bloom();
+    let encoded_legacy = receipt_legacy.encode_inner_with_bloom(&NativeCrypto);
+    let encoded_eip1559 = receipt_eip1559.encode_inner_with_bloom(&NativeCrypto);
 
     let decoded_legacy =
         ethrex_common::types::ReceiptWithBloom::decode_inner(&encoded_legacy).unwrap();

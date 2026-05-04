@@ -92,6 +92,7 @@
   - [Fee token](./l2/fundamentals/fee_token.md)
   - [Shared Bridge](./l2/fundamentals/shared_bridge.md)
   - [Aligned Layer Integration](./l2/fundamentals/ethrex_l2_aligned_integration.md)
+  - [Distributed proving](./l2/fundamentals/distributed_proving.md)
 
 # Ethrex for developers
 
@@ -122,6 +123,7 @@
 - [Debugging solidity with ethrex](./vm/levm/debug.md)
 - [Re-execute Ethereum with ethrex](./ethrex_replay/ethrex_replay.md)
   - [FAQ](./ethrex_replay/faq.md)
+- [Interactive REPL](./developers/repl.md)
 - [CLI reference](./CLI.md)
 - [Release Process](./developers/release-process.md)
 - [Troubleshooting]()
@@ -139,5 +141,7 @@
 
 # Other resources
 
+- [Audits](./audits/README.md)
+  - [Least Authority Initial Audit (v9.0.0)](./audits/least-authority-initial-audit.md)
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
 - [Recommended lectures](./lectures.md)

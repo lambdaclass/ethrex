@@ -168,21 +168,24 @@ impl Tests {
         fork: &Fork,
         raw_post: &RawPostValue,
     ) -> Result<TestCase, RunnerError> {
-        let data_index = raw_post
+        let data_index: usize = (*raw_post
             .indexes
             .get("data")
-            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-            .as_usize();
-        let value_index = raw_post
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?)
+        .try_into()
+        .unwrap();
+        let value_index: usize = (*raw_post
             .indexes
             .get("value")
-            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-            .as_usize();
-        let gas_index = raw_post
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?)
+        .try_into()
+        .unwrap();
+        let gas_index: usize = (*raw_post
             .indexes
             .get("gas")
-            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-            .as_usize();
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?)
+        .try_into()
+        .unwrap();
         let access_list_raw = raw_tx.access_lists.clone().unwrap_or_default();
         let mut access_list = Vec::new();
         if !access_list_raw.is_empty() {
@@ -296,7 +299,7 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
             0
         };
 
-        Some(excess_blob_gas.as_u64() + target as u64 * GAS_PER_BLOB as u64)
+        Some(u64::try_from(excess_blob_gas).unwrap() + target as u64 * GAS_PER_BLOB as u64)
     } else {
         None
     };
@@ -314,7 +317,7 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         timestamp: 0,
         config: chain_config,
         gas_limit: test.env.current_gas_limit,
-        base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64()
+        base_fee_per_gas: (u64::try_from(test.env.current_base_fee.unwrap()).unwrap()
             * BASE_FEE_MAX_CHANGE_DENOMINATOR as u64)
             .checked_div(7), // This was VERY carefully calculated so that the header passes validations in calculate_base_fee_per_gas
         excess_blob_gas: genesis_excess_blob_gas,

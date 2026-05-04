@@ -2,6 +2,7 @@ use crate::discv5::messages::{Packet, PacketCodecError};
 
 use bytes::BytesMut;
 use ethrex_common::H256;
+use std::io::{Error, ErrorKind};
 use tokio_util::codec::{Decoder, Encoder};
 
 #[derive(Debug)]
@@ -35,7 +36,10 @@ impl Encoder<Packet> for Discv5Codec {
     type Error = PacketCodecError;
 
     fn encode(&mut self, _packet: Packet, _buf: &mut BytesMut) -> Result<(), Self::Error> {
-        // We are not going to use Discv5Coded to send messages, only to receive them
-        unimplemented!();
+        Err(Error::new(
+            ErrorKind::Unsupported,
+            "Discv5Codec is receive-only; the server handles its own encoding",
+        )
+        .into())
     }
 }

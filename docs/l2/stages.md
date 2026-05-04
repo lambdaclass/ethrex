@@ -267,7 +267,7 @@ Based rollups delegate sequencing to Ethereum L1 validators rather than using a 
 ### For Future Stage 2 Transition
 
 1. **Open proof submission**
-   - Remove sequencer-only restriction on `verifyBatch()`
+   - Remove sequencer-only restriction on `verifyBatches()`
    - Anyone can submit valid proofs
 
 2. **Extend exit window to 30+ days**

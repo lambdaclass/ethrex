@@ -63,7 +63,7 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(15);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Number of retry attempts when selecting a peer for a request.
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
@@ -88,8 +88,10 @@ pub const MAX_HEADER_CHUNK: u64 = 500_000;
 /// <https://github.com/ethereum/go-ethereum/blob/2585776aabbd4ae9b00050403b42afb0cee968ec/eth/downloader/downloader.go#L42-L43>
 pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 
-/// Maximum attempts before giving up on header downloads during syncing.
-pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 100;
+/// Maximum *consecutive* failures before giving up on header downloads.
+/// The counter resets on each successful response, so this only triggers
+/// when no peer can serve headers at all.
+pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 10;
 
 // =============================================================================
 // SNAP SYNC THRESHOLDS

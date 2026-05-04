@@ -1032,7 +1032,7 @@ pub async fn build_generic_tx(
         authorization_list: overrides.authorization_list,
         ..Default::default()
     };
-    tx.gas_price = tx.max_fee_per_gas.unwrap_or_default();
+    tx.gas_price = U256::from(tx.max_fee_per_gas.unwrap_or_default());
     if let Some(blobs_bundle) = &overrides.blobs_bundle {
         tx.blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
         add_blobs_to_generic_tx(&mut tx, blobs_bundle);
@@ -1266,6 +1266,13 @@ pub async fn get_last_fetched_l1_block(
     _call_u64_variable(client, b"lastFetchedL1Block()", common_bridge_address).await
 }
 
+pub async fn get_l2_gas_limit(
+    client: &EthClient,
+    common_bridge_address: Address,
+) -> Result<u64, EthClientError> {
+    _call_u64_variable(client, b"l2GasLimit()", common_bridge_address).await
+}
+
 pub async fn get_pending_l1_messages(
     client: &EthClient,
     common_bridge_address: Address,
@@ -1331,15 +1338,8 @@ async fn _generic_call(
         .get(..4)
         .ok_or(EthClientError::Custom("Failed to get selector.".to_owned()))?
         .to_vec();
-
-    let mut calldata = Vec::new();
-    calldata.extend_from_slice(&selector);
-
-    let leading_zeros = 32 - ((calldata.len() - 4) % 32);
-    calldata.extend(vec![0; leading_zeros]);
-
     let hex_string = client
-        .call(contract_address, calldata.into(), Overrides::default())
+        .call(contract_address, selector.into(), Overrides::default())
         .await?;
 
     Ok(hex_string)

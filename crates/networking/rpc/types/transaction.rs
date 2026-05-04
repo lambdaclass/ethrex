@@ -7,6 +7,7 @@ use ethrex_common::{
         WrappedEIP4844Transaction,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError};
 use serde::{Deserialize, Serialize};
 
@@ -32,7 +33,7 @@ impl RpcTransaction {
         block_hash: Option<BlockHash>,
         transaction_index: Option<usize>,
     ) -> Result<Self, RpcErr> {
-        let from = tx.sender()?;
+        let from = tx.sender(&NativeCrypto)?;
         let hash = tx.hash();
         let transaction_index = transaction_index.map(|n| n as u64);
         Ok(RpcTransaction {

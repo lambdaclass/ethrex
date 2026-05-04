@@ -12,7 +12,7 @@ let
   }) { };
   toolchain = fenix.fromToolchainFile {
       file = ../../../../rust-toolchain.toml;
-      sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
+      sha256 = "sha256-2eWc3xVTKqg5wKSHGwt1XoM/kUBC6y3MWfKg74Zn+fY=";
   };
   rustPlatform = pkgs.makeRustPlatform {
     cargo = toolchain;
@@ -38,7 +38,7 @@ let
     cargoDeps = rustPlatform.importCargoLock {
       lockFile = ./Cargo.lock;
       outputHashes = {
-        "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
+        "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
       };
     };
 

@@ -68,18 +68,23 @@ pub mod api;
 pub mod backend;
 pub mod error;
 mod layering;
+pub mod migrations;
 pub mod rlp;
 pub mod store;
 pub mod trie;
 pub mod utils;
 
 pub use layering::apply_prefix;
-pub use store::{AccountUpdatesList, EngineType, Store, UpdateBatch, hash_address, hash_key};
+pub use store::{
+    AccountUpdatesList, EngineType, Store, UpdateBatch, has_valid_db, hash_address, hash_key,
+    read_chain_id_from_db,
+};
 
 /// Store Schema Version, must be updated on any breaking change.
 ///
-/// An upgrade to a newer schema version invalidates currently stored data,
-/// requiring a re-sync from genesis or a snapshot.
+/// When bumping this version, add a corresponding migration function to
+/// `migrations::MIGRATIONS`. The migration framework will automatically
+/// upgrade existing databases instead of requiring a full resync.
 pub const STORE_SCHEMA_VERSION: u64 = 1;
 
 /// Name of the file storing the metadata about the database.

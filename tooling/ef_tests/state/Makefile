@@ -1,4 +1,4 @@
-.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests amsterdam-vectors
+.PHONY: download-evm-ef-tests clean-evm-ef-tests run-evm-ef-tests test-levm test-levm-nostd-crypto test-revm run-evm-ef-tests flamegraph-run-ef-tests samply-run-ef-tests amsterdam-vectors
 
 FIXTURES_FILE := .fixtures_url
 STATETEST_ARTIFACT := test.tar.gz
@@ -32,7 +32,7 @@ $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
 amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(VECTORS_DIR)
-	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/amsterdam
+	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(VECTORS_DIR)/state_tests fixtures/state_tests/for_amsterdam
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -73,6 +73,9 @@ run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM
 
 test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
+
+test-levm-nostd-crypto: $(VECTORS_DIR) ## 🧪 Run EF state tests with no_std crypto fallbacks
+	cargo test --test all --profile release-with-debug --no-default-features --features nostd-crypto -- --summary
 
 test-revm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--revm"

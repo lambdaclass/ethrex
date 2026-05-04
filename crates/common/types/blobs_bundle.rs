@@ -14,12 +14,13 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{BYTES_PER_BLOB, SAFE_BYTES_PER_BLOB};
+use super::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB, SAFE_BYTES_PER_BLOB};
 
 pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
+pub type BlobTuple = (Box<Blob>, Commitment, Vec<Proof>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -122,6 +123,19 @@ impl BlobsBundle {
             .iter()
             .map(kzg_commitment_to_versioned_hash)
             .collect()
+    }
+
+    /// Given an index returns all or nothing `BlobTuple` if either of the commitment, proof or
+    /// blob is not found then it will return None instead of Partial data.
+    pub fn get_blob_tuple_by_index(&self, index: usize) -> Option<BlobTuple> {
+        let blob = Box::new(*self.blobs.get(index)?);
+        let commitment = *self.commitments.get(index)?;
+        let proofs = if self.version == 0 {
+            vec![*self.proofs.get(index)?]
+        } else {
+            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec()
+        };
+        Some((blob, commitment, proofs))
     }
 
     /// Full blob bundle validation: structural checks + KZG cryptographic proof verification.
@@ -544,6 +558,44 @@ mod tests {
         assert!(matches!(
             blobs_bundle.validate(&tx, crate::types::Fork::Prague),
             Err(crate::types::BlobsBundleError::MaxBlobsExceeded)
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "c-kzg")]
+    fn transaction_with_version_0_blobs_should_fail_on_amsterdam() {
+        // Version 0 blobs should be invalid on Amsterdam fork (which comes after Osaka)
+        // The validation requires version 0 only on Osaka; Amsterdam >= Osaka so version 0 is rejected
+        let blobs = vec!["Hello, world!".as_bytes(), "Goodbye, world!".as_bytes()]
+            .into_iter()
+            .map(|data| {
+                crate::types::blobs_bundle::blob_from_bytes(data.into())
+                    .expect("Failed to create blob")
+            })
+            .collect();
+
+        let blobs_bundle = crate::types::BlobsBundle::create_from_blobs(&blobs, None)
+            .expect("Failed to create blobs bundle");
+
+        let blob_versioned_hashes = blobs_bundle.generate_versioned_hashes();
+
+        let tx = crate::types::transaction::EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: crate::Address::from_low_u64_be(1), // Normal tx
+            value: crate::U256::zero(),             // Value zero
+            data: crate::Bytes::default(),          // No data
+            access_list: Default::default(),        // No access list
+            blob_versioned_hashes,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            blobs_bundle.validate(&tx, crate::types::Fork::Amsterdam),
+            Err(crate::types::BlobsBundleError::InvalidBlobVersionForFork)
         ));
     }
 }

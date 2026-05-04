@@ -50,3 +50,16 @@ impl ProgramInput {
         }
     }
 }
+
+impl From<ethrex_l2_common::prover::ProverInputData> for ProgramInput {
+    fn from(input: ethrex_l2_common::prover::ProverInputData) -> Self {
+        ProgramInput {
+            blocks: input.blocks,
+            execution_witness: input.execution_witness,
+            elasticity_multiplier: input.elasticity_multiplier,
+            blob_commitment: input.blob_commitment,
+            blob_proof: input.blob_proof,
+            fee_configs: input.fee_configs,
+        }
+    }
+}

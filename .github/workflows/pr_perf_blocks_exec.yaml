@@ -96,6 +96,7 @@ jobs:
           path: bench_pr_comparison.md
 
       - name: Find comment
+        if: ${{ github.event.pull_request.head.repo.fork != true }}
         continue-on-error: true
         uses: peter-evans/find-comment@v3
         id: fc
@@ -105,6 +106,7 @@ jobs:
           body-includes: "Benchmark Block Execution Results Comparison Against Main"
 
       - name: Create or update comment
+        if: ${{ github.event.pull_request.head.repo.fork != true }}
         uses: peter-evans/create-or-update-comment@v4
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}

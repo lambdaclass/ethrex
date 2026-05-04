@@ -282,24 +282,19 @@ mapping(bytes32 commitHash => mapping(uint8 verifierId => bytes32 vk))
     public verificationKeys;
 ```
 
-**Standard Verification** (`verifyBatch`):
+**Standard Verification** (`verifyBatches`):
 
 ```solidity
-function verifyBatch(
-    uint256 batchNumber,
-    bytes memory risc0BlockProof,
-    bytes memory sp1ProofBytes,
-    bytes memory tdxSignature
+function verifyBatches(
+    uint256 firstBatchNumber,
+    bytes[] calldata risc0BlockProofs,
+    bytes[] calldata sp1ProofsBytes,
+    bytes[] calldata tdxSignatures
 ) external onlyOwner whenNotPaused {
     require(!ALIGNED_MODE, "008");  // Use verifyBatchesAligned instead
 
-    // Verify proofs directly via verifier contracts
-    if (REQUIRE_SP1_PROOF) {
-        ISP1Verifier(SP1_VERIFIER_ADDRESS).verifyProof(sp1Vk, publicInputs, sp1ProofBytes);
-    }
-    if (REQUIRE_RISC0_PROOF) {
-        IRiscZeroVerifier(RISC0_VERIFIER_ADDRESS).verify(risc0BlockProof, risc0Vk, sha256(publicInputs));
-    }
+    // Loops over _verifyBatchInternal() for each batch,
+    // verifying proofs directly via verifier contracts
 }
 ```
 
@@ -312,7 +307,7 @@ function verifyBatchesAligned(
     bytes32[][] calldata sp1MerkleProofsList,
     bytes32[][] calldata risc0MerkleProofsList
 ) external onlyOwner whenNotPaused {
-    require(ALIGNED_MODE, "00h");  // Use verifyBatch instead
+    require(ALIGNED_MODE, "00h");  // Use verifyBatches instead
 
     for (uint256 i = 0; i < batchesToVerify; i++) {
         bytes memory publicInputs = _getPublicInputsFromCommitment(batchNumber);
@@ -406,6 +401,9 @@ pub struct AlignedConfig {
 
     /// Fee estimation type ("instant" or "default")
     pub fee_estimate: String,
+
+    /// Timeout in seconds before resending a proof not yet verified on-chain
+    pub resubmission_timeout_secs: u64,
 }
 ```
 
@@ -416,6 +414,7 @@ pub struct AlignedConfig {
 | `--aligned` | Enable Aligned mode |
 | `--aligned-network` | Network for Aligned SDK (devnet/testnet/mainnet) |
 | `--aligned.beacon-url` | Beacon client URL supporting `/eth/v1/beacon/blobs` |
+| `--aligned.resubmission-timeout` | Timeout (seconds) before resending an unverified proof (e.g. `86400` for 24h) |
 
 ### Environment Variables
 
@@ -426,6 +425,7 @@ pub struct AlignedConfig {
 | `ETHREX_ALIGNED_MODE` | Enable Aligned mode |
 | `ETHREX_ALIGNED_BEACON_URL` | Beacon client URL |
 | `ETHREX_ALIGNED_NETWORK` | Aligned network |
+| `ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS` | Timeout (seconds) before resending an unverified proof |
 
 **Deployer Configuration:**
 
@@ -444,9 +444,9 @@ pub struct AlignedConfig {
 |--------|---------------|--------------|
 | **Proof Format** | Groth16 (EVM-friendly) | Compressed STARK |
 | **Submission Target** | OnChainProposer contract | Aligned Batcher (WebSocket) |
-| **Verification Method** | `verifyBatch()` | `verifyBatchesAligned()` |
+| **Verification Method** | `verifyBatches()` | `verifyBatchesAligned()` |
 | **Verifier Contract** | SP1Verifier/RISC0Verifier | AlignedProofAggregatorService |
-| **Batch Verification** | One batch per tx | Multiple batches per tx |
+| **Batch Verification** | Multiple batches per tx | Multiple batches per tx (aggregated) |
 | **Gas Cost** | Higher (per-proof verification) | Lower (amortized via aggregation) |
 | **Additional Component** | None | L1ProofVerifier process |
 | **Proof Tracking** | Via rollup store | Via Aligned SDK |
@@ -455,7 +455,7 @@ pub struct AlignedConfig {
 
 **Standard Mode**:
 - Generates Groth16 proof (calldata format)
-- Proof sent directly to `OnChainProposer.verifyBatch()`
+- Proof sent directly to `OnChainProposer.verifyBatches()`
 
 **Aligned Mode**:
 - Generates Compressed STARK proof (bytes format)
@@ -466,7 +466,7 @@ pub struct AlignedConfig {
 
 **Standard Mode**:
 ```
-Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatch()
+Prover → ProofCoordinator → L1ProofSender → OnChainProposer.verifyBatches()
                                                     │
                                                     ▼
                                           SP1Verifier/RISC0Verifier
@@ -518,7 +518,7 @@ AlignedProofAggregatorService.verifyProofInclusion()
 ### Key Metrics
 
 - `batch_verification_gas`: Gas used per batch verification
-- `latest_sent_batch_proof`: Last batch proof submitted to Aligned
+- `latest_verified_batch_proof`: Last batch proof verified on-chain
 - `last_verified_batch`: Last batch verified on L1
 
 ### Log Messages

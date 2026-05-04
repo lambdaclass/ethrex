@@ -2,6 +2,7 @@
 //!
 //! Hive `AccountRange` tests based on go-ethereum's test suite:
 //! https://github.com/ethereum/go-ethereum/blob/3e567b8b2901611f004b5a6070a9b6d286be128d/cmd/devp2p/internal/ethtest/snap.go#L69
+#![allow(clippy::unwrap_used)]
 
 use std::str::FromStr;
 
@@ -820,5 +821,8 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
             .insert(hashed_address, account.encode_to_vec())
             .unwrap();
     }
-    Ok((store, state_trie.hash().unwrap()))
+    Ok((
+        store,
+        state_trie.hash(&ethrex_crypto::NativeCrypto).unwrap(),
+    ))
 }

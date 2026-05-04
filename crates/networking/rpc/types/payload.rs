@@ -16,26 +16,26 @@ use ethrex_common::{
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionPayload {
-    parent_hash: H256,
-    fee_recipient: Address,
-    state_root: H256,
-    receipts_root: H256,
-    logs_bloom: Bloom,
-    prev_randao: H256,
+    pub(crate) parent_hash: H256,
+    pub(crate) fee_recipient: Address,
+    pub(crate) state_root: H256,
+    pub(crate) receipts_root: H256,
+    pub(crate) logs_bloom: Bloom,
+    pub(crate) prev_randao: H256,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub block_number: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
-    gas_limit: u64,
+    pub(crate) gas_limit: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
-    gas_used: u64,
+    pub(crate) gas_used: u64,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub timestamp: u64,
     #[serde(with = "serde_utils::bytes")]
-    extra_data: Bytes,
+    pub(crate) extra_data: Bytes,
     #[serde(with = "serde_utils::u64::hex_str")]
-    base_fee_per_gas: u64,
+    pub(crate) base_fee_per_gas: u64,
     pub block_hash: H256,
-    transactions: Vec<EncodedTransaction>,
+    pub(crate) transactions: Vec<EncodedTransaction>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub withdrawals: Option<Vec<Withdrawal>>,
     // ExecutionPayloadV3 fields. Optional since we support V2 too
@@ -127,7 +127,10 @@ impl ExecutionPayload {
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.fee_recipient,
             state_root: self.state_root,
-            transactions_root: compute_transactions_root(&body.transactions),
+            transactions_root: compute_transactions_root(
+                &body.transactions,
+                &ethrex_crypto::NativeCrypto,
+            ),
             receipts_root: self.receipts_root,
             logs_bloom: self.logs_bloom,
             difficulty: 0.into(),
@@ -142,7 +145,7 @@ impl ExecutionPayload {
             withdrawals_root: body
                 .withdrawals
                 .as_ref()
-                .map(|w| compute_withdrawals_root(w)),
+                .map(|w| compute_withdrawals_root(w, &ethrex_crypto::NativeCrypto)),
             blob_gas_used: self.blob_gas_used,
             excess_blob_gas: self.excess_blob_gas,
             parent_beacon_block_root,

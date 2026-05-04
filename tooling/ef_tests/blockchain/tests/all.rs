@@ -1,5 +1,5 @@
 use ef_tests_blockchain::test_runner::parse_and_execute;
-use ethrex_prover_lib::backend::BackendType;
+use ethrex_prover::backend::BackendType;
 use std::path::Path;
 
 // Enable only one of `sp1` or `stateless` at a time.

@@ -35,7 +35,7 @@ make init-prover-<sp1|risc0|exec> # optional: GPU=true
 
 1. `cd crates/l2`
 2. `make rm-db-l2 && make down`
-   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [datadir](https://docs.rs/dirs/latest/dirs/fn.datadir.html).
+   - It will remove any old database, if present, stored in your computer. The absolute path of SQL is defined by [datadir](https://docs.rs/dirs/latest/dirs/fn.data_dir.html).
 3. `make init`
    - Make sure you have the `solc` compiler installed in your system.
    - Init the L1 in a docker container on port `8545`.

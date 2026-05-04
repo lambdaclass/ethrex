@@ -19,24 +19,24 @@ pub struct MetricsBlocks {
     block_building_base_fee: IntGauge,
     gas_used: Gauge,
     transaction_count: IntGauge,
-    execution_ms: IntGauge,
-    merkle_ms: IntGauge,
-    store_ms: IntGauge,
+    execution_ms: Gauge,
+    merkle_ms: Gauge,
+    store_ms: Gauge,
     /// Keeps track of the head block number
     head_height: IntGauge,
     // Pipeline-specific metrics
     /// Block validation time in milliseconds
-    validate_ms: IntGauge,
+    validate_ms: Gauge,
     /// Time spent on merkle operations concurrent with execution
-    merkle_concurrent_ms: IntGauge,
+    merkle_concurrent_ms: Gauge,
     /// Time spent draining merkle queue after execution completes
-    merkle_drain_ms: IntGauge,
+    merkle_drain_ms: Gauge,
     /// Percentage of merkle work done concurrently with execution
-    merkle_overlap_pct: IntGauge,
+    merkle_overlap_pct: Gauge,
     /// Total warmer thread execution time in milliseconds
-    warmer_ms: IntGauge,
+    warmer_ms: Gauge,
     /// Warmer finished early (positive) or late (negative) relative to exec, in ms
-    warmer_early_ms: IntGauge,
+    warmer_early_ms: Gauge,
 }
 
 impl Default for MetricsBlocks {
@@ -107,17 +107,17 @@ impl MetricsBlocks {
                 "Keeps track of the block number for the head of the chain",
             )
             .expect("Failed to create head_height metric"),
-            execution_ms: IntGauge::new(
+            execution_ms: Gauge::new(
                 "execution_ms",
                 "Keeps track of the execution time spent in block execution in miliseconds",
             )
             .expect("Failed to create execution_ms metric"),
-            merkle_ms: IntGauge::new(
+            merkle_ms: Gauge::new(
                 "merkle_ms",
                 "Keeps track of the execution time spent in block merkelization in miliseconds",
             )
             .expect("Failed to create merkle_ms metric"),
-            store_ms: IntGauge::new(
+            store_ms: Gauge::new(
                 "store_ms",
                 "Keeps track of the execution time spent in block storage in miliseconds",
             )
@@ -127,32 +127,32 @@ impl MetricsBlocks {
                 "Keeps track of transaction count in a block",
             )
             .expect("Failed to create transaction_count metric"),
-            validate_ms: IntGauge::new(
+            validate_ms: Gauge::new(
                 "validate_ms",
                 "Block validation time in milliseconds",
             )
             .expect("Failed to create validate_ms metric"),
-            merkle_concurrent_ms: IntGauge::new(
+            merkle_concurrent_ms: Gauge::new(
                 "merkle_concurrent_ms",
                 "Time spent on merkle operations concurrent with execution in milliseconds",
             )
             .expect("Failed to create merkle_concurrent_ms metric"),
-            merkle_drain_ms: IntGauge::new(
+            merkle_drain_ms: Gauge::new(
                 "merkle_drain_ms",
                 "Time spent draining merkle queue after execution completes in milliseconds",
             )
             .expect("Failed to create merkle_drain_ms metric"),
-            merkle_overlap_pct: IntGauge::new(
+            merkle_overlap_pct: Gauge::new(
                 "merkle_overlap_pct",
                 "Percentage of merkle work done concurrently with execution",
             )
             .expect("Failed to create merkle_overlap_pct metric"),
-            warmer_ms: IntGauge::new(
+            warmer_ms: Gauge::new(
                 "warmer_ms",
                 "Total warmer thread execution time in milliseconds",
             )
             .expect("Failed to create warmer_ms metric"),
-            warmer_early_ms: IntGauge::new(
+            warmer_early_ms: Gauge::new(
                 "warmer_early_ms",
                 "Warmer finished early (positive) or late (negative) relative to exec in milliseconds",
             )
@@ -164,15 +164,15 @@ impl MetricsBlocks {
         self.transaction_count.set(transaction_count);
     }
 
-    pub fn set_execution_ms(&self, execution_ms: i64) {
+    pub fn set_execution_ms(&self, execution_ms: f64) {
         self.execution_ms.set(execution_ms);
     }
 
-    pub fn set_merkle_ms(&self, merkle_ms: i64) {
+    pub fn set_merkle_ms(&self, merkle_ms: f64) {
         self.merkle_ms.set(merkle_ms);
     }
 
-    pub fn set_store_ms(&self, store_ms: i64) {
+    pub fn set_store_ms(&self, store_ms: f64) {
         self.store_ms.set(store_ms);
     }
 
@@ -209,27 +209,27 @@ impl MetricsBlocks {
         self.gas_used.set(gas_used);
     }
 
-    pub fn set_validate_ms(&self, validate_ms: i64) {
+    pub fn set_validate_ms(&self, validate_ms: f64) {
         self.validate_ms.set(validate_ms);
     }
 
-    pub fn set_merkle_concurrent_ms(&self, merkle_concurrent_ms: i64) {
+    pub fn set_merkle_concurrent_ms(&self, merkle_concurrent_ms: f64) {
         self.merkle_concurrent_ms.set(merkle_concurrent_ms);
     }
 
-    pub fn set_merkle_drain_ms(&self, merkle_drain_ms: i64) {
+    pub fn set_merkle_drain_ms(&self, merkle_drain_ms: f64) {
         self.merkle_drain_ms.set(merkle_drain_ms);
     }
 
-    pub fn set_merkle_overlap_pct(&self, merkle_overlap_pct: i64) {
+    pub fn set_merkle_overlap_pct(&self, merkle_overlap_pct: f64) {
         self.merkle_overlap_pct.set(merkle_overlap_pct);
     }
 
-    pub fn set_warmer_ms(&self, warmer_ms: i64) {
+    pub fn set_warmer_ms(&self, warmer_ms: f64) {
         self.warmer_ms.set(warmer_ms);
     }
 
-    pub fn set_warmer_early_ms(&self, warmer_early_ms: i64) {
+    pub fn set_warmer_early_ms(&self, warmer_early_ms: f64) {
         self.warmer_early_ms.set(warmer_early_ms);
     }
 

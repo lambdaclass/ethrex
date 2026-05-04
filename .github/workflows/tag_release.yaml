@@ -87,9 +87,7 @@ jobs:
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
         uses: docker/setup-qemu-action@v3
@@ -146,8 +144,8 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1 and RISC0 since
-  # they need to be built without the l2 features.
+  # There's a separate job to build the guest programs for SP1, RISC0, and ZisK
+  # since they need to be built without the l2 features.
   build-ethrex-guest:
     strategy:
       matrix:
@@ -171,9 +169,7 @@ jobs:
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
@@ -186,11 +182,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
-          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
-          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+        uses: ./.github/actions/install-zisk
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         env:
@@ -198,7 +190,7 @@ jobs:
         run: |
           # Sanitize ref name by replacing '/' with '-' for valid file names
           SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
-          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }},ci"
+          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }}-build-elf,ci"
           mkdir -p ${{ matrix.zkvm }}_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
             mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
@@ -226,8 +218,8 @@ jobs:
           name: ${{ matrix.zkvm }}_verification_keys
           path: ${{ matrix.zkvm }}_verification_keys/
 
-  # Creates ethrex-guests.tar.gz artifact including both SP1 and
-  # RISC0 elf and verification keys.
+  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
+  # elf and verification keys.
   package-ethrex-guest:
     needs:
       - build-ethrex-guest

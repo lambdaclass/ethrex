@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     peer_handler::PeerHandler,
-    sync::{SyncMode, Syncer},
+    sync::{SyncDiagnostics, SyncMode, Syncer},
 };
 
 /// Abstraction to interact with the active sync process without disturbing it
@@ -30,6 +30,7 @@ pub struct SyncManager {
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
     store: Store,
+    diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 }
 
 impl SyncManager {
@@ -42,26 +43,60 @@ impl SyncManager {
         datadir: PathBuf,
     ) -> Self {
         let snap_enabled = Arc::new(AtomicBool::new(matches!(sync_mode, SyncMode::Snap)));
+
+        // Fetch checkpoint once to avoid duplicate DB reads
+        let has_checkpoint = store
+            .get_header_download_checkpoint()
+            .await
+            .unwrap_or_else(|e| {
+                warn!("Failed to read header download checkpoint: {e}");
+                None
+            })
+            .is_some();
+
+        // Auto-switch from snap to full sync if node already has synced state.
+        // For post-merge networks (terminal_total_difficulty_passed), any stored
+        // block > 0 means the node has previously synced. For pre-merge networks,
+        // use merge_netsplit_block as threshold to avoid false positives in hive tests.
+        if snap_enabled.load(Ordering::Relaxed) {
+            let latest_block = store.get_latest_block_number().await.unwrap_or(0);
+            let chain_config = store.get_chain_config();
+            let is_synced = if chain_config.terminal_total_difficulty_passed {
+                latest_block > 0
+            } else if let Some(merge_block) = chain_config.merge_netsplit_block {
+                latest_block > merge_block
+            } else {
+                false
+            };
+            if is_synced {
+                info!("Node has synced state (block {latest_block}), switching to full sync");
+                snap_enabled.store(false, Ordering::Relaxed);
+                if has_checkpoint && let Err(e) = store.clear_snap_state().await {
+                    warn!("Failed to clear stale snap state: {e}");
+                }
+            }
+        }
+
+        let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
         let syncer = Arc::new(Mutex::new(Syncer::new(
             peer_handler,
             snap_enabled.clone(),
             cancel_token,
             blockchain,
             datadir,
+            diagnostics.clone(),
         )));
         let sync_manager = Self {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
             store: store.clone(),
+            diagnostics,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
-        if store
-            .get_header_download_checkpoint()
-            .await
-            .is_ok_and(|res| res.is_some())
-        {
+        // Skip if the auto-switch already transitioned to full sync (snap_enabled is now false)
+        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) {
             sync_manager.start_sync();
         }
         sync_manager
@@ -87,6 +122,58 @@ impl SyncManager {
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
         self.snap_enabled.store(false, Ordering::Relaxed);
+    }
+
+    /// Returns a snapshot of the current sync diagnostics with live values.
+    pub async fn get_sync_diagnostics(&self) -> SyncDiagnostics {
+        use crate::metrics::METRICS;
+        use std::sync::atomic::Ordering::Relaxed;
+
+        let mut diag = self.diagnostics.read().await.clone();
+
+        // Compute live pivot age
+        if let Some(ts) = diag.pivot_timestamp {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            diag.pivot_age_seconds = Some(now.saturating_sub(ts));
+        }
+
+        // Populate live progress from METRICS atomics
+        let headers = METRICS.downloaded_headers.get();
+        let accounts_downloaded = METRICS.downloaded_account_tries.load(Relaxed);
+        let accounts_inserted = METRICS.account_tries_inserted.load(Relaxed);
+        let storage_downloaded = METRICS.storage_leaves_downloaded.get();
+        let storage_inserted = METRICS.storage_leaves_inserted.get();
+
+        if headers > 0 {
+            diag.phase_progress
+                .insert("headers_downloaded".into(), headers);
+        }
+        if accounts_downloaded > 0 {
+            diag.phase_progress
+                .insert("accounts_downloaded".into(), accounts_downloaded);
+        }
+        if accounts_inserted > 0 {
+            diag.phase_progress
+                .insert("accounts_inserted".into(), accounts_inserted);
+        }
+        if storage_downloaded > 0 {
+            diag.phase_progress
+                .insert("storage_slots_downloaded".into(), storage_downloaded);
+        }
+        if storage_inserted > 0 {
+            diag.phase_progress
+                .insert("storage_slots_inserted".into(), storage_inserted);
+        }
+
+        diag
+    }
+
+    /// Returns a reference to the diagnostics RwLock for updating from the sync code.
+    pub fn diagnostics(&self) -> &Arc<tokio::sync::RwLock<SyncDiagnostics>> {
+        &self.diagnostics
     }
 
     /// Updates the last fcu head. This may be used on the next sync cycle if needed

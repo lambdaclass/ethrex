@@ -23,7 +23,7 @@ When X needs to read values, it only uses the flatkeyvalues on the left of `last
 
 # Debugging
 
-You can inspect its progress by [inspecting the DB](../rocksdb-inspection.md).
+You can inspect its progress by [inspecting the DB](./rocksdb-inspection.md).
 
 In particular, you might want to run
 

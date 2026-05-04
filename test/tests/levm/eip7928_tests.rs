@@ -954,3 +954,197 @@ fn test_bal_reverted_write_restores_read() {
     // And not in writes
     assert!(account.storage_changes.is_empty());
 }
+
+/// Regression test: a slot written in tx 1 and then written+reverted in tx 2
+/// must NOT appear in both storage_changes and storage_reads.
+/// See: restore() was adding reverted writes as reads even when prior writes existed.
+#[test]
+fn test_reverted_write_after_prior_tx_write_no_duplicate() {
+    let mut recorder = BlockAccessListRecorder::new();
+
+    // Tx 1: write slot 0x10
+    recorder.set_block_access_index(1);
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x01));
+
+    // Transition to tx 2
+    recorder.set_block_access_index(2);
+
+    // Tx 2, inner call: read then write slot 0x10
+    let checkpoint = recorder.checkpoint();
+    recorder.record_storage_read(ALICE, U256::from(0x10));
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x01));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x99));
+
+    // Inner call reverts
+    recorder.restore(checkpoint);
+
+    let bal = recorder.build();
+
+    // Slot 0x10 should be in storage_changes (from tx 1), NOT in storage_reads
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.storage_changes.len(), 1);
+    assert_eq!(alice.storage_changes[0].slot, U256::from(0x10));
+    assert!(
+        alice.storage_reads.is_empty(),
+        "slot should not be in both storage_changes and storage_reads"
+    );
+
+    // BAL should pass ordering validation
+    bal.validate_ordering().unwrap();
+}
+
+/// Nested reverts: slot written in inner call A (not reverted), then written
+/// in inner call B (reverted within same tx). Should only be in storage_changes.
+#[test]
+fn test_nested_revert_slot_only_in_changes() {
+    let mut recorder = BlockAccessListRecorder::new();
+    recorder.set_block_access_index(1);
+
+    // Inner call A: write slot 0x10 (succeeds)
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x01));
+
+    // Inner call B: write same slot (reverts)
+    let checkpoint = recorder.checkpoint();
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x01));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x99));
+    recorder.restore(checkpoint);
+
+    let bal = recorder.build();
+
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.storage_changes.len(), 1);
+    assert_eq!(alice.storage_changes[0].slot, U256::from(0x10));
+    assert!(alice.storage_reads.is_empty());
+    bal.validate_ordering().unwrap();
+}
+
+/// Net-zero write in tx 1 (filtered to read), then written+reverted in tx 2.
+/// Slot should stay in storage_reads only.
+#[test]
+fn test_net_zero_then_reverted_write_stays_read() {
+    let mut recorder = BlockAccessListRecorder::new();
+
+    // Tx 1: write slot 0x10 with net-zero (write 0x01 then back to 0x00)
+    recorder.set_block_access_index(1);
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x01));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x00));
+
+    // Transition to tx 2 (triggers net-zero filtering for tx 1)
+    recorder.set_block_access_index(2);
+
+    // Tx 2, inner call: write slot 0x10 (reverts)
+    let checkpoint = recorder.checkpoint();
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x55));
+    recorder.restore(checkpoint);
+
+    let bal = recorder.build();
+
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    // Net-zero removed the tx 1 write, slot should be a read only
+    assert!(alice.storage_changes.is_empty());
+    assert_eq!(alice.storage_reads.len(), 1);
+    assert!(alice.storage_reads.contains(&U256::from(0x10)));
+    bal.validate_ordering().unwrap();
+}
+
+/// Slot written and reverted in 3 separate inner calls within the same tx.
+/// Should appear in storage_reads exactly once.
+#[test]
+fn test_multiple_reverts_same_slot_single_read() {
+    let mut recorder = BlockAccessListRecorder::new();
+    recorder.set_block_access_index(1);
+
+    for val in [0x01u64, 0x02, 0x03] {
+        let checkpoint = recorder.checkpoint();
+        recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+        recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(val));
+        recorder.restore(checkpoint);
+    }
+
+    let bal = recorder.build();
+
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert!(alice.storage_changes.is_empty());
+    assert_eq!(alice.storage_reads.len(), 1);
+    assert!(alice.storage_reads.contains(&U256::from(0x10)));
+    bal.validate_ordering().unwrap();
+}
+
+/// Slot read, then written in reverted call, then written successfully.
+/// Should only be in storage_changes.
+#[test]
+fn test_read_reverted_write_then_successful_write() {
+    let mut recorder = BlockAccessListRecorder::new();
+    recorder.set_block_access_index(1);
+
+    // Read slot 0x10
+    recorder.record_storage_read(ALICE, U256::from(0x10));
+
+    // Inner call: write slot 0x10 (reverts)
+    let checkpoint = recorder.checkpoint();
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x99));
+    recorder.restore(checkpoint);
+
+    // Successful write to same slot
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x42));
+
+    let bal = recorder.build();
+
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    assert_eq!(alice.storage_changes.len(), 1);
+    assert_eq!(alice.storage_changes[0].slot, U256::from(0x10));
+    assert!(
+        alice.storage_reads.is_empty(),
+        "slot should not be in both storage_changes and storage_reads"
+    );
+    bal.validate_ordering().unwrap();
+}
+
+/// Exercises the build() defensive filter: slot written in tx 1, then explicitly
+/// read and written+reverted in tx 2. The record_storage_read in tx 2 is skipped
+/// (slot already in writes), but restore() could still add it to storage_reads.
+/// The build() filter ensures it doesn't leak into the final BAL as a read.
+#[test]
+fn test_build_filters_reads_that_exist_in_writes() {
+    let mut recorder = BlockAccessListRecorder::new();
+
+    // Tx 1: write slot 0x10
+    recorder.set_block_access_index(1);
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x01));
+
+    // Transition to tx 2
+    recorder.set_block_access_index(2);
+
+    // Tx 2: explicit read, then write, then revert
+    let checkpoint = recorder.checkpoint();
+    // record_storage_read is skipped here (slot in writes), but the write+revert
+    // path through restore() is what we're testing
+    recorder.record_storage_read(ALICE, U256::from(0x10));
+    recorder.capture_pre_storage(ALICE, U256::from(0x10), U256::from(0x01));
+    recorder.record_storage_write(ALICE, U256::from(0x10), U256::from(0x99));
+    recorder.restore(checkpoint);
+
+    // Also write a different slot in tx 2 that succeeds (to ensure the recorder
+    // is in a realistic state with mixed reverted/non-reverted operations)
+    recorder.capture_pre_storage(ALICE, U256::from(0x20), U256::from(0x00));
+    recorder.record_storage_write(ALICE, U256::from(0x20), U256::from(0x02));
+
+    let bal = recorder.build();
+
+    let alice = bal.accounts().iter().find(|a| a.address == ALICE).unwrap();
+    // Slot 0x10 from tx 1 and 0x20 from tx 2 should be in changes
+    assert_eq!(alice.storage_changes.len(), 2);
+    // Neither should be in reads
+    assert!(
+        alice.storage_reads.is_empty(),
+        "no slot should appear in both storage_changes and storage_reads"
+    );
+    bal.validate_ordering().unwrap();
+}

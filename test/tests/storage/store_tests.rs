@@ -78,7 +78,7 @@ async fn test_iter_accounts(store: Store) {
         trie.insert(address.0.to_vec(), state.encode_to_vec())
             .unwrap();
     }
-    let state_root = trie.hash().unwrap();
+    let state_root = trie.hash(&ethrex_crypto::NativeCrypto).unwrap();
     let pivot = H256::random();
     let pos = accounts.partition_point(|(key, _)| key < &pivot);
     let account_iter = store.iter_accounts_from(state_root, pivot).unwrap();
@@ -99,7 +99,7 @@ async fn test_iter_storage(store: Store) {
     for (slot, value) in &slots {
         trie.insert(slot.0.to_vec(), value.encode_to_vec()).unwrap();
     }
-    let storage_root = trie.hash().unwrap();
+    let storage_root = trie.hash(&ethrex_crypto::NativeCrypto).unwrap();
     let mut trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH).unwrap();
     trie.insert(
         address.0.to_vec(),
@@ -112,7 +112,7 @@ async fn test_iter_storage(store: Store) {
         .encode_to_vec(),
     )
     .unwrap();
-    let state_root = trie.hash().unwrap();
+    let state_root = trie.hash(&ethrex_crypto::NativeCrypto).unwrap();
     let pivot = H256::random();
     let pos = slots.partition_point(|(key, _)| key < &pivot);
     let storage_iter = store
@@ -281,7 +281,7 @@ async fn test_store_block_receipt(store: Store) {
 }
 
 async fn test_store_account_code(store: Store) {
-    let code = Code::from_bytecode(Bytes::from("kiwi"));
+    let code = Code::from_bytecode(Bytes::from("kiwi"), &ethrex_crypto::NativeCrypto);
     let code_hash = code.hash;
 
     store.add_account_code(code.clone()).await.unwrap();

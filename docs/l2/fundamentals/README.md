@@ -30,3 +30,4 @@ For general documentation, see:
 - [Fee token](./fee_token.md)
 - [Exit window](./exit_window.md) and [Timelock](./timelock.md) for upgrade safety mechanisms.
 - [Aligned Layer Integration](./ethrex_l2_aligned_integration.md) details how ethrex L2 integrates with Aligned Layer for proof aggregation and verification.
+- [Distributed proving](./distributed_proving.md) explains how the proof coordinator, proof sender, and provers interact to enable parallel proving and multi-batch L1 verification.

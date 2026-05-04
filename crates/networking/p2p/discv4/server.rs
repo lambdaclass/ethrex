@@ -1,41 +1,45 @@
 use crate::{
     backend,
-    discv4::{
-        codec::Discv4Codec,
-        messages::{
-            ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
-            Packet, PacketDecodeErr, PingMessage, PongMessage,
-        },
-        peer_table::{Contact, OutMessage as PeerTableOutMessage, PeerTable, PeerTableError},
+    discv4::messages::{
+        ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage, Packet,
+        PacketDecodeErr, PingMessage, PongMessage,
     },
     metrics::METRICS,
-    types::{Endpoint, Node, NodeRecord},
+    peer_table::{
+        Contact, ContactValidation, DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _,
+    },
+    types::{Endpoint, INITIAL_ENR_SEQ, Node, NodeRecord},
     utils::{
         get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
     },
 };
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512, types::ForkId};
 use ethrex_storage::{Store, error::StoreError};
-use futures::StreamExt;
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use spawned_concurrency::{
-    messages::Unused,
+    actor,
+    error::ActorError,
+    protocol,
     tasks::{
-        CastResponse, GenServer, GenServerHandle, InitResult::Success, send_after, send_interval,
-        send_message_on, spawn_listener,
+        Actor, ActorRef, ActorStart as _, Context, Handler, send_after, send_interval,
+        send_message_on,
     },
 };
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tokio::net::UdpSocket;
-use tokio_util::udp::UdpFramed;
 use tracing::{debug, error, info, trace};
 
-pub(crate) const MAX_NODES_IN_NEIGHBORS_PACKET: usize = 16;
 const EXPIRATION_SECONDS: u64 = 20;
-/// Interval between revalidation checks.
-const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
+/// Interval between revalidation checks. Each check pings one random stale
+/// contact, so this controls the maximum revalidation ping rate (~1/sec).
+const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 /// Interval between revalidations.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours,
 /// The initial interval between peer lookups, until the number of peers reaches
@@ -59,25 +63,20 @@ pub enum DiscoveryServerError {
     #[error("Unknown or invalid contact")]
     InvalidContact,
     #[error(transparent)]
-    PeerTable(#[from] PeerTableError),
+    PeerTable(#[from] ActorError),
     #[error(transparent)]
     Store(#[from] StoreError),
 }
 
-#[derive(Debug, Clone)]
-pub enum InMessage {
-    Message(Box<Discv4Message>),
-    Revalidate,
-    Lookup,
-    EnrLookup,
-    Prune,
-    ChangeFindNodeMessage,
-    Shutdown,
-}
-
-#[derive(Debug, Clone)]
-pub enum OutMessage {
-    Done,
+#[protocol]
+pub trait Discv4ServerProtocol: Send + Sync {
+    fn recv_message(&self, message: Box<Discv4Message>) -> Result<(), ActorError>;
+    fn revalidate(&self) -> Result<(), ActorError>;
+    fn lookup(&self) -> Result<(), ActorError>;
+    fn enr_lookup(&self) -> Result<(), ActorError>;
+    fn prune(&self) -> Result<(), ActorError>;
+    fn change_find_node_message(&self) -> Result<(), ActorError>;
+    fn shutdown(&self) -> Result<(), ActorError>;
 }
 
 #[derive(Debug)]
@@ -92,21 +91,29 @@ pub struct DiscoveryServer {
     /// signatures being expensive.
     find_node_message: BytesMut,
     initial_lookup_interval: f64,
+    /// Tracks pending FindNode requests by node_id -> sent_at.
+    /// Used to reject unsolicited Neighbors responses.
+    pending_find_node: HashMap<H256, Instant>,
 }
 
+#[actor(protocol = Discv4ServerProtocol)]
 impl DiscoveryServer {
+    /// Spawn the discv4 discovery server.
+    ///
+    /// The server receives packets from the multiplexer via actor sends.
+    /// The `udp_socket` is shared with the multiplexer and used for sending only.
     pub async fn spawn(
         storage: Store,
         local_node: Node,
         signer: SecretKey,
-        udp_socket: UdpSocket,
-        mut peer_table: PeerTable,
+        udp_socket: Arc<UdpSocket>,
+        peer_table: PeerTable,
         bootnodes: Vec<Node>,
         initial_lookup_interval: f64,
-    ) -> Result<(), DiscoveryServerError> {
-        info!("Starting Discovery Server");
+    ) -> Result<ActorRef<Self>, DiscoveryServerError> {
+        info!(protocol = "discv4", "Starting discovery server");
 
-        let mut local_node_record = NodeRecord::from_node(&local_node, 1, &signer)
+        let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
         if let Ok(fork_id) = storage.get_fork_id().await {
             local_node_record
@@ -118,27 +125,132 @@ impl DiscoveryServer {
             local_node: local_node.clone(),
             local_node_record,
             signer,
-            udp_socket: Arc::new(udp_socket),
+            udp_socket,
             store: storage.clone(),
             peer_table: peer_table.clone(),
             find_node_message: Self::random_message(&signer),
             initial_lookup_interval,
+            pending_find_node: HashMap::new(),
         };
 
-        info!(count = bootnodes.len(), "Adding bootnodes");
+        info!(
+            protocol = "discv4",
+            count = bootnodes.len(),
+            "Adding bootnodes"
+        );
+
+        peer_table.new_contacts(
+            bootnodes.clone(),
+            local_node.node_id(),
+            DiscoveryProtocol::Discv4,
+        )?;
 
         for bootnode in &bootnodes {
             discovery_server.send_ping(bootnode).await?;
         }
-        peer_table
-            .new_contacts(bootnodes, local_node.node_id())
-            .await?;
 
-        discovery_server.start();
-        Ok(())
+        Ok(discovery_server.start())
     }
 
-    async fn handle_message(
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        send_interval(
+            REVALIDATION_CHECK_INTERVAL,
+            ctx.clone(),
+            discv4_server_protocol::Revalidate,
+        );
+        send_interval(PRUNE_INTERVAL, ctx.clone(), discv4_server_protocol::Prune);
+        send_interval(
+            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
+            ctx.clone(),
+            discv4_server_protocol::ChangeFindNodeMessage,
+        );
+        let _ = ctx.send(discv4_server_protocol::Lookup);
+        let _ = ctx.send(discv4_server_protocol::EnrLookup);
+        send_message_on(
+            ctx.clone(),
+            tokio::signal::ctrl_c(),
+            discv4_server_protocol::Shutdown,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_recv_message(
+        &mut self,
+        msg: discv4_server_protocol::RecvMessage,
+        _ctx: &Context<Self>,
+    ) {
+        let _ = self.process_message(*msg.message).await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error Handling Discovery message"),
+        );
+    }
+
+    #[send_handler]
+    async fn handle_revalidate(
+        &mut self,
+        _msg: discv4_server_protocol::Revalidate,
+        _ctx: &Context<Self>,
+    ) {
+        trace!(protocol = "discv4", received = "Revalidate");
+        let _ = self.revalidate_peers().await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error revalidating discovered peers"),
+        );
+    }
+
+    #[send_handler]
+    async fn handle_lookup(&mut self, _msg: discv4_server_protocol::Lookup, ctx: &Context<Self>) {
+        trace!(protocol = "discv4", received = "Lookup");
+        let _ = self.do_lookup().await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
+        );
+
+        let interval = self.get_lookup_interval().await;
+        send_after(interval, ctx.clone(), discv4_server_protocol::Lookup);
+    }
+
+    #[send_handler]
+    async fn handle_enr_lookup(
+        &mut self,
+        _msg: discv4_server_protocol::EnrLookup,
+        ctx: &Context<Self>,
+    ) {
+        trace!(protocol = "discv4", received = "EnrLookup");
+        let _ = self.do_enr_lookup().await.inspect_err(
+            |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
+        );
+
+        let interval = self.get_lookup_interval().await;
+        send_after(interval, ctx.clone(), discv4_server_protocol::EnrLookup);
+    }
+
+    #[send_handler]
+    async fn handle_prune(&mut self, _msg: discv4_server_protocol::Prune, _ctx: &Context<Self>) {
+        trace!(protocol = "discv4", received = "Prune");
+        let _ = self
+            .prune()
+            .await
+            .inspect_err(|e| error!(protocol = "discv4", err=?e, "Error Pruning peer table"));
+    }
+
+    #[send_handler]
+    async fn handle_change_find_node_message(
+        &mut self,
+        _msg: discv4_server_protocol::ChangeFindNodeMessage,
+        _ctx: &Context<Self>,
+    ) {
+        self.find_node_message = Self::random_message(&self.signer);
+    }
+
+    #[send_handler]
+    async fn handle_shutdown(
+        &mut self,
+        _msg: discv4_server_protocol::Shutdown,
+        ctx: &Context<Self>,
+    ) {
+        ctx.stop();
+    }
+
+    async fn process_message(
         &mut self,
         Discv4Message {
             from,
@@ -151,12 +263,17 @@ impl DiscoveryServer {
         if node_id(&sender_public_key) == self.local_node.node_id() {
             return Ok(());
         }
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_incoming(message.metric_label());
+        }
         match message {
             Message::Ping(ping_message) => {
-                trace!(received = "Ping", msg = ?ping_message, from = %format!("{sender_public_key:#x}"));
+                trace!(protocol = "discv4", received = "Ping", msg = ?ping_message, from = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(ping_message.expiration) {
-                    trace!("Ping expired, skipped");
+                    trace!(protocol = "discv4", "Ping expired, skipped");
                     return Ok(());
                 }
 
@@ -168,21 +285,21 @@ impl DiscoveryServer {
                 );
 
                 let _ = self.handle_ping(ping_message, hash, sender_public_key, node).await.inspect_err(|e| {
-                    error!(sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
+                    error!(protocol = "discv4", sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
                 });
             }
             Message::Pong(pong_message) => {
-                trace!(received = "Pong", msg = ?pong_message, from = %format!("{:#x}", sender_public_key));
+                trace!(protocol = "discv4", received = "Pong", msg = ?pong_message, from = %format!("{:#x}", sender_public_key));
 
                 let node_id = node_id(&sender_public_key);
 
                 self.handle_pong(pong_message, node_id).await?;
             }
             Message::FindNode(find_node_message) => {
-                trace!(received = "FindNode", msg = ?find_node_message, from = %format!("{:#x}", sender_public_key));
+                trace!(protocol = "discv4", received = "FindNode", msg = ?find_node_message, from = %format!("{:#x}", sender_public_key));
 
                 if is_msg_expired(find_node_message.expiration) {
-                    trace!("FindNode expired, skipped");
+                    trace!(protocol = "discv4", "FindNode expired, skipped");
                     return Ok(());
                 }
 
@@ -190,20 +307,21 @@ impl DiscoveryServer {
                     .await?;
             }
             Message::Neighbors(neighbors_message) => {
-                trace!(received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
+                trace!(protocol = "discv4", received = "Neighbors", msg = ?neighbors_message, from = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(neighbors_message.expiration) {
-                    trace!("Neighbors expired, skipping");
+                    trace!(protocol = "discv4", "Neighbors expired, skipping");
                     return Ok(());
                 }
 
-                self.handle_neighbors(neighbors_message).await?;
+                self.handle_neighbors(neighbors_message, sender_public_key)
+                    .await?;
             }
             Message::ENRRequest(enrrequest_message) => {
-                trace!(received = "ENRRequest", msg = ?enrrequest_message, from = %format!("{sender_public_key:#x}"));
+                trace!(protocol = "discv4", received = "ENRRequest", msg = ?enrrequest_message, from = %format!("{sender_public_key:#x}"));
 
                 if is_msg_expired(enrrequest_message.expiration) {
-                    trace!("ENRRequest expired, skipping");
+                    trace!(protocol = "discv4", "ENRRequest expired, skipping");
                     return Ok(());
                 }
 
@@ -211,16 +329,7 @@ impl DiscoveryServer {
                     .await?;
             }
             Message::ENRResponse(enrresponse_message) => {
-                /*
-                    TODO
-                    https://github.com/lambdaclass/ethrex/issues/4412
-                    - Look up in peer_table the peer associated with this message
-                    - Check that the request hash sent matches the one we sent previously (this requires setting it on enrrequest)
-                    - Check that the seq number matches the one we have in our table (this requires setting it).
-                    - Check valid signature
-                    - Take the `eth` part of the record. If it's None, this peer is garbage; if it's set
-                */
-                trace!(received = "ENRResponse", msg = ?enrresponse_message, from = %format!("{sender_public_key:#x}"));
+                trace!(protocol = "discv4", received = "ENRResponse", msg = ?enrresponse_message, from = %format!("{sender_public_key:#x}"));
                 self.handle_enr_response(sender_public_key, from, enrresponse_message)
                     .await?;
             }
@@ -240,10 +349,10 @@ impl DiscoveryServer {
         buf
     }
 
-    async fn revalidate(&mut self) -> Result<(), DiscoveryServerError> {
-        for contact in self
+    async fn revalidate_peers(&mut self) -> Result<(), DiscoveryServerError> {
+        if let Some(contact) = self
             .peer_table
-            .get_contacts_to_revalidate(REVALIDATION_INTERVAL)
+            .get_contact_to_revalidate(REVALIDATION_INTERVAL, DiscoveryProtocol::Discv4)
             .await?
         {
             self.send_ping(&contact.node).await?;
@@ -251,29 +360,42 @@ impl DiscoveryServer {
         Ok(())
     }
 
-    async fn lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        if let Some(contact) = self.peer_table.get_contact_for_lookup().await? {
+    async fn do_lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        if let Some(contact) = self
+            .peer_table
+            .get_contact_for_lookup(DiscoveryProtocol::Discv4)
+            .await?
+        {
             if let Err(e) = self
                 .udp_socket
                 .send_to(&self.find_node_message, &contact.node.udp_addr())
                 .await
             {
-                error!(sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table
-                    .set_disposable(&contact.node.node_id())
-                    .await?;
+                error!(protocol = "discv4", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
+                self.peer_table.set_disposable(contact.node.node_id())?;
                 METRICS.record_new_discarded_node();
+            } else {
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::p2p::METRICS_P2P;
+                    METRICS_P2P.inc_discv4_outgoing("FindNode");
+                }
+                self.pending_find_node
+                    .insert(contact.node.node_id(), Instant::now());
             }
 
             self.peer_table
-                .increment_find_node_sent(&contact.node.node_id())
-                .await?;
+                .increment_find_node_sent(contact.node.node_id())?;
         }
         Ok(())
     }
 
     async fn prune(&mut self) -> Result<(), DiscoveryServerError> {
-        self.peer_table.prune().await?;
+        self.peer_table.prune_table()?;
+        // Clean up expired pending FindNode entries
+        let expiration = Duration::from_secs(EXPIRATION_SECONDS);
+        self.pending_find_node
+            .retain(|_, sent_at| sent_at.elapsed() < expiration);
         Ok(())
     }
 
@@ -290,7 +412,7 @@ impl DiscoveryServer {
         )
     }
 
-    async fn enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
+    async fn do_enr_lookup(&mut self) -> Result<(), DiscoveryServerError> {
         if let Some(contact) = self.peer_table.get_contact_for_enr_lookup().await? {
             self.send_enr_request(&contact.node).await?;
         }
@@ -298,7 +420,6 @@ impl DiscoveryServer {
     }
 
     async fn send_ping(&mut self, node: &Node) -> Result<(), DiscoveryServerError> {
-        // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
         let from = Endpoint {
             ip: self.local_node.ip,
@@ -313,16 +434,14 @@ impl DiscoveryServer {
         let enr_seq = self.local_node_record.seq;
         let ping = Message::Ping(PingMessage::new(from, to, expiration).with_enr_seq(enr_seq));
         let ping_hash = self.send_else_dispose(ping, node).await?;
-        trace!(sent = "Ping", to = %format!("{:#x}", node.public_key));
+        trace!(protocol = "discv4", sent = "Ping", to = %format!("{:#x}", node.public_key));
         METRICS.record_ping_sent().await;
-        self.peer_table
-            .record_ping_sent(&node.node_id(), ping_hash)
-            .await?;
+        let ping_id = Bytes::copy_from_slice(ping_hash.as_bytes());
+        self.peer_table.record_ping_sent(node.node_id(), ping_id)?;
         Ok(())
     }
 
     async fn send_pong(&self, ping_hash: H256, node: &Node) -> Result<(), DiscoveryServerError> {
-        // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
 
         let to = Endpoint {
@@ -337,7 +456,7 @@ impl DiscoveryServer {
 
         self.send(pong, node.udp_addr()).await?;
 
-        trace!(sent = "Pong", to = %format!("{:#x}", node.public_key));
+        trace!(protocol = "discv4", sent = "Pong", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -347,14 +466,13 @@ impl DiscoveryServer {
         neighbors: Vec<Node>,
         node: &Node,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO: Parametrize this expiration.
         let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
 
         let msg = Message::Neighbors(NeighborsMessage::new(neighbors, expiration));
 
         self.send(msg, node.udp_addr()).await?;
 
-        trace!(sent = "Neighbors", to = %format!("{:#x}", node.public_key));
+        trace!(protocol = "discv4", sent = "Neighbors", to = %format!("{:#x}", node.public_key));
 
         Ok(())
     }
@@ -366,8 +484,7 @@ impl DiscoveryServer {
         let enr_request_hash = self.send_else_dispose(enr_request, node).await?;
 
         self.peer_table
-            .record_enr_request_sent(&node.node_id(), enr_request_hash)
-            .await?;
+            .record_enr_request_sent(node.node_id(), enr_request_hash)?;
         Ok(())
     }
 
@@ -394,10 +511,14 @@ impl DiscoveryServer {
     ) -> Result<(), DiscoveryServerError> {
         self.send_pong(hash, &node).await?;
 
-        if self.peer_table.insert_if_new(&node).await.unwrap_or(false) {
+        if self
+            .peer_table
+            .insert_if_new(node.clone(), DiscoveryProtocol::Discv4)
+            .await
+            .unwrap_or(false)
+        {
             self.send_ping(&node).await?;
         } else {
-            // If the contact has stale ENR then request the updated one.
             let node_id = node_id(&sender_public_key);
             let stored_enr_seq = self
                 .peer_table
@@ -426,13 +547,9 @@ impl DiscoveryServer {
             return Ok(());
         };
 
-        // If the contact doesn't exist then there is nothing to record.
-        // So we do it after making sure that the contact exists.
-        self.peer_table
-            .record_pong_received(&node_id, message.ping_hash)
-            .await?;
+        let ping_id = Bytes::copy_from_slice(message.ping_hash.as_bytes());
+        self.peer_table.record_pong_received(node_id, ping_id)?;
 
-        // If the contact has stale ENR then request the updated one.
         let stored_enr_seq = contact.record.map(|r| r.seq);
         let received_enr_seq = message.enr_seq;
         if let (Some(received), Some(stored)) = (received_enr_seq, stored_enr_seq)
@@ -455,15 +572,9 @@ impl DiscoveryServer {
             .validate_contact(sender_public_key, sender_id, from, "FindNode")
             .await
         {
-            // According to https://github.com/ethereum/devp2p/blob/master/discv4.md#findnode-packet-0x03
-            // reply closest 16 nodes to target
             let target_id = node_id(&target);
-            let neighbors = self.peer_table.get_closest_nodes(&target_id).await?;
+            let neighbors = self.peer_table.get_closest_nodes(target_id).await?;
 
-            // A single node encodes to at most 89B, so 8 of them are at most 712B plus
-            // recursive length and expiration time, well within bound of 1280B per packet.
-            // Sending all in one packet would exceed bounds with the nodes only, weighing
-            // up to 1424B.
             for chunk in neighbors.chunks(8) {
                 let _ = self.send_neighbors(chunk.to_vec(), &contact.node).await;
             }
@@ -474,15 +585,34 @@ impl DiscoveryServer {
     async fn handle_neighbors(
         &mut self,
         neighbors_message: NeighborsMessage,
+        sender_public_key: H512,
     ) -> Result<(), DiscoveryServerError> {
-        // TODO(#3746): check that we requested neighbors from the node
-        let nodes = neighbors_message.nodes.clone();
-        self.peer_table
-            .new_contacts(nodes, self.local_node.node_id())
-            .await?;
-        for node in neighbors_message.nodes {
-            self.send_ping(&node).await?;
+        let sender_id = node_id(&sender_public_key);
+        let expiration = Duration::from_secs(EXPIRATION_SECONDS);
+
+        // Only accept Neighbors from peers we sent a FindNode to.
+        // This prevents unsolicited Neighbors from injecting contacts
+        // into our peer table. We don't remove the entry on first
+        // response because Neighbors can be split across multiple
+        // UDP packets (up to 8 nodes each).
+        match self.pending_find_node.get(&sender_id) {
+            Some(sent_at) if sent_at.elapsed() < expiration => {}
+            _ => {
+                trace!(
+                    protocol = "discv4",
+                    from = %format!("{sender_public_key:#x}"),
+                    "Dropping unsolicited Neighbors (no pending FindNode)"
+                );
+                return Ok(());
+            }
         }
+
+        let nodes = neighbors_message.nodes;
+        self.peer_table.new_contacts(
+            nodes,
+            self.local_node.node_id(),
+            DiscoveryProtocol::Discv4,
+        )?;
         Ok(())
     }
 
@@ -506,7 +636,7 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        self.peer_table.knows_us(&node_id).await?;
+        self.peer_table.mark_knows_us(node_id)?;
         Ok(())
     }
 
@@ -526,13 +656,11 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        self.peer_table
-            .record_enr_response_received(
-                &node_id,
-                enr_response_message.request_hash,
-                enr_response_message.node_record.clone(),
-            )
-            .await?;
+        self.peer_table.record_enr_response_received(
+            node_id,
+            enr_response_message.request_hash,
+            enr_response_message.node_record.clone(),
+        )?;
 
         self.validate_enr_fork_id(node_id, sender_public_key, enr_response_message.node_record)
             .await?;
@@ -547,13 +675,11 @@ impl DiscoveryServer {
         sender_public_key: H512,
         node_record: NodeRecord,
     ) -> Result<(), DiscoveryServerError> {
-        let pairs = node_record.decode_pairs();
+        let node_fork_id = node_record.get_fork_id().cloned();
 
-        let Some(remote_fork_id) = pairs.eth else {
-            self.peer_table
-                .set_is_fork_id_valid(&node_id, false)
-                .await?;
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
+        let Some(remote_fork_id) = node_fork_id else {
+            self.peer_table.set_is_fork_id_valid(node_id, false)?;
+            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
             return Ok(());
         };
 
@@ -576,15 +702,13 @@ impl DiscoveryServer {
         );
 
         if !backend::is_fork_id_valid(&self.store, &remote_fork_id).await? {
-            self.peer_table
-                .set_is_fork_id_valid(&node_id, false)
-                .await?;
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
+            self.peer_table.set_is_fork_id_valid(node_id, false)?;
+            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "fork id mismatch in ENR response, skipping");
             return Ok(());
         }
 
-        debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
-        self.peer_table.set_is_fork_id_valid(&node_id, true).await?;
+        debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), local_fork_id=%local_fork_id, remote_fork_id=%remote_fork_id, "valid fork id in ENR found");
+        self.peer_table.set_is_fork_id_valid(node_id, true)?;
 
         Ok(())
     }
@@ -596,29 +720,20 @@ impl DiscoveryServer {
         from: SocketAddr,
         message_type: &str,
     ) -> Result<Contact, DiscoveryServerError> {
-        match self
-            .peer_table
-            .validate_contact(&node_id, from.ip())
-            .await?
-        {
-            PeerTableOutMessage::UnknownContact => {
-                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
+        match self.peer_table.validate_contact(node_id, from.ip()).await? {
+            ContactValidation::UnknownContact => {
+                debug!(protocol = "discv4", received = message_type, to = %format!("{sender_public_key:#x}"), "Unknown contact, skipping");
                 Err(DiscoveryServerError::InvalidContact)
             }
-            PeerTableOutMessage::InvalidContact => {
-                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
+            ContactValidation::InvalidContact => {
+                debug!(protocol = "discv4", received = message_type, to = %format!("{sender_public_key:#x}"), "Contact not validated, skipping");
                 Err(DiscoveryServerError::InvalidContact)
             }
-            // Check that the IP address from which we receive the request matches the one we have stored to prevent amplification attacks
-            // This prevents an attack vector where the discovery protocol could be used to amplify traffic in a DDOS attack.
-            // A malicious actor would send a findnode request with the IP address and UDP port of the target as the source address.
-            // The recipient of the findnode packet would then send a neighbors packet (which is a much bigger packet than findnode) to the victim.
-            PeerTableOutMessage::IpMismatch => {
-                debug!(received = message_type, to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
+            ContactValidation::IpMismatch => {
+                debug!(protocol = "discv4", received = message_type, to = %format!("{sender_public_key:#x}"), "IP address mismatch, skipping");
                 Err(DiscoveryServerError::InvalidContact)
             }
-            PeerTableOutMessage::Contact(contact) => Ok(*contact),
-            _ => unreachable!(),
+            ContactValidation::Valid(contact) => Ok(*contact),
         }
     }
 
@@ -632,7 +747,7 @@ impl DiscoveryServer {
             .validate_contact(sender_public_key, node_id, from, "ENRResponse")
             .await?;
         if !contact.has_pending_enr_request() {
-            debug!(received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
+            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "unsolicited message received, skipping");
             return Err(DiscoveryServerError::InvalidContact);
         }
         Ok(())
@@ -643,10 +758,15 @@ impl DiscoveryServer {
         message: Message,
         addr: SocketAddr,
     ) -> Result<usize, DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_outgoing(message.metric_label());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
-            |e| error!(sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+            |e| error!(protocol = "discv4", sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?)
     }
 
@@ -655,117 +775,23 @@ impl DiscoveryServer {
         message: Message,
         node: &Node,
     ) -> Result<H256, DiscoveryServerError> {
+        #[cfg(feature = "metrics")]
+        {
+            use ethrex_metrics::p2p::METRICS_P2P;
+            METRICS_P2P.inc_discv4_outgoing(message.metric_label());
+        }
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         let message_hash: [u8; 32] = buf[..32]
             .try_into()
             .expect("first 32 bytes are the message hash");
         if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
-            error!(sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
-            self.peer_table.set_disposable(&node.node_id()).await?;
+            error!(protocol = "discv4", sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
+            self.peer_table.set_disposable(node.node_id())?;
             METRICS.record_new_discarded_node();
+            return Err(e.into());
         }
         Ok(H256::from(message_hash))
-    }
-}
-
-impl GenServer for DiscoveryServer {
-    type CallMsg = Unused;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = DiscoveryServerError;
-
-    async fn init(
-        self,
-        handle: &GenServerHandle<Self>,
-    ) -> Result<spawned_concurrency::tasks::InitResult<Self>, Self::Error> {
-        let stream = UdpFramed::new(self.udp_socket.clone(), Discv4Codec::new(self.signer));
-
-        spawn_listener(
-            handle.clone(),
-            stream.filter_map(|result| async move {
-                match result {
-                    Ok((msg, addr)) => {
-                        Some(InMessage::Message(Box::new(Discv4Message::from(msg, addr))))
-                    }
-                    Err(e) => {
-                        debug!(error=?e, "Error receiving Discv4 message");
-                        // Skipping invalid data
-                        None
-                    }
-                }
-            }),
-        );
-        send_interval(
-            REVALIDATION_CHECK_INTERVAL,
-            handle.clone(),
-            InMessage::Revalidate,
-        );
-        send_interval(PRUNE_INTERVAL, handle.clone(), InMessage::Prune);
-        send_interval(
-            CHANGE_FIND_NODE_MESSAGE_INTERVAL,
-            handle.clone(),
-            InMessage::ChangeFindNodeMessage,
-        );
-        let _ = handle.clone().cast(InMessage::Lookup).await;
-        let _ = handle.clone().cast(InMessage::EnrLookup).await;
-        send_message_on(handle.clone(), tokio::signal::ctrl_c(), InMessage::Shutdown);
-
-        Ok(Success(self))
-    }
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            Self::CastMsg::Message(message) => {
-                let _ = self
-                    .handle_message(*message)
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error Handling Discovery message"));
-            }
-            Self::CastMsg::Revalidate => {
-                trace!(received = "Revalidate");
-                let _ = self
-                    .revalidate()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error revalidating discovered peers"));
-            }
-            Self::CastMsg::Lookup => {
-                trace!(received = "Lookup");
-                let _ = self
-                    .lookup()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
-
-                let interval = self.get_lookup_interval().await;
-                send_after(interval, handle.clone(), Self::CastMsg::Lookup);
-            }
-            Self::CastMsg::EnrLookup => {
-                trace!(received = "EnrLookup");
-                let _ = self
-                    .enr_lookup()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error performing Discovery lookup"));
-
-                let interval = self.get_lookup_interval().await;
-                send_after(interval, handle.clone(), Self::CastMsg::EnrLookup);
-            }
-            Self::CastMsg::Prune => {
-                trace!(received = "Prune");
-                let _ = self
-                    .prune()
-                    .await
-                    .inspect_err(|e| error!(err=?e, "Error Pruning peer table"));
-            }
-            Self::CastMsg::ChangeFindNodeMessage => {
-                self.find_node_message = Self::random_message(&self.signer);
-            }
-            Self::CastMsg::Shutdown => return CastResponse::Stop,
-        }
-        CastResponse::NoReply
     }
 }
 
@@ -792,19 +818,7 @@ impl Discv4Message {
     }
 }
 
-pub fn lookup_interval_function(progress: f64, lower_limit: f64, upper_limit: f64) -> Duration {
-    // Smooth progression curve
-    // See https://easings.net/#easeInOutCubic
-    let ease_in_out_cubic = if progress < 0.5 {
-        4.0 * progress.powf(3.0)
-    } else {
-        1.0 - ((-2.0 * progress + 2.0).powf(3.0)) / 2.0
-    };
-    Duration::from_micros(
-        // Use `progress` here instead of `ease_in_out_cubic` for a linear function.
-        (1000f64 * (ease_in_out_cubic * (upper_limit - lower_limit) + lower_limit)).round() as u64,
-    )
-}
+pub use crate::discovery::lookup_interval_function;
 
 // TODO: Reimplement tests removed during snap sync refactor
 //       https://github.com/lambdaclass/ethrex/issues/4423

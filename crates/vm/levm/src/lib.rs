@@ -53,7 +53,7 @@
 //! use levm::{VM, Environment};
 //!
 //! // Create VM with database and environment
-//! let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+//! let mut vm = VM::new(env, db, &tx, tracer, vm_type, &NativeCrypto);
 //!
 //! // Execute the transaction
 //! let report = vm.execute()?;
