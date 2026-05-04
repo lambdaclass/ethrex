@@ -33,6 +33,15 @@ pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
 /// Maximum number of active subscriptions allowed per WebSocket connection.
 pub const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 128;
 
+/// Maximum number of active subscriptions across all connections.
+///
+/// Bounds the worst-case memory of the actor: each subscriber owns a
+/// [`SUBSCRIBER_CHANNEL_CAPACITY`]-slot `mpsc` channel, so the per-connection
+/// cap alone (`128`) does not bound total state when many connections are
+/// open. `subscribe` returns `None` once this is reached and the calling
+/// `eth_subscribe` request fails with an internal error.
+pub const MAX_TOTAL_SUBSCRIPTIONS: usize = 10_000;
+
 /// Actor that manages all active WebSocket subscriptions.
 ///
 /// Each subscription is identified by a hex-encoded string ID and backed by a
@@ -55,9 +64,10 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
 
     /// Register a new subscriber.
     ///
-    /// Returns the subscription ID that the client should use in subsequent
-    /// `eth_unsubscribe` calls.
-    fn subscribe(&self, sender: Sender<String>) -> Response<String>;
+    /// Returns `Some(id)` with the subscription ID that the client should use
+    /// in subsequent `eth_unsubscribe` calls, or `None` if the global cap
+    /// [`MAX_TOTAL_SUBSCRIPTIONS`] has been reached.
+    fn subscribe(&self, sender: Sender<String>) -> Response<Option<String>>;
 
     /// Remove a subscriber by ID.
     ///
@@ -126,10 +136,17 @@ impl SubscriptionManager {
         &mut self,
         msg: subscription_manager_protocol::Subscribe,
         _ctx: &Context<Self>,
-    ) -> String {
+    ) -> Option<String> {
+        if self.subscribers.len() >= MAX_TOTAL_SUBSCRIPTIONS {
+            warn!(
+                cap = MAX_TOTAL_SUBSCRIPTIONS,
+                "Global subscription cap reached, refusing new subscriber"
+            );
+            return None;
+        }
         let id = generate_subscription_id();
         self.subscribers.insert(id.clone(), msg.sender);
-        id
+        Some(id)
     }
 
     #[request_handler]

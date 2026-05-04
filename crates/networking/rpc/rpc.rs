@@ -886,7 +886,8 @@ pub async fn handle_eth_subscribe(
                 .subscription_manager
                 .subscribe(out_tx.clone())
                 .await
-                .map_err(|e| RpcErr::Internal(format!("Subscription failed: {e}")))?;
+                .map_err(|e| RpcErr::Internal(format!("Subscription failed: {e}")))?
+                .ok_or_else(|| RpcErr::Internal("Global subscription cap reached".to_string()))?;
 
             subscription_ids.push(id.clone());
             Ok(Value::String(id))

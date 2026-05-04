@@ -1,6 +1,7 @@
 use ethrex_common::types::BlockHeader;
 use ethrex_rpc::subscription_manager::{
-    SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager, SubscriptionManagerProtocol,
+    MAX_TOTAL_SUBSCRIPTIONS, SUBSCRIBER_CHANNEL_CAPACITY, SubscriptionManager,
+    SubscriptionManagerProtocol,
 };
 use tokio::sync::mpsc;
 
@@ -11,8 +12,8 @@ async fn subscribe_returns_unique_ids() {
     let (tx1, _rx1) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx2, _rx2) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
 
-    let id1 = manager.subscribe(tx1).await.unwrap();
-    let id2 = manager.subscribe(tx2).await.unwrap();
+    let id1 = manager.subscribe(tx1).await.unwrap().unwrap();
+    let id2 = manager.subscribe(tx2).await.unwrap().unwrap();
 
     assert_ne!(id1, id2);
     assert!(id1.starts_with("0x"));
@@ -24,7 +25,7 @@ async fn unsubscribe_existing_returns_true() {
     let manager = SubscriptionManager::spawn();
 
     let (tx, _rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
-    let id = manager.subscribe(tx).await.unwrap();
+    let id = manager.subscribe(tx).await.unwrap().unwrap();
 
     let removed = manager.unsubscribe(id).await.unwrap();
     assert!(removed);
@@ -43,7 +44,7 @@ async fn unsubscribe_twice_returns_false_second_time() {
     let manager = SubscriptionManager::spawn();
 
     let (tx, _rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
-    let id = manager.subscribe(tx).await.unwrap();
+    let id = manager.subscribe(tx).await.unwrap().unwrap();
 
     assert!(manager.unsubscribe(id.clone()).await.unwrap());
     assert!(!manager.unsubscribe(id).await.unwrap());
@@ -56,8 +57,8 @@ async fn new_head_fans_out_to_all_subscribers() {
     let (tx1, mut rx1) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx2, mut rx2) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
 
-    let id1 = manager.subscribe(tx1).await.unwrap();
-    let id2 = manager.subscribe(tx2).await.unwrap();
+    let id1 = manager.subscribe(tx1).await.unwrap().unwrap();
+    let id2 = manager.subscribe(tx2).await.unwrap().unwrap();
 
     let header = BlockHeader::default();
     manager.new_head(header).unwrap();
@@ -89,8 +90,8 @@ async fn new_head_removes_dead_subscribers() {
     let (tx_alive, mut rx_alive) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
     let (tx_dead, rx_dead) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
 
-    let _id_alive = manager.subscribe(tx_alive).await.unwrap();
-    let id_dead = manager.subscribe(tx_dead).await.unwrap();
+    let _id_alive = manager.subscribe(tx_alive).await.unwrap().unwrap();
+    let id_dead = manager.subscribe(tx_dead).await.unwrap().unwrap();
 
     // Drop the receiver so the dead subscriber's channel is closed.
     drop(rx_dead);
@@ -125,7 +126,7 @@ async fn notification_contains_block_hash() {
     let manager = SubscriptionManager::spawn();
 
     let (tx, mut rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
-    let _id = manager.subscribe(tx).await.unwrap();
+    let _id = manager.subscribe(tx).await.unwrap().unwrap();
 
     let header = BlockHeader::default();
     let expected_hash = format!("{:#x}", header.hash());
@@ -142,4 +143,24 @@ async fn notification_contains_block_hash() {
         v["params"]["result"]["hash"].as_str().unwrap(),
         expected_hash
     );
+}
+
+#[tokio::test]
+async fn subscribe_returns_none_at_global_cap() {
+    let manager = SubscriptionManager::spawn();
+
+    // Fill the actor to the cap. Senders are kept alive in `keep_alive` so
+    // the channels do not get cleaned up.
+    let mut keep_alive = Vec::with_capacity(MAX_TOTAL_SUBSCRIPTIONS);
+    for _ in 0..MAX_TOTAL_SUBSCRIPTIONS {
+        let (tx, rx) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+        let id = manager.subscribe(tx).await.unwrap();
+        assert!(id.is_some());
+        keep_alive.push(rx);
+    }
+
+    // The next subscribe must be refused.
+    let (tx_overflow, _rx_overflow) = mpsc::channel(SUBSCRIBER_CHANNEL_CAPACITY);
+    let result = manager.subscribe(tx_overflow).await.unwrap();
+    assert!(result.is_none(), "expected None at MAX_TOTAL_SUBSCRIPTIONS");
 }
