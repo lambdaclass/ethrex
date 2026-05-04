@@ -57,6 +57,7 @@ pub struct Metrics {
     /* Snap Sync */
     // Common
     pub sync_head_block: AtomicU64,
+    pub pivot_timestamp: AtomicU64,
     pub sync_head_hash: Arc<Mutex<H256>>,
     pub current_step: Arc<CurrentStep>,
 
@@ -708,6 +709,7 @@ impl Default for Metrics {
             /* Snap Sync */
             // Common
             sync_head_block: AtomicU64::new(0),
+            pivot_timestamp: AtomicU64::new(0),
             sync_head_hash: Arc::new(Mutex::new(H256::default())),
             current_step: Arc::new(CurrentStep(AtomicU8::new(0))),
 
