@@ -1890,11 +1890,21 @@ impl Blockchain {
     /// Advance the canonical head pointer to a block we've already stored.
     /// Used by the BSC direct-fetch path so `eth_blockNumber` reflects the
     /// import without depending on a separate `forkchoice_update` cadence.
+    ///
+    /// No-ops when `number` is at or below the current canonical head: BSC
+    /// peers broadcast blocks out of order (we may receive N+1 before N), and
+    /// `forkchoice_update` semantically rewinds the head — which would delete
+    /// canonical mappings for legitimate higher blocks already on disk and
+    /// punch holes BLOCKHASH lookups can't recover from.
     pub async fn advance_canonical_head(
         &self,
         number: BlockNumber,
         hash: H256,
     ) -> Result<(), ChainError> {
+        let latest = self.storage.get_latest_block_number().await?;
+        if number <= latest {
+            return Ok(());
+        }
         self.storage
             .forkchoice_update(vec![(number, hash)], number, hash, None, None)
             .await
