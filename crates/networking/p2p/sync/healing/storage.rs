@@ -331,7 +331,7 @@ async fn ask_peers_for_nodes(
     logged_no_free_peers_count: &mut u32,
 ) {
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
-        let Some((peer_id, connection)) = peers
+        let Some((peer_id, connection, permit)) = peers
             .peer_table
             .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
             .await
@@ -368,11 +368,9 @@ async fn ask_peers_for_nodes(
 
         let tx = task_sender.clone();
 
-        let peer_table = peers.peer_table.clone();
-
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
-            let response = request_storage_trienodes(peer_id, connection, peer_table, gtn).await;
+            let response = request_storage_trienodes(connection, permit, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(
                 |err| debug!(error=?err, "Failed to send state trie nodes response"),
