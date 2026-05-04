@@ -2,8 +2,11 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::api::StorageBackend;
+use crate::api::tables::{EXECUTION_WITNESSES, MISC_VALUES, STATE_BACKEND_FORMAT_KEY};
 use crate::error::StoreError;
+use crate::store::backend_kind_to_byte;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
+use ethrex_state_backend::BackendKind;
 
 use super::store::StoreMetadata;
 
@@ -23,9 +26,30 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
 pub const MIGRATIONS: &[MigrationFn] = &[
-    // Currently empty — no migrations exist yet.
-    // When STORE_SCHEMA_VERSION is bumped to 2, add migrate_1_to_2 here.
+    // v1 → v2: shared-trie abstraction landed.
+    //   - Stamps `STATE_BACKEND_FORMAT_KEY = MPT` in `MISC_VALUES` so the
+    //     format-marker check on subsequent opens has something to compare
+    //     against. v1 DBs are MPT by definition (no other backend existed).
+    //   - Clears `EXECUTION_WITNESSES`: the rkyv layout of cached witnesses
+    //     changed (`Option<Node>` + `BTreeMap<H256, Node>` → `Vec<Vec<u8>>`),
+    //     so old rows can no longer be deserialized. The witnesses are
+    //     regenerated on demand, so dropping them is safe.
+    migrate_1_to_2,
 ];
+
+fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    backend.clear_table(EXECUTION_WITNESSES)?;
+
+    let mut tx = backend.begin_write()?;
+    tx.put(
+        MISC_VALUES,
+        STATE_BACKEND_FORMAT_KEY,
+        &[backend_kind_to_byte(BackendKind::Mpt)],
+    )?;
+    tx.commit()?;
+
+    Ok(())
+}
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -118,6 +142,53 @@ mod tests {
 
         let result = run_pending_migrations(&backend, temp_dir.path(), STORE_SCHEMA_VERSION);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn migrate_1_to_2_stamps_marker_and_clears_witnesses() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        // Pre-populate: pretend a v1 DB with no marker and a stale witness row.
+        let mut setup = backend.begin_write().unwrap();
+        setup
+            .put(EXECUTION_WITNESSES, b"some_block_hash", b"stale_rkyv_bytes")
+            .unwrap();
+        setup.commit().unwrap();
+
+        let pre_marker = backend
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, STATE_BACKEND_FORMAT_KEY)
+            .unwrap();
+        assert_eq!(pre_marker, None, "marker absent before migration");
+        let pre_witness = backend
+            .begin_read()
+            .unwrap()
+            .get(EXECUTION_WITNESSES, b"some_block_hash")
+            .unwrap();
+        assert!(
+            pre_witness.is_some(),
+            "witness row present before migration"
+        );
+
+        migrate_1_to_2(&backend).unwrap();
+
+        let post_marker = backend
+            .begin_read()
+            .unwrap()
+            .get(MISC_VALUES, STATE_BACKEND_FORMAT_KEY)
+            .unwrap();
+        assert_eq!(
+            post_marker,
+            Some(vec![backend_kind_to_byte(BackendKind::Mpt)]),
+            "marker stamped to MPT after migration"
+        );
+        let post_witness = backend
+            .begin_read()
+            .unwrap()
+            .get(EXECUTION_WITNESSES, b"some_block_hash")
+            .unwrap();
+        assert_eq!(post_witness, None, "witness row cleared after migration");
     }
 
     #[test]

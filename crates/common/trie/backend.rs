@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, btree_map, hash_map::Entry};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use rustc_hash::FxHashMap;
 
@@ -111,7 +111,15 @@ pub struct MptBackend {
     code_reader: CodeReader,
     /// Cached storage roots to avoid re-reading accounts on repeated SLOAD.
     /// Maps hashed_address -> storage_root.
-    storage_root_cache: Mutex<FxHashMap<H256, H256>>,
+    ///
+    /// Held under `RwLock` so concurrent readers (e.g. parallel BAL
+    /// pre-validation) don't serialize on the cache. The mutation paths
+    /// (`update_accounts` SELFDESTRUCT removal, `clear_storage`, and the
+    /// cold-cache insert in `storage()`) are infrequent; reads dominate.
+    /// Single-writer-per-block semantics still hold because block execution
+    /// is sequential — the lock just prevents data races between worker
+    /// threads on the read side.
+    storage_root_cache: RwLock<FxHashMap<H256, H256>>,
     /// Witness recording state. `Some` when in witness mode, `None` otherwise.
     pub(crate) witness_state: Option<MptWitnessState>,
 }
@@ -128,7 +136,7 @@ impl MptBackend {
             crypto,
             storage_opener: Arc::new(EmptyTrieProvider),
             code_reader: Arc::new(no_op_code_reader),
-            storage_root_cache: Mutex::new(FxHashMap::default()),
+            storage_root_cache: RwLock::new(FxHashMap::default()),
             witness_state: None,
         }
     }
@@ -148,7 +156,7 @@ impl MptBackend {
             crypto,
             storage_opener: Arc::new(EmptyTrieProvider),
             code_reader: Arc::new(no_op_code_reader),
-            storage_root_cache: Mutex::new(FxHashMap::default()),
+            storage_root_cache: RwLock::new(FxHashMap::default()),
             witness_state: None,
         }
     }
@@ -246,7 +254,7 @@ impl MptBackend {
             crypto,
             storage_opener,
             code_reader,
-            storage_root_cache: Mutex::new(FxHashMap::default()),
+            storage_root_cache: RwLock::new(FxHashMap::default()),
             witness_state: None,
         }
     }
@@ -768,7 +776,7 @@ impl StateReader for MptBackend {
         let storage_root = {
             let cache = self
                 .storage_root_cache
-                .lock()
+                .read()
                 .map_err(|e| StateError::Storage(format!("storage_root_cache poisoned: {e}")))?;
             cache.get(&hashed_addr).copied()
         };
@@ -781,7 +789,7 @@ impl StateReader for MptBackend {
                 let state =
                     AccountState::decode(&encoded).map_err(|e| StateError::Trie(e.to_string()))?;
                 self.storage_root_cache
-                    .lock()
+                    .write()
                     .map_err(|e| StateError::Storage(format!("storage_root_cache poisoned: {e}")))?
                     .insert(hashed_addr, state.storage_root);
                 state.storage_root
@@ -828,7 +836,7 @@ impl StateCommitter for MptBackend {
                     self.state_trie.remove(hashed.as_bytes())?;
                     self.storage_tries.remove(&hashed);
                     self.storage_root_cache
-                        .lock()
+                        .write()
                         .map_err(|e| {
                             StateError::Storage(format!("storage_root_cache poisoned: {e}"))
                         })?
@@ -898,7 +906,7 @@ impl StateCommitter for MptBackend {
         self.storage_tries.insert(hashed_addr, Trie::default());
         // Invalidate any cached storage_root for this address.
         self.storage_root_cache
-            .lock()
+            .write()
             .map_err(|e| StateError::Storage(format!("storage_root_cache poisoned: {e}")))?
             .remove(&hashed_addr);
         // Update account's storage_root to empty

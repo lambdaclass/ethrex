@@ -72,6 +72,17 @@ pub trait TrieProvider: Send + Sync {
 // Background drop thread (avoids recursive deallocation on hot path)
 // ---------------------------------------------------------------------------
 
+/// Process-lifetime drop thread. Workers send large boxed values here instead
+/// of dropping them inline so the merkleization hot path doesn't pay the cost
+/// of recursively freeing deep MPT structures (intermediate `Trie`s, the
+/// `pending_removal` queues, etc.). The thread does nothing but receive and
+/// drop — the receiver moving the box out of the channel triggers `Drop`.
+///
+/// It's a deliberate process-lifetime resource: profiling showed that
+/// per-block deallocation of large tries was non-trivial on the critical path,
+/// and a `LazyLock` static dodges both the spawn-per-block cost and the
+/// shutdown coordination that a scoped thread would require. The "leak" is
+/// bounded — at most one thread for the lifetime of the process.
 static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
     let (tx, rx) = channel::<Box<dyn Send>>();
     std::thread::Builder::new()

@@ -28,6 +28,14 @@ pub enum BackendKind {
 /// Lives here (not in `ethrex-trie`) so it can be used across crates without
 /// the `ethrex-trie` dependency. The error type is `StateError` to match the
 /// backend trait surface.
+///
+/// Boxed `Fn` (one vtable indirection per cold-cache call) is preferred over an
+/// enum here because each backend captures its own storage handle, and a single
+/// `Arc<dyn Fn>` lets the caller plug any source (in-memory map for witness
+/// replay, `Store` handle for production, mock for tests) without leaking a
+/// generic parameter through every backend type. Hot reads are served from the
+/// per-backend `codes` cache before this closure is invoked, so the indirection
+/// cost is dominated by the disk fetch on the path that actually calls it.
 pub type CodeReader = Arc<dyn Fn(H256) -> Result<Option<Vec<u8>>, StateError> + Send + Sync>;
 
 // --- Mutation types ---
@@ -41,10 +49,6 @@ pub struct CodeMut {
 pub struct AccountMut {
     pub account: Option<AccountInfo>,
     pub code: Option<CodeMut>,
-    /// Current total code size. MPT ignores it; other backends may encode it
-    /// into their leaf layout. Populated by callers so the interface is stable
-    /// across backends.
-    pub code_size: usize,
 }
 
 // --- Output types ---

@@ -80,7 +80,6 @@ impl StateBackend {
                     &[AccountMut {
                         account: None,
                         code: None,
-                        code_size: 0,
                     }],
                 )?;
                 continue;
@@ -94,13 +93,11 @@ impl StateBackend {
                 let mut acct_mut = AccountMut {
                     account: Some(*info),
                     code: None,
-                    code_size: 0,
                 };
                 if let Some(code) = &update.code {
                     acct_mut.code = Some(ethrex_state_backend::CodeMut {
                         code: Some(code.bytecode.to_vec()),
                     });
-                    acct_mut.code_size = code.bytecode.len();
                 }
                 self.update_accounts(&[update.address], &[acct_mut])?;
             }

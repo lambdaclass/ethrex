@@ -498,7 +498,6 @@ impl Store {
                         code: Some(account.code.to_vec()),
                     })
                 },
-                code_size: account.code.len(),
             };
 
             backend.update_accounts(&[*address], &[acct_mut])?;

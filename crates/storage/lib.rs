@@ -86,7 +86,7 @@ pub use store::{EngineType, Store, UpdateBatch, has_valid_db, read_chain_id_from
 /// When bumping this version, add a corresponding migration function to
 /// `migrations::MIGRATIONS`. The migration framework will automatically
 /// upgrade existing databases instead of requiring a full resync.
-pub const STORE_SCHEMA_VERSION: u64 = 1;
+pub const STORE_SCHEMA_VERSION: u64 = 2;
 
 /// Name of the file storing the metadata about the database.
 ///

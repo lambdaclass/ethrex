@@ -141,7 +141,6 @@ impl GuestProgramState {
                     &[AccountMut {
                         account: None,
                         code: None,
-                        code_size: 0,
                     }],
                 )?;
                 continue;
@@ -155,13 +154,11 @@ impl GuestProgramState {
                 let mut acct_mut = AccountMut {
                     account: Some(*info),
                     code: None,
-                    code_size: 0,
                 };
                 if let Some(code) = &update.code {
                     acct_mut.code = Some(CodeMut {
                         code: Some(code.bytecode.to_vec()),
                     });
-                    acct_mut.code_size = code.bytecode.len();
                 }
                 self.backend
                     .update_accounts(&[update.address], &[acct_mut])?;
