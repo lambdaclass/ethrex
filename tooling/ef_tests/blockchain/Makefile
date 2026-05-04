@@ -50,6 +50,7 @@ amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
 
+# amsterdam-vectors must run first so witness-bearing zkevm JSONs overlay the bal@v5.6.1 copies.
 zkevm-vectors: $(ZKEVM_ARTIFACT) $(SPECTEST_VECTORS_DIR) amsterdam-vectors
 	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
 
