@@ -1189,20 +1189,6 @@ impl Store {
         .map_err(StoreError::from)
     }
 
-    /// Backfill a canonical block hash mapping without touching the head /
-    /// LatestBlockNumber pointers. Use only for repair paths that fill gaps
-    /// in `CANONICAL_BLOCK_HASHES` left by past forkchoice races; for normal
-    /// head advancement use [`Self::forkchoice_update`] instead.
-    pub async fn set_canonical_block_hash(
-        &self,
-        block_number: BlockNumber,
-        block_hash: BlockHash,
-    ) -> Result<(), StoreError> {
-        let key = block_number.to_le_bytes().to_vec();
-        let value = block_hash.encode_to_vec();
-        self.write_async(CANONICAL_BLOCK_HASHES, key, value).await
-    }
-
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
     /// For updating the state after block execution, use [`Self::store_block_updates`].
     pub async fn write_storage_trie_nodes_batch(
