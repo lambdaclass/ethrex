@@ -294,9 +294,9 @@ FROM messages;
 <pre><code class="language-sql">ALTER TABLE balance_diffs
 ADD COLUMN value_per_token BLOB;
 </code></pre>
-<h2 id="from-v10-to-v11"><a class="header" href="#from-v10-to-v11">From v10 to v11</a></h2>
+<h2 id="from-v9-to-v10"><a class="header" href="#from-v9-to-v10">From v9 to v10</a></h2>
 <h3 id="commonbridge-l2-gas-limit-stored-on-chain"><a class="header" href="#commonbridge-l2-gas-limit-stored-on-chain">CommonBridge: L2 gas limit stored on-chain</a></h3>
-<p>From v11 onwards, the L2 block gas limit is stored in the <code>CommonBridge</code> contract as <code>l2GasLimit</code>. The sequencer fetches this value on startup instead of using a CLI flag.</p>
+<p>From v10 onwards, the L2 block gas limit is stored in the <code>CommonBridge</code> contract as <code>l2GasLimit</code>. The sequencer fetches this value on startup instead of using a CLI flag.</p>
 <h4 id="upgrade-requirement"><a class="header" href="#upgrade-requirement">Upgrade requirement</a></h4>
 <p>On existing deployments, <code>l2GasLimit</code> will default to <code>0</code> because <code>initialize()</code> has already run. This means <code>_sendToL2</code> will revert for any non-zero gas limit, <strong>bricking the bridge</strong> until the owner calls <code>setL2GasLimit()</code>.</p>
 <p>After upgrading (with the contract paused), call <code>setL2GasLimit</code> before unpausing (see <a href="#updating-the-gas-limit">Updating the gas limit</a> below). The contract must not be unpaused until <code>l2GasLimit</code> is set to a valid value. Otherwise all deposits and privileged transactions will revert.</p>

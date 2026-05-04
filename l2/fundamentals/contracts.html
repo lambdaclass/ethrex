@@ -390,10 +390,14 @@
 <p>Upgrade the proxy by calling the method <code>upgradeToAndCall(address newImplementation, bytes memory data)</code>. The <code>data</code> parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.</p>
 <pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION_ADDRESS&gt; &lt;INITIALIZATION_CALLDATA&gt; --private-key &lt;PRIVATE_KEY&gt;
 </code></pre>
+<blockquote>
+<p><strong>Note:</strong> The <code>OnChainProposer</code> is owned by the Timelock contract. You cannot call <code>upgradeToAndCall</code> on the OCP directly — it will revert with <code>onlyOwner</code>. The call must be routed through the Timelock. See <a href="./timelock.html">Timelock</a> for the available paths (schedule + execute with delay, or <code>emergencyExecute</code> for immediate execution by the Security Council).</p>
+<p>The same applies to any operation restricted by <code>onlyOwner</code> on the OCP (e.g., <code>pause</code>, <code>unpause</code>).</p>
+</blockquote>
 </li>
 <li>
 <p>Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:</p>
-<pre><code class="language-sh">curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [&lt;PROXY_ADDRESS&gt;, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
+<pre><code class="language-sh">curl &lt;L1_RPC_URL&gt; -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": ["&lt;PROXY_ADDRESS&gt;", "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
 </code></pre>
 </li>
 </ol>

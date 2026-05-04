@@ -4829,7 +4829,7 @@ COMPILE_CONTRACTS=true cargo install --locked --path cmd/ethrex --bin ethrex --f
 <li>
 <p>Tune throughput with the gas caps:</p>
 <ul>
-<li>The L2 block gas limit is stored on-chain in the <code>CommonBridge</code> contract (set during deployment via <code>--l2-gas-limit</code>, defaults to 30000000). The sequencer fetches this value on startup. See <a href="l2/deployment/./upgrades.html#from-v10-to-v11">Upgrades</a> for how to view and update it.</li>
+<li>The L2 block gas limit is stored on-chain in the <code>CommonBridge</code> contract (set during deployment via <code>--l2-gas-limit</code>, defaults to 30000000). The sequencer fetches this value on startup. See <a href="l2/deployment/./upgrades.html#from-v9-to-v10">Upgrades</a> for how to view and update it.</li>
 <li><code>--committer.batch-gas-limit</code> (env: <code>ETHREX_COMMITTER_BATCH_GAS_LIMIT</code>): Sets the gas limit per batch sent to L1—should be at or above the block gas limit.</li>
 </ul>
 <p>You can use either the environment variables or the flags to configure these values.</p>
@@ -6391,9 +6391,9 @@ FROM messages;
 <pre><code class="language-sql">ALTER TABLE balance_diffs
 ADD COLUMN value_per_token BLOB;
 </code></pre>
-<h2 id="from-v10-to-v11"><a class="header" href="#from-v10-to-v11">From v10 to v11</a></h2>
+<h2 id="from-v9-to-v10"><a class="header" href="#from-v9-to-v10">From v9 to v10</a></h2>
 <h3 id="commonbridge-l2-gas-limit-stored-on-chain"><a class="header" href="#commonbridge-l2-gas-limit-stored-on-chain">CommonBridge: L2 gas limit stored on-chain</a></h3>
-<p>From v11 onwards, the L2 block gas limit is stored in the <code>CommonBridge</code> contract as <code>l2GasLimit</code>. The sequencer fetches this value on startup instead of using a CLI flag.</p>
+<p>From v10 onwards, the L2 block gas limit is stored in the <code>CommonBridge</code> contract as <code>l2GasLimit</code>. The sequencer fetches this value on startup instead of using a CLI flag.</p>
 <h4 id="upgrade-requirement"><a class="header" href="#upgrade-requirement">Upgrade requirement</a></h4>
 <p>On existing deployments, <code>l2GasLimit</code> will default to <code>0</code> because <code>initialize()</code> has already run. This means <code>_sendToL2</code> will revert for any non-zero gas limit, <strong>bricking the bridge</strong> until the owner calls <code>setL2GasLimit()</code>.</p>
 <p>After upgrading (with the contract paused), call <code>setL2GasLimit</code> before unpausing (see <a href="l2/deployment/upgrades.html#updating-the-gas-limit">Updating the gas limit</a> below). The contract must not be unpaused until <code>l2GasLimit</code> is set to a valid value. Otherwise all deposits and privileged transactions will revert.</p>
@@ -11518,10 +11518,14 @@ To do this, they compute a merkle proof for the included batch and call the L1 <
 <p>Upgrade the proxy by calling the method <code>upgradeToAndCall(address newImplementation, bytes memory data)</code>. The <code>data</code> parameter is the calldata to call on the new implementation as an initialization, you can pass an empty stream.</p>
 <pre><code class="language-sh">rex send &lt;PROXY_ADDRESS&gt; 'upgradeToAndCall(address,bytes)' &lt;NEW_IMPLEMENTATION_ADDRESS&gt; &lt;INITIALIZATION_CALLDATA&gt; --private-key &lt;PRIVATE_KEY&gt;
 </code></pre>
+<blockquote>
+<p><strong>Note:</strong> The <code>OnChainProposer</code> is owned by the Timelock contract. You cannot call <code>upgradeToAndCall</code> on the OCP directly — it will revert with <code>onlyOwner</code>. The call must be routed through the Timelock. See <a href="l2/fundamentals/./timelock.html">Timelock</a> for the available paths (schedule + execute with delay, or <code>emergencyExecute</code> for immediate execution by the Security Council).</p>
+<p>The same applies to any operation restricted by <code>onlyOwner</code> on the OCP (e.g., <code>pause</code>, <code>unpause</code>).</p>
+</blockquote>
 </li>
 <li>
 <p>Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:</p>
-<pre><code class="language-sh">curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [&lt;PROXY_ADDRESS&gt;, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
+<pre><code class="language-sh">curl &lt;L1_RPC_URL&gt; -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": ["&lt;PROXY_ADDRESS&gt;", "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
 </code></pre>
 </li>
 </ol>
