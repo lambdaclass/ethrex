@@ -48,6 +48,7 @@ pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
 pub mod tracing;
+pub mod transition_activator;
 pub mod vm;
 
 use ::tracing::{debug, info, instrument, warn};
@@ -79,7 +80,7 @@ pub use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_state_backend::{MerkleOutput, StateError};
+use ethrex_state_backend::{BackendKind, MerkleOutput, StateError};
 use ethrex_storage::{Merkleizer, Store, UpdateBatch, error::StoreError};
 pub use ethrex_trie::{validate_block_body, validate_receipts_root};
 use ethrex_vm::backends::CachingDatabase;
@@ -187,6 +188,17 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: Arc<rayon::ThreadPool>,
+    /// Optional MPT→binary transition activator.
+    ///
+    /// Present only when `--binary-transition` was passed at startup and the
+    /// DB is still in MPT mode (format byte 0).  Ticks after each successful
+    /// block commit; once activation fires the activator exits the process.
+    ///
+    /// Wrapped in a `Mutex` so it can be set after the `Arc<Blockchain>` is
+    /// constructed (the `SyncManager`'s atomics are not available until after
+    /// the blockchain Arc exists).  Reads (in `add_block_pipeline_inner`) use
+    /// `try_lock`; the write (in `init_l1`) happens once at startup.
+    pub transition_activator: std::sync::Mutex<Option<transition_activator::TransitionActivator>>,
 }
 
 /// Configuration options for the blockchain.
@@ -254,6 +266,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            transition_activator: std::sync::Mutex::new(None),
         }
     }
 
@@ -265,7 +278,24 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
+            transition_activator: std::sync::Mutex::new(None),
         }
+    }
+
+    /// Sets the transition activator (called once at startup from `initializers.rs`
+    /// after the `SyncManager` is available).
+    pub fn set_transition_activator(&self, activator: transition_activator::TransitionActivator) {
+        if let Ok(mut guard) = self.transition_activator.lock() {
+            *guard = Some(activator);
+        }
+    }
+
+    /// Returns a reference to the underlying storage.
+    ///
+    /// Used by the `TransitionActivator` to call
+    /// `persist_transition_metadata` and other store methods.
+    pub fn store(&self) -> &Store {
+        &self.storage
     }
 
     /// Executes a block withing a new vm instance and state
@@ -347,6 +377,15 @@ impl Blockchain {
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
+        // Acquire the activation lock before executing so that no block can be
+        // applied concurrently with a metadata write during binary-trie activation.
+        // The lock is released when `_activation_guard` drops at the end of this
+        // function, after the result is returned to the caller.
+        let activation_lock = self.storage.activation_lock();
+        let _activation_guard = activation_lock
+            .lock()
+            .map_err(|_| ChainError::Custom("activation_lock poisoned".to_string()))?;
+
         let start_instant = Instant::now();
 
         let chain_config = self.storage.get_chain_config();
@@ -892,8 +931,12 @@ impl Blockchain {
         merkle_output: MerkleOutput,
         execution_result: BlockExecutionResult,
     ) -> Result<(), ChainError> {
-        // Check state root matches the one in block header
-        validate_state_root(&block.header, merkle_output.root)?;
+        // State-root validation is only meaningful for MPT: Binary and
+        // Transition backends produce a different root hash that does not
+        // match the MPT-format header field written by the block producer.
+        if self.storage.backend_kind() == BackendKind::Mpt {
+            validate_state_root(&block.header, merkle_output.root)?;
+        }
 
         let block_hash = block.hash();
         self.storage
@@ -1024,6 +1067,11 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
+        // Capture the state_root of the block we are about to commit so the
+        // transition activator can use it for `frozen_mpt_root` without
+        // re-reading stale state via CHAIN_DATA::LatestBlockNumber, which is
+        // advanced by apply_fork_choice and lags this block's commit.
+        let block_state_root = block.header.state_root;
 
         if let Some(logger) = logger
             && let Some(account_updates) = &merkle_output.accumulated_updates
@@ -1040,6 +1088,16 @@ impl Blockchain {
         };
 
         let result = self.store_block(block, merkle_output, res);
+
+        // Tick the transition activator after a successful block commit.
+        // A no-op when no activator is installed (flag absent or already activated).
+        // The Mutex is un-contended in steady state (the write happens once at startup).
+        if result.is_ok()
+            && let Ok(guard) = self.transition_activator.try_lock()
+            && let Some(ref activator) = *guard
+        {
+            activator.tick(&self.storage, block_number, block_state_root);
+        }
 
         let stored = Instant::now();
 
@@ -1058,6 +1116,7 @@ impl Blockchain {
                 block_number,
                 transactions_count,
                 warmer_duration,
+                self.storage.backend_kind(),
                 instants,
             );
         }
@@ -1125,6 +1184,8 @@ impl Blockchain {
         block_number: u64,
         transactions_count: usize,
         warmer_duration: Duration,
+        // TEMP: hoodi sign-off visibility — remove in Phase 9 metrics work
+        backend_kind: BackendKind,
         [
             start_instant,
             block_validated_instant,
@@ -1209,13 +1270,14 @@ impl Blockchain {
 
         // Format output
         let header = format!(
-            "[METRIC] BLOCK {} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%)",
+            "[METRIC] BLOCK {} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%) [BACKEND={:?}]",
             block_number,
             throughput,
             total_ms,
             transactions_count,
             as_mgas,
-            (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64
+            (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64,
+            backend_kind
         );
 
         let bottleneck_marker = |name: &str| {
@@ -1389,8 +1451,12 @@ impl Blockchain {
             .map_err(|e| (e.into(), None))?
             .ok_or((ChainError::ParentStateNotFound, None))?;
 
-        // Check state root matches the one in block header
-        validate_state_root(&last_block.header, merkle_output.root).map_err(|e| (e, None))?;
+        // State-root validation is only meaningful for MPT: Binary and
+        // Transition backends produce a different root hash that does not
+        // match the MPT-format header field written by the block producer.
+        if self.storage.backend_kind() == BackendKind::Mpt {
+            validate_state_root(&last_block.header, merkle_output.root).map_err(|e| (e, None))?;
+        }
 
         self.storage
             .store_block_updates(UpdateBatch {
@@ -1777,5 +1843,99 @@ pub async fn is_canonical(
     match store.get_canonical_block_hash(block_number).await? {
         Some(hash) if hash == block_hash => Ok(true),
         _ => Ok(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::{H256, types::Block};
+    use ethrex_state_backend::{BackendKind, MerkleOutput, NodeUpdates};
+    use ethrex_storage::{EngineType, Store};
+    use ethrex_vm::BlockExecutionResult;
+
+    /// Regression test for the `validate_state_root` backend gate introduced in
+    /// Phase 7 round 4.
+    ///
+    /// `store_block` must skip MPT state-root validation for non-MPT backends.
+    /// Without the gate a `BackendKind::Binary` (or `Transition`) store will always
+    /// fail validation on post-switch blocks because the binary root stored in
+    /// `merkle_output.root` does not match the MPT-format `header.state_root`.
+    ///
+    /// The test uses `BackendKind::Binary` to represent the "non-MPT" side of the
+    /// gate.  `BackendKind::Transition` is omitted here because constructing a
+    /// valid Transition store requires `Store::from_backend` + persisted metadata,
+    /// both of which are `pub(crate)` in `ethrex-storage`; they are tested
+    /// independently in `transition_wiring::tests::binary_transition_restart_cycle`.
+    /// The gate condition is `== BackendKind::Mpt`, so Binary and Transition are
+    /// equivalent from the gate's perspective.
+    #[test]
+    fn store_block_skips_state_root_validation_for_non_mpt_backend() {
+        // Sentinel root written into the block header.  Deliberately does NOT
+        // match the value we pass as `merkle_output.root` so that an un-gated
+        // `validate_state_root` call would return Err.
+        let header_root = H256::from([0xAA; 32]);
+        let merkle_root = H256::from([0xBB; 32]);
+
+        // Build the minimal valid arguments for `store_block`.
+        let block = {
+            let mut b = Block::default();
+            b.header.state_root = header_root;
+            b
+        };
+
+        let merkle_output = MerkleOutput {
+            root: merkle_root,
+            node_updates: NodeUpdates::Mpt {
+                state_updates: vec![],
+                storage_updates: vec![],
+            },
+            code_updates: vec![],
+            accumulated_updates: None,
+        };
+
+        let execution_result = BlockExecutionResult {
+            receipts: vec![],
+            requests: vec![],
+            block_gas_used: 0,
+        };
+
+        // --- Binary store: gate must be skipped; store_block must succeed. ---
+        let binary_store =
+            Store::new(".", EngineType::InMemory, BackendKind::Binary).expect("binary store");
+        let blockchain = Blockchain::default_with_store(binary_store);
+        blockchain
+            .store_block(block.clone(), merkle_output, execution_result)
+            .expect("store_block must succeed for BackendKind::Binary despite root mismatch");
+
+        // Rebuild arguments (MerkleOutput is not Clone).
+        let merkle_output2 = MerkleOutput {
+            root: merkle_root,
+            node_updates: NodeUpdates::Mpt {
+                state_updates: vec![],
+                storage_updates: vec![],
+            },
+            code_updates: vec![],
+            accumulated_updates: None,
+        };
+        let execution_result2 = BlockExecutionResult {
+            receipts: vec![],
+            requests: vec![],
+            block_gas_used: 0,
+        };
+
+        // --- MPT store: gate must fire; store_block must fail with StateRootMismatch. ---
+        let mpt_store = Store::new(".", EngineType::InMemory, BackendKind::Mpt).expect("mpt store");
+        let blockchain2 = Blockchain::default_with_store(mpt_store);
+        let err = blockchain2
+            .store_block(block, merkle_output2, execution_result2)
+            .expect_err("store_block must fail for BackendKind::Mpt when roots differ");
+        assert!(
+            matches!(
+                err,
+                ChainError::InvalidBlock(InvalidBlockError::StateRootMismatch)
+            ),
+            "expected StateRootMismatch, got: {err:?}"
+        );
     }
 }

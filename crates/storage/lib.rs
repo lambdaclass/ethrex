@@ -66,6 +66,7 @@
 
 pub mod api;
 pub mod backend;
+pub(crate) mod binary_wiring;
 pub mod error;
 mod layering;
 pub mod merkleizer;
@@ -74,6 +75,7 @@ pub(crate) mod mpt_wiring;
 pub mod rlp;
 pub mod state_backend;
 pub mod store;
+pub(crate) mod transition_wiring;
 pub mod trie;
 pub mod utils;
 

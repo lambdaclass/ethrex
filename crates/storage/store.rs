@@ -12,6 +12,7 @@ use crate::{
         },
     },
     backend::in_memory::InMemoryBackend,
+    binary_wiring::{binary_commit_nodes_to_disk, build_binary_cache_layer},
     error::StoreError,
     layering::TrieLayerCache,
     mpt_wiring::{
@@ -21,6 +22,7 @@ use crate::{
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     utils::{ChainDataIndex, SnapStateIndex},
 };
+use ethrex_binary_trie::layer_cache::BinaryTrieLayerCache;
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -46,6 +48,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex, RwLock,
+        atomic::{AtomicU8, Ordering},
         mpsc::{SyncSender, sync_channel},
     },
     thread::JoinHandle,
@@ -64,7 +67,7 @@ pub const MAX_WITNESSES: u64 = 128;
 // TODO: unify these
 #[allow(unused)]
 const DB_COMMIT_THRESHOLD: usize = 128;
-const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
+pub(crate) const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
@@ -164,7 +167,7 @@ pub struct UpdateBatch {
     pub batch_mode: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Store {
     /// Path to the database directory.
     db_path: PathBuf,
@@ -201,11 +204,67 @@ pub struct Store {
 
     background_threads: Arc<ThreadList>,
 
-    /// Which trie backend is active for this store. Written at construction,
-    /// read by future dispatch sites (e.g. FKV generator per backend). Kept as
-    /// a field so the plumbing exists once a second variant is added.
-    #[allow(dead_code)]
-    pub(crate) backend_kind: BackendKind,
+    /// Which trie backend is active for this store. Stored as an atomic byte
+    /// so `set_backend_kind` can update it in-process without requiring a
+    /// restart (hot-swap). The byte encoding is via `backend_kind_to_byte` /
+    /// `byte_to_backend_kind`.
+    ///
+    /// Wrapped in `Arc` so all `Store` clones share the same atomic — a
+    /// hot-swap via `set_backend_kind` is therefore visible to every live
+    /// handle (RPC handlers, engine API, SyncManager, …) without a restart.
+    pub(crate) backend_kind: Arc<AtomicU8>,
+
+    /// Cache for binary trie leaf diffs (FKV), one layer per block.
+    ///
+    /// Independent from `trie_cache` (MPT node cache). During `Transition` mode
+    /// both caches coexist, each keyed by its own root hash; they never cross-read.
+    /// For `BackendKind::Mpt` this cache is present but always empty.
+    pub(crate) binary_trie_cache: Arc<RwLock<Arc<BinaryTrieLayerCache>>>,
+
+    /// Transition metadata loaded at startup when `backend_kind == Transition`.
+    ///
+    /// Contains `(switch_block, frozen_mpt_root, binary_root)` as persisted by
+    /// `Store::persist_transition_metadata`. Present only for `Transition` stores;
+    /// `None` for `Mpt` and `Binary` stores.
+    ///
+    /// Wrapped in `Arc<RwLock<…>>` so all `Store` clones share the same lock —
+    /// a write by `persist_transition_metadata` (called during hot-swap) is
+    /// immediately visible to every live clone (RPC, engine API, SyncManager).
+    pub(crate) transition_metadata: Arc<RwLock<Option<(u64, H256, H256)>>>,
+
+    /// Shared mutex that serialises block execution against activation.
+    ///
+    /// Both `execute_block_pipeline` (in the blockchain crate) and
+    /// `TransitionActivator::activate` acquire this lock.  The activation
+    /// write is therefore exclusive with any concurrent block commit, which
+    /// prevents a race between writing the format byte and applying trie
+    /// updates.
+    ///
+    /// The lock itself carries no data (`()`); it is purely a coordination
+    /// primitive.
+    activation_lock: Arc<std::sync::Mutex<()>>,
+}
+
+impl Clone for Store {
+    fn clone(&self) -> Self {
+        Store {
+            db_path: self.db_path.clone(),
+            backend: self.backend.clone(),
+            chain_config: self.chain_config,
+            latest_block_header: self.latest_block_header.clone(),
+            trie_cache: self.trie_cache.clone(),
+            flatkeyvalue_control_tx: self.flatkeyvalue_control_tx.clone(),
+            trie_update_worker_tx: self.trie_update_worker_tx.clone(),
+            last_computed_flatkeyvalue: self.last_computed_flatkeyvalue.clone(),
+            account_code_cache: self.account_code_cache.clone(),
+            code_metadata_cache: self.code_metadata_cache.clone(),
+            background_threads: self.background_threads.clone(),
+            backend_kind: self.backend_kind.clone(),
+            binary_trie_cache: self.binary_trie_cache.clone(),
+            transition_metadata: self.transition_metadata.clone(),
+            activation_lock: self.activation_lock.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1162,6 +1221,10 @@ impl Store {
 
     /// Write trie node diffs directly to disk, bypassing TrieLayerCache.
     /// Dispatches to the backend-specific writer based on the [`NodeUpdates`] variant.
+    ///
+    /// For `NodeUpdates::Binary`, writes trie nodes, stem tombstones, and FKV
+    /// leaf entries to disk in a single atomic transaction via
+    /// [`binary_commit_nodes_to_disk`].
     pub(crate) fn write_node_updates_direct(
         &self,
         node_updates: NodeUpdates,
@@ -1171,6 +1234,16 @@ impl Store {
                 state_updates,
                 storage_updates,
             } => self.write_mpt_node_updates(state_updates, storage_updates),
+            NodeUpdates::Binary {
+                node_diffs,
+                deleted_stems,
+                fkv_entries,
+            } => binary_commit_nodes_to_disk(
+                self.backend.as_ref(),
+                node_diffs,
+                deleted_stems,
+                fkv_entries,
+            ),
         }
     }
 
@@ -1508,7 +1581,52 @@ impl Store {
         }
     }
 
-    fn from_backend(
+    /// Opens the backend just enough to read the `STATE_BACKEND_FORMAT_KEY` byte,
+    /// without running any schema migrations or mismatch checks.
+    ///
+    /// Returns `None` if the key is absent (fresh DB or in-memory path).
+    /// Used by the CLI to determine the correct `BackendKind` before calling
+    /// `Store::new`, so the Store is opened with the right variant from the start.
+    pub fn peek_backend_format_byte(
+        #[allow(unused_variables)] path: impl AsRef<std::path::Path>,
+        engine_type: EngineType,
+    ) -> Result<Option<u8>, StoreError> {
+        match engine_type {
+            EngineType::InMemory => {
+                // In-memory stores are never persisted; always fresh.
+                return Ok(None);
+            }
+            #[cfg(feature = "rocksdb")]
+            EngineType::RocksDB => {}
+        }
+        #[cfg(feature = "rocksdb")]
+        {
+            // Opening RocksDB on a fresh datadir writes bootstrap files
+            // (CURRENT, MANIFEST, OPTIONS-*).  Subsequently `Store::new`'s
+            // schema-version check would see a non-empty dir without
+            // metadata.json and fail with NotFoundDBVersion.  Skip the peek
+            // when the datadir has no valid DB; a fresh datadir cannot be in
+            // transition mode by definition.
+            if !has_valid_db(path.as_ref()) {
+                return Ok(None);
+            }
+            let backend: Arc<dyn StorageBackend> = Arc::new(RocksDBBackend::open(path.as_ref())?);
+            let tx = backend.begin_read()?;
+            let bytes = tx.get(MISC_VALUES, STATE_BACKEND_FORMAT_KEY)?;
+            return match bytes {
+                None => Ok(None),
+                Some(b) if b.len() == 1 => Ok(Some(b[0])),
+                Some(b) => Err(StoreError::Custom(format!(
+                    "state backend format marker has unexpected length {} (expected 1)",
+                    b.len()
+                ))),
+            };
+        }
+        #[allow(unreachable_code)]
+        Ok(None)
+    }
+
+    pub(crate) fn from_backend(
         backend: Arc<dyn StorageBackend>,
         db_path: PathBuf,
         commit_threshold: usize,
@@ -1564,6 +1682,17 @@ impl Store {
                     };
                     let on_disk_kind = byte_to_backend_kind(byte)?;
                     if on_disk_kind != backend_kind {
+                        // Provide a clear, actionable error for the most common
+                        // mismatch: DB has been transitioned (format byte 2) but
+                        // the node was restarted without --binary-transition.
+                        if byte == 2 && backend_kind == BackendKind::Mpt {
+                            return Err(StoreError::Custom(
+                                "database has format byte 2 (transition) but --binary-transition \
+                                 was not passed. Restart with --binary-transition to resume in \
+                                 transition mode, or point ethrex at a different datadir."
+                                    .to_string(),
+                            ));
+                        }
                         return Err(StoreError::Custom(format!(
                             "state backend format mismatch: on-disk={on_disk_kind:?}, configured={backend_kind:?}"
                         )));
@@ -1571,6 +1700,70 @@ impl Store {
                 }
             }
         }
+
+        // For Transition mode, load the three metadata keys from MISC_VALUES.
+        // Fail fast if any key is missing — the store cannot operate as a
+        // transition backend without them (they are written atomically on activation).
+        let transition_metadata = if backend_kind == BackendKind::Transition {
+            let tx = backend.begin_read()?;
+            use crate::api::tables::{
+                TRANSITION_BINARY_ROOT_KEY, TRANSITION_MPT_FROZEN_ROOT_KEY,
+                TRANSITION_SWITCH_BLOCK_KEY,
+            };
+            let switch_block_bytes = tx
+                .get(MISC_VALUES, TRANSITION_SWITCH_BLOCK_KEY)?
+                .ok_or_else(|| {
+                    StoreError::Custom(
+                        "transition store is missing TRANSITION_SWITCH_BLOCK_KEY".to_string(),
+                    )
+                })?;
+            let mpt_root_bytes = tx
+                .get(MISC_VALUES, TRANSITION_MPT_FROZEN_ROOT_KEY)?
+                .ok_or_else(|| {
+                    StoreError::Custom(
+                        "transition store is missing TRANSITION_MPT_FROZEN_ROOT_KEY".to_string(),
+                    )
+                })?;
+            let binary_root_bytes = tx
+                .get(MISC_VALUES, TRANSITION_BINARY_ROOT_KEY)?
+                .ok_or_else(|| {
+                    StoreError::Custom(
+                        "transition store is missing TRANSITION_BINARY_ROOT_KEY".to_string(),
+                    )
+                })?;
+            let switch_block = if switch_block_bytes.len() == 8 {
+                u64::from_be_bytes(
+                    switch_block_bytes
+                        .as_slice()
+                        .try_into()
+                        .expect("length checked above"),
+                )
+            } else {
+                return Err(StoreError::Custom(format!(
+                    "TRANSITION_SWITCH_BLOCK_KEY has unexpected length {} (expected 8)",
+                    switch_block_bytes.len()
+                )));
+            };
+            let mpt_root = if mpt_root_bytes.len() == 32 {
+                H256::from_slice(&mpt_root_bytes)
+            } else {
+                return Err(StoreError::Custom(format!(
+                    "TRANSITION_MPT_FROZEN_ROOT_KEY has unexpected length {} (expected 32)",
+                    mpt_root_bytes.len()
+                )));
+            };
+            let binary_root = if binary_root_bytes.len() == 32 {
+                H256::from_slice(&binary_root_bytes)
+            } else {
+                return Err(StoreError::Custom(format!(
+                    "TRANSITION_BINARY_ROOT_KEY has unexpected length {} (expected 32)",
+                    binary_root_bytes.len()
+                )));
+            };
+            Some((switch_block, mpt_root, binary_root))
+        } else {
+            None
+        };
 
         let mut background_threads = Vec::new();
         let mut store = Self {
@@ -1585,7 +1778,12 @@ impl Store {
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             background_threads: Default::default(),
-            backend_kind,
+            backend_kind: Arc::new(AtomicU8::new(backend_kind_to_byte(backend_kind))),
+            binary_trie_cache: Arc::new(RwLock::new(Arc::new(BinaryTrieLayerCache::new(
+                commit_threshold,
+            )))),
+            transition_metadata: Arc::new(RwLock::new(transition_metadata)),
+            activation_lock: Arc::new(std::sync::Mutex::new(())),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -1608,11 +1806,21 @@ impl Store {
                     let _ = flatkeyvalue_generator(&backend_clone, &last_computed_fkv, &rx)
                         .inspect_err(|err| error!("Error while generating FlatKeyValue: {err}"));
                 }
+                // Binary FKV is populated inline on commit (no background generator).
+                // The FKV generator thread exits immediately for Binary/Transition;
+                // the MPT fkv_ctl channel remains present but carries no traffic.
+                BackendKind::Binary | BackendKind::Transition => {
+                    info!(
+                        "Binary/Transition mode: no FKV background generator \
+                         (FKV populated inline on commit)."
+                    );
+                }
             }
         }));
         let backend = store.backend.clone();
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
+        let binary_trie_cache = store.binary_trie_cache.clone();
         /*
             When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
             This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
@@ -1643,6 +1851,7 @@ impl Store {
                             backend.as_ref(),
                             &flatkeyvalue_control_tx,
                             &trie_cache,
+                            &binary_trie_cache,
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
@@ -1916,6 +2125,180 @@ impl Store {
             .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
     }
 
+    // -------------------------------------------------------------------------
+    // Activation-lock and flush helpers (Phase 7 — binary trie transition)
+    // -------------------------------------------------------------------------
+
+    /// Returns a clone of the `Arc<Mutex<()>>` that serialises block execution
+    /// against the binary-trie activation write.
+    ///
+    /// Both `execute_block_pipeline` (blockchain crate) and
+    /// `TransitionActivator::activate` acquire this lock; the activation
+    /// metadata write is therefore atomic w.r.t. concurrent block commits.
+    pub fn activation_lock(&self) -> Arc<std::sync::Mutex<()>> {
+        self.activation_lock.clone()
+    }
+
+    /// Sends `FKVGeneratorControlMessage::Stop` to the MPT FKV generator.
+    ///
+    /// Best-effort: if the channel is already closed (e.g. for Binary/Transition
+    /// stores that never started the generator), the error is swallowed.
+    pub fn stop_fkv_generator(&self) {
+        let _ = self
+            .flatkeyvalue_control_tx
+            .send(FKVGeneratorControlMessage::Stop);
+    }
+
+    /// Force-flushes all in-memory MPT `TrieLayerCache` layers to disk.
+    ///
+    /// Used by the activation sequence to ensure the frozen MPT root on disk
+    /// matches the block header's `state_root` before the format byte is
+    /// written.
+    ///
+    /// This bypasses the normal commit-threshold logic and writes every
+    /// accumulated layer, newest-to-oldest, in a single pass.
+    /// Force-flushes all in-memory MPT `TrieLayerCache` layers reachable from
+    /// `from_root` (oldest-first) to disk.
+    ///
+    /// `from_root` MUST be the most recent state_root we want frozen (typically
+    /// the state_root of the block we just committed via `execute_block_pipeline`).
+    /// `Store::latest_block_header` is NOT a safe source here because it is
+    /// advanced by `apply_fork_choice` (engine_forkchoiceUpdated from the CL),
+    /// not by block execution; during catchup it lags by ≥ 1 block, and a
+    /// walk from the stale root skips the most recent layer (it is keyed by
+    /// `from_root` and a child of the stale root, not an ancestor).
+    pub fn force_commit_layers(&self, from_root: H256) -> Result<(), StoreError> {
+        // Snapshot the current cache so we operate on a consistent view.
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut cache_mut = (*cache).clone();
+
+        // Drain until no more layers are found.  We use a temporary threshold
+        // of 1 so every layer (not just those older than 128 blocks) is eligible.
+        while let Some(commitable_root) = cache_mut.get_commitable_with_threshold(from_root, 1) {
+            let last_written = self
+                .backend
+                .begin_read()?
+                .get(MISC_VALUES, "last_written".as_bytes())?
+                .unwrap_or_default();
+
+            let nodes = cache_mut.commit(commitable_root).ok_or_else(|| {
+                StoreError::Custom(
+                    "force_commit_layers: layer vanished from cloned cache after \
+                     get_commitable_with_threshold returned Some — internal bug"
+                        .to_string(),
+                )
+            })?;
+            // bypass_fkv_cursor=true: this path runs only during the binary
+            // transition activation freeze (FKV generator has been stopped
+            // permanently by activate() step 2). Leaves past the FKV cursor
+            // would otherwise be silently dropped — see mpt_commit_nodes_to_disk
+            // doc and Bug 3 v3 in phase-7-handoff.md.
+            mpt_commit_nodes_to_disk(self.backend.as_ref(), nodes, last_written, true)?;
+        }
+
+        // Write the drained cache back.
+        *self.trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(cache_mut);
+
+        Ok(())
+    }
+
+    /// Drains any pending trie-update-worker item by sending a no-op TrieUpdate
+    /// and waiting for acknowledgement.
+    ///
+    /// Because the `trie_update_worker` channel has capacity 0 (rendezvous),
+    /// a pending send from a prior block commit will have already been received
+    /// by the worker.  However the worker's Phase-2 disk write may still be
+    /// running.  Sending a no-op TrieUpdate and waiting for its Phase-1 ack
+    /// ensures the worker is idle before we proceed with activation.
+    pub fn drain_trie_update_worker(&self) -> Result<(), StoreError> {
+        let (notify_tx, notify_rx) = std::sync::mpsc::sync_channel(1);
+        let latest_root = self.latest_block_header.get().state_root;
+        // A no-op update: same parent and child root, empty diffs.
+        // The worker will update the cache (put_batch becomes a no-op for
+        // equal roots), signal us, then find nothing to commit to disk.
+        let noop_update = TrieUpdate {
+            result_sender: notify_tx,
+            parent_state_root: latest_root,
+            child_state_root: latest_root,
+            node_updates: NodeUpdates::Mpt {
+                state_updates: vec![],
+                storage_updates: vec![],
+            },
+            is_batch: false,
+        };
+        self.trie_update_worker_tx
+            .send(noop_update)
+            .map_err(|_| StoreError::Custom("trie_update_worker disconnected".to_string()))?;
+        notify_rx
+            .recv()
+            .map_err(|_| StoreError::Custom("trie_update_worker ack recv failed".to_string()))??;
+        Ok(())
+    }
+
+    /// Returns the trie backend kind active for this store.
+    ///
+    /// Used by callers outside this crate (e.g. the blockchain crate) to gate
+    /// operations that are only meaningful for a specific backend — for example,
+    /// MPT state-root validation must be skipped for `Binary` and `Transition`
+    /// stores because those backends produce a different root hash that does not
+    /// match the MPT-format header field.
+    pub fn backend_kind(&self) -> BackendKind {
+        let byte = self.backend_kind.load(Ordering::Acquire);
+        byte_to_backend_kind(byte).expect("backend_kind byte was set via backend_kind_to_byte")
+    }
+
+    /// Atomically updates the in-memory backend kind.
+    ///
+    /// Called by `TransitionActivator::activate` after `persist_transition_metadata`
+    /// writes the format byte to disk, completing the in-process hot-swap.
+    /// Uses `Release` ordering so all subsequent `Acquire` loads see the new value.
+    pub fn set_backend_kind(&self, kind: BackendKind) {
+        self.backend_kind
+            .store(backend_kind_to_byte(kind), Ordering::Release);
+    }
+
+    /// Returns the transition metadata loaded at startup (or updated by activation).
+    ///
+    /// Returns `None` for `Mpt` and `Binary` stores, or before activation fires.
+    /// After `persist_transition_metadata` succeeds during hot-swap, returns `Some`.
+    pub fn transition_metadata(&self) -> Option<(u64, H256, H256)> {
+        *self
+            .transition_metadata
+            .read()
+            .expect("transition_metadata RwLock poisoned")
+    }
+
+    /// Returns the latest cached block header (not an async call).
+    ///
+    /// Returns `Ok(None)` when no canonical block has ever been committed to
+    /// the database (i.e. `LatestBlockNumber` is absent from `CHAIN_DATA`).
+    /// The `LatestBlockHeaderCache` starts at a zero-initialized default; we
+    /// cannot distinguish "genesis block stored" from "never stored" by
+    /// inspecting the cache alone, so we do a cheap synchronous DB peek
+    /// instead.
+    ///
+    /// Used by the `TransitionActivator` to read `frozen_mpt_root` without
+    /// blocking the tokio runtime on an async DB call.
+    pub fn get_latest_canonical_block_header(
+        &self,
+    ) -> Result<Option<ethrex_common::types::BlockHeader>, StoreError> {
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        if self.read(CHAIN_DATA, key)?.is_none() {
+            // `LatestBlockNumber` is absent only on a bare backend that has never
+            // had `add_initial_state` called (possible in unit tests; unreachable
+            // in production, where genesis init writes it for block 0).
+            // Its presence means the cache holds at least the genesis header.
+            return Ok(None);
+        }
+        let header = self.latest_block_header.get();
+        Ok(Some((*header).clone()))
+    }
+
     pub fn create_checkpoint(&self, path: impl AsRef<Path>) -> Result<(), StoreError> {
         self.backend.create_checkpoint(path.as_ref())?;
         init_metadata_file(path.as_ref())?;
@@ -2015,6 +2398,7 @@ fn apply_trie_updates(
     backend: &dyn StorageBackend,
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    binary_trie_cache: &Arc<RwLock<Arc<BinaryTrieLayerCache>>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2025,18 +2409,32 @@ fn apply_trie_updates(
         is_batch,
     } = trie_update;
 
-    // Capture variant identity before node_updates is consumed by build_mpt_cache_layer.
-    let backend_kind: BackendKind = match &node_updates {
-        NodeUpdates::Mpt { .. } => BackendKind::Mpt,
+    // Extract binary FKV entries before consuming node_updates.
+    // For MPT this is always empty; for Binary it carries the FKV leaf diffs.
+    // Note: Transition mode also emits NodeUpdates::Binary (overlay writes only),
+    // so `backend_kind` here is always either Mpt or Binary — never Transition.
+    // The store-level BackendKind::Transition is irrelevant to the NodeUpdates discriminant.
+    let (binary_fkv_entries, backend_kind) = match &node_updates {
+        NodeUpdates::Mpt { .. } => (Vec::new(), BackendKind::Mpt),
+        NodeUpdates::Binary { fkv_entries, .. } => (fkv_entries.clone(), BackendKind::Binary),
     };
-    // Dispatch on backend variant to build the byte-keyed cache layer.
+
+    // Dispatch on backend variant to build the byte-keyed node cache layer.
     let new_layer = match node_updates {
         NodeUpdates::Mpt {
             state_updates,
             storage_updates,
         } => crate::mpt_wiring::build_mpt_cache_layer(state_updates, storage_updates),
+        NodeUpdates::Binary {
+            node_diffs,
+            deleted_stems,
+            fkv_entries: _,
+        } => build_binary_cache_layer(node_diffs, deleted_stems),
     };
-    // Read-Copy-Update the trie cache with a new layer.
+
+    // Read-Copy-Update the MPT trie cache with a new layer.
+    // For Binary nodes, the framed key-value pairs go into the same TrieLayerCache
+    // (keyed by state root). Binary FKV leaf diffs go into the separate BinaryTrieLayerCache.
     let trie = trie_cache
         .read()
         .map_err(|_| StoreError::LockError)?
@@ -2045,6 +2443,21 @@ fn apply_trie_updates(
     trie_mut.put_batch(parent_state_root, child_state_root, new_layer);
     let trie = Arc::new(trie_mut);
     *trie_cache.write().map_err(|_| StoreError::LockError)? = trie.clone();
+
+    // For Binary (which covers Transition too — see comment above): update the
+    // BinaryTrieLayerCache with FKV leaf diffs.
+    if backend_kind == BackendKind::Binary && !binary_fkv_entries.is_empty() {
+        let bin_cache = binary_trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let mut bin_mut = (*bin_cache).clone();
+        bin_mut.put_batch(parent_state_root.0, child_state_root.0, binary_fkv_entries);
+        *binary_trie_cache
+            .write()
+            .map_err(|_| StoreError::LockError)? = Arc::new(bin_mut);
+    }
+
     // Update finished, signal block processing.
     result_sender
         .send(Ok(()))
@@ -2072,13 +2485,69 @@ fn apply_trie_updates(
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
 
-    // Before encoding, accounts have only the account address as their path, while storage keys have
-    // the account address (32 bytes) + storage path (up to 32 bytes).
-
-    // Commit removes the bottom layer and returns it, this is the mutation step.
+    // Commit removes the bottom layer from the node cache and returns the merged diffs.
+    // This is the mutation step.
     let nodes = trie_mut.commit(root).unwrap_or_default();
+    // backend_kind here can only be Mpt or Binary: NodeUpdates::Mpt maps to Mpt
+    // and NodeUpdates::Binary maps to Binary. Transition stores always emit
+    // NodeUpdates::Binary (overlay writes only), so BackendKind::Transition is
+    // unreachable from this match arm.
     let write_result = match backend_kind {
-        BackendKind::Mpt => mpt_commit_nodes_to_disk(backend, nodes, last_written),
+        // bypass_fkv_cursor=false: normal worker Phase 2 commit path; the FKV
+        // generator may still be running and will rewrite leaves past the cursor.
+        BackendKind::Mpt => mpt_commit_nodes_to_disk(backend, nodes, last_written, false),
+        BackendKind::Transition => {
+            // NodeUpdates::Binary is the only path here, which maps to BackendKind::Binary above.
+            // Transition stores never produce BackendKind::Transition from NodeUpdates.
+            unreachable!("BackendKind::Transition cannot arise from NodeUpdates matching")
+        }
+        BackendKind::Binary => {
+            // Decode framed node bytes from the committed layer and separate
+            // tombstones (key prefix 0xFE) from regular node diffs.
+            let mut node_diffs: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+            let mut deleted_stems: Vec<[u8; 31]> = Vec::new();
+            for (key, framed_value) in nodes {
+                if key.first() == Some(&0xFE) && key.len() == 32 {
+                    // Tombstone key: decode the stem from bytes 1..32.
+                    let mut stem = [0u8; 31];
+                    stem.copy_from_slice(&key[1..32]);
+                    deleted_stems.push(stem);
+                } else {
+                    // Regular node: unframe the value.
+                    match crate::binary_wiring::decode_binary_cache_value(&framed_value) {
+                        Ok(Some(value)) => node_diffs.push((key, value)),
+                        Ok(None) => {
+                            // Deletion-framed value on a non-tombstone key: treat as deletion.
+                            node_diffs.push((key, vec![]));
+                        }
+                        Err(e) => {
+                            return Err(StoreError::Custom(format!(
+                                "binary cache decode error during commit: {e}"
+                            )));
+                        }
+                    }
+                }
+            }
+
+            // Drain committed FKV diffs from the BinaryTrieLayerCache.
+            let fkv_entries: Vec<([u8; 32], Option<[u8; 32]>)> = {
+                let bin_cache = binary_trie_cache
+                    .read()
+                    .map_err(|_| StoreError::LockError)?
+                    .clone();
+                let mut bin_mut = (*bin_cache).clone();
+                let committed_fkv = bin_mut
+                    .commit(root.0)
+                    .map(|(_roots, diffs)| diffs)
+                    .unwrap_or_default();
+                *binary_trie_cache
+                    .write()
+                    .map_err(|_| StoreError::LockError)? = Arc::new(bin_mut);
+                committed_fkv
+            };
+
+            binary_commit_nodes_to_disk(backend, node_diffs, deleted_stems, fkv_entries)
+        }
     };
     // We want to send this message even if there was an error during the batch write
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
@@ -2118,7 +2587,7 @@ fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
 }
 
-fn encode_code(code: &Code) -> Vec<u8> {
+pub(crate) fn encode_code(code: &Code) -> Vec<u8> {
     let mut buf = Vec::with_capacity(
         6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
     );
@@ -2275,9 +2744,13 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
 ///
 /// Current mapping:
 /// - `0` = `BackendKind::Mpt`
+/// - `1` = `BackendKind::Binary`
+/// - `2` = `BackendKind::Transition`
 pub(crate) fn backend_kind_to_byte(k: BackendKind) -> u8 {
     match k {
         BackendKind::Mpt => 0,
+        BackendKind::Binary => 1,
+        BackendKind::Transition => 2,
     }
 }
 
@@ -2286,9 +2759,27 @@ pub(crate) fn backend_kind_to_byte(k: BackendKind) -> u8 {
 pub(crate) fn byte_to_backend_kind(b: u8) -> Result<BackendKind, StoreError> {
     match b {
         0 => Ok(BackendKind::Mpt),
+        1 => Ok(BackendKind::Binary),
+        2 => Ok(BackendKind::Transition),
         other => Err(StoreError::Custom(format!(
             "unknown state backend format byte: {other:#04x}"
         ))),
+    }
+}
+
+/// Test-only helpers exposed as `pub` so external test crates (e.g.
+/// `ethrex-blockchain`) can simulate store state without a full async block
+/// pipeline.  These are not part of the stable API.
+impl Store {
+    /// Writes the `LatestBlockNumber` entry in `CHAIN_DATA` synchronously,
+    /// simulating what `forkchoice_update_inner` does when the first canonical
+    /// block is committed.  Used by tests that need to exercise code paths
+    /// downstream of `get_latest_canonical_block_header`.
+    ///
+    /// **Not for production use.**
+    pub fn test_set_latest_block_number(&self, number: u64) -> Result<(), StoreError> {
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        self.write(CHAIN_DATA, key, number.to_le_bytes().to_vec())
     }
 }
 
@@ -2304,9 +2795,142 @@ mod backend_format_tests {
     }
 
     #[test]
+    fn binary_round_trips() {
+        assert_eq!(backend_kind_to_byte(BackendKind::Binary), 1);
+        assert!(matches!(byte_to_backend_kind(1), Ok(BackendKind::Binary)));
+    }
+
+    #[test]
+    fn transition_round_trips() {
+        assert_eq!(backend_kind_to_byte(BackendKind::Transition), 2);
+        assert!(matches!(
+            byte_to_backend_kind(2),
+            Ok(BackendKind::Transition)
+        ));
+    }
+
+    #[test]
     fn unknown_byte_returns_err() {
         assert!(byte_to_backend_kind(0xFF).is_err());
-        assert!(byte_to_backend_kind(1).is_err());
+        assert!(byte_to_backend_kind(3).is_err());
+    }
+
+    /// `get_latest_canonical_block_header` must return `Ok(None)` on a fresh
+    /// store (no block ever committed) and `Ok(Some(_))` after the canonical
+    /// chain data is written.
+    ///
+    /// This tests that the function properly detects the "no block committed"
+    /// state rather than silently returning the zero-initialized default header.
+    #[test]
+    fn get_latest_canonical_block_header_returns_none_on_fresh_store() {
+        let store = Store::new(".", EngineType::InMemory, BackendKind::Mpt)
+            .expect("failed to open in-memory store");
+
+        // Fresh store: LatestBlockNumber absent → must return None.
+        let result = store
+            .get_latest_canonical_block_header()
+            .expect("must not error on fresh store");
+        assert!(
+            result.is_none(),
+            "fresh store must return None, not the zero-initialized default header"
+        );
+
+        // Simulate the first canonical block commit by writing LatestBlockNumber.
+        let key = chain_data_key(ChainDataIndex::LatestBlockNumber);
+        store
+            .write(CHAIN_DATA, key, 1u64.to_le_bytes().to_vec())
+            .expect("write LatestBlockNumber failed");
+
+        // Now it must return Some (the cache still holds the default header, but
+        // that's acceptable — the activator only cares that Some is returned).
+        let result2 = store
+            .get_latest_canonical_block_header()
+            .expect("must not error after writing LatestBlockNumber");
+        assert!(
+            result2.is_some(),
+            "after writing LatestBlockNumber, must return Some"
+        );
+    }
+
+    /// Plan §6 Task 7.9 — `binary_transition_locked_without_flag`.
+    ///
+    /// Persist format byte 2 + valid transition metadata to an in-memory backend,
+    /// then attempt to re-open the same backend with `BackendKind::Mpt`
+    /// (simulating a restart without `--binary-transition`).
+    ///
+    /// `Store::from_backend` must return `Err(StoreError::Custom(_))` with a
+    /// message containing "format byte 2 (transition) but --binary-transition was
+    /// not passed", and must NOT construct a usable `Store`.
+    #[test]
+    fn binary_transition_locked_without_flag() {
+        use crate::api::StorageBackend;
+        use crate::backend::in_memory::InMemoryBackend;
+        use std::sync::Arc;
+
+        let backend_arc: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+
+        // Step 1: open as MPT, write format byte 2 via persist_transition_metadata.
+        {
+            let store1 = Store::from_backend(
+                Arc::clone(&backend_arc),
+                std::path::PathBuf::from("."),
+                IN_MEMORY_COMMIT_THRESHOLD,
+                BackendKind::Mpt,
+            )
+            .unwrap();
+            store1
+                .persist_transition_metadata(5, Default::default(), Default::default())
+                .unwrap();
+        }
+
+        // Step 2: re-open with BackendKind::Mpt (flag absent). Must error.
+        let result = Store::from_backend(
+            Arc::clone(&backend_arc),
+            std::path::PathBuf::from("."),
+            IN_MEMORY_COMMIT_THRESHOLD,
+            BackendKind::Mpt,
+        );
+
+        match result {
+            Err(StoreError::Custom(msg)) => {
+                assert!(
+                    msg.contains(
+                        "format byte 2 (transition) but --binary-transition was not passed"
+                    ),
+                    "error message must explain the mismatch; got: {msg:?}"
+                );
+            }
+            Err(other) => panic!("expected StoreError::Custom, got: {other:?}"),
+            Ok(_) => panic!("expected Err but Store::from_backend succeeded"),
+        }
+    }
+
+    /// Regression test: `peek_backend_format_byte` must NOT create RocksDB
+    /// bootstrap files in a fresh datadir.  Earlier behavior opened RocksDB
+    /// unconditionally, populating the dir with CURRENT/MANIFEST/OPTIONS-* and
+    /// causing `Store::new` to bail with `NotFoundDBVersion` on the next call.
+    #[cfg(feature = "rocksdb")]
+    #[test]
+    fn peek_backend_format_byte_does_not_populate_fresh_datadir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path();
+
+        let result = Store::peek_backend_format_byte(path, EngineType::RocksDB)
+            .expect("peek must not error on fresh datadir");
+        assert!(
+            result.is_none(),
+            "peek on fresh datadir must return None, got {result:?}"
+        );
+
+        let entries: Vec<_> = std::fs::read_dir(path)
+            .expect("read_dir")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("collect entries");
+        assert!(
+            entries.is_empty(),
+            "datadir must remain empty after peek on fresh dir; found: {:?}",
+            entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
     }
 }
 
@@ -2330,5 +2954,60 @@ mod code_lookup_tests {
         assert_eq!(code.hash, *EMPTY_KECCACK_HASH);
         assert_eq!(code.bytecode.len(), 0, "empty bytecode");
         assert!(code.jump_targets.is_empty(), "no jump targets");
+    }
+}
+
+#[cfg(test)]
+mod hot_swap_clone_tests {
+    use super::*;
+    use ethrex_common::H256;
+    use ethrex_state_backend::BackendKind;
+
+    /// Verifies that `Store::clone` shares the `Arc<AtomicU8>` backing
+    /// `backend_kind`, so a hot-swap via `set_backend_kind` is immediately
+    /// visible to all live clones (RPC handlers, engine API, SyncManager, …).
+    ///
+    /// This test would have FAILED under the old by-value Clone where each clone
+    /// held its own independent `AtomicU8`.
+    #[test]
+    fn store_clone_shares_backend_kind_after_hot_swap() {
+        let store = Store::new(".", EngineType::InMemory, BackendKind::Mpt).unwrap();
+        let clone = store.clone();
+        assert_eq!(store.backend_kind(), BackendKind::Mpt);
+        assert_eq!(clone.backend_kind(), BackendKind::Mpt);
+
+        store.set_backend_kind(BackendKind::Transition);
+
+        assert_eq!(store.backend_kind(), BackendKind::Transition);
+        assert_eq!(
+            clone.backend_kind(),
+            BackendKind::Transition,
+            "Store clones must observe hot-swap (shared Arc<AtomicU8>)"
+        );
+    }
+
+    /// Verifies that `Store::clone` shares the `Arc<RwLock<…>>` backing
+    /// `transition_metadata`, so a write by `persist_transition_metadata` is
+    /// immediately visible to all live clones without a restart.
+    ///
+    /// This test would have FAILED under the old by-value Clone where each clone
+    /// held its own independent `RwLock`.
+    #[test]
+    fn store_clone_shares_transition_metadata_after_persist() {
+        let store = Store::new(".", EngineType::InMemory, BackendKind::Mpt).unwrap();
+        let clone = store.clone();
+        assert!(store.transition_metadata().is_none());
+        assert!(clone.transition_metadata().is_none());
+
+        let frozen = H256::from([0xAA; 32]);
+        let binary = H256::zero();
+        store
+            .persist_transition_metadata(42, frozen, binary)
+            .unwrap();
+
+        let meta = clone
+            .transition_metadata()
+            .expect("Store clones must observe persisted metadata (shared Arc<RwLock>)");
+        assert_eq!(meta, (42, frozen, binary));
     }
 }

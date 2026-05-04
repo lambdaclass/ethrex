@@ -3861,11 +3861,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-binary-trie"
+version = "10.0.0"
+dependencies = [
+ "blake3",
+ "bytes",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-state-backend",
+ "fastbloom",
+ "hex",
+ "lru 0.16.4",
+ "rayon",
+ "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "ethrex-blockchain"
 version = "10.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
+ "ethrex-binary-trie",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-guest-program",
@@ -4410,6 +4430,7 @@ version = "10.0.0"
 dependencies = [
  "anyhow",
  "bytes",
+ "ethrex-binary-trie",
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
@@ -4455,6 +4476,7 @@ dependencies = [
  "cita_trie",
  "ethereum-types 0.15.1",
  "ethrex",
+ "ethrex-binary-trie",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
@@ -4482,6 +4504,7 @@ dependencies = [
  "rkyv",
  "rustc-hash 2.1.2",
  "secp256k1",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",

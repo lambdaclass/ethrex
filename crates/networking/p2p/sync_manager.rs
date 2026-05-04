@@ -29,6 +29,14 @@ pub struct SyncManager {
     snap_enabled: Arc<AtomicBool>,
     syncer: Arc<Mutex<Syncer>>,
     last_fcu_head: Arc<Mutex<H256>>,
+    /// The finalized block hash and number from the most recent FCU message.
+    /// Populated whenever `engine_forkchoiceUpdated` is received.
+    /// Default is `(H256::zero(), 0)` until the first FCU arrives.
+    last_fcu_finalized: Arc<Mutex<(H256, u64)>>,
+    /// One-shot latch: true once the follower has seen its head at or beyond
+    /// the CL-reported finalized block. Never reset to false.
+    /// Set with `Ordering::Release`; read with `Ordering::Acquire`.
+    caught_up: Arc<AtomicBool>,
     store: Store,
     diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 }
@@ -58,7 +66,7 @@ impl SyncManager {
         // For post-merge networks (terminal_total_difficulty_passed), any stored
         // block > 0 means the node has previously synced. For pre-merge networks,
         // use merge_netsplit_block as threshold to avoid false positives in hive tests.
-        if snap_enabled.load(Ordering::Relaxed) {
+        if snap_enabled.load(Ordering::Acquire) {
             let latest_block = store.get_latest_block_number().await.unwrap_or(0);
             let chain_config = store.get_chain_config();
             let is_synced = if chain_config.terminal_total_difficulty_passed {
@@ -70,7 +78,7 @@ impl SyncManager {
             };
             if is_synced {
                 info!("Node has synced state (block {latest_block}), switching to full sync");
-                snap_enabled.store(false, Ordering::Relaxed);
+                snap_enabled.store(false, Ordering::Release);
                 if has_checkpoint && let Err(e) = store.clear_snap_state().await {
                     warn!("Failed to clear stale snap state: {e}");
                 }
@@ -90,13 +98,15 @@ impl SyncManager {
             snap_enabled,
             syncer,
             last_fcu_head: Arc::new(Mutex::new(H256::zero())),
+            last_fcu_finalized: Arc::new(Mutex::new((H256::zero(), 0))),
+            caught_up: Arc::new(AtomicBool::new(false)),
             store: store.clone(),
             diagnostics,
         };
         // If the node was in the middle of a sync and then re-started we must resume syncing
         // Otherwise we will incorreclty assume the node is already synced and work on invalid state
         // Skip if the auto-switch already transitioned to full sync (snap_enabled is now false)
-        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Relaxed) {
+        if has_checkpoint && sync_manager.snap_enabled.load(Ordering::Acquire) {
             sync_manager.start_sync();
         }
         sync_manager
@@ -112,7 +122,9 @@ impl SyncManager {
 
     /// Returns the syncer's current syncmode (either snap or full)
     pub fn sync_mode(&self) -> SyncMode {
-        if self.snap_enabled.load(Ordering::Relaxed) {
+        // Acquire pairs with the Release stores in disable_snap / SyncManager::new
+        // and snap_sync.rs, ensuring callers see a consistent view.
+        if self.snap_enabled.load(Ordering::Acquire) {
             SyncMode::Snap
         } else {
             SyncMode::Full
@@ -121,7 +133,7 @@ impl SyncManager {
 
     /// Disables snapsync mode
     pub fn disable_snap(&self) {
-        self.snap_enabled.store(false, Ordering::Relaxed);
+        self.snap_enabled.store(false, Ordering::Release);
     }
 
     /// Returns a snapshot of the current sync diagnostics with live values.
@@ -236,5 +248,71 @@ impl SyncManager {
 
     pub fn get_last_fcu_head(&self) -> Result<H256, tokio::sync::TryLockError> {
         Ok(*self.last_fcu_head.try_lock()?)
+    }
+
+    /// Returns a clone of the `snap_enabled` atomic so callers can observe
+    /// (read-only) whether snap sync is still active.
+    pub fn snap_enabled(&self) -> Arc<AtomicBool> {
+        self.snap_enabled.clone()
+    }
+
+    /// Returns a clone of the `caught_up` atomic. Set to true (one-shot latch)
+    /// once the follower's committed head reaches or exceeds the CL-reported
+    /// finalized block number. Never reset to false.
+    pub fn caught_up(&self) -> Arc<AtomicBool> {
+        self.caught_up.clone()
+    }
+
+    /// Returns true if the follower has been caught up to finalized head at
+    /// least once since this process started.
+    pub fn is_caught_up(&self) -> bool {
+        self.caught_up.load(Ordering::Acquire)
+    }
+
+    /// Returns a clone of the `last_fcu_finalized` mutex so callers can read
+    /// the most recently received finalized block hash and number.
+    pub fn last_fcu_finalized(&self) -> Arc<Mutex<(H256, u64)>> {
+        self.last_fcu_finalized.clone()
+    }
+
+    /// Records the finalized block from an FCU message.
+    ///
+    /// Called from the FCU handler each time `engine_forkchoiceUpdated` fires.
+    /// Stores the finalized block hash and number so that the `TransitionActivator`
+    /// can compare against the committed head when checking `caught_up`.
+    pub fn update_fcu_finalized(&self, finalized_hash: H256, finalized_number: u64) {
+        if let Ok(mut guard) = self.last_fcu_finalized.try_lock() {
+            *guard = (finalized_hash, finalized_number);
+        } else {
+            warn!("Failed to update last_fcu_finalized: lock contended");
+        }
+    }
+
+    /// Checks whether the given committed block number meets or exceeds the
+    /// CL-reported finalized head. If so, latches `caught_up` to true.
+    ///
+    /// This is a one-shot latch: once true it never returns to false.
+    /// Call this after each successful block commit.
+    pub fn check_and_latch_caught_up(&self, committed_number: u64) {
+        // Already latched — nothing to do.
+        if self.caught_up.load(Ordering::Acquire) {
+            return;
+        }
+        let finalized_number = match self.last_fcu_finalized.try_lock() {
+            Ok(guard) => guard.1,
+            Err(_) => return, // Can't read; skip this tick.
+        };
+        // Only latch if we have received at least one real FCU (number > 0).
+        if finalized_number > 0 && committed_number >= finalized_number {
+            self.caught_up.store(true, Ordering::Release);
+            // Plain "caught up" log — does NOT imply binary transition will fire.
+            // Whether anything observes this latch depends on whether a
+            // TransitionActivator was installed at startup (only when
+            // --binary-transition is set AND the DB is in Mpt mode).
+            info!(
+                committed_number,
+                finalized_number, "Follower caught up to finalized head."
+            );
+        }
     }
 }

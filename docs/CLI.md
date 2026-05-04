@@ -103,6 +103,11 @@ P2P options:
           [env: ETHREX_SYNCMODE=]
           [default: snap]
 
+      --binary-transition
+          Enable opt-in MPT→binary trie transition (research preview; L1 follower only). Activates automatically once snap sync completes and the follower catches up to finalized head. Activation is in-process; the node transitions to overlay-binary mode without operator intervention. See `docs/binary-trie/operational.md` for the full operator runbook.
+
+          [env: ETHREX_BINARY_TRANSITION=]
+
       --p2p.disabled
           [env: ETHREX_P2P_DISABLED=]
 

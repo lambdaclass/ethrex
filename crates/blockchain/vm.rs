@@ -5,7 +5,7 @@ use ethrex_common::{
         AccountStateInfo, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata,
     },
 };
-use ethrex_state_backend::StateReader;
+use ethrex_state_backend::{BackendKind, StateReader};
 use ethrex_storage::{StateBackend, Store};
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
@@ -38,19 +38,7 @@ pub struct StoreVmDatabase {
 
 impl StoreVmDatabase {
     pub fn new(store: Store, block_header: BlockHeader) -> Result<Self, EvmError> {
-        // If we don't have the state for the base, we want to fail in a clear way
-        // instead of eventually erroring due to one of the several errors that may
-        // happen as a result of executing from the wrong state
-        // This lets one easily tell apart an inconsistent state from a syncing issue
-        if !store
-            .has_state_root(block_header.state_root)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            return Err(EvmError::DB("state root missing".to_string()));
-        }
-        let state_backend = store
-            .new_state_reader(block_header.state_root)
-            .map_err(|e| EvmError::DB(e.to_string()))?;
+        let state_backend = Self::build_state_backend(&store, &block_header)?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
@@ -66,16 +54,7 @@ impl StoreVmDatabase {
         block_header: BlockHeader,
         block_hash_cache: BTreeMap<BlockNumber, BlockHash>,
     ) -> Result<Self, EvmError> {
-        // Fail clearly if prestate is missing. See `StoreVmDatabase::new` for details on why we want this
-        if !store
-            .has_state_root(block_header.state_root)
-            .map_err(|e| EvmError::DB(e.to_string()))?
-        {
-            return Err(EvmError::DB("state root missing".to_string()));
-        }
-        let state_backend = store
-            .new_state_reader(block_header.state_root)
-            .map_err(|e| EvmError::DB(e.to_string()))?;
+        let state_backend = Self::build_state_backend(&store, &block_header)?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
@@ -84,6 +63,56 @@ impl StoreVmDatabase {
             state_root: block_header.state_root,
             state_backend: Arc::new(state_backend),
         })
+    }
+
+    /// Constructs the correct `StateBackend` for the given block header, dispatching
+    /// on the store's current backend kind.
+    ///
+    /// For `BackendKind::Mpt`: performs the `has_state_root` pre-check (fast-fail on
+    /// missing prestate) then opens an MPT reader for the block's `state_root`.
+    ///
+    /// For `BackendKind::Transition`: skips the `has_state_root` check (the header's
+    /// `state_root` is the canonical MPT root from the peer, which is never written to
+    /// disk post-switch — the check would always fail). Opens a transition reader using
+    /// the metadata persisted at activation time.
+    ///
+    /// `BackendKind::Binary` is not reachable from the VM read path until Phase 8
+    /// (genesis-binary) lands.
+    fn build_state_backend(
+        store: &Store,
+        block_header: &BlockHeader,
+    ) -> Result<StateBackend, EvmError> {
+        match store.backend_kind() {
+            BackendKind::Mpt => {
+                // If we don't have the state for the base, we want to fail in a clear way
+                // instead of eventually erroring due to one of the several errors that may
+                // happen as a result of executing from the wrong state.
+                // This lets one easily tell apart an inconsistent state from a syncing issue.
+                if !store
+                    .has_state_root(block_header.state_root)
+                    .map_err(|e| EvmError::DB(e.to_string()))?
+                {
+                    return Err(EvmError::DB("state root missing".to_string()));
+                }
+                store
+                    .new_state_reader(block_header.state_root)
+                    .map_err(|e| EvmError::DB(e.to_string()))
+            }
+            BackendKind::Transition => {
+                let (switch_block, frozen_mpt_root, binary_root) =
+                    store.transition_metadata().ok_or_else(|| {
+                        EvmError::DB(
+                            "Transition mode requires transition_metadata; not loaded".to_string(),
+                        )
+                    })?;
+                store
+                    .new_transition_state_reader(switch_block, frozen_mpt_root, binary_root)
+                    .map_err(|e| EvmError::DB(e.to_string()))
+            }
+            BackendKind::Binary => unreachable!(
+                "BackendKind::Binary unreachable from VM read path until Phase 8 (genesis-binary) lands"
+            ),
+        }
     }
 
     fn get_cached_account_state_info(
@@ -242,6 +271,106 @@ impl VmDatabase for StoreVmDatabase {
                 "Code metadata not found for hash: {code_hash:?}",
             ))),
             Err(e) => Err(EvmError::DB(e.to_string())),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ethrex_common::{Address, H256, types::BlockHeader};
+    use ethrex_state_backend::BackendKind;
+    use ethrex_storage::{EngineType, Store};
+    use ethrex_trie::EMPTY_TRIE_HASH;
+    use ethrex_vm::VmDatabase;
+
+    use super::StoreVmDatabase;
+
+    /// Verifies that `StoreVmDatabase::new` in Transition mode bypasses the
+    /// `has_state_root` gate and that `get_account_state` succeeds through the
+    /// Transition read path (sub-Bug 0B: `account_state_info` previously returned
+    /// an error for Binary/Transition backends, making every account read fail).
+    ///
+    /// Bug 0 root cause: both constructors called `store.new_state_reader` unconditionally,
+    /// so Transition mode was cosmetic — block execution still ran the MPT reader and the
+    /// `has_state_root` check always failed post-switch (the peer header's MPT root is
+    /// never stored as a state trie root after activation).
+    ///
+    /// This test proves:
+    /// 1. In Transition mode, `StoreVmDatabase::new` succeeds even when the header's
+    ///    `state_root` is not present in the DB (gate correctly bypassed).
+    /// 2. `get_account_state` returns `Ok(None)` for an unknown address rather than
+    ///    erroring with "AccountStateInfo is MPT-specific" (sub-Bug 0B fixed).
+    /// 3. In MPT mode with the same non-canonical `state_root`, `StoreVmDatabase::new`
+    ///    fails with "state root missing" (gate fires as expected).
+    #[test]
+    fn transition_mode_vm_database_uses_transition_reader() {
+        // Build an MPT store and activate transition by persisting metadata +
+        // hot-swapping backend_kind.
+        let store = Store::new(".", EngineType::InMemory, BackendKind::Mpt)
+            .expect("failed to create in-memory store");
+
+        // Use EMPTY_TRIE_HASH as the frozen MPT root so that the TransitionBackend's
+        // base MPT lookups return Ok(None) for any unknown address (the trie exists as
+        // an empty trie; no on-disk node data required). This lets get_account_state
+        // exercise the full read path without needing actual MPT state written to disk.
+        let frozen_mpt_root = *EMPTY_TRIE_HASH;
+        let binary_root = H256::zero(); // fresh binary overlay (no commits yet)
+
+        store
+            .persist_transition_metadata(100, frozen_mpt_root, binary_root)
+            .expect("persist_transition_metadata failed");
+        store.set_backend_kind(BackendKind::Transition);
+
+        // The header's state_root is set to a non-canonical value that does NOT match
+        // any actual trie root on disk. In Transition mode this field is ignored for
+        // backend construction (the metadata's frozen_mpt_root is used instead); in
+        // MPT mode the `has_state_root` gate would reject it.
+        let non_canonical_root = H256::from([0xAA; 32]);
+        let header = {
+            let mut h = BlockHeader::default();
+            h.state_root = non_canonical_root;
+            h
+        };
+
+        // --- Positive assertion: Transition mode must succeed. ---
+        // Gate is bypassed; TransitionBackend is built from persisted metadata.
+        let db = StoreVmDatabase::new(store.clone(), header.clone())
+            .expect("StoreVmDatabase::new must succeed in Transition mode");
+
+        // --- Sub-Bug 0B: account_state_info must not error for Transition backend. ---
+        // Prior to the fix, this call returned Err("AccountStateInfo is MPT-specific…")
+        // for any address, causing every block-execution account read to fail post-switch.
+        // With frozen_mpt_root = EMPTY_TRIE_HASH, the overlay is empty and the base MPT
+        // lookup returns Ok(None) without any DB I/O. The overall result must be Ok(None).
+        let unknown_addr = Address::from([0xBB; 20]);
+        let account_result = db.get_account_state(unknown_addr);
+        assert!(
+            account_result.is_ok(),
+            "get_account_state must not error on Transition backend; got: {account_result:?}"
+        );
+        assert_eq!(
+            account_result.unwrap(),
+            None,
+            "get_account_state must return None for an unknown address in empty Transition state"
+        );
+
+        // --- Negative assertion: MPT mode with the same non-canonical root must fail. ---
+        // This proves the gate actually fires in MPT mode, making the Transition bypass
+        // meaningful rather than vacuous.
+        let mpt_store = Store::new(".", EngineType::InMemory, BackendKind::Mpt)
+            .expect("failed to create MPT store");
+        let mpt_result = StoreVmDatabase::new(mpt_store, header);
+        assert!(
+            mpt_result.is_err(),
+            "StoreVmDatabase::new must fail in MPT mode for a non-canonical state_root"
+        );
+        if let Err(ethrex_vm::EvmError::DB(msg)) = mpt_result {
+            assert!(
+                msg.contains("state root missing"),
+                "error must say 'state root missing'; got: {msg}"
+            );
+        } else {
+            panic!("expected EvmError::DB(state root missing)");
         }
     }
 }
