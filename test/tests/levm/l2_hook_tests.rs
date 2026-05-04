@@ -226,7 +226,7 @@ fn non_privileged_l2_env(
         base_fee_per_gas: U256::from(base_fee_per_gas),
         base_blob_fee_per_gas: U256::from(1),
         gas_price: U256::from(gas_price),
-        tx_max_priority_fee_per_gas: Some(U256::from(gas_price - base_fee_per_gas)),
+        tx_max_priority_fee_per_gas: Some(U256::from(gas_price.saturating_sub(base_fee_per_gas))),
         tx_max_fee_per_gas: Some(U256::from(gas_price)),
         block_gas_limit: gas_limit * 2,
         ..Default::default()

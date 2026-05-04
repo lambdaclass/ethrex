@@ -325,6 +325,10 @@ impl CallFrameBackup {
         self.bal_checkpoint = None;
     }
 
+    /// Merges `other` into `self`, per-address. For slots present in both,
+    /// `other`'s values win. Callers MUST pass the older/more-original backup
+    /// as `other` so the truly-original value is preserved (matches the
+    /// `or_insert` semantic in `backup_storage_slot`).
     pub fn extend(&mut self, other: CallFrameBackup) {
         // Per-slot merge: plain HashMap::extend would let `other`'s inner slot map
         // replace `self`'s, dropping any slots `self` had for the same address.
