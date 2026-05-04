@@ -654,6 +654,22 @@ impl Store {
     /// Check if the code exists in the cache (attribute `account_code_cache`), if not,
     /// reads the database, and if it exists, decodes and returns it.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Option<Code>, StoreError> {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+
+        // Empty-code special case: every empty-coded account hashes to
+        // EMPTY_KECCACK_HASH. We don't store that entry in `ACCOUNT_CODES`
+        // explicitly (saves space across millions of empty accounts), but
+        // callers — notably the snap-server's `GetByteCodes` handler — must
+        // see a `Some(empty)` to satisfy the eth/devp2p protocol expectation.
+        // Mirrors the `get_code_metadata` empty-code special case.
+        if code_hash == *EMPTY_KECCACK_HASH {
+            return Ok(Some(Code {
+                hash: code_hash,
+                bytecode: Bytes::new(),
+                jump_targets: Vec::new(),
+            }));
+        }
+
         // check cache first
         if let Some(code) = self
             .account_code_cache
@@ -2291,5 +2307,28 @@ mod backend_format_tests {
     fn unknown_byte_returns_err() {
         assert!(byte_to_backend_kind(0xFF).is_err());
         assert!(byte_to_backend_kind(1).is_err());
+    }
+}
+
+#[cfg(test)]
+mod code_lookup_tests {
+    use super::*;
+    use ethrex_common::constants::EMPTY_KECCACK_HASH;
+    use ethrex_state_backend::BackendKind;
+
+    /// Regression test for hive devp2p `GetByteCodes` Test 3: a snap-protocol
+    /// query for `EMPTY_KECCACK_HASH` must return an empty-bytecode entry, not
+    /// `None`. The empty-code entry is never written to `ACCOUNT_CODES` (would
+    /// duplicate across every empty-coded account); we must synthesize it.
+    #[test]
+    fn get_account_code_empty_hash_returns_empty_bytecode() {
+        let store = Store::new(".", EngineType::InMemory, BackendKind::Mpt).unwrap();
+        let code = store
+            .get_account_code(*EMPTY_KECCACK_HASH)
+            .unwrap()
+            .expect("EMPTY_KECCACK_HASH must yield Some(empty Code)");
+        assert_eq!(code.hash, *EMPTY_KECCACK_HASH);
+        assert_eq!(code.bytecode.len(), 0, "empty bytecode");
+        assert!(code.jump_targets.is_empty(), "no jump targets");
     }
 }
