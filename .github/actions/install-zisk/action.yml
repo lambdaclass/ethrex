@@ -12,7 +12,8 @@ runs:
 
     - name: Install ZisK
       shell: bash
-      # Must match the `ziskos` tag in crates/guest-program/bin/zisk/Cargo.toml.
+      # Must match the `ziskos` tag in both crates/guest-program/Cargo.toml
+      # and crates/guest-program/bin/zisk/Cargo.toml.
       env:
         ZISK_VERSION: "0.16.1"
       run: |
@@ -21,5 +22,5 @@ runs:
         mkdir -p "$HOME/.zisk/bin"
         retry curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v${ZISK_VERSION}/ziskup/ziskup" -o "$HOME/.zisk/bin/ziskup"
         chmod +x "$HOME/.zisk/bin/ziskup"
-        "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}"
+        retry "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}"
         echo "$HOME/.zisk/bin" >> $GITHUB_PATH
