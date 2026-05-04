@@ -20,8 +20,10 @@ const SKIPPED_BASE: &[&str] = &[
     "createBlobhashTx",
 ];
 
-// Extra skips added only for prover backends.
-#[cfg(feature = "sp1")]
+// Extra skips added only for prover backends. The `not(feature = "stateless")`
+// clause keeps the `compile_error!` above as the sole diagnostic when both
+// features are mistakenly enabled together.
+#[cfg(all(feature = "sp1", not(feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[
     // I believe these tests fail because of how much stress they put into the zkVM, they probably cause an OOM though this should be checked
     "static_Call50000",
@@ -55,7 +57,7 @@ const EXTRA_SKIPS: &[&str] = &[];
 // Select backend
 #[cfg(feature = "stateless")]
 const BACKEND: Option<BackendType> = Some(BackendType::Exec);
-#[cfg(feature = "sp1")]
+#[cfg(all(feature = "sp1", not(feature = "stateless")))]
 const BACKEND: Option<BackendType> = Some(BackendType::SP1);
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const BACKEND: Option<BackendType> = None;
