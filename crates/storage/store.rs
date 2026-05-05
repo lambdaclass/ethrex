@@ -1995,6 +1995,13 @@ impl Store {
 
     /// Applies account updates based on the block's latest storage state
     /// and returns the new state root after the updates have been applied.
+    ///
+    /// Dispatches the underlying state reader on the active `backend_kind` so
+    /// `Blockchain::add_block` (the non-pipelined path that calls this) does
+    /// not silently route through the MPT-only reader after Transition
+    /// activation. Same Bug 0 / Bug 5 family — if this used `new_state_reader`
+    /// unconditionally, post-switch state writes here would never reach the
+    /// binary overlay.
     pub fn apply_account_updates_batch(
         &self,
         block_hash: BlockHash,
@@ -2003,7 +2010,19 @@ impl Store {
         let Some(header) = self.get_block_header_by_hash(block_hash)? else {
             return Ok(None);
         };
-        let backend = self.new_state_reader(header.state_root)?;
+        let backend = match self.backend_kind() {
+            BackendKind::Mpt => self.new_state_reader(header.state_root)?,
+            BackendKind::Transition => {
+                let (switch_block, frozen_mpt_root, binary_root) =
+                    self.transition_metadata().ok_or_else(|| {
+                        StoreError::Custom(
+                            "Transition mode requires transition_metadata; not loaded".to_string(),
+                        )
+                    })?;
+                self.new_transition_state_reader(switch_block, frozen_mpt_root, binary_root)?
+            }
+            BackendKind::Binary => self.new_binary_state_reader(header.state_root)?,
+        };
         Ok(Some(
             backend
                 .apply_account_updates(account_updates)

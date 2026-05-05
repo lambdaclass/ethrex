@@ -437,4 +437,6 @@ Fix (`crates/blockchain/blockchain.rs:483-528`): `execute_block_pipeline` now di
 
 Constructs both `mpt_provider` and `binary_provider` ahead of the spawn so the threading layout is unchanged. After this fix, post-Transition blocks merkleize via `BinaryMerkleizer`, write to the binary overlay, and the `[BINARY-DEBUG] advanced current_binary_root` + `update_accounts` logs from the diagnostic round will start firing — confirming the design pipeline now matches MPT's structure.
 
-Also-need (separate, Phase-9-or-followup): `Store::apply_account_updates_batch` (used by `Blockchain::add_block`, the simpler non-pipelined path) still calls `self.new_state_reader(header.state_root)` which is MPT-only. Same Bug-0/Bug-5 family for that path. Not on the snap-sync hot path so not blocking, but should be addressed for completeness.
+Companion fix landed in same commit family: `Store::apply_account_updates_batch` (used by `Blockchain::add_block`, the non-pipelined path) was MPT-only via `self.new_state_reader(header.state_root)`. Now dispatches on `backend_kind`: Mpt → existing reader, Transition → `new_transition_state_reader` with the persisted metadata, Binary → `new_binary_state_reader`. Same Bug 0/5 family closed everywhere, not just on the snap-sync hot path.
+
+The `BackendKind::Binary` arm in `execute_block_pipeline` now calls `Merkleizer::new_binary` (instead of `unreachable!()`). Not exercised by `--binary-transition` mode, but the pipeline is fully wired so `--binary-from-genesis` (Phase 8) can drop in without touching this dispatch.

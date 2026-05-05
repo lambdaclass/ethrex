@@ -411,8 +411,8 @@ impl Blockchain {
 
         let cancelled = AtomicBool::new(false);
 
-        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
-            |s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) =
+            std::thread::scope(|s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
                 let warm_handle = std::thread::Builder::new()
@@ -518,10 +518,12 @@ impl Blockchain {
                                 binary_provider,
                                 merkle_pool,
                             )?,
-                            BackendKind::Binary => unreachable!(
-                                "BackendKind::Binary in execute_block_pipeline is Phase 8 territory; \
-                                 not reachable until --binary-from-genesis lands"
-                            ),
+                            BackendKind::Binary => Merkleizer::new_binary(
+                                parent_state_root,
+                                precompute_witnesses,
+                                binary_provider,
+                                merkle_pool,
+                            )?,
                         };
                         for updates in rx {
                             merkleizer.feed_updates(updates)?;
@@ -547,8 +549,7 @@ impl Blockchain {
                     .ok()
                     .unwrap_or(Duration::ZERO);
                 Ok((execution_result, merkleization_result, warmer_duration))
-            },
-        )?;
+            })?;
         let (merkle_output, merkle_end_instant) =
             merkleization_result.map_err(|e| ChainError::Custom(e.to_string()))?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
