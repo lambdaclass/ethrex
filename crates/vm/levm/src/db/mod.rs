@@ -14,11 +14,11 @@ pub mod gen_db;
 // Bounded so the cache survives cross-block reuse without unbounded growth.
 // Caps are first-pass values; revisit once we have benchmarks.
 #[allow(clippy::unwrap_used)]
-const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(256 * 1024).unwrap();
+const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(1024 * 1024).unwrap();
 #[allow(clippy::unwrap_used)]
-const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(1024 * 1024).unwrap();
+const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(4 * 1024 * 1024).unwrap();
 #[allow(clippy::unwrap_used)]
-const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(4 * 1024).unwrap();
+const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(64 * 1024).unwrap();
 
 type AccountCache = LruCache<Address, AccountState, FxBuildHasher>;
 type StorageCache = LruCache<(Address, H256), U256, FxBuildHasher>;
