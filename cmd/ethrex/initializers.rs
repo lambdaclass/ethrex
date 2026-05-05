@@ -528,6 +528,7 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            private_mempool: opts.mempool_private,
         },
     );
 
