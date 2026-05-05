@@ -5,18 +5,12 @@ use ethrex_common::{
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::sync::{
-    Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
 
 // Type aliases for cache storage maps.
-//
-// TODO: investigate replacing FxHashMap with `schnellru::LruMap` for bounded
-// eviction (storage especially) once we have benchmarks. See plan in
-// `track-perf-commit/cross-block-caches/plan.md` (Sizing section).
+// TODO: bound eviction (LruMap) once benchmarked.
 type AccountCache = FxHashMap<Address, AccountState>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
@@ -56,18 +50,12 @@ pub trait Database: Send + Sync {
 ///
 /// Thread-safe via RwLock - optimized for read-heavy concurrent access.
 ///
-/// The inner database is swappable so that the cache itself can survive across
-/// blocks (see [`CrossBlockCache`]). Reads consult the cache first; on a miss,
-/// the current `inner` is queried and the value is populated. The caller MUST
-/// ensure that whenever `inner` is swapped, it points at a database whose state
-/// matches what the cache currently holds (i.e. the post-state of the most
-/// recently promoted block).
+/// Inner DB is swappable (see [`CrossBlockCache`]) so the cache can be reused
+/// across blocks; caller MUST ensure a swapped inner reflects the post-state
+/// of the most recently promoted block.
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
 pub struct CachingDatabase {
-    /// Underlying database for cache misses. Swappable via [`Self::set_inner`]
-    /// so the cache can be reused across blocks while the read-through target
-    /// follows the current parent state.
     inner: RwLock<Arc<dyn Database>>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
     accounts: RwLock<AccountCache>,
@@ -93,16 +81,13 @@ impl CachingDatabase {
         }
     }
 
-    /// Replace the inner database. Must be called when no other thread is reading
-    /// through this cache (e.g. between blocks, before warmer/executor threads
-    /// are spawned).
+    /// Replace the inner database. Caller must ensure no other thread is reading
+    /// through the cache during the swap.
     pub fn set_inner(&self, inner: Arc<dyn Database>) -> Result<(), DatabaseError> {
         *self.inner.write().map_err(poison_error_to_db_error)? = inner;
         Ok(())
     }
 
-    /// Snapshot the current inner database. Returned `Arc` is independent of
-    /// future `set_inner` calls.
     fn current_inner(&self) -> Result<Arc<dyn Database>, DatabaseError> {
         self.inner
             .read()
@@ -115,28 +100,25 @@ impl CachingDatabase {
         &self.precompile_cache
     }
 
-    /// Drop all cached state. Used by [`CrossBlockCache::invalidate`] on reorg
-    /// or parent mismatch. Recovers from poisoned locks since clearing is the
+    /// Drop all cached state. Recovers from poisoned locks: clearing is the
     /// right action when a previous mutator panicked.
     pub fn clear_all(&self) {
-        if let Ok(mut a) = self.accounts.write() {
-            a.clear();
-        }
-        if let Ok(mut s) = self.storage.write() {
-            s.clear();
-        }
-        if let Ok(mut c) = self.code.write() {
-            c.clear();
-        }
+        self.accounts
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.storage
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        self.code.write().unwrap_or_else(|p| p.into_inner()).clear();
     }
 
     fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
         self.accounts.read().map_err(poison_error_to_db_error)
     }
 
-    pub(crate) fn write_accounts(
-        &self,
-    ) -> Result<RwLockWriteGuard<'_, AccountCache>, DatabaseError> {
+    fn write_accounts(&self) -> Result<RwLockWriteGuard<'_, AccountCache>, DatabaseError> {
         self.accounts.write().map_err(poison_error_to_db_error)
     }
 
@@ -144,9 +126,7 @@ impl CachingDatabase {
         self.storage.read().map_err(poison_error_to_db_error)
     }
 
-    pub(crate) fn write_storage(
-        &self,
-    ) -> Result<RwLockWriteGuard<'_, StorageCache>, DatabaseError> {
+    fn write_storage(&self) -> Result<RwLockWriteGuard<'_, StorageCache>, DatabaseError> {
         self.storage.write().map_err(poison_error_to_db_error)
     }
 
@@ -154,7 +134,7 @@ impl CachingDatabase {
         self.code.read().map_err(poison_error_to_db_error)
     }
 
-    pub(crate) fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
+    fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
         self.code.write().map_err(poison_error_to_db_error)
     }
 }
@@ -265,10 +245,16 @@ impl Database for CachingDatabase {
     }
 }
 
-/// Placeholder database used when a [`CrossBlockCache`] is constructed before
-/// the first block is processed. Any read errors out — `set_inner` MUST be
-/// called before any execution path consults the cache.
+/// Placeholder used until [`CrossBlockCache::set_inner`] is called. Reads error
+/// loudly so a missing `set_inner` is impossible to miss.
 struct UnsetInner;
+
+const UNSET_INNER_MSG: &str =
+    "CrossBlockCache: inner database not set; call set_inner() before use";
+
+fn unset_inner_error() -> DatabaseError {
+    DatabaseError::Custom(UNSET_INNER_MSG.to_string())
+}
 
 impl Database for UnsetInner {
     fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
@@ -291,41 +277,14 @@ impl Database for UnsetInner {
     }
 }
 
-fn unset_inner_error() -> DatabaseError {
-    DatabaseError::Custom(
-        "CrossBlockCache: inner database not set; call set_inner() before use".to_string(),
-    )
-}
-
-/// Cross-block state cache.
-///
-/// Wraps a [`CachingDatabase`] and adds the lifecycle metadata needed to keep
-/// the cache valid across multiple block executions:
-///
-/// - `last_committed` records the `(number, hash)` of the most recent block
-///   whose post-state was promoted into the cache. The next block must extend
-///   this one (i.e. its `parent_hash == last_committed.hash`); otherwise the
-///   cache is invalidated.
-/// - `legacy_clear` is a hint set during execution of pre-EIP-6780 SELFDESTRUCT
-///   blocks. The promotion path uses it to wipe the storage cache wholesale
-///   when a legacy storage clear happened (rare; pre-Cancun only).
-///
-/// Reads delegate to the inner [`CachingDatabase`]; writes are deferred to
-/// `promote_block`, which is only called after the block has been successfully
-/// executed AND stored. If anything fails between execution and `store_block`,
-/// `promote_block` is not invoked, so the cache is never poisoned with state
-/// from an invalid block.
-///
-/// See `track-perf-commit/cross-block-caches/plan.md` and Nethermind PR #10959
-/// for the upstream design we're translating.
+/// Cross-block state cache. Wraps a [`CachingDatabase`] with the lifecycle
+/// metadata needed to keep cached state valid across blocks: the next block
+/// must extend `last_committed`, otherwise the cache is invalidated. Writes
+/// are deferred to [`Self::promote_block`], called only after a block has been
+/// successfully executed AND stored.
 pub struct CrossBlockCache {
     cache: Arc<CachingDatabase>,
-    /// `(parent_number, parent_hash)` whose post-state matches what's cached.
-    /// `None` until the first successful promotion (or after invalidation).
     last_committed: RwLock<Option<(BlockNumber, BlockHash)>>,
-    /// Hint set during execution of a block containing a pre-EIP-6780
-    /// SELFDESTRUCT. Reset by `promote_block` / `invalidate`.
-    legacy_clear: AtomicBool,
 }
 
 impl CrossBlockCache {
@@ -333,113 +292,53 @@ impl CrossBlockCache {
         Self {
             cache: Arc::new(CachingDatabase::new(inner)),
             last_committed: RwLock::new(None),
-            legacy_clear: AtomicBool::new(false),
         }
     }
 
-    /// Construct without an initial backing database. The cache is empty and
-    /// any read will fail loudly until [`Self::set_inner`] is called. Used so
-    /// `Blockchain` can hold an `Arc<CrossBlockCache>` field that's set up at
-    /// the start of every block.
+    /// Empty cache; reads fail until [`Self::set_inner`] is called.
     pub fn unset() -> Self {
         Self::new(Arc::new(UnsetInner))
     }
 
-    /// Construct from an existing `CachingDatabase`. Used when the inner cache
-    /// is shared with other consumers (e.g. warming threads that take an
-    /// `Arc<dyn Database>`).
-    pub fn from_cache(cache: Arc<CachingDatabase>) -> Self {
-        Self {
-            cache,
-            last_committed: RwLock::new(None),
-            legacy_clear: AtomicBool::new(false),
-        }
-    }
-
-    /// The wrapped [`CachingDatabase`]. Cloning the returned `Arc` is cheap.
-    pub fn cache(&self) -> Arc<CachingDatabase> {
-        self.cache.clone()
-    }
-
-    /// Replace the underlying database (typically with the StoreVmDatabase for
-    /// the new block's parent). Caller must ensure no other thread is reading
-    /// through this cache during the swap.
     pub fn set_inner(&self, inner: Arc<dyn Database>) -> Result<(), DatabaseError> {
         self.cache.set_inner(inner)
     }
 
-    /// True if the cache's `last_committed` matches the supplied parent
-    /// `(number, hash)`. Used to detect reorgs / sibling-block scenarios.
     pub fn is_valid_for_parent(&self, parent_number: BlockNumber, parent_hash: BlockHash) -> bool {
-        let snapshot = self
+        let snapshot = *self
             .last_committed
             .read()
-            .map(|g| *g)
-            .unwrap_or_else(|p| *p.into_inner());
-        match snapshot {
-            Some((n, h)) => n == parent_number && h == parent_hash,
-            None => false,
-        }
+            .unwrap_or_else(|p| p.into_inner());
+        matches!(snapshot, Some((n, h)) if n == parent_number && h == parent_hash)
     }
 
-    /// Drop all cached state, reset metadata. Safe to call at any time.
     pub fn invalidate(&self) {
         self.cache.clear_all();
-        self.legacy_clear.store(false, Ordering::Relaxed);
-        if let Ok(mut g) = self.last_committed.write() {
-            *g = None;
-        }
-    }
-
-    /// Mark that the current in-progress block contains a pre-EIP-6780
-    /// SELFDESTRUCT. Called by the execution path so the next `promote_block`
-    /// knows it has to wipe storage. The flag is cleared on `promote_block` /
-    /// `invalidate`.
-    pub fn mark_legacy_clear(&self) {
-        self.legacy_clear.store(true, Ordering::Relaxed);
+        *self
+            .last_committed
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = None;
     }
 
     /// Apply the post-state of a successfully executed-and-stored block.
     ///
-    /// Promotion strategy:
-    /// - **Accounts**: invalidated (removed from cache). Next read repopulates
-    ///   from the new parent state. We do this because the post-block
-    ///   `storage_root` is not cheaply available here, and inserting an account
-    ///   with a stale `storage_root` would lie to consumers who read it.
-    /// - **Storage**: the new value for every touched `(address, slot)` is
-    ///   written through. Slots for fully-removed accounts (or accounts whose
-    ///   storage trie was wiped) are evicted.
-    /// - **Code**: every newly deployed code is inserted.
-    ///
-    /// `last_committed` is set to `(block_number, block_hash)` on success.
+    /// Accounts are evicted (the post-block `storage_root` is not cheaply
+    /// available here, and a stale `storage_root` would lie to consumers).
+    /// Touched slots are written through; wiped accounts have their cached
+    /// slots evicted. Newly deployed code is inserted.
     pub fn promote_block(
         &self,
         block_number: BlockNumber,
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) -> Result<(), DatabaseError> {
-        let legacy_clear = self.legacy_clear.swap(false, Ordering::Relaxed);
-
         let mut accounts = self.cache.write_accounts()?;
         let mut storage = self.cache.write_storage()?;
         let mut code = self.cache.write_code()?;
 
-        if legacy_clear {
-            // Pre-EIP-6780 SELFDESTRUCT can wipe storage in a way the
-            // per-account update list doesn't cleanly express. Be safe: drop
-            // every cached storage slot. (This branch is rare — pre-Cancun
-            // only.)
-            storage.clear();
-        }
-
-        // Collect addresses whose storage was wholesale wiped this block so we
-        // can evict their cached slots in one pass.
         let mut storage_wiped: FxHashSet<Address> = FxHashSet::default();
 
         for update in account_updates {
-            // Always drop the cached account: we don't know the post-state
-            // `storage_root` cheaply. The next read refetches from the parent
-            // state of the next block, which will be this block's post-state.
             accounts.remove(&update.address);
 
             if update.removed {
@@ -451,8 +350,6 @@ impl CrossBlockCache {
                 storage_wiped.insert(update.address);
             }
 
-            // Write through every touched slot (covers both updates and
-            // post-EIP-6780 SELFDESTRUCT-then-recreate within a block).
             for (slot, value) in &update.added_storage {
                 storage.insert((update.address, *slot), *value);
             }
@@ -470,16 +367,10 @@ impl CrossBlockCache {
         drop(storage);
         drop(code);
 
-        match self.last_committed.write() {
-            Ok(mut g) => *g = Some((block_number, block_hash)),
-            Err(p) => {
-                // Recover from poison: a previous panic in a mutator left the
-                // lock poisoned, but the value behind it is safe to overwrite
-                // with the freshly-promoted block.
-                let mut g = p.into_inner();
-                *g = Some((block_number, block_hash));
-            }
-        }
+        *self
+            .last_committed
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Some((block_number, block_hash));
         Ok(())
     }
 }
