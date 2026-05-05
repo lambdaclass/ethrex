@@ -82,6 +82,18 @@ impl Hook for DefaultHook {
 
         // check for nonce mismatch
         if sender_info.nonce != vm.env.tx_nonce {
+            // TEMP (Bug 4 diagnosis): log the offending sender so we can
+            // cross-check whether the state we computed for this address
+            // matches the canonical chain. levm has no tracing dep, so this
+            // goes to stderr; the run-hoodi-stack scripts tee 2>&1 so it
+            // ends up in the same log as the rest of the events.
+            eprintln!(
+                "[BINARY-DEBUG] Nonce mismatch sender={:?} state_nonce={} tx_nonce={} delta={}",
+                sender_address,
+                sender_info.nonce,
+                vm.env.tx_nonce,
+                vm.env.tx_nonce as i64 - sender_info.nonce as i64,
+            );
             return Err(TxValidationError::NonceMismatch {
                 expected: sender_info.nonce,
                 actual: vm.env.tx_nonce,
