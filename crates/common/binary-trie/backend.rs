@@ -54,15 +54,33 @@ pub trait BinaryTrieProvider: Send + Sync {
     /// `0xFF`-prefixed custom key).
     fn load_meta(&self, key: &[u8]) -> Result<Option<Vec<u8>>, BinaryTrieError>;
     /// Returns `true` if the given 31-byte stem has a tombstone entry in the
-    /// persistence layer (i.e. the account was SELFDESTRUCTed in a previous
-    /// block and the tombstone was committed to disk).
+    /// persistence layer — checked across in-memory layer cache (live, current
+    /// head root) and disk. The provider knows the current head root and walks
+    /// the cache layer chain from there before falling back to disk.
     fn is_deleted_stem(&self, stem: &[u8; 31]) -> Result<bool, BinaryTrieError>;
-    /// Returns `true` if the given 32-byte tree key has any FKV entry in the
-    /// persistence layer (including an explicit `[0; 32]` zero marker written
-    /// by a post-switch SSTORE 0). Used by the overlay (transition) read path
-    /// to distinguish "explicitly zeroed in overlay" from "absent, fall
-    /// through to base".
+    /// Returns `true` if the given 32-byte tree key has any record (value or
+    /// explicit zero-marker / deletion) — checked across in-memory layer cache
+    /// (live) and disk. Used by the overlay (transition) read path to
+    /// distinguish "explicitly zeroed in overlay" from "absent, fall through
+    /// to base".
     fn is_slot_in_fkv(&self, tree_key: &[u8; 32]) -> Result<bool, BinaryTrieError>;
+    /// Look up a leaf value in the in-memory binary layer cache at the current
+    /// head root. Walks parent chain from head down through committed layers.
+    ///
+    /// Returns:
+    /// - `Some(Some(value))` — leaf found with this value in some layer
+    /// - `Some(None)` — leaf was explicitly deleted (post-switch SSTORE 0 or
+    ///   stem clear) in some layer
+    /// - `None` — leaf not in any cache layer; caller should fall through to
+    ///   the on-disk trie / `BINARY_FLATKEYVALUE`
+    ///
+    /// Default impl returns `None` (no cache); concrete providers override.
+    fn cache_get_leaf(
+        &self,
+        _tree_key: &[u8; 32],
+    ) -> Result<Option<Option<[u8; 32]>>, BinaryTrieError> {
+        Ok(None)
+    }
 }
 
 /// A no-op provider used for in-memory / genesis paths where there is no
@@ -294,15 +312,27 @@ impl BinaryBackend {
         let storage_key = U256::from_big_endian(slot.as_bytes());
         let tree_key = get_tree_key_for_storage_slot(&addr, storage_key);
 
-        // Non-zero in trie → in overlay.
+        // In the in-memory binary layer cache at the live head root → in overlay.
+        // Includes `Some(Some(v))` (value) and `Some(None)` (deletion / SSTORE 0
+        // marker). Pre-Bug-4-fix this was missed, leaking pre-switch values
+        // through the transition base fall-through.
+        if self
+            .provider
+            .cache_get_leaf(&tree_key)
+            .map_err(|e| StateError::Other(e.to_string()))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        // Non-zero in trie → in overlay (disk-backed in-memory tree).
         if self.state.trie_get(tree_key).is_some() {
             return Ok(true);
         }
-        // Recorded as a zero-write in this session's pending diffs.
+        // Recorded as a zero-write in this session's pending diffs (current block).
         if self.state.has_pending_fkv_entry(&tree_key) {
             return Ok(true);
         }
-        // Persisted in FKV from a prior block (zero or non-zero).
+        // Persisted in FKV from a prior block (zero or non-zero) on disk.
         self.provider
             .is_slot_in_fkv(&tree_key)
             .map_err(|e| StateError::Other(e.to_string()))
@@ -412,8 +442,31 @@ impl StateReader for BinaryBackend {
         let basic_data_key = get_tree_key_for_basic_data(&addr);
         let code_hash_key = get_tree_key_for_code_hash(&addr);
 
-        let basic_data = self.state.trie_get(basic_data_key);
-        let code_hash_raw = self.state.trie_get(code_hash_key);
+        // Check the in-memory binary layer cache (live head root) first; the
+        // on-disk `state.trie_get` walks the trie at the disk-persisted root
+        // which lags during catchup (Bug 4). The cache holds every overlay
+        // write since the last Phase-2 disk flush.
+        let basic_data = match self
+            .provider
+            .cache_get_leaf(&basic_data_key)
+            .map_err(|e| StateError::Other(e.to_string()))?
+        {
+            Some(Some(v)) => Some(v),
+            // Some(None) = leaf was deleted (e.g. post-switch SELFDESTRUCT
+            // wiped the stem). Treat as "no account" — but we still need the
+            // stem-group invariant check below to hold.
+            Some(None) => None,
+            None => self.state.trie_get(basic_data_key),
+        };
+        let code_hash_raw = match self
+            .provider
+            .cache_get_leaf(&code_hash_key)
+            .map_err(|e| StateError::Other(e.to_string()))?
+        {
+            Some(Some(v)) => Some(v),
+            Some(None) => None,
+            None => self.state.trie_get(code_hash_key),
+        };
 
         // Stem-group invariant: both present or both absent.
         debug_assert!(
@@ -445,7 +498,18 @@ impl StateReader for BinaryBackend {
     fn storage(&self, addr: Address, slot: H256) -> Result<H256, StateError> {
         let storage_key = U256::from_big_endian(slot.as_bytes());
         let tree_key = get_tree_key_for_storage_slot(&addr, storage_key);
-        Ok(self.state.trie_get(tree_key).map(H256).unwrap_or_default())
+        // Check the in-memory binary layer cache (live head root) first.
+        // See `account` above for why; same Bug 4 rationale.
+        match self
+            .provider
+            .cache_get_leaf(&tree_key)
+            .map_err(|e| StateError::Other(e.to_string()))?
+        {
+            Some(Some(v)) => Ok(H256(v)),
+            // Explicit zero-marker / deletion in overlay → return zero.
+            Some(None) => Ok(H256::zero()),
+            None => Ok(self.state.trie_get(tree_key).map(H256).unwrap_or_default()),
+        }
     }
 
     /// Read code by hash. Delegates to the `code_reader` (legacy `AccountCodes`
