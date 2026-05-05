@@ -3,17 +3,23 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, AccountUpdate, BlockHash, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
+use lru::LruCache;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashSet};
+use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub mod gen_db;
 
-// Type aliases for cache storage maps.
-// TODO: bound eviction (LruMap) once benchmarked.
-type AccountCache = FxHashMap<Address, AccountState>;
-type StorageCache = FxHashMap<(Address, H256), U256>;
-type CodeCache = FxHashMap<H256, Code>;
+// Bounded so the cache survives cross-block reuse without unbounded growth.
+// Sizes chosen conservatively: ~38 MB / ~84 MB / ~40 MB worst-case.
+const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(256 * 1024 - 1);
+const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1024 * 1024 - 1);
+const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(4 * 1024 - 1);
+
+type AccountCache = LruCache<Address, AccountState, FxBuildHasher>;
+type StorageCache = LruCache<(Address, H256), U256, FxBuildHasher>;
+type CodeCache = LruCache<H256, Code, FxBuildHasher>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -73,16 +79,17 @@ impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>) -> Self {
         Self {
             inner: RwLock::new(inner),
-            accounts: RwLock::new(FxHashMap::default()),
-            storage: RwLock::new(FxHashMap::default()),
-            code: RwLock::new(FxHashMap::default()),
+            accounts: RwLock::new(LruCache::with_hasher(ACCOUNT_CACHE_CAP, FxBuildHasher)),
+            storage: RwLock::new(LruCache::with_hasher(STORAGE_CACHE_CAP, FxBuildHasher)),
+            code: RwLock::new(LruCache::with_hasher(CODE_CACHE_CAP, FxBuildHasher)),
             precompile_cache: PrecompileCache::new(),
             chain_config: OnceLock::new(),
         }
     }
 
     /// Replace the inner database. After the swap, cached entries must be valid
-    /// for the new inner; only swap to the post-state of the most recently
+    /// for the new inner: either the cache was just `clear_all`-ed (any inner
+    /// is safe) or the new inner is the post-state of the most recently
     /// promoted block.
     pub fn set_inner(&self, inner: Arc<dyn Database>) {
         *self.inner.write().unwrap_or_else(|p| p.into_inner()) = inner;
@@ -100,8 +107,10 @@ impl CachingDatabase {
         &self.precompile_cache
     }
 
-    /// Drop all cached state. Recovers from poisoned locks: clearing is the
-    /// right action when a previous mutator panicked.
+    /// Drop all cached state (account / storage / code). `precompile_cache` and
+    /// `chain_config` are intentionally retained: precompile outputs are
+    /// input-deterministic and `ChainConfig` is constant for the process. Recovers
+    /// from poisoned locks: clearing is the right action after a panicking writer.
     pub fn clear_all(&self) {
         self.accounts
             .write()
@@ -145,8 +154,8 @@ fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
 
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        // Check cache first
-        if let Some(state) = self.read_accounts()?.get(&address).copied() {
+        // peek (not get) so a read lock is enough; we don't promote on hit.
+        if let Some(state) = self.read_accounts()?.peek(&address).copied() {
             return Ok(state);
         }
 
@@ -154,14 +163,13 @@ impl Database for CachingDatabase {
         let state = self.current_inner()?.get_account_state(address)?;
 
         // Populate cache (AccountState is Copy, no clone needed)
-        self.write_accounts()?.insert(address, state);
+        self.write_accounts()?.put(address, state);
 
         Ok(state)
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        // Check cache first
-        if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
+        if let Some(value) = self.read_storage()?.peek(&(address, key)).copied() {
             return Ok(value);
         }
 
@@ -169,7 +177,7 @@ impl Database for CachingDatabase {
         let value = self.current_inner()?.get_storage_value(address, key)?;
 
         // Populate cache (U256 is Copy, no clone needed)
-        self.write_storage()?.insert((address, key), value);
+        self.write_storage()?.put((address, key), value);
 
         Ok(value)
     }
@@ -191,8 +199,7 @@ impl Database for CachingDatabase {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
-        // Check cache first
-        if let Some(code) = self.read_code()?.get(&code_hash).cloned() {
+        if let Some(code) = self.read_code()?.peek(&code_hash).cloned() {
             return Ok(code);
         }
 
@@ -200,7 +207,7 @@ impl Database for CachingDatabase {
         let code = self.current_inner()?.get_account_code(code_hash)?;
 
         // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
-        self.write_code()?.insert(code_hash, code.clone());
+        self.write_code()?.put(code_hash, code.clone());
 
         Ok(code)
     }
@@ -225,7 +232,9 @@ impl Database for CachingDatabase {
             .collect::<Result<_, _>>()?;
         let mut cache = self.write_accounts()?;
         for (addr, state) in fetched {
-            cache.entry(addr).or_insert(state);
+            if !cache.contains(&addr) {
+                cache.put(addr, state);
+            }
         }
         Ok(())
     }
@@ -239,7 +248,9 @@ impl Database for CachingDatabase {
             .collect::<Result<_, _>>()?;
         let mut cache = self.write_storage()?;
         for (key, value) in fetched {
-            cache.entry(key).or_insert(value);
+            if !cache.contains(&key) {
+                cache.put(key, value);
+            }
         }
         Ok(())
     }
@@ -300,15 +311,19 @@ impl CrossBlockCache {
         Self::new(Arc::new(UnsetInner))
     }
 
-    /// Inner cache, suitable for use as `Arc<dyn Database>` by execution paths.
-    pub fn cache(&self) -> Arc<CachingDatabase> {
+    /// Inner cache as `Arc<dyn Database>` for use by execution paths.
+    pub fn cache(&self) -> Arc<dyn Database> {
         self.cache.clone()
     }
 
+    /// Replace the inner database. See [`CachingDatabase::set_inner`] for the
+    /// caller invariant.
     pub fn set_inner(&self, inner: Arc<dyn Database>) {
         self.cache.set_inner(inner);
     }
 
+    /// True if `last_committed` matches the supplied parent. Used to detect
+    /// reorgs / sibling blocks before reusing cached state for a new block.
     pub fn is_valid_for_parent(&self, parent_number: BlockNumber, parent_hash: BlockHash) -> bool {
         let snapshot = *self
             .last_committed
@@ -317,6 +332,7 @@ impl CrossBlockCache {
         snapshot == Some((parent_number, parent_hash))
     }
 
+    /// Drop all cached state and reset `last_committed`.
     pub fn invalidate(&self) {
         self.cache.clear_all();
         *self
@@ -344,28 +360,32 @@ impl CrossBlockCache {
         let mut storage_wiped: FxHashSet<Address> = FxHashSet::default();
 
         for update in account_updates {
-            accounts.remove(&update.address);
+            accounts.pop(&update.address);
 
-            if update.removed {
+            // Wiped accounts: don't bother writing slots/code we'd evict next.
+            if update.removed || update.removed_storage {
                 storage_wiped.insert(update.address);
                 continue;
             }
 
-            if update.removed_storage {
-                storage_wiped.insert(update.address);
-            }
-
             for (slot, value) in &update.added_storage {
-                storage.insert((update.address, *slot), *value);
+                storage.put((update.address, *slot), *value);
             }
 
             if let (Some(info), Some(c)) = (&update.info, &update.code) {
-                code.insert(info.code_hash, c.clone());
+                code.put(info.code_hash, c.clone());
             }
         }
 
         if !storage_wiped.is_empty() {
-            storage.retain(|(addr, _), _| !storage_wiped.contains(addr));
+            // LruCache lacks `retain`; collect-then-pop is unavoidable.
+            let to_remove: Vec<(Address, H256)> = storage
+                .iter()
+                .filter_map(|(k, _)| storage_wiped.contains(&k.0).then_some(*k))
+                .collect();
+            for k in &to_remove {
+                storage.pop(k);
+            }
         }
 
         drop(accounts);

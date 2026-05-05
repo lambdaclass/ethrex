@@ -212,6 +212,10 @@ pub struct Blockchain {
     merkle_pool: rayon::ThreadPool,
     /// Cross-block state cache. Invalidated on parent mismatch.
     cross_block_cache: Arc<CrossBlockCache>,
+    /// Serializes `add_block_pipeline_inner` so the cross-block cache lifecycle
+    /// (`set_inner` → execute → `promote_block`) is atomic per block. Required
+    /// for callers that share `Arc<Blockchain>` across tasks (L2 peer actors).
+    pipeline_lock: Arc<std::sync::Mutex<()>>,
 }
 
 impl core::fmt::Debug for Blockchain {
@@ -224,6 +228,7 @@ impl core::fmt::Debug for Blockchain {
             .field("payloads", &"<...>")
             .field("merkle_pool", &"<...>")
             .field("cross_block_cache", &"<...>")
+            .field("pipeline_lock", &"<...>")
             .finish()
     }
 }
@@ -352,6 +357,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache: Arc::new(CrossBlockCache::unset()),
+            pipeline_lock: Arc::new(std::sync::Mutex::new(())),
         }
     }
 
@@ -364,6 +370,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache: Arc::new(CrossBlockCache::unset()),
+            pipeline_lock: Arc::new(std::sync::Mutex::new(())),
         }
     }
 
@@ -462,9 +469,10 @@ impl Blockchain {
         let mut max_queue_length = 0;
 
         // Point the cross-block cache at this block's parent state. Misses fall
-        // through to `original_store` (StoreVmDatabase for `parent_header`).
-        // Invalidate if the cache no longer extends this parent (reorg or
-        // sibling block).
+        // through to `vm.db.store` (a `StoreVmDatabase` for `parent_header`,
+        // optionally wrapped by `DatabaseLogger` when witness pre-generation is
+        // enabled). Invalidate if the cache no longer extends this parent
+        // (reorg or sibling block).
         if !self
             .cross_block_cache
             .is_valid_for_parent(parent_header.number, parent_header.hash())
@@ -1844,6 +1852,12 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        // Serialize the entire pipeline so the cross-block cache lifecycle
+        // (`set_inner` → execute → `promote_block`) is atomic across callers.
+        // Recover from poisoning since the cache state is self-correcting via
+        // the parent-mismatch check on the next block.
+        let _guard = self.pipeline_lock.lock().unwrap_or_else(|p| p.into_inner());
+
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
