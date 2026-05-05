@@ -13,6 +13,7 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
+# Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
