@@ -620,9 +620,15 @@ async fn execute_blocks_per_block_fc(
         tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
             .await
             .map_err(SyncError::JoinHandle)??;
-        store
-            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
-            .await?;
+        // Route via advance_canonical_head so the no-op-on-old-block guard
+        // applies here too. Direct `forkchoice_update` would rewind the
+        // head if a newer NewBlock raced ahead via direct-fetch, deleting
+        // its canonical mapping (the same race this guard fixed in the
+        // direct-fetch path).
+        blockchain
+            .advance_canonical_head(number, hash)
+            .await
+            .map_err(SyncError::Chain)?;
     }
     Ok(())
 }
