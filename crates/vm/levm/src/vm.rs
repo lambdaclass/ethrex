@@ -580,11 +580,7 @@ impl<'a> VM<'a> {
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
 
-        // Fast path: simple EOA -> EOA transfer with no recipient code, no auth list, not a
-        // precompile and not a contract creation. The opcode dispatch loop would only execute a
-        // single STOP for empty bytecode, so we can synthesize a successful ContextResult and skip
-        // straight to finalize_execution. prepare_execution has already done value transfer (incl.
-        // EIP-7708 log emission), nonce increment, intrinsic-gas charge and recipient warm-up.
+        // Empty bytecode would only execute STOP; skip the dispatch loop.
         if self.is_simple_transfer_fast_path() {
             #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
             let gas_used = self
@@ -595,7 +591,7 @@ impl<'a> VM<'a> {
             let context_result = ContextResult {
                 result: TxResult::Success,
                 gas_used,
-                gas_spent: gas_used, // Will be updated in finalize_execution
+                gas_spent: gas_used,
                 output: Bytes::new(),
             };
             return self.finalize_execution(context_result);
@@ -624,34 +620,16 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
-    /// Predicate for the simple-transfer fast path.
-    ///
-    /// Matches transactions whose recipient is a non-contract, non-precompile account with no
-    /// authorization list (per Nethermind's `IsSimpleTransferFastPathCandidate` —
-    /// see <https://github.com/NethermindEth/nethermind/pull/11323>).
-    ///
-    /// Must only be evaluated *after* `set_bytecode_and_code_address` has run (i.e. after
-    /// `prepare_execution`), so that any EIP-7702 delegation has already been resolved into
-    /// `current_call_frame.bytecode`. A delegated EOA whose authority has code will appear with
-    /// non-empty bytecode here and will correctly fall through to the slow path.
-    ///
-    /// Conservative v1 also rejects transactions that themselves carry an authorization list,
-    /// matching upstream Nethermind. The auth list has already been processed in
-    /// `prepare_execution`; a recipient that became delegated to non-empty code would already
-    /// fail `bytecode.is_empty()`, so this is purely a belt-and-braces check.
+    /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into
+    /// `bytecode`. Inspired by Nethermind's `IsSimpleTransferFastPathCandidate`.
     #[inline(always)]
     fn is_simple_transfer_fast_path(&self) -> bool {
-        // Not a contract creation.
         !self.current_call_frame.is_create
-            // Recipient bytecode resolved (post EIP-7702) is empty.
             && self.current_call_frame.bytecode.bytecode.is_empty()
-            // Gas remaining must be non-negative — privileged L2 txs can leave it negative
-            // when intrinsic gas exceeds the limit; let the slow path handle that as OOG.
+            // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
-            // No authorization list (conservative v1, matches upstream exactly).
             && self.tx.authorization_list().is_none()
-            // Recipient is not a precompile — precompiles execute through the precompile
-            // branch in run_execution even with empty bytecode.
+            // Precompiles dispatch via run_execution even with empty bytecode.
             && !precompiles::is_precompile(
                 &self.current_call_frame.to,
                 self.env.config.fork,
