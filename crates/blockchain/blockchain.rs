@@ -215,7 +215,7 @@ pub struct Blockchain {
     /// Serializes `add_block_pipeline_inner` so the cross-block cache lifecycle
     /// (`set_inner` → execute → `promote_block`) is atomic per block. Required
     /// for callers that share `Arc<Blockchain>` across tasks (L2 peer actors).
-    pipeline_lock: Arc<std::sync::Mutex<()>>,
+    pipeline_lock: std::sync::Mutex<()>,
 }
 
 impl core::fmt::Debug for Blockchain {
@@ -357,7 +357,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache: Arc::new(CrossBlockCache::unset()),
-            pipeline_lock: Arc::new(std::sync::Mutex::new(())),
+            pipeline_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -370,7 +370,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache: Arc::new(CrossBlockCache::unset()),
-            pipeline_lock: Arc::new(std::sync::Mutex::new(())),
+            pipeline_lock: std::sync::Mutex::new(()),
         }
     }
 

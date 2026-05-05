@@ -12,7 +12,7 @@ use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWrite
 pub mod gen_db;
 
 // Bounded so the cache survives cross-block reuse without unbounded growth.
-// Sizes chosen conservatively: ~38 MB / ~84 MB / ~40 MB worst-case.
+// Sizes chosen conservatively; revisit with benchmarks if needed.
 const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(256 * 1024 - 1);
 const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1024 * 1024 - 1);
 const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(4 * 1024 - 1);
