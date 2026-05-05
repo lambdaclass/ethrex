@@ -548,3 +548,73 @@ fn blobs_bundle_insert_and_remove() {
         vec![None]
     );
 }
+
+/// `add_transaction` queues the tx for P2P broadcast (the default path).
+/// `add_transaction_no_broadcast` does not, modeling the private-mempool
+/// flag's effect on RPC-submitted transactions: they're available locally
+/// but never appear in `get_txs_for_broadcast`.
+#[test]
+fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+
+    // Public tx — goes through the standard path, ends up in broadcast pool.
+    let public_decoded = Transaction::decode_canonical(&hex::decode(
+        "f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4",
+    ).unwrap()).unwrap();
+    let public_sender = public_decoded.sender(&NativeCrypto).unwrap();
+    let public_tx = MempoolTransaction::new(public_decoded, public_sender);
+    let public_hash = public_tx.hash();
+
+    // Private tx — goes through `add_transaction_no_broadcast`, only
+    // distinguishable from `public_tx` by sender (so the per-sender-nonce
+    // index doesn't collide).
+    let private_decoded = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(H160::from_low_u64_be(0xBEEF)),
+        value: U256::zero(),
+        ..Default::default()
+    });
+    // Using a synthetic sender so we don't need a signed tx for this test.
+    let private_sender = Address::from_low_u64_be(0xCAFE);
+    let private_hash = private_decoded.hash();
+    let private_tx = MempoolTransaction::new(private_decoded, private_sender);
+
+    mempool
+        .add_transaction(public_hash, public_sender, public_tx.clone())
+        .expect("public tx should land in broadcast pool");
+    mempool
+        .add_transaction_no_broadcast(private_hash, private_sender, private_tx.clone())
+        .expect("private tx should land in mempool but not broadcast pool");
+
+    // Both txs are queryable from the mempool itself.
+    assert!(mempool.contains_tx(public_hash).unwrap());
+    assert!(mempool.contains_tx(private_hash).unwrap());
+
+    // Only the public one is returned for broadcast.
+    let broadcast: Vec<H256> = mempool
+        .get_txs_for_broadcast()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.hash())
+        .collect();
+    assert!(broadcast.contains(&public_hash));
+    assert!(
+        !broadcast.contains(&private_hash),
+        "private tx must not appear in get_txs_for_broadcast"
+    );
+
+    // After remove_broadcasted_txs clears the public hash, the private tx
+    // remains absent (proving the broadcast pool never contained it).
+    mempool.remove_broadcasted_txs(&[public_hash]).unwrap();
+    let broadcast_after: Vec<H256> = mempool
+        .get_txs_for_broadcast()
+        .unwrap()
+        .iter()
+        .map(|tx| tx.hash())
+        .collect();
+    assert!(broadcast_after.is_empty());
+}
