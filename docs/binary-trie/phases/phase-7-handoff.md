@@ -540,3 +540,63 @@ This is the architectural symmetry the user asked for: "binary trie should work 
 - `state.trie_get` at any post-switch root returns leaves for any account modified at any prior post-switch block.
 - `stem_has_basic_data` returns true correctly for cross-block reads.
 - Chain advances past switch_block + 50, +100, +200 cleanly → Phase 7 signed off.
+
+## Bug 7 — FCU `has_state_root` MPT-only check
+
+After a successful run #9 the `LatestBlockNumber` (advanced by `apply_fork_choice`) was permanently pinned at the activation block while the executed head climbed normally via `engine_newPayload`. Every CL forkchoiceUpdated produced `WARN FCU head state not reachable from DB state. Ignoring fork choice update.` — the EL was rejecting all FCUs.
+
+Root cause: `apply_fork_choice` in `crates/blockchain/fork_choice.rs:109` calls `store.has_state_root(link_header.state_root)` unconditionally. For Mpt that walks the MPT trie tables. For Binary / Transition the block's post-state lives in `BINARY_TRIE_NODES` under the merkleizer-computed binary root, which does NOT match the canonical MPT-format `state_root` field in the header — same reason `validate_state_root` is gated on `BackendKind::Mpt` in `blockchain.rs::store_block`. So `has_state_root` returned false for every Transition block, every FCU was dropped, `LatestBlockNumber` never advanced, and any RPC reading via `LatestBlockNumber` (`eth_blockNumber`, `LatestBlockHeaderCache`, etc.) was permanently stuck at activation.
+
+Fix: dispatch on `store.backend_kind()` in the FCU validator. Mpt keeps the existing `has_state_root` check. Binary / Transition return `true` — `get_block_header_by_hash` above already confirms the block is in the DB, and `add_block_pipeline` commits binary state alongside `store_block` via the worker (Phase 1 to `binary_trie_cache`, Phase 2 to disk on threshold) atomically with the block write. Block existence implies state existence; there is no analogous `has_binary_state(state_root)` lookup because binary state is keyed by an opaque merkleizer root, not the header's MPT root. Symmetric to the `validate_state_root` gating.
+
+Verified end-to-end on run #10: zero `head state not reachable` warnings post-activation; `eth_blockNumber` returns the live executed head, not the pinned activation block.
+
+## Bug 8 — Phase-2 worker spammed Stop/Continue at a stopped FKV generator
+
+Hoodi run #9 + #10 emitted occasional `ERROR Error while generating FlatKeyValue: Unexpected Stop message` after activation. Cosmetic for chain progress (the generator returns `Err`, the thread exits, Phase 2 commits keep working because their `let _ = …` ignores send errors), but it's a real protocol violation worth fixing.
+
+Sequence:
+1. Snap sync running, MPT FKV generator inside `flatkeyvalue_generator()` doing scans.
+2. Activator step 2 calls `Store::stop_fkv_generator()` → sends `Stop`. Generator returns `StoreError::PivotChanged` and blocks at `mpt_wiring.rs:1085` `match control_rx.recv()` waiting for a `Continue` to resume.
+3. Activator's intent was permanent stop; the generator's PivotChanged protocol expects a follow-up Continue.
+4. After activation, `apply_trie_updates` in store.rs Phase 2 still calls `fkv_ctl.send(Stop)` (line 2571) and `send(Continue)` (line 2646) on every commitable layer — regardless of `backend_kind`.
+5. The waiting generator receives a 2nd `Stop` (not `Continue`) → fires `mpt_wiring.rs:1088` `Err(StoreError::Custom("Unexpected Stop message"))`.
+
+Fix: gate both `fkv_ctl.send(Stop)` and `send(Continue)` calls on `backend_kind == BackendKind::Mpt` in `apply_trie_updates`. Binary FKV is populated inline in `binary_commit_nodes_to_disk` (no background generator); Transition's MPT generator is permanently stopped at activation. Either way, sending FKV control messages from the Phase 2 worker is meaningless and harmful.
+
+## Known parity gaps to track
+
+These don't block Phase 7 sign-off but are tracked for future symmetry work between binary and MPT:
+
+**Binary FKV background generator**: The MPT pipeline runs a background `flatkeyvalue_generator` (`crates/storage/mpt_wiring.rs`) that denormalizes snap-synced raw trie nodes into `ACCOUNT_FLATKEYVALUE` / `STORAGE_FLATKEYVALUE`. The binary side has no equivalent because binary trie cannot be snap-synced (no peer protocol ships binary-trie ranges); all binary leaves are written inline by `binary_commit_nodes_to_disk` at commit time. **For full symmetry with MPT and to support future scenarios** (binary state import from a checkpoint, archive node bulk loading, etc.) the binary trie should have an equivalent background FKV generator that walks `BINARY_TRIE_NODES` and emits `BINARY_FLATKEYVALUE`. Designing this requires:
+- A serialization format for "raw binary trie nodes" that can be ingested in bulk.
+- A peer protocol (or import format) that ships binary-trie ranges — analogous to `eth_getAccountRange`.
+- The same `Stop` / `Continue` PivotChanged protocol to coordinate with Phase 2 commits, so the gating in `apply_trie_updates` (Bug 8 fix) needs to be revisited (currently it skips messaging entirely for Binary; with a generator it would re-enable).
+- Likely Phase 11+ work; out of scope for `--binary-transition` (Phase 7) and `--binary-from-genesis` (Phase 8) which both populate FKV inline by construction.
+
+Track this as the major "binary feels like MPT" parity gap remaining. Other minor gaps (selfdestruct cache walk, restart-recovery validation against `META_ROOT_HASH`, trie-walk operations through historic roots) are documented in the Asymmetry close-out section above.
+
+## Bug 9 (HIGH, open) — Gas mismatch on a post-Transition block
+
+Run #10 (commit `9cf63f69f`, all of Bugs 5/6/6.5/7 fixed, FKV gating not yet) advanced cleanly through switch_block 2754528 + 20 blocks, then at block 2754549 (switch+21) failed with:
+
+```
+WARN Error executing block: Gas used doesn't match value in header. Used: 3842205, Expected: 3769681
+```
+
+Delta: +72524 gas (~2% over expected). Block 2754548 (the prior block) committed cleanly with 17 txs in 17.11 ms.
+
+This is a NEW failure mode — distinct from the Bug 6 / Bug 6.5 family (which failed on tx-validation Nonce mismatch). Gas usage divergence implies the EVM's state reads returned values different from what the canonical chain saw. Most likely pathway: SSTORE net gas metering (EIP-2200 / EIP-3529) charges different gas based on `original` value of a slot. If `original` is wrong (cross-block storage read returns a stale value from frozen MPT base where an overlay write should have shadowed it), the tx's gas usage diverges from the network header's expected value.
+
+Suspect read paths still under audit:
+- `TransitionBackend::storage` (`crates/storage/transition_wiring.rs:201`) — should consult overlay (cache_get_leaf + state.trie_get + slot_is_in_overlay) before falling through to MPT base. The Bug 6.5 fix made `state.trie_get` see cached leaves via `CacheAwareTrieBackend`, but maybe `slot_is_in_overlay` has an edge case or the fall-through threshold is wrong.
+- Storage slot read for an account that was modified in a *prior* post-switch block (so its overlay entry is in a older cache layer) but not in the current block.
+- An account whose stem was CoW'd but whose specific storage slot was never explicitly written post-switch — the read should fall through to MPT base for that slot, but if the overlay wrongly returns "yes I have this slot" → returns zero → wrong.
+
+Diagnosis path for next session:
+1. Identify which tx in block 2754549 is the over-gas culprit. Re-execute the block in isolation with extra tracing on the EVM's storage read path.
+2. Cross-check the failing tx's storage reads against a trusted hoodi node via `eth_getStorageAt` at the block's parent.
+3. Verify `slot_is_in_overlay` correctness through cache layers in a unit test that mirrors run #10's state at switch+21.
+4. If `slot_is_in_overlay` is correct, look at the CoW path in `TransitionBackend::update_accounts` — particularly whether a storage slot that's never explicitly written gets "frozen" at the wrong base value when the stem is CoW'd.
+
+Status: open. Run #10 chain stuck at 2754549. Phase 7 sign-off NOT achieved despite Bug 5/6/6.5/7 closing because of this. Next iteration to diagnose.

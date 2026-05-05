@@ -2568,7 +2568,17 @@ fn apply_trie_updates(
     };
     // Stop the flat-key-value generator thread, as the underlying trie is about to change.
     // Ignore the error, if the channel is closed it means there is no worker to notify.
-    let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
+    //
+    // Only meaningful for `BackendKind::Mpt`. Binary FKV is populated inline in
+    // `binary_commit_nodes_to_disk` (no background generator, see Store
+    // construction). Post-Transition activation, `stop_fkv_generator()` has
+    // already permanently halted the MPT generator inside its
+    // wait-for-Continue state; sending another Stop here would arrive while
+    // the generator is blocked on `recv()` for Continue and trigger
+    // `Unexpected Stop message` in `flatkeyvalue_generator`.
+    if backend_kind == BackendKind::Mpt {
+        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
+    }
 
     // RCU to remove the bottom layer: update step needs to happen after disk layer is updated.
     let mut trie_mut = (*trie).clone();
@@ -2642,8 +2652,14 @@ fn apply_trie_updates(
             binary_commit_nodes_to_disk(backend, node_diffs, deleted_stems, fkv_entries)
         }
     };
-    // We want to send this message even if there was an error during the batch write
-    let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
+    // We want to send this message even if there was an error during the batch write.
+    // Gated on `BackendKind::Mpt` for the same reason as the matching Stop send
+    // above: the FKV generator only exists for MPT; messaging it under Binary
+    // / Transition either races with `stop_fkv_generator()` or prematurely
+    // resumes a generator we do not want running.
+    if backend_kind == BackendKind::Mpt {
+        let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
+    }
     write_result?;
     // Phase 3: update diff layers with the removal of bottom layer.
     *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
