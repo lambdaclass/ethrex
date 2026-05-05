@@ -81,6 +81,23 @@ pub trait BinaryTrieProvider: Send + Sync {
     ) -> Result<Option<Option<[u8; 32]>>, BinaryTrieError> {
         Ok(None)
     }
+
+    /// Open a fresh [`BinaryTrieState`] rooted at the live head.
+    ///
+    /// Production providers override this to open against a cache-aware
+    /// backend serving reads through the in-memory layer cache before disk,
+    /// so the merkleizer's trie traverses the FULL post-parent state. This
+    /// is required for cross-block read correctness: with an empty starting
+    /// state the trie at the new root contains only this block's writes, so
+    /// `state.trie_get` returns `None` for any account modified at any prior
+    /// block (causing read-path gates like `stem_has_basic_data` to falsely
+    /// route reads to the MPT base — Bug 6).
+    ///
+    /// Default impl returns an empty state (no persisted backend). Tests and
+    /// genesis bootstrap rely on this default; mirrors `BinaryTrieState::new()`.
+    fn open_state(&self) -> Result<BinaryTrieState, BinaryTrieError> {
+        Ok(BinaryTrieState::new())
+    }
 }
 
 /// A no-op provider used for in-memory / genesis paths where there is no

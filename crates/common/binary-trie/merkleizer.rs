@@ -110,18 +110,37 @@ pub struct BinaryMerkleizer {
 }
 
 impl BinaryMerkleizer {
-    /// Create a standard merkleizer.
+    /// Create a standard merkleizer rooted at the live binary head.
+    ///
+    /// Opens [`BinaryTrieState`] via `provider.trie_backend()`, which for
+    /// production providers returns a cache-aware backend serving reads
+    /// through the in-memory layer cache before disk. The merkleizer's trie
+    /// is therefore rooted at the FULL post-parent state, so reads via
+    /// `state.trie_get` during apply (e.g. existing `code_size` lookups) and
+    /// from any read-path gate function see all accounts modified at any
+    /// prior block — matching `MptMerkleizer`'s behavior of opening at
+    /// `parent_state_root` and lazy-loading through the provider.
+    ///
+    /// For test / genesis-bootstrap providers (`EmptyBinaryTrieProvider`),
+    /// the default `trie_backend()` returns [`crate::db::EmptyTrieBackend`],
+    /// which yields an empty in-memory state — preserving the prior
+    /// "empty trie" bootstrap path.
+    ///
+    /// `_parent_root` is currently informational only; the live head is
+    /// resolved via the trie backend's META_ROOT lookup. The parameter is
+    /// kept for symmetry with `MptMerkleizer::new` and future validation.
     ///
     /// `feed_updates` deduplicates by address (last-write-wins) and applies
-    /// each update to the single `BinaryTrieState` immediately.
+    /// each update to `BinaryTrieState` immediately.
     pub fn new(
         _parent_root: H256,
         precompute_witnesses: bool,
         provider: Arc<dyn BinaryTrieProvider>,
         pool: Arc<rayon::ThreadPool>,
     ) -> Result<Self, StateError> {
+        let state = Self::open_state(provider.as_ref())?;
         Ok(Self {
-            state: BinaryTrieState::new(),
+            state,
             pool,
             provider,
             code_updates: Vec::new(),
@@ -137,18 +156,20 @@ impl BinaryMerkleizer {
         })
     }
 
-    /// Create a BAL-optimised merkleizer.
+    /// Create a BAL-optimised merkleizer rooted at the live binary head.
     ///
-    /// In BAL mode `feed_updates` expects pre-deduplicated updates and skips
-    /// the merge-with-previous step (no `FxHashMap` dedup overhead).
+    /// Same backing as [`Self::new`]; only the apply path differs (BAL mode
+    /// expects pre-deduplicated updates and skips the merge-with-previous
+    /// step).
     pub fn new_bal(
         _parent_root: H256,
         precompute_witnesses: bool,
         provider: Arc<dyn BinaryTrieProvider>,
         pool: Arc<rayon::ThreadPool>,
     ) -> Result<Self, StateError> {
+        let state = Self::open_state(provider.as_ref())?;
         Ok(Self {
-            state: BinaryTrieState::new(),
+            state,
             pool,
             provider,
             code_updates: Vec::new(),
@@ -162,6 +183,14 @@ impl BinaryMerkleizer {
             bal_mode: true,
             pending: FxHashMap::default(),
         })
+    }
+
+    /// Open a `BinaryTrieState` via the provider, deferring backend + table
+    /// choice to the provider impl.
+    fn open_state(provider: &dyn BinaryTrieProvider) -> Result<BinaryTrieState, StateError> {
+        provider
+            .open_state()
+            .map_err(|e| StateError::Other(format!("BinaryMerkleizer open: {e}")))
     }
 
     /// Feed a batch of account updates.

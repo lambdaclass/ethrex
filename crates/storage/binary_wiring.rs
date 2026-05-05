@@ -318,6 +318,24 @@ impl BinaryTrieProvider for StoreBinaryTrieProvider {
         let state_root = self.store.current_binary_root().0;
         Ok(cache.get(state_root, tree_key))
     }
+
+    /// Open a `BinaryTrieState` against [`CacheAwareTrieBackend`] so the
+    /// merkleizer's trie is rooted at the **live** binary head (cache + disk)
+    /// instead of the disk-flushed `META_ROOT_HASH`. Mirrors `MptMerkleizer`'s
+    /// `MptTrieWrapper(state_root, trie_cache, db, last_written)`: each
+    /// block's merkleizer sees the FULL post-parent state, not just this
+    /// block's writes — required so cross-block reads via `state.trie_get`
+    /// during apply (and via gate functions like `stem_has_basic_data` on
+    /// the read path) find accounts modified at any prior block.
+    fn open_state(&self) -> Result<BinaryTrieState, BinaryTrieError> {
+        let backend: Arc<dyn TrieBackend> = Arc::new(CacheAwareTrieBackend {
+            store: self.store.clone(),
+            inner: StorageTrieBackend {
+                store: self.store.clone(),
+            },
+        });
+        BinaryTrieState::open(backend, BINARY_TRIE_NODES, BINARY_STORAGE_KEYS)
+    }
 }
 
 impl StoreBinaryTrieProvider {

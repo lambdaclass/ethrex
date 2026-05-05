@@ -510,3 +510,33 @@ This is the structural root-cause fix. No narrow patch to `stem_has_basic_data` 
 - Block 2753921 (or whatever the new switch block is): `[BINARY-DEBUG] advanced current_binary_root` fires (Bug 5 still works).
 - Block switch_block + 1: commits cleanly without nonce mismatch (Bug 6 closed).
 - Chain advances past switch_block + 50, +100, +200 → Phase 7 signed off.
+
+## Bug 6.5 (HIGH, root cause for run #8 failure) — `BinaryMerkleizer` started from an empty trie
+
+Hoodi sign-off run #8 (with the f10fb7ffa "cache-aware binary trie reads" fix landed): block switch_block + 1 (2754125) committed cleanly with 32 txs ✓, but block switch_block + 2 (2754126) failed with the same off-by-1 nonce on three different senders.
+
+Diagnosis: even with `CacheAwareTrieBackend` plumbed into `new_transition_state_reader`, the **merkleizer itself** opened a fresh `BinaryTrieState::new()` per block — an EMPTY trie. Compare:
+
+- `MptMerkleizer::new(parent_state_root, provider, …)` opens 16 shard workers each handling a subtrie rooted at `parent_state_root`, lazy-loading nodes via `provider`. The internal trie at the new root is `parent_state + this block's writes` (FULL post-state).
+- `BinaryMerkleizer::new(_parent_root, provider, …)` ignored both arguments (literal `_parent_root`, provider was `#[allow(dead_code)]`) and started from an empty `BinaryTrieState`. The internal trie at the new root contained **only this block's writes**.
+
+Consequence under the layer-cache model: each block's commit produced node diffs representing "diffs from empty," not "diffs from parent." The trie at root R(N) contained a path only to accounts modified at block N. `state.trie_get(any_other_account_key)` at R(N) returned None. Read-path gates that consult `state.trie_get` (`stem_has_basic_data` is the prominent one) therefore returned false for any account not modified in the latest block, falling through to the MPT base — even when that account had been modified at a *prior* post-switch block whose layer was still in `binary_trie_cache`.
+
+Run #7 hit this at switch_block + 1 because `BinaryTrieState` was opened against the disk-flushed `META_ROOT_HASH` (empty for fresh activation). The `CacheAwareTrieBackend` fix made `BinaryTrieState`'s open call see the cached META_ROOT, so block N's own writes became visible — so switch_block + 1 worked. But the merkleizer inside `Merkleizer::new_transition` (and `new_binary` for Phase 8) still started from `BinaryTrieState::new()` (empty), so block switch_block + 2 reading an account modified at switch_block + 1 saw an empty trie and fell through.
+
+**Fix**: make `BinaryMerkleizer` symmetric to `MptMerkleizer`. The merkleizer now opens its starting state through the provider, which production providers root at the live binary head via `CacheAwareTrieBackend`:
+
+- `BinaryTrieProvider::open_state(&self) -> Result<BinaryTrieState, BinaryTrieError>`: new trait method. Default impl returns `BinaryTrieState::new()` (empty, used by `EmptyBinaryTrieProvider` and tests / genesis bootstrap).
+- `StoreBinaryTrieProvider::open_state` overrides: opens `BinaryTrieState::open(CacheAwareTrieBackend, BINARY_TRIE_NODES, BINARY_STORAGE_KEYS)`. The cache-aware backend serves META_ROOT and per-node reads from `trie_cache` at `current_binary_root` first, then disk — same pattern as MPT's `MptTrieWrapper(state_root, trie_cache, db, last_written)`.
+- `BinaryMerkleizer::new` and `new_bal`: replace `BinaryTrieState::new()` with `provider.open_state()`. The `provider: Arc<dyn BinaryTrieProvider>` field loses its `#[allow(dead_code)]` — it's now load-bearing.
+- Added `EmptyTrieBackend` to `binary-trie::db` for symmetry with `EmptyBinaryTrieProvider`. Returns None for every read, rejects writes; used by the default `open_state` impl path.
+
+Result: each post-switch block's merkleizer trie contains the FULL post-parent state (live binary head + this block's writes). `state.trie_get` works for cross-block reads. The read-path gates (`stem_has_basic_data`, `slot_is_in_overlay` via `state.trie_get`) all see prior-block modifications. Layer-cache + on-disk fallback work identically to the MPT pipeline.
+
+This is the architectural symmetry the user asked for: "binary trie should work as likely as possible like mpt does, following same pipeline paths/caches/fkvs."
+
+**Verification expectations for run #9** (post-Bug-6.5 fix, fresh datadir):
+- BinaryMerkleizer opens via `provider.open_state()` rooted at the live head.
+- `state.trie_get` at any post-switch root returns leaves for any account modified at any prior post-switch block.
+- `stem_has_basic_data` returns true correctly for cross-block reads.
+- Chain advances past switch_block + 50, +100, +200 cleanly → Phase 7 signed off.

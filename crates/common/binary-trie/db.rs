@@ -41,3 +41,30 @@ pub trait TrieBackend: Send + Sync {
         table: &'static str,
     ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, BinaryTrieError>;
 }
+
+/// A no-op `TrieBackend` that returns `None` / empty for every read and rejects
+/// writes. Used by `EmptyBinaryTrieProvider` and unit tests where no persisted
+/// state exists.
+///
+/// Opening a `BinaryTrieState` against this backend yields an empty in-memory
+/// trie with no root, identical to `BinaryTrieState::new()`.
+pub struct EmptyTrieBackend;
+
+impl TrieBackend for EmptyTrieBackend {
+    fn get(&self, _table: &'static str, _key: &[u8]) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        Ok(None)
+    }
+
+    fn write_batch(&self, _ops: Vec<WriteOp>) -> Result<(), BinaryTrieError> {
+        Err(BinaryTrieError::StoreError(
+            "EmptyTrieBackend rejects writes".to_string(),
+        ))
+    }
+
+    fn full_iterator(
+        &self,
+        _table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, BinaryTrieError> {
+        Ok(Box::new(std::iter::empty()))
+    }
+}
