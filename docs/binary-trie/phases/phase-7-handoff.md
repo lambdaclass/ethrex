@@ -347,3 +347,31 @@ Fix: add a `bypass_fkv_cursor: bool` parameter to `mpt_commit_nodes_to_disk`. Th
 This third layer was undetectable from unit tests because the in-memory `Store::new(InMemory)` test path doesn't exercise the FKV generator at all — the cursor is always `Vec::new()` (default) and the skip check `key > last_written` evaluates as `key > []` which is true for any non-empty key, but the test path's `mpt_commit_nodes_to_disk` is also a no-op for the InMemory backend. Only on a real RocksDB-backed snap-synced node does the FKV cursor reach a meaningful value during catchup.
 
 Live hoodi confirmation pending (sign-off run #4).
+
+**Bug 4 (HIGH, diagnosed, fix pending) — overlay reads miss in-memory binary_trie_cache layers**:
+
+Hoodi sign-off run #4 with Bug 3 v3 fix: block 2753345 (last MPT) committed, block 2753346 (FIRST under Transition) committed cleanly with 38 txs, then block 2753347 failed with `Receipts Root does not match the one in the header after executing` — execution diverged.
+
+Root cause: post-Transition overlay reads do NOT consult the in-memory `binary_trie_cache`. Specifically:
+
+1. `crates/storage/transition_wiring.rs::new_transition_state_reader` opens the overlay BinaryBackend at the **frozen** `binary_root` from `transition_metadata` (which is `EMPTY_BINARY_ROOT` for fresh activation, never updated).
+2. `BinaryTrieState::open` (`crates/common/binary-trie/state.rs`) initializes `state` from on-disk `META_ROOT_HASH` — also at activation-time value.
+3. `BinaryBackend::storage` (`crates/common/binary-trie/backend.rs:445`) reads via `self.state.trie_get(tree_key)`, which walks the in-memory tree backed by the provider's disk reads. The provider (`StoreBinaryTrieProvider` in `binary_wiring.rs`) reads only from `BINARY_TRIE_NODES`/`BINARY_FLATKEYVALUE` on disk.
+4. `is_slot_in_fkv` (`binary_wiring.rs:191`) reads `BINARY_FLATKEYVALUE` on disk only.
+
+So when block N+1's overlay reader queries a slot that block N wrote:
+- Block N's writes live in `binary_trie_cache` (in-memory) — NOT on disk (worker Phase 2's threshold of 128 layers won't fire for the first ~127 post-switch blocks).
+- Block N+1's BinaryBackend reads return EMPTY (state at activation-time empty root).
+- `TransitionBackend::storage` falls through to base (frozen MPT) → returns pre-switch value, not the correct post-switch overlay value.
+
+For non-zero SSTORE in block N: block N+1 reads pre-switch value instead of new value → EVM diverges → receipts root mismatch.
+For zero SSTORE in block N (slot zeroed post-switch): block N+1's `slot_is_in_overlay` returns false (overlay backend empty, FKV disk empty) → falls through to base → pre-switch non-zero value resurrected → receipts root mismatch.
+
+Symmetric to MPT: MPT's `open_state_trie` constructs an `MptTrieWrapper(state_root, trie_cache, db, last_written)` that reads through both the in-memory `trie_cache` and on-disk backend. The binary path has no equivalent — it reads disk only.
+
+Fix options:
+- **A (correct, invasive)**: plumb `binary_trie_cache` into `BinaryTrieProvider`/`BinaryTrieState` so reads consult the in-memory layers first, falling through to disk. Symmetric to `MptTrieWrapper`.
+- **B (quick, slow)**: in `Blockchain::add_block_pipeline` (or in the worker Phase 2 for binary), force-commit the binary cache to disk after every block during Transition mode. Adds a disk write per block; loses the layer cache's batching benefit but is correct.
+- **C (simplest, semantic shift)**: at activation, drop the overlay backend altogether — switch to having every Transition block read & write directly to disk-backed binary state. No in-memory layering. Trades perf for correctness/simplicity.
+
+Option A is the right long-term fix. Option B is the smallest patch to ship today and validate. Choose at session restart.
