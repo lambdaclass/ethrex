@@ -80,15 +80,15 @@ impl RpcHandler for LogsFilter {
                     })
                     .transpose()?
                     .flatten();
-                let topics_filters = param
-                    .get("topics")
-                    .ok_or_else(|| RpcErr::MissingParam("topics".to_string()))
-                    .and_then(|topics| {
+                let topics_filters = match param.get("topics") {
+                    Some(topics) => {
                         match serde_json::from_value::<Option<Vec<TopicFilter>>>(topics.clone()) {
-                            Ok(filters) => Ok(filters),
-                            _ => Err(RpcErr::WrongParam("topics".to_string())),
+                            Ok(filters) => filters,
+                            _ => return Err(RpcErr::WrongParam("topics".to_string())),
                         }
-                    })?;
+                    }
+                    None => None,
+                };
                 Ok(LogsFilter {
                     from_block,
                     to_block,

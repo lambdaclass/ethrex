@@ -17,6 +17,15 @@ pub struct SequencerConfig {
     pub monitor: MonitorConfig,
     pub admin_server: AdminConfig,
     pub state_updater: StateUpdaterConfig,
+    pub credible_layer: CredibleLayerConfig,
+}
+
+/// Configuration for the Credible Layer sidecar integration.
+/// URL is optional; if absent, the feature is disabled.
+#[derive(Clone, Debug, Default)]
+pub struct CredibleLayerConfig {
+    /// gRPC endpoint for the Credible Layer Assertion Enforcer sidecar.
+    pub sidecar_url: Option<String>,
 }
 
 // TODO: Move to blockchain/dev

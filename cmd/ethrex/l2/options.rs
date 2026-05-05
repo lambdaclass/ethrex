@@ -8,7 +8,7 @@ use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
+    sequencer::configs::{AdminConfig, AlignedConfig, CredibleLayerConfig, MonitorConfig},
 };
 use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
@@ -92,6 +92,8 @@ pub struct SequencerOptions {
     pub admin_opts: AdminOptions,
     #[clap(flatten)]
     pub state_updater_opts: StateUpdaterOptions,
+    #[clap(flatten)]
+    pub credible_layer_opts: CredibleLayerOptions,
     #[arg(
         long = "validium",
         default_value = "false",
@@ -262,6 +264,9 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 check_interval_ms: opts.state_updater_opts.check_interval_ms,
                 start_at: opts.state_updater_opts.start_at,
                 l2_head_check_rpc_url: opts.state_updater_opts.l2_head_check_rpc_url,
+            },
+            credible_layer: CredibleLayerConfig {
+                sidecar_url: opts.credible_layer_opts.credible_layer_url,
             },
         })
     }
@@ -1064,6 +1069,18 @@ impl Default for AdminOptions {
             admin_listen_port: 5555,
         }
     }
+}
+
+#[derive(Parser, Default, Debug)]
+pub struct CredibleLayerOptions {
+    #[arg(
+        long = "credible-layer-url",
+        value_name = "URL",
+        env = "ETHREX_CREDIBLE_LAYER_URL",
+        help = "gRPC endpoint for the Credible Layer Assertion Enforcer sidecar (e.g. http://localhost:50051). Passing this flag enables the integration.",
+        help_heading = "Credible Layer options"
+    )]
+    pub credible_layer_url: Option<String>,
 }
 
 #[derive(Parser)]
