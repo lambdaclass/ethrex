@@ -473,11 +473,9 @@ impl Blockchain {
         }
 
         let original_store = vm.db.store.clone();
-        self.cross_block_cache
-            .set_inner(original_store)
-            .map_err(|e| ChainError::Custom(format!("set cross-block cache inner: {e}")))?;
+        self.cross_block_cache.set_inner(original_store);
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            self.cross_block_cache.clone();
+            self.cross_block_cache.cache();
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -1514,7 +1512,7 @@ impl Blockchain {
 
     pub fn generate_witness_from_account_updates(
         &self,
-        account_updates: Vec<AccountUpdate>,
+        account_updates: &[AccountUpdate],
         block: &Block,
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
@@ -1540,7 +1538,7 @@ impl Blockchain {
 
         let mut codes = Vec::new();
 
-        for account_update in &account_updates {
+        for account_update in account_updates {
             touched_account_storage_slots.insert(
                 account_update.address,
                 account_update
@@ -1626,7 +1624,7 @@ impl Blockchain {
         let (storage_tries_after_update, _account_updates_list) =
             self.storage.apply_account_updates_from_trie_with_witness(
                 trie,
-                &account_updates,
+                account_updates,
                 used_storage_tries,
             )?;
 
@@ -1900,10 +1898,11 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
+        let block_hash = block.hash();
+
         if let Some(logger) = logger {
-            let block_hash = block.hash();
             let witness = self.generate_witness_from_account_updates(
-                accumulated_updates.clone(),
+                &accumulated_updates,
                 &block,
                 parent_header,
                 &logger,
@@ -1912,7 +1911,6 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        let stored_block_hash = block.hash();
         let result = self.store_block(block, account_updates_list, res);
 
         let stored = Instant::now();
@@ -1921,11 +1919,9 @@ impl Blockchain {
         // earlier leaves the cache reflecting the previous block, and the next
         // block's parent-mismatch check handles invalidation.
         if result.is_ok()
-            && let Err(e) = self.cross_block_cache.promote_block(
-                block_number,
-                stored_block_hash,
-                &accumulated_updates,
-            )
+            && let Err(e) =
+                self.cross_block_cache
+                    .promote_block(block_number, block_hash, &accumulated_updates)
         {
             warn!("cross-block cache promotion failed; invalidating: {e}");
             self.cross_block_cache.invalidate();

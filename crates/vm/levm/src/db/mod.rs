@@ -81,11 +81,11 @@ impl CachingDatabase {
         }
     }
 
-    /// Replace the inner database. Caller must ensure no other thread is reading
-    /// through the cache during the swap.
-    pub fn set_inner(&self, inner: Arc<dyn Database>) -> Result<(), DatabaseError> {
-        *self.inner.write().map_err(poison_error_to_db_error)? = inner;
-        Ok(())
+    /// Replace the inner database. After the swap, cached entries must be valid
+    /// for the new inner; only swap to the post-state of the most recently
+    /// promoted block.
+    pub fn set_inner(&self, inner: Arc<dyn Database>) {
+        *self.inner.write().unwrap_or_else(|p| p.into_inner()) = inner;
     }
 
     fn current_inner(&self) -> Result<Arc<dyn Database>, DatabaseError> {
@@ -288,7 +288,7 @@ pub struct CrossBlockCache {
 }
 
 impl CrossBlockCache {
-    pub fn new(inner: Arc<dyn Database>) -> Self {
+    fn new(inner: Arc<dyn Database>) -> Self {
         Self {
             cache: Arc::new(CachingDatabase::new(inner)),
             last_committed: RwLock::new(None),
@@ -300,8 +300,13 @@ impl CrossBlockCache {
         Self::new(Arc::new(UnsetInner))
     }
 
-    pub fn set_inner(&self, inner: Arc<dyn Database>) -> Result<(), DatabaseError> {
-        self.cache.set_inner(inner)
+    /// Inner cache, suitable for use as `Arc<dyn Database>` by execution paths.
+    pub fn cache(&self) -> Arc<CachingDatabase> {
+        self.cache.clone()
+    }
+
+    pub fn set_inner(&self, inner: Arc<dyn Database>) {
+        self.cache.set_inner(inner);
     }
 
     pub fn is_valid_for_parent(&self, parent_number: BlockNumber, parent_hash: BlockHash) -> bool {
@@ -309,7 +314,7 @@ impl CrossBlockCache {
             .last_committed
             .read()
             .unwrap_or_else(|p| p.into_inner());
-        matches!(snapshot, Some((n, h)) if n == parent_number && h == parent_hash)
+        snapshot == Some((parent_number, parent_hash))
     }
 
     pub fn invalidate(&self) {
@@ -372,43 +377,5 @@ impl CrossBlockCache {
             .write()
             .unwrap_or_else(|p| p.into_inner()) = Some((block_number, block_hash));
         Ok(())
-    }
-}
-
-impl Database for CrossBlockCache {
-    fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        self.cache.get_account_state(address)
-    }
-
-    fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        self.cache.get_storage_value(address, key)
-    }
-
-    fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError> {
-        self.cache.get_block_hash(block_number)
-    }
-
-    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-        self.cache.get_chain_config()
-    }
-
-    fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
-        self.cache.get_account_code(code_hash)
-    }
-
-    fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-        self.cache.get_code_metadata(code_hash)
-    }
-
-    fn precompile_cache(&self) -> Option<&PrecompileCache> {
-        Some(self.cache.precompile_cache())
-    }
-
-    fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
-        self.cache.prefetch_accounts(addresses)
-    }
-
-    fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        self.cache.prefetch_storage(keys)
     }
 }
