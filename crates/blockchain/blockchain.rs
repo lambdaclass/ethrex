@@ -1291,16 +1291,26 @@ impl Blockchain {
         // Helper for percentage
         let pct = |ms: f64| (ms / total_ms * 100.0).round() as u64;
 
-        // Format output
+        // Format output. The BACKEND tag uses operator-friendly names rather
+        // than the BackendKind enum variant Debug repr ("Transition" was
+        // opaque from the operator side):
+        // - Mpt        -> "MPT"
+        // - Transition -> "BinaryTrieOverlay"  (binary writes, MPT-frozen base)
+        // - Binary     -> "BinaryTrie"         (Phase 8: --binary-from-genesis)
+        let backend_label = match backend_kind {
+            BackendKind::Mpt => "MPT",
+            BackendKind::Transition => "BinaryTrieOverlay",
+            BackendKind::Binary => "BinaryTrie",
+        };
         let header = format!(
-            "[METRIC] BLOCK {} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%) [BACKEND={:?}]",
+            "[METRIC] BLOCK {} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%) [BACKEND={}]",
             block_number,
             throughput,
             total_ms,
             transactions_count,
             as_mgas,
             (gas_used as f64 / gas_limit as f64 * 100.0).round() as u64,
-            backend_kind
+            backend_label
         );
 
         let bottleneck_marker = |name: &str| {
