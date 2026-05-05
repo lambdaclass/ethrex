@@ -261,6 +261,13 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// If true, transactions submitted via this node's RPC (e.g.
+    /// `eth_sendRawTransaction`) are kept private: they enter the mempool and
+    /// can be included in blocks built locally, but are not propagated to
+    /// peers via `Transactions` / `NewPooledTransactionHashes`. Equivalent to
+    /// reth's `--txpool.no-local-transactions-propagation`.
+    /// P2P-received transactions are unaffected.
+    pub private_mempool: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -275,6 +282,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            private_mempool: false,
         }
     }
 }
@@ -2882,12 +2890,44 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_blob_transaction_to_pool`].
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, true)
+            .await
+    }
+
+    /// EIP-equivalent of `add_blob_transaction_to_pool` for transactions
+    /// submitted via this node's local RPC. When
+    /// `BlockchainOptions::private_mempool` is `true`, the transaction is
+    /// added to the mempool but is NOT queued for P2P broadcast — it stays
+    /// available only for blocks built locally.
+    #[cfg(feature = "c-kzg")]
+    pub async fn add_local_blob_transaction_to_pool(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_blob_transaction_to_pool_inner(transaction, blobs_bundle, broadcast)
+            .await
+    }
+
+    #[cfg(feature = "c-kzg")]
+    async fn add_blob_transaction_to_pool_inner(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+        broadcast: bool,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
@@ -2926,15 +2966,46 @@ impl Blockchain {
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        if broadcast {
+            self.mempool.add_transaction(hash, sender, mempool_tx)?;
+        } else {
+            self.mempool
+                .add_transaction_no_broadcast(hash, sender, mempool_tx)?;
+        }
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool checking that the transaction is valid
+    /// Add a transaction to the mempool checking that the transaction is valid.
+    ///
+    /// This is the P2P entry point: the transaction's hash is queued for
+    /// broadcast to peers regardless of `BlockchainOptions::private_mempool`.
+    /// For the local-RPC path that honors `private_mempool`, use
+    /// [`Self::add_local_transaction_to_pool`].
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        self.add_transaction_to_pool_inner(transaction, true).await
+    }
+
+    /// Equivalent of `add_transaction_to_pool` for transactions submitted via
+    /// this node's local RPC. When `BlockchainOptions::private_mempool` is
+    /// `true`, the transaction is added to the mempool but is NOT queued for
+    /// P2P broadcast — it stays available only for blocks built locally.
+    pub async fn add_local_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        let broadcast = !self.options.private_mempool;
+        self.add_transaction_to_pool_inner(transaction, broadcast)
+            .await
+    }
+
+    async fn add_transaction_to_pool_inner(
+        &self,
+        transaction: Transaction,
+        broadcast: bool,
     ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
@@ -2963,8 +3034,13 @@ impl Blockchain {
         }
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        let mempool_tx = MempoolTransaction::new(transaction, sender);
+        if broadcast {
+            self.mempool.add_transaction(hash, sender, mempool_tx)?;
+        } else {
+            self.mempool
+                .add_transaction_no_broadcast(hash, sender, mempool_tx)?;
+        }
 
         Ok(hash)
     }

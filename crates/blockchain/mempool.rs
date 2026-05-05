@@ -282,12 +282,35 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Add transaction to the pool without doing validity checks
+    /// Add transaction to the pool without doing validity checks. The
+    /// transaction's hash is queued for P2P broadcast.
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
+    ) -> Result<(), StoreError> {
+        self.add_transaction_inner(hash, sender, transaction, true)
+    }
+
+    /// Add transaction to the pool without queueing it for P2P broadcast.
+    /// Used by the private-mempool path: the tx is available to the local
+    /// payload builder but never gossiped to peers.
+    pub fn add_transaction_no_broadcast(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+    ) -> Result<(), StoreError> {
+        self.add_transaction_inner(hash, sender, transaction, false)
+    }
+
+    fn add_transaction_inner(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        broadcast: bool,
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
@@ -323,7 +346,9 @@ impl Mempool {
             .txs_by_sender_nonce
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
-        inner.broadcast_pool.insert(hash);
+        if broadcast {
+            inner.broadcast_pool.insert(hash);
+        }
         inner.alternates.remove(&hash);
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);

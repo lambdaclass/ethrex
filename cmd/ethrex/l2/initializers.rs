@@ -236,6 +236,7 @@ pub async fn init_l2(
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
         bal_parallel_trie_enabled: true,
+        private_mempool: opts.node_opts.mempool_private,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
