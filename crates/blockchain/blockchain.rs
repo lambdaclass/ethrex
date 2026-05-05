@@ -98,6 +98,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
+use std::sync::Mutex as StdMutex;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -215,7 +216,9 @@ pub struct Blockchain {
     /// Serializes `add_block_pipeline_inner` so the cross-block cache lifecycle
     /// (`set_inner` → execute → `promote_block`) is atomic per block. Required
     /// for callers that share `Arc<Blockchain>` across tasks (L2 peer actors).
-    pipeline_lock: std::sync::Mutex<()>,
+    /// `StdMutex` (not `TokioMutex`) because the pipeline is sync and must not
+    /// be held across `.await`.
+    pipeline_lock: StdMutex<()>,
 }
 
 impl core::fmt::Debug for Blockchain {
@@ -357,7 +360,7 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache: Arc::new(CrossBlockCache::unset()),
-            pipeline_lock: std::sync::Mutex::new(()),
+            pipeline_lock: StdMutex::new(()),
         }
     }
 
@@ -370,7 +373,7 @@ impl Blockchain {
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache: Arc::new(CrossBlockCache::unset()),
-            pipeline_lock: std::sync::Mutex::new(()),
+            pipeline_lock: StdMutex::new(()),
         }
     }
 
@@ -483,7 +486,7 @@ impl Blockchain {
         let original_store = vm.db.store.clone();
         self.cross_block_cache.set_inner(original_store);
         let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            self.cross_block_cache.cache();
+            self.cross_block_cache.as_database();
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -660,7 +663,7 @@ impl Blockchain {
         // Workers and watcher are spawned as pool tasks; the coordination logic
         // (dispatching messages, collecting results) runs on the calling thread
         // via in_place_scope, so it executes concurrently with the pool tasks.
-        let watcher_error: Arc<std::sync::Mutex<Option<StoreError>>> = Default::default();
+        let watcher_error: Arc<StdMutex<Option<StoreError>>> = Default::default();
         let result = self.merkle_pool.in_place_scope(|s| {
             // Spawn 16 unified workers (each gets clone of all 16 senders)
             for (i, rx) in workers_rx.into_iter().enumerate() {

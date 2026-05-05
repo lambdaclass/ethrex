@@ -12,10 +12,13 @@ use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWrite
 pub mod gen_db;
 
 // Bounded so the cache survives cross-block reuse without unbounded growth.
-// Sizes chosen conservatively; revisit with benchmarks if needed.
-const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(256 * 1024 - 1);
-const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(1024 * 1024 - 1);
-const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.saturating_add(4 * 1024 - 1);
+// Caps are first-pass values; revisit once we have benchmarks.
+#[allow(clippy::unwrap_used)]
+const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(256 * 1024).unwrap();
+#[allow(clippy::unwrap_used)]
+const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(1024 * 1024).unwrap();
+#[allow(clippy::unwrap_used)]
+const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(4 * 1024).unwrap();
 
 type AccountCache = LruCache<Address, AccountState, FxBuildHasher>;
 type StorageCache = LruCache<(Address, H256), U256, FxBuildHasher>;
@@ -62,7 +65,8 @@ pub trait Database: Send + Sync {
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
 pub struct CachingDatabase {
-    inner: RwLock<Arc<dyn Database>>,
+    /// `None` until `set_inner` is called. Reads error loudly in that state.
+    inner: RwLock<Option<Arc<dyn Database>>>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
     accounts: RwLock<AccountCache>,
     /// Cached storage values
@@ -75,10 +79,16 @@ pub struct CachingDatabase {
     chain_config: OnceLock<ChainConfig>,
 }
 
+impl Default for CachingDatabase {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CachingDatabase {
-    pub fn new(inner: Arc<dyn Database>) -> Self {
+    pub fn new() -> Self {
         Self {
-            inner: RwLock::new(inner),
+            inner: RwLock::new(None),
             accounts: RwLock::new(LruCache::with_hasher(ACCOUNT_CACHE_CAP, FxBuildHasher)),
             storage: RwLock::new(LruCache::with_hasher(STORAGE_CACHE_CAP, FxBuildHasher)),
             code: RwLock::new(LruCache::with_hasher(CODE_CACHE_CAP, FxBuildHasher)),
@@ -87,19 +97,20 @@ impl CachingDatabase {
         }
     }
 
-    /// Replace the inner database. After the swap, cached entries must be valid
-    /// for the new inner: either the cache was just `clear_all`-ed (any inner
-    /// is safe) or the new inner is the post-state of the most recently
-    /// promoted block.
+    /// Set the inner database. When the cache holds entries, the new inner
+    /// must be the post-state of the most recently promoted block (or the
+    /// cache must be `clear_all`-ed first).
     pub fn set_inner(&self, inner: Arc<dyn Database>) {
-        *self.inner.write().unwrap_or_else(|p| p.into_inner()) = inner;
+        *self.inner.write().unwrap_or_else(|p| p.into_inner()) = Some(inner);
     }
 
     fn current_inner(&self) -> Result<Arc<dyn Database>, DatabaseError> {
-        self.inner
-            .read()
-            .map_err(poison_error_to_db_error)
-            .map(|guard| guard.clone())
+        let guard = self.inner.read().map_err(poison_error_to_db_error)?;
+        guard.as_ref().cloned().ok_or_else(|| {
+            DatabaseError::Custom(
+                "CachingDatabase: inner database not set; call set_inner() before use".to_string(),
+            )
+        })
     }
 
     /// Access the shared precompile result cache.
@@ -256,38 +267,6 @@ impl Database for CachingDatabase {
     }
 }
 
-/// Placeholder used until [`CrossBlockCache::set_inner`] is called. Reads error
-/// loudly so a missing `set_inner` is impossible to miss.
-struct UnsetInner;
-
-const UNSET_INNER_MSG: &str =
-    "CrossBlockCache: inner database not set; call set_inner() before use";
-
-fn unset_inner_error() -> DatabaseError {
-    DatabaseError::Custom(UNSET_INNER_MSG.to_string())
-}
-
-impl Database for UnsetInner {
-    fn get_account_state(&self, _: Address) -> Result<AccountState, DatabaseError> {
-        Err(unset_inner_error())
-    }
-    fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
-        Err(unset_inner_error())
-    }
-    fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
-        Err(unset_inner_error())
-    }
-    fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-        Err(unset_inner_error())
-    }
-    fn get_account_code(&self, _: H256) -> Result<Code, DatabaseError> {
-        Err(unset_inner_error())
-    }
-    fn get_code_metadata(&self, _: H256) -> Result<CodeMetadata, DatabaseError> {
-        Err(unset_inner_error())
-    }
-}
-
 /// Cross-block state cache. Wraps a [`CachingDatabase`] with the lifecycle
 /// metadata needed to keep cached state valid across blocks: the next block
 /// must extend `last_committed`, otherwise the cache is invalidated. Writes
@@ -299,20 +278,18 @@ pub struct CrossBlockCache {
 }
 
 impl CrossBlockCache {
-    fn new(inner: Arc<dyn Database>) -> Self {
+    /// Empty cache with no inner database. Reads error until
+    /// [`Self::set_inner`] is called.
+    pub fn unset() -> Self {
         Self {
-            cache: Arc::new(CachingDatabase::new(inner)),
+            cache: Arc::new(CachingDatabase::new()),
             last_committed: RwLock::new(None),
         }
     }
 
-    /// Empty cache; reads fail until [`Self::set_inner`] is called.
-    pub fn unset() -> Self {
-        Self::new(Arc::new(UnsetInner))
-    }
-
     /// Inner cache as `Arc<dyn Database>` for use by execution paths.
-    pub fn cache(&self) -> Arc<dyn Database> {
+    /// Shared handle: warmer and executor see each other's writes.
+    pub fn as_database(&self) -> Arc<dyn Database> {
         self.cache.clone()
     }
 
@@ -357,12 +334,13 @@ impl CrossBlockCache {
         let mut storage = self.cache.write_storage()?;
         let mut code = self.cache.write_code()?;
 
+        // Wipe path is cold on Cancun+ (EIP-6780 prevents cross-tx storage
+        // wipes); kept for pre-Cancun replay and L2s on older forks.
         let mut storage_wiped: FxHashSet<Address> = FxHashSet::default();
 
         for update in account_updates {
             accounts.pop(&update.address);
 
-            // Wiped accounts: don't bother writing slots/code we'd evict next.
             if update.removed || update.removed_storage {
                 storage_wiped.insert(update.address);
                 continue;
