@@ -632,6 +632,8 @@ impl Mempool {
     /// gates read the live pool state the insert will mutate. Executable
     /// (contiguous-nonce) txs are never queued-capped, so a single sender can
     /// hold arbitrarily many (bounded only by the global mempool size).
+    ///
+    /// The transaction's hash is queued for P2P broadcast.
     pub fn add_transaction(
         &self,
         hash: H256,
@@ -639,6 +641,47 @@ impl Mempool {
         transaction: MempoolTransaction,
         frame_reservation: Option<FramePaymasterReservation>,
         sender_admission: Option<SenderAdmission>,
+    ) -> Result<(), MempoolError> {
+        self.add_transaction_inner(
+            hash,
+            sender,
+            transaction,
+            frame_reservation,
+            sender_admission,
+            true,
+        )
+    }
+
+    /// Add transaction to the pool without queueing it for P2P broadcast.
+    /// Used by the private-mempool path: the tx is available to the local
+    /// payload builder but never gossiped to peers.
+    pub fn add_transaction_no_broadcast(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+    ) -> Result<(), MempoolError> {
+        self.add_transaction_inner(
+            hash,
+            sender,
+            transaction,
+            frame_reservation,
+            sender_admission,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn add_transaction_inner(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        frame_reservation: Option<FramePaymasterReservation>,
+        sender_admission: Option<SenderAdmission>,
+        broadcast: bool,
     ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
         let is_frame = matches!(transaction.tx_type(), TxType::Frame);
@@ -778,7 +821,9 @@ impl Mempool {
         let tx_nonce = transaction.nonce();
         inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         inner.transaction_pool.insert(hash, transaction);
-        inner.broadcast_pool.insert(hash);
+        if broadcast {
+            inner.broadcast_pool.insert(hash);
+        }
         inner.alternates.remove(&hash);
 
         // Track per-sender pending frame tx for EIP-8141 admission gating.
