@@ -395,3 +395,20 @@ Notes for future cleanup (not required for Bug 4):
 - `new_transition_state_reader` still receives `binary_root` from `transition_metadata` (frozen at activation). For fresh activation that's `EMPTY_BINARY_ROOT` and the empty-overlay branch is taken, so this works. On restart the second branch validates against on-disk `META_ROOT_HASH` which might lag in-memory `current_binary_root`; this is a separate restart-recovery path that should also be reconciled.
 - The `state.trie_get` fallback inside `BinaryBackend` walks the disk-backed in-memory tree at whatever root `BinaryTrieState::open` started at. For restart scenarios where on-disk `META_ROOT_HASH` lags `current_binary_root`, that tree is at the older root. Cache_get_leaf covers reads modified post-flush; truly-unmodified-since-flush leaves still resolve through the lagged tree, which is the on-disk truth — fine for state reads but could matter for trie-walk operations (rare).
 - `is_deleted_stem` is NOT yet cache-walking; SELFDESTRUCT-during-overlay isn't covered by Bug 4 fix. Low frequency, can be added if hoodi exposes it.
+
+**Hoodi sign-off run #5 (Bug 4 Option A fix)** — partial success:
+
+- Block 2753571 (last MPT) ✓ committed (52 txs, BACKEND=Transition tag post-activation).
+- Block 2753572 (FIRST post-switch under Transition mode) ✓ committed cleanly, 25 txs, store=0.33ms. **Bug 4 fix definitely works for the switch block** — pre-fix this would have failed identically to the receipts-root mismatch in run #4.
+- Block 2753573 fails: `Invalid transaction: Nonce mismatch: expected 4327, got 4330` — **off by 3**, not off by 1 like prior rounds.
+
+The off-by-3 magnitude is new. Hypotheses:
+
+1. Bug 3 v3 incomplete: a sender did 3 txs across full-sync blocks (2753539–2753571) and all 3 leaf updates got silently dropped. force_commit_layers' `bypass_fkv_cursor=true` should have prevented this; needs verification.
+2. Block 2753572 had 3 txs from the failing sender, and the BinaryMerkleizer / `BinaryBackend::update_accounts` didn't propagate all 3 nonce increments into `fkv_entries`. Cache_get_leaf then returns the partially-updated value.
+3. The CoW first-write logic in `BinaryBackend::update_accounts` (atomic writes of all 4 BASIC_DATA sub-leaves + CODE_HASH on first post-switch touch) might race with intra-block state visibility, dropping later-tx updates within the same block.
+
+Diagnostics to add next session:
+- Temp log in `BinaryBackend::update_accounts` printing `(addr, new_nonce, before, after_intra_block_state_root)` for each sender per tx.
+- Log layer count and `current_binary_root` after each commit so we can verify cache state.
+- Cross-check sender's actual canonical-chain nonce via JSON-RPC against a trusted node at switch_block + 1.
