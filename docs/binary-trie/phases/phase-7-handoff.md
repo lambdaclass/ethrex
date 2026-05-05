@@ -375,3 +375,23 @@ Fix options:
 - **C (simplest, semantic shift)**: at activation, drop the overlay backend altogether — switch to having every Transition block read & write directly to disk-backed binary state. No in-memory layering. Trades perf for correctness/simplicity.
 
 Option A is the right long-term fix. Option B is the smallest patch to ship today and validate. Choose at session restart.
+
+**Bug 4 fix (Option A, landed in 3 commits)**:
+
+User chose Option A. Landed in `ce6409937` + `f402a6a85` + `631a44cba`:
+
+1. **`Store::current_binary_root: Arc<RwLock<H256>>`** field added (`ce6409937`). Seeded from disk `META_ROOT_HASH` at construction (so it survives restarts) and advanced in `apply_trie_updates` Phase 1 to `child_state_root` after each `BackendKind::Binary` `TrieUpdate`. Public accessor `Store::current_binary_root()`. Source of truth for the live binary head root, replacing reads from the frozen `transition_metadata.binary_root` and the disk-lagged `META_ROOT_HASH`.
+
+2. **`BinaryTrieProvider::cache_get_leaf`** added to the trait (`f402a6a85`), and `BinaryBackend::account` / `BinaryBackend::storage` / `BinaryBackend::slot_is_in_overlay` now consult it before the disk-backed `state.trie_get` / `is_slot_in_fkv`. Default trait impl returns `None` (no cache), preserving `EmptyBinaryTrieProvider` semantics for unit tests.
+
+3. **`StoreBinaryTrieProvider::cache_get_leaf`** implements the lookup (`631a44cba`): `binary_trie_cache.get(self.store.current_binary_root().0, tree_key)`. Walks the layer chain from the live head root; returns:
+   - `Some(Some(value))` — leaf was written in some layer
+   - `Some(None)` — leaf was deleted (post-switch SSTORE 0 / SELFDESTRUCT stem clear)
+   - `None` — not in any layer; caller falls through to disk
+
+After this fix, block N+1's overlay reads observe block N's writes via the live in-memory cache, not the disk-lagged frozen state. Validation pending hoodi sign-off run #5.
+
+Notes for future cleanup (not required for Bug 4):
+- `new_transition_state_reader` still receives `binary_root` from `transition_metadata` (frozen at activation). For fresh activation that's `EMPTY_BINARY_ROOT` and the empty-overlay branch is taken, so this works. On restart the second branch validates against on-disk `META_ROOT_HASH` which might lag in-memory `current_binary_root`; this is a separate restart-recovery path that should also be reconciled.
+- The `state.trie_get` fallback inside `BinaryBackend` walks the disk-backed in-memory tree at whatever root `BinaryTrieState::open` started at. For restart scenarios where on-disk `META_ROOT_HASH` lags `current_binary_root`, that tree is at the older root. Cache_get_leaf covers reads modified post-flush; truly-unmodified-since-flush leaves still resolve through the lagged tree, which is the on-disk truth — fine for state reads but could matter for trie-walk operations (rare).
+- `is_deleted_stem` is NOT yet cache-walking; SELFDESTRUCT-during-overlay isn't covered by Bug 4 fix. Low frequency, can be added if hoodi exposes it.
