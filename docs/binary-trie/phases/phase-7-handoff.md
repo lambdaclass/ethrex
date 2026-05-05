@@ -412,3 +412,29 @@ Diagnostics to add next session:
 - Temp log in `BinaryBackend::update_accounts` printing `(addr, new_nonce, before, after_intra_block_state_root)` for each sender per tx.
 - Log layer count and `current_binary_root` after each commit so we can verify cache state.
 - Cross-check sender's actual canonical-chain nonce via JSON-RPC against a trusted node at switch_block + 1.
+
+**Bug 5 (CRITICAL, fix landed) — execute_block_pipeline always used MPT merkleizer regardless of backend_kind**:
+
+Hoodi sign-off run #6 (with Bug 4 fix + diagnostic logs) showed:
+- Block 2753731 (FIRST post-Transition) committed cleanly under Transition tag.
+- Block 2753732 fails: `Nonce mismatch sender=0xf1a2f8e2... state_nonce=16348 tx_nonce=16349 delta=1` AND `sender=0x6d5ef225... state_nonce=40 tx_nonce=41 delta=1` — TWO senders both off by exactly 1.
+- The diagnostic `[BINARY-DEBUG] update_accounts` logs NEVER fired post-activation.
+- The diagnostic `[BINARY-DEBUG] advanced current_binary_root` logs NEVER fired post-activation.
+- `force_commit_layers committed 10411 nodes (1614 leaves)` fired ONCE at activation (the MPT freeze flush).
+
+Diagnosis: `Blockchain::execute_block_pipeline` at `crates/blockchain/blockchain.rs:498` always called `Merkleizer::new_mpt` / `Merkleizer::new_bal_mpt`, with NO dispatch on `store.backend_kind()`. So even after Transition activation, blocks merkleized via the MPT path, producing `NodeUpdates::Mpt`. Worker stored writes into the **MPT** layer cache + flushed to disk MPT trie tables at NEW `state_root` values (not the frozen root).
+
+Meanwhile the read side (TransitionBackend, after Bug 0/4 fixes) reads at the FROZEN `frozen_mpt_root` (state-at-activation). Post-activation MPT writes never visible because they live at different state_roots from the frozen one.
+
+Result: every sender that had a tx in block N (post-activation) reads as off-by-1 in block N+1 (state from N-1 returned).
+
+`Merkleizer::new_transition` was defined in `crates/storage/merkleizer.rs:78` but **never called from anywhere outside that file**. The whole binary-write pipeline was dead code post-activation.
+
+Fix (`crates/blockchain/blockchain.rs:483-528`): `execute_block_pipeline` now dispatches on `store.backend_kind()`:
+- `BackendKind::Mpt` → `Merkleizer::new_bal_mpt` / `new_mpt` (existing behaviour).
+- `BackendKind::Transition` → `Merkleizer::new_transition` (BinaryMerkleizer producing `NodeUpdates::Binary`, which the worker routes through `binary_trie_cache`).
+- `BackendKind::Binary` → `unreachable!()` (Phase 8 territory).
+
+Constructs both `mpt_provider` and `binary_provider` ahead of the spawn so the threading layout is unchanged. After this fix, post-Transition blocks merkleize via `BinaryMerkleizer`, write to the binary overlay, and the `[BINARY-DEBUG] advanced current_binary_root` + `update_accounts` logs from the diagnostic round will start firing — confirming the design pipeline now matches MPT's structure.
+
+Also-need (separate, Phase-9-or-followup): `Store::apply_account_updates_batch` (used by `Blockchain::add_block`, the simpler non-pipelined path) still calls `self.new_state_reader(header.state_root)` which is MPT-only. Same Bug-0/Bug-5 family for that path. Not on the snap-sync hot path so not blocking, but should be addressed for completeness.

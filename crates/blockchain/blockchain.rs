@@ -411,8 +411,8 @@ impl Blockchain {
 
         let cancelled = AtomicBool::new(false);
 
-        let (execution_result, merkleization_result, warmer_duration) =
-            std::thread::scope(|s| -> Result<_, ChainError> {
+        let (execution_result, merkleization_result, warmer_duration) = std::thread::scope(
+            |s| -> Result<_, ChainError> {
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
                 let warm_handle = std::thread::Builder::new()
@@ -481,26 +481,47 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
                 let parent_state_root = parent_header.state_root;
-                let provider = self.storage.make_trie_provider(parent_state_root);
+                // Dispatch the merkleizer on the active backend so post-Transition
+                // blocks merkleize via BinaryMerkleizer (writes go to the binary
+                // overlay) instead of always using MPT (which left the binary
+                // cache empty and made TransitionBackend reads return frozen-base
+                // state forever — Bug 5, hoodi 2026-05-05).
+                let backend_kind = self.storage.backend_kind();
                 let precompute_witnesses = self.options.precompute_witnesses;
                 let merkle_pool = Arc::clone(&self.merkle_pool);
+                let bal_some = bal.is_some();
+                let mpt_provider = self.storage.make_trie_provider(parent_state_root);
+                let binary_provider = self.storage.make_binary_trie_provider();
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> Result<_, StateError> {
-                        let mut merkleizer = if bal.is_some() {
-                            Merkleizer::new_bal_mpt(
+                        let mut merkleizer = match backend_kind {
+                            BackendKind::Mpt => {
+                                if bal_some {
+                                    Merkleizer::new_bal_mpt(
+                                        parent_state_root,
+                                        precompute_witnesses,
+                                        mpt_provider,
+                                        merkle_pool,
+                                    )?
+                                } else {
+                                    Merkleizer::new_mpt(
+                                        parent_state_root,
+                                        precompute_witnesses,
+                                        mpt_provider,
+                                        merkle_pool,
+                                    )?
+                                }
+                            }
+                            BackendKind::Transition => Merkleizer::new_transition(
                                 parent_state_root,
-                                precompute_witnesses,
-                                provider,
+                                binary_provider,
                                 merkle_pool,
-                            )?
-                        } else {
-                            Merkleizer::new_mpt(
-                                parent_state_root,
-                                precompute_witnesses,
-                                provider,
-                                merkle_pool,
-                            )?
+                            )?,
+                            BackendKind::Binary => unreachable!(
+                                "BackendKind::Binary in execute_block_pipeline is Phase 8 territory; \
+                                 not reachable until --binary-from-genesis lands"
+                            ),
                         };
                         for updates in rx {
                             merkleizer.feed_updates(updates)?;
@@ -526,7 +547,8 @@ impl Blockchain {
                     .ok()
                     .unwrap_or(Duration::ZERO);
                 Ok((execution_result, merkleization_result, warmer_duration))
-            })?;
+            },
+        )?;
         let (merkle_output, merkle_end_instant) =
             merkleization_result.map_err(|e| ChainError::Custom(e.to_string()))?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
