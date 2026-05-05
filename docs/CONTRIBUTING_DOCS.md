@@ -24,8 +24,9 @@ We welcome contributions to the documentation! If you want to help improve or ex
 
 We use some mdBook preprocessors and backends for extra features:
 
-- [`mdbook-alerts`](https://github.com/lambdalisue/rs-mdbook-alerts) for custom markdown syntax.
 - [`mdbook-mermaid`](https://github.com/badboy/mdbook-mermaid) for diagrams.
+- [`mdbook-katex`](https://github.com/lzanini/mdbook-katex) for LaTeX math expressions.
+- [`mdbook-linkcheck2`](https://github.com/marxin/mdbook-linkcheck2) for checking broken links during the build.
 - [`lychee`](https://github.com/lycheeverse/lychee) for checking broken links (optional, runs automatically in CI).
 
 You can install mdBook and all dependencies with:
