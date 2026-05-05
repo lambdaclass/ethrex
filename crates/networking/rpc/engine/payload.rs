@@ -523,28 +523,13 @@ impl RpcHandler for NewPayloadV6Request {
         validate_execution_payload_v4(&self.payload)?;
         validate_execution_requests(&self.execution_requests)?;
 
-        // Parse-time sanity check on IL transactions: each must RLP-decode and
-        // its sender must recover from signature material. Per
-        // `engine-api-inclusion-list/spec.md` "IL transactions are
-        // sanity-checked at V6 parse time" — return -38003 on failure.
-        // Phase 5.2 will pass the decoded txs into the satisfaction validator;
-        // for now we just verify decode-ability so that the contract is
-        // honored from day one.
-        let crypto = ethrex_crypto::NativeCrypto;
-        for (i, raw) in self.inclusion_list_transactions.iter().enumerate() {
-            let tx =
-                ethrex_common::types::Transaction::decode_canonical(raw.as_ref()).map_err(|e| {
-                    RpcErr::InvalidPayloadAttributes(format!(
-                        "inclusionListTransactions[{i}]: RLP decode failed: {e}"
-                    ))
-                })?;
-            // Recover sender — surfaces invalid signatures at parse time.
-            tx.sender(&crypto).map_err(|e| {
-                RpcErr::InvalidPayloadAttributes(format!(
-                    "inclusionListTransactions[{i}]: signature recovery failed: {e}"
-                ))
-            })?;
-        }
+        // Per the FOCIL spec (and the hive engine-focil "garbage bytes" test),
+        // malformed IL byte strings MUST be tolerated as if they were empty IL
+        // entries — the V6 call should not be rejected wholesale. Real RLP
+        // decoding for the satisfaction check happens below; entries that
+        // fail to decode are simply skipped. The size cap is the only
+        // hard error at this layer.
+        validate_il_byte_size(&self.inclusion_list_transactions)?;
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
         let block_access_list_hash = self.raw_bal_hash;
@@ -575,17 +560,24 @@ impl RpcHandler for NewPayloadV6Request {
         // has no InvalidBlockHash variant). Spec compliance by construction.
         let bal = self.payload.block_access_list.clone();
 
-        // Decode IL transactions for the satisfaction check (RLP-validated
-        // earlier at parse time; this re-decode is the same byte stream).
+        // Decode IL transactions for the satisfaction check. Per the FOCIL
+        // spec, malformed entries are tolerated — they're treated as if they
+        // were empty IL items (no obligation imposed on the block). Skip
+        // anything that fails to decode rather than rejecting the whole
+        // newPayload call.
         let mut decoded_il: Vec<ethrex_common::types::Transaction> =
             Vec::with_capacity(self.inclusion_list_transactions.len());
-        for raw in &self.inclusion_list_transactions {
-            // Already validated at parse time, so this is infallible in
-            // practice; surface as Internal if a regression occurs.
-            decoded_il.push(
-                ethrex_common::types::Transaction::decode_canonical(raw.as_ref())
-                    .map_err(|e| RpcErr::Internal(e.to_string()))?,
-            );
+        for (i, raw) in self.inclusion_list_transactions.iter().enumerate() {
+            match ethrex_common::types::Transaction::decode_canonical(raw.as_ref()) {
+                Ok(tx) => decoded_il.push(tx),
+                Err(e) => {
+                    debug!(
+                        index = i,
+                        error = %e,
+                        "engine_newPayloadV6: skipping malformed IL byte string (treated as empty entry)"
+                    );
+                }
+            }
         }
 
         let block_hash_for_il = block.hash();
@@ -687,7 +679,6 @@ fn parse_il_transactions(value: &Value) -> Result<Vec<bytes::Bytes>, RpcErr> {
         RpcErr::WrongParam("inclusionListTransactions: expected array".to_string())
     })?;
     let mut out = Vec::with_capacity(array.len());
-    let mut total: usize = 0;
     for (i, entry) in array.iter().enumerate() {
         let s = entry.as_str().ok_or_else(|| {
             RpcErr::WrongParam(format!(
@@ -697,15 +688,29 @@ fn parse_il_transactions(value: &Value) -> Result<Vec<bytes::Bytes>, RpcErr> {
         let bytes = hex::decode(s.trim_start_matches("0x")).map_err(|_| {
             RpcErr::WrongParam(format!("inclusionListTransactions[{i}]: invalid hex"))
         })?;
-        total = total.saturating_add(bytes.len());
         out.push(bytes::Bytes::from(bytes));
     }
-    if total > ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST {
+    validate_il_byte_size(&out)?;
+    Ok(out)
+}
+
+/// EIP-7805 (FOCIL) — `MAX_BYTES_PER_INCLUSION_LIST = 8192` is on the
+/// **RLP-encoded** list, not the sum of raw entry lengths. A single 8192-byte
+/// entry RLP-encodes to ~8198 bytes (string header + list header), which the
+/// spec rejects. Compute the actual encoded length and check against the cap.
+pub(crate) fn validate_il_byte_size(il: &[bytes::Bytes]) -> Result<(), RpcErr> {
+    use ethrex_rlp::encode::RLPEncode;
+    let raw: Vec<Vec<u8>> = il.iter().map(|b| b.to_vec()).collect();
+    let mut buf = Vec::new();
+    raw.encode(&mut buf);
+    if buf.len() > ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST {
         return Err(RpcErr::InvalidPayloadAttributes(format!(
-            "inclusionListTransactions exceeds 8192-byte cap (got {total} bytes)"
+            "inclusionListTransactions RLP-encoded size {} exceeds {}-byte cap",
+            buf.len(),
+            ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST,
         )));
     }
-    Ok(out)
+    Ok(())
 }
 
 // GetPayload V1-V2-V3 implementations
@@ -1977,13 +1982,40 @@ mod v6_tests {
 
     #[test]
     fn parse_il_transactions_enforces_8kib_cap() {
-        // 8193 bytes total → over cap by 1 byte.
+        // 8193 bytes total → over cap.
         let huge = format!(
             "0x{}",
             "ab".repeat(ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST + 1)
         );
         let err = parse_il_transactions(&json!([huge])).unwrap_err();
         assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
+    }
+
+    /// Hive engine-focil "oversized" test: a single 8192-byte entry RLPs to
+    /// ~8198 bytes (string header + list header) and MUST be rejected even
+    /// though the raw byte sum equals the cap exactly.
+    #[test]
+    fn validate_il_byte_size_rejects_single_entry_at_raw_cap() {
+        let one = bytes::Bytes::from(vec![
+            0x42_u8;
+            ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST
+        ]);
+        let err = validate_il_byte_size(&[one]).unwrap_err();
+        assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
+    }
+
+    /// Hive engine-focil "garbage bytes" test: bytes that aren't valid RLP
+    /// transactions (`0xdeadbeef`, empty, `0x02c0`) MUST round-trip through
+    /// `parse_il_transactions` without error — RLP decode failures are
+    /// downstream concerns handled by skip-and-continue.
+    #[test]
+    fn parse_il_transactions_tolerates_garbage_bytes() {
+        let parsed =
+            parse_il_transactions(&json!(["0xdeadbeef", "", "0x02c0"])).expect("garbage parses");
+        assert_eq!(parsed.len(), 3);
+        assert_eq!(parsed[0].as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+        assert!(parsed[1].is_empty());
+        assert_eq!(parsed[2].as_ref(), &[0x02, 0xc0]);
     }
 
     #[test]

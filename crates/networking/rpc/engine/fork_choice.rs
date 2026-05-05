@@ -736,18 +736,22 @@ async fn build_payload_v5(
 ) -> Result<u64, RpcErr> {
     use ethrex_common::types::Transaction;
 
-    // Defensive: log if we receive ILs we can't decode. The CL is responsible
-    // for forwarding well-formed RLP; a bad encoding is a CL bug, not a
-    // proposer-injection condition we should accept.
+    // Per the FOCIL spec (and the hive engine-focil "garbage bytes" test),
+    // malformed IL byte strings MUST be tolerated rather than failing the
+    // whole forkchoiceUpdated call. Skip anything that doesn't RLP-decode
+    // and build with whatever real transactions remain.
+    crate::engine::payload::validate_il_byte_size(&attributes.inclusion_list_transactions)?;
     let il_count = attributes.inclusion_list_transactions.len();
     let mut decoded_il: Vec<Transaction> = Vec::with_capacity(il_count);
     for (i, raw) in attributes.inclusion_list_transactions.iter().enumerate() {
         match Transaction::decode_canonical(raw.as_ref()) {
             Ok(tx) => decoded_il.push(tx),
             Err(e) => {
-                return Err(RpcErr::InvalidPayloadAttributes(format!(
-                    "inclusion_list_transactions[{i}]: RLP decode failed: {e}"
-                )));
+                debug!(
+                    index = i,
+                    error = %e,
+                    "engine_forkchoiceUpdatedV5: skipping malformed IL byte string (treated as empty entry)"
+                );
             }
         }
     }
