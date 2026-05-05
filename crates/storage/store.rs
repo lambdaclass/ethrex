@@ -2013,13 +2013,16 @@ impl Store {
         let backend = match self.backend_kind() {
             BackendKind::Mpt => self.new_state_reader(header.state_root)?,
             BackendKind::Transition => {
-                let (switch_block, frozen_mpt_root, binary_root) =
+                let (switch_block, frozen_mpt_root, _binary_root) =
                     self.transition_metadata().ok_or_else(|| {
                         StoreError::Custom(
                             "Transition mode requires transition_metadata; not loaded".to_string(),
                         )
                     })?;
-                self.new_transition_state_reader(switch_block, frozen_mpt_root, binary_root)?
+                // `_binary_root` from metadata is vestigial; the reader is
+                // anchored at the live `current_binary_root` via
+                // `CacheAwareTrieBackend`.
+                self.new_transition_state_reader(switch_block, frozen_mpt_root)?
             }
             BackendKind::Binary => self.new_binary_state_reader(header.state_root)?,
         };

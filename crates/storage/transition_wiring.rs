@@ -340,25 +340,31 @@ impl StateCommitter for TransitionBackend {
 // ---------------------------------------------------------------------------
 
 impl Store {
-    /// Create a [`StateBackend::Transition`] anchored at the given MPT and
-    /// binary roots. The MPT side is treated as read-only by construction
-    /// (no `&mut base` is exposed); writes go to the binary overlay only.
+    /// Create a [`StateBackend::Transition`] anchored at the frozen MPT root
+    /// and the **live** binary head root.
+    ///
+    /// The MPT side is treated as read-only by construction (no `&mut base` is
+    /// exposed); writes go to the binary overlay only.
     ///
     /// - `mpt_root`: the frozen MPT root at the switch block.
-    /// - `binary_root`: the current binary overlay root.
-    ///   - When `binary_root == H256::zero()`: opens an empty overlay (fresh
-    ///     activation; no prior post-switch writes exist on disk).
-    ///   - Otherwise: opens the persisted overlay rooted at `binary_root`,
-    ///     validating the on-disk `META_ROOT_HASH` against `binary_root`. Any
-    ///     mismatch returns `Err` so that a stale or corrupt overlay is never
-    ///     silently accepted.
     /// - `switch_block`: block number of the first binary-overlay block.
+    ///
+    /// The binary overlay is anchored at `Store::current_binary_root()` (the
+    /// live, in-memory head advanced per-block by `apply_trie_updates`). The
+    /// overlay is opened via [`CacheAwareTrieBackend`] so the in-memory
+    /// [`BinaryTrieState`] traverses the **live** structure (cache layers +
+    /// disk), not the disk-flushed root which lags by up to 128 layers. This
+    /// matches MPT's `MptTrieWrapper(state_root, trie_cache, db, last_written)`.
+    ///
+    /// The `binary_root` field of `transition_metadata` is no longer consulted;
+    /// it is kept on disk for backward-compatibility of the format but is
+    /// vestigial — the live root is the source of truth.
     pub fn new_transition_state_reader(
         &self,
         switch_block: u64,
         mpt_root: H256,
-        binary_root: H256,
     ) -> Result<StateBackend, StoreError> {
+        use crate::binary_wiring::CacheAwareTrieBackend;
         use crate::mpt_wiring::StoreTrieProvider;
 
         // Open the frozen MPT backend at `mpt_root`.
@@ -375,53 +381,29 @@ impl Store {
             code_reader.clone(),
         );
 
-        // Open the binary overlay backend.
+        // Open the binary overlay backend, anchored at the live head root via
+        // CacheAwareTrieBackend.
         //
-        // When binary_root is zero, no overlay commits have been made yet —
-        // open an empty in-memory overlay (fresh activation path).
-        //
-        // When binary_root is non-zero, reconstruct the persisted overlay from
-        // disk and validate that the stored META_ROOT_HASH matches binary_root.
-        // This mirrors the validation performed by `new_binary_state_reader` so
-        // that a stale or mismatched root is caught at startup rather than
-        // silently returning wrong data.
+        // BinaryTrieState::open reads META_ROOT through the wrapper; the cache
+        // layer at current_binary_root contains an updated META_ROOT entry
+        // pointing at the live root NodeId. If no commits have happened yet
+        // (fresh activation, current_binary_root == EMPTY_BINARY_ROOT), the
+        // cache lookup returns None, the disk lookup also returns None, and
+        // the trie is opened empty — same as the previous "fresh activation"
+        // branch.
         let binary_provider = Arc::new(StoreBinaryTrieProvider {
             store: self.clone(),
         }) as Arc<dyn ethrex_binary_trie::BinaryTrieProvider>;
-        let overlay = if binary_root == H256::zero() {
-            BinaryBackend::new_with_db(binary_provider, code_reader.clone())
-        } else {
-            // Validate that the stored META_ROOT_HASH matches binary_root.
-            let stored_root = StoreBinaryTrieProvider {
+        let trie_backend = Arc::new(CacheAwareTrieBackend {
+            store: self.clone(),
+            inner: StorageTrieBackend {
                 store: self.clone(),
-            }
-            .load_current_root_hash()?;
-            match stored_root {
-                None => {
-                    return Err(StoreError::Custom(format!(
-                        "transition overlay: binary trie has no committed state; \
-                         cannot open overlay at binary_root {binary_root:?}"
-                    )));
-                }
-                Some(h) if h != binary_root.0 => {
-                    return Err(StoreError::Custom(format!(
-                        "transition overlay: requested binary_root {binary_root:?} does not \
-                         match on-disk META_ROOT_HASH {:?}; historical root pinning is not \
-                         supported",
-                        H256(h)
-                    )));
-                }
-                _ => {} // root matches — proceed to open
-            }
-
-            let trie_backend = Arc::new(StorageTrieBackend {
-                store: self.clone(),
-            });
-            let binary_state =
-                BinaryTrieState::open(trie_backend, BINARY_TRIE_NODES, BINARY_STORAGE_KEYS)
-                    .map_err(|e| StoreError::Custom(e.to_string()))?;
-            BinaryBackend::from_state(binary_state, binary_provider, code_reader.clone())
-        };
+            },
+        });
+        let binary_state =
+            BinaryTrieState::open(trie_backend, BINARY_TRIE_NODES, BINARY_STORAGE_KEYS)
+                .map_err(|e| StoreError::Custom(e.to_string()))?;
+        let overlay = BinaryBackend::from_state(binary_state, binary_provider, code_reader.clone());
 
         let transition = TransitionBackend::new(base, overlay, switch_block, mpt_root, code_reader);
         Ok(StateBackend::Transition(Box::new(transition)))
@@ -1095,9 +1077,7 @@ mod tests {
         assert_eq!(meta.2, binary_root, "binary_root must round-trip");
 
         // Reads via the TransitionBackend constructed from persisted metadata.
-        let tb = store2
-            .new_transition_state_reader(meta.0, meta.1, meta.2)
-            .unwrap();
+        let tb = store2.new_transition_state_reader(meta.0, meta.1).unwrap();
         let info = tb.account(addr).unwrap().unwrap();
         assert_eq!(
             info.nonce, 3,
@@ -1348,9 +1328,7 @@ mod tests {
             );
 
             // Build a TransitionBackend and update addr's balance.
-            let tb_backend = store2
-                .new_transition_state_reader(meta.0, meta.1, meta.2)
-                .unwrap();
+            let tb_backend = store2.new_transition_state_reader(meta.0, meta.1).unwrap();
 
             // Unwrap StateBackend::Transition to get the inner TransitionBackend
             // so we can call StateCommitter::commit() directly.
@@ -1426,7 +1404,7 @@ mod tests {
             );
 
             let reader = store3
-                .new_transition_state_reader(meta3.0, meta3.1, meta3.2)
+                .new_transition_state_reader(meta3.0, meta3.1)
                 .unwrap();
 
             let info = reader
@@ -1537,10 +1515,7 @@ mod tests {
         // addr_base exists only in the MPT base → must be readable.
         // addr_overlay is written to the binary overlay → overlay value wins.
         // ----------------------------------------------------------------
-        let mut tb = match store2
-            .new_transition_state_reader(meta.0, meta.1, meta.2)
-            .unwrap()
-        {
+        let mut tb = match store2.new_transition_state_reader(meta.0, meta.1).unwrap() {
             StateBackend::Transition(inner) => *inner,
             _ => panic!("expected StateBackend::Transition"),
         };

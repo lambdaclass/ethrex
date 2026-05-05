@@ -132,6 +132,61 @@ impl TrieBackend for StorageTrieBackend {
 }
 
 // ---------------------------------------------------------------------------
+// CacheAwareTrieBackend — TrieBackend that consults trie_cache at the live
+// binary head root before falling through to disk.
+// ---------------------------------------------------------------------------
+
+/// `TrieBackend` wrapper that consults the in-memory `trie_cache` at the
+/// current binary head root for reads on `BINARY_TRIE_NODES` before falling
+/// through to the disk-backed [`StorageTrieBackend`].
+///
+/// Used by [`Store::new_transition_state_reader`] so the in-memory
+/// [`BinaryTrieState`] traverses the **live** trie structure (cache layers +
+/// disk), not the disk-flushed root which lags by up to 128 layers. Symmetric
+/// to MPT's `MptTrieWrapper(state_root, trie_cache, db, last_written)`.
+///
+/// Other tables (`BINARY_STORAGE_KEYS`, etc.) bypass the cache and go straight
+/// to disk.
+pub(crate) struct CacheAwareTrieBackend {
+    pub(crate) store: Store,
+    pub(crate) inner: StorageTrieBackend,
+}
+
+impl TrieBackend for CacheAwareTrieBackend {
+    fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, BinaryTrieError> {
+        if table == BINARY_TRIE_NODES {
+            let head = self.store.current_binary_root();
+            let cache = self
+                .store
+                .trie_cache
+                .read()
+                .map_err(|_| BinaryTrieError::StoreError("trie_cache RwLock poisoned".into()))?
+                .clone();
+            if let Some(framed) = cache.get(head, key) {
+                // Cache hit: decode framing.
+                // - Ok(Some(bytes)) -> value-tagged: return the unframed bytes.
+                // - Ok(None) -> tombstone-tagged: return None (treat as absent;
+                //   either a deleted node or a stem-tombstone marker).
+                return decode_binary_cache_value(&framed)
+                    .map_err(|e| BinaryTrieError::StoreError(e.to_string()));
+            }
+        }
+        self.inner.get(table, key)
+    }
+
+    fn write_batch(&self, ops: Vec<WriteOp>) -> Result<(), BinaryTrieError> {
+        self.inner.write_batch(ops)
+    }
+
+    fn full_iterator(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = (Vec<u8>, Vec<u8>)>>, BinaryTrieError> {
+        self.inner.full_iterator(table)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // StoreBinaryTrieProvider — BinaryTrieProvider backed by Store
 // ---------------------------------------------------------------------------
 
@@ -169,10 +224,41 @@ impl BinaryTrieProvider for StoreBinaryTrieProvider {
     }
 
     /// Returns `true` if the given 31-byte stem has a tombstone entry in the
-    /// persistence layer (i.e. the account was SELFDESTRUCTed in a prior block
-    /// and the tombstone was committed to disk).
+    /// in-memory binary cache (live head root) or on disk.
+    ///
+    /// In-memory check is essential during overlay: a SELFDESTRUCT in block N
+    /// writes the tombstone into `trie_cache` (Phase 1) but only flushes to
+    /// disk once 128 layers accumulate (Phase 2). Block N+1 reads must see the
+    /// tombstone immediately, otherwise the transition fall-through resurrects
+    /// the storage of the destroyed account from MPT base. Symmetric to the
+    /// `cache_get_leaf` walk that fixed Bug 4 for value reads.
     fn is_deleted_stem(&self, stem: &[u8; 31]) -> Result<bool, BinaryTrieError> {
         let key = tombstone_key(stem);
+
+        // In-memory cache walk: tombstones are framed as [CACHE_TOMBSTONE_TAG]
+        // in the binary node layer, keyed by [0xFE, stem...]. Walk the layer
+        // chain from current_binary_root toward older ancestors.
+        let head = self.store.current_binary_root();
+        let cache = self
+            .store
+            .trie_cache
+            .read()
+            .map_err(|_| BinaryTrieError::StoreError("trie_cache RwLock poisoned".into()))?
+            .clone();
+        if let Some(framed) = cache.get(head, &key) {
+            // Any framed entry at a tombstone key is a tombstone (the only
+            // writes at [0xFE, stem] keys are tombstone tag values).
+            // Decode defensively in case framing changes; either tombstone tag
+            // or non-empty value at this key means the stem is deleted.
+            return match decode_binary_cache_value(&framed)
+                .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?
+            {
+                None => Ok(true),    // tombstone tag: deleted
+                Some(_) => Ok(true), // any value at a 0xFE key means presence-marker
+            };
+        }
+
+        // Fall through to disk.
         let tx = self
             .store
             .backend
@@ -1389,6 +1475,138 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "uncommitted puts must not be visible"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Cache-walk regression tests for the binary read path.
+    //
+    // These cover the post-Bug-5 asymmetries: until they were fixed, the
+    // overlay reader's stem-tombstone check and the in-memory trie traversal
+    // both consulted disk only and missed in-memory cache layers, so a
+    // SELFDESTRUCT or any node write that hadn't yet been Phase-2-flushed to
+    // disk was invisible until the 128-layer threshold fired.
+    // -----------------------------------------------------------------------
+
+    /// Fix #1: `is_deleted_stem` walks the in-memory `trie_cache` at the live
+    /// `current_binary_root` before falling through to disk.
+    ///
+    /// Setup: insert a synthetic binary cache layer containing only a stem
+    /// tombstone, advance `current_binary_root` to that layer's root, leave
+    /// disk empty. Pre-fix code would have read disk-only and returned false.
+    #[test]
+    fn is_deleted_stem_walks_cache_before_disk() {
+        use crate::{EngineType, Store};
+        use ethrex_state_backend::BackendKind;
+
+        let store = Store::new(
+            std::path::Path::new(""),
+            EngineType::InMemory,
+            BackendKind::Mpt,
+        )
+        .unwrap();
+
+        let stem = [0xAAu8; 31];
+        let head_root = H256::from([0x42u8; 32]);
+        let parent_root = H256::zero();
+
+        // Build a cache layer holding just this stem tombstone (no node
+        // diffs). build_binary_cache_layer frames it as
+        // ([0xFE, stem...; 32], [CACHE_TOMBSTONE_TAG; 1]).
+        let layer = build_binary_cache_layer(Vec::new(), vec![stem]);
+        {
+            let cache = store.trie_cache.read().unwrap().clone();
+            let mut cache_mut = (*cache).clone();
+            cache_mut.put_batch(parent_root, head_root, layer);
+            *store.trie_cache.write().unwrap() = Arc::new(cache_mut);
+        }
+        *store.current_binary_root.write().unwrap() = head_root;
+
+        // Disk has no tombstone for this stem.
+        let read = store.backend.begin_read().unwrap();
+        let tomb_key = tombstone_key(&stem);
+        assert!(
+            read.get(BINARY_TRIE_NODES, &tomb_key).unwrap().is_none(),
+            "precondition: tombstone must NOT be on disk yet (cache-only)"
+        );
+
+        // is_deleted_stem must report true via the cache walk.
+        let provider = StoreBinaryTrieProvider {
+            store: store.clone(),
+        };
+        assert!(
+            provider.is_deleted_stem(&stem).unwrap(),
+            "is_deleted_stem must walk trie_cache and find the tombstone before disk"
+        );
+
+        // A different stem (not in cache, not on disk) must still report false.
+        let other_stem = [0xBBu8; 31];
+        assert!(
+            !provider.is_deleted_stem(&other_stem).unwrap(),
+            "is_deleted_stem must return false for a stem with no cache or disk entry"
+        );
+    }
+
+    /// Fix #3: `CacheAwareTrieBackend::get` for `BINARY_TRIE_NODES` consults
+    /// the in-memory `trie_cache` at `current_binary_root` before falling
+    /// through to disk; a node-id key written into a cache layer is
+    /// retrievable even though it never reached disk.
+    #[test]
+    fn cache_aware_trie_backend_serves_node_from_cache() {
+        use crate::{EngineType, Store};
+        use ethrex_state_backend::BackendKind;
+
+        let store = Store::new(
+            std::path::Path::new(""),
+            EngineType::InMemory,
+            BackendKind::Mpt,
+        )
+        .unwrap();
+
+        // Synthetic node-id key (8-byte LE) and node bytes.
+        let node_id_key = vec![0x07u8, 0, 0, 0, 0, 0, 0, 0];
+        let node_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
+
+        // Build cache layer with the node diff.
+        let head_root = H256::from([0x55u8; 32]);
+        let parent_root = H256::zero();
+        let layer =
+            build_binary_cache_layer(vec![(node_id_key.clone(), node_bytes.clone())], Vec::new());
+        {
+            let cache = store.trie_cache.read().unwrap().clone();
+            let mut cache_mut = (*cache).clone();
+            cache_mut.put_batch(parent_root, head_root, layer);
+            *store.trie_cache.write().unwrap() = Arc::new(cache_mut);
+        }
+        *store.current_binary_root.write().unwrap() = head_root;
+
+        // Precondition: disk does not have this node.
+        let read = store.backend.begin_read().unwrap();
+        assert!(
+            read.get(BINARY_TRIE_NODES, &node_id_key).unwrap().is_none(),
+            "precondition: node must NOT be on disk yet (cache-only)"
+        );
+
+        // Read via CacheAwareTrieBackend — must return the unframed node
+        // bytes from the cache.
+        let cache_aware = CacheAwareTrieBackend {
+            store: store.clone(),
+            inner: StorageTrieBackend {
+                store: store.clone(),
+            },
+        };
+        let got = cache_aware.get(BINARY_TRIE_NODES, &node_id_key).unwrap();
+        assert_eq!(
+            got,
+            Some(node_bytes),
+            "cache-aware backend must return unframed node bytes from cache"
+        );
+
+        // Reads on a different table bypass the cache (table != BINARY_TRIE_NODES).
+        let other = cache_aware.get(BINARY_FLATKEYVALUE, &[0u8; 32]).unwrap();
+        assert!(
+            other.is_none(),
+            "non-BINARY_TRIE_NODES tables must bypass the cache walk"
         );
     }
 }

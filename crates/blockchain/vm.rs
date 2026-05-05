@@ -99,14 +99,16 @@ impl StoreVmDatabase {
                     .map_err(|e| EvmError::DB(e.to_string()))
             }
             BackendKind::Transition => {
-                let (switch_block, frozen_mpt_root, binary_root) =
+                let (switch_block, frozen_mpt_root, _binary_root) =
                     store.transition_metadata().ok_or_else(|| {
                         EvmError::DB(
                             "Transition mode requires transition_metadata; not loaded".to_string(),
                         )
                     })?;
+                // `_binary_root` from metadata is vestigial; reader is anchored
+                // at the live `current_binary_root` via `CacheAwareTrieBackend`.
                 store
-                    .new_transition_state_reader(switch_block, frozen_mpt_root, binary_root)
+                    .new_transition_state_reader(switch_block, frozen_mpt_root)
                     .map_err(|e| EvmError::DB(e.to_string()))
             }
             BackendKind::Binary => unreachable!(

@@ -440,3 +440,73 @@ Constructs both `mpt_provider` and `binary_provider` ahead of the spawn so the t
 Companion fix landed in same commit family: `Store::apply_account_updates_batch` (used by `Blockchain::add_block`, the non-pipelined path) was MPT-only via `self.new_state_reader(header.state_root)`. Now dispatches on `backend_kind`: Mpt → existing reader, Transition → `new_transition_state_reader` with the persisted metadata, Binary → `new_binary_state_reader`. Same Bug 0/5 family closed everywhere, not just on the snap-sync hot path.
 
 The `BackendKind::Binary` arm in `execute_block_pipeline` now calls `Merkleizer::new_binary` (instead of `unreachable!()`). Not exercised by `--binary-transition` mode, but the pipeline is fully wired so `--binary-from-genesis` (Phase 8) can drop in without touching this dispatch.
+
+## Asymmetry close-out (post-Bug-5)
+
+After Bug 5 landed, three remaining MPT/binary read-path asymmetries were identified in the handoff "Notes for future cleanup" of Bug 4. All three are now fixed in this session:
+
+**Asymmetry 1 — `is_deleted_stem` consulted disk only**:
+SELFDESTRUCT writes a tombstone into `trie_cache` at `[0xFE, stem...; 32 bytes]` framed as `[CACHE_TOMBSTONE_TAG; 1]`. Block N+1's transition fall-through called `StoreBinaryTrieProvider::is_deleted_stem` which read disk only; cache-only tombstones (≤ 127 layers since flush) were invisible, so a SELFDESTRUCTed account in the overlay would resurrect from MPT base on the next block's reads.
+
+Fix (`crates/storage/binary_wiring.rs::StoreBinaryTrieProvider::is_deleted_stem`): walk `store.trie_cache` at `store.current_binary_root()` for `tombstone_key(stem)` first; on cache hit (any framed entry at a 0xFE-prefixed key is a tombstone), return `true`. Falls through to the existing disk lookup on cache miss. Symmetric to the Bug 4 `cache_get_leaf` walk.
+
+Regression test: `binary_wiring::tests::is_deleted_stem_walks_cache_before_disk` — inserts a synthetic cache layer with a stem tombstone, advances `current_binary_root`, asserts disk has no tombstone, asserts `is_deleted_stem` returns true via the cache walk.
+
+**Asymmetry 2 — `new_transition_state_reader` used the frozen `binary_root` from `transition_metadata`**:
+The metadata's `binary_root` is written once at activation (`EMPTY_BINARY_ROOT`) and never updated. The reader's two-branch construction (`binary_root == zero` → empty overlay; `!= zero` → DB-backed open with `META_ROOT_HASH` validation) was wrong on restart: post-activation commits advance the disk `META_ROOT_HASH` but the metadata still says zero, so the empty branch fires and the persisted overlay nodes are invisible to the reader.
+
+Fix (`crates/storage/transition_wiring.rs::Store::new_transition_state_reader`): drop the `binary_root` parameter. Always open via [`CacheAwareTrieBackend`] (see Asymmetry 3) which serves META_ROOT and trie nodes from the cache layer at `current_binary_root` first, then falls through to disk. The two branches collapse into one. Callsites in `store.rs::apply_account_updates_batch`, `blockchain/vm.rs::StoreVmDatabase`, and four restart-cycle tests in `transition_wiring.rs::tests` updated. The `binary_root` field of `transition_metadata` is kept on disk for backward-compatibility of the persisted format but is now vestigial.
+
+**Asymmetry 3 — `state.trie_get` walked at the disk-flushed root, lagging the live head**:
+`BinaryTrieState::open` reads `META_ROOT` via the `TrieBackend`. `StorageTrieBackend::get` reads `BINARY_TRIE_NODES` from disk only, so the in-memory trie was effectively rooted at the disk-flushed `META_ROOT_HASH`. Cache layers on top (up to 127) were invisible to trie traversal. State value reads were already covered by Bug 4's `cache_get_leaf`, but anything walking the trie structure (proofs, iteration) was at the lagged root.
+
+Fix (`crates/storage/binary_wiring.rs::CacheAwareTrieBackend`): new `TrieBackend` wrapper that consults `store.trie_cache` at `store.current_binary_root()` for `BINARY_TRIE_NODES` reads before delegating to the inner `StorageTrieBackend`. On cache hit, decodes the framed value (`CACHE_VALUE_TAG` → unframed bytes; `CACHE_TOMBSTONE_TAG` → `None`). Other tables (`BINARY_STORAGE_KEYS`, etc.) and `write_batch` / `full_iterator` pass through unchanged. Used only by `new_transition_state_reader`; `new_binary_state_reader` (historic-root pinning) keeps the bare `StorageTrieBackend` so historic readers see only what's on disk at that root. Symmetric to MPT's `MptTrieWrapper(state_root, trie_cache, db, last_written)`.
+
+Regression test: `binary_wiring::tests::cache_aware_trie_backend_serves_node_from_cache` — inserts a synthetic node-id+bytes layer into `trie_cache`, advances `current_binary_root`, asserts disk has no such node, then reads via `CacheAwareTrieBackend` and asserts the unframed bytes come back from the cache. Also asserts non-`BINARY_TRIE_NODES` tables bypass the cache walk.
+
+All three close-out fixes preserve `EmptyBinaryTrieProvider` and `new_binary_state_reader` semantics — no historic-root readers gain implicit cache walks. Hoodi run #7 will validate Bug 5 landed; runs after that will validate Asymmetries 1-3 if a SELFDESTRUCT or proof-walk happens within 127 blocks of activation. Tests cover the unit-level assertions deterministically.
+
+## Bug 6 (HIGH, root cause for run #7 failure) — `stem_has_basic_data` gate read disk-only, misrouting reads to MPT base
+
+Hoodi sign-off run #7 (with Bug 5 fix only, BEFORE the Asymmetry close-out fixes were rebuilt into the binary):
+
+- Block 2753920 (last MPT) ✓ committed (29 txs).
+- Block 2753921 (FIRST under Transition) ✓ committed cleanly, 20 txs, store=0.33ms. `[BINARY-DEBUG] advanced current_binary_root: parent=0x9642 child=0x3bb9` fires — proving Bug 5's merkleizer dispatch fix engaged: BinaryMerkleizer ran, NodeUpdates::Binary landed, layer at R1=0x3bb9 wrote into `binary_trie_cache` and `trie_cache`.
+- Block 2753922 fails: three different senders, all delta=1 nonce mismatch. Chain stalls.
+
+Diagnosis traced through the read path:
+
+`TransitionBackend::account` (`crates/storage/transition_wiring.rs:176`) gates on `self.overlay.stem_has_basic_data(&stem)` — if `false`, falls through to MPT base. That function (`crates/common/binary-trie/backend.rs::stem_has_basic_data`):
+
+```rust
+pub fn stem_has_basic_data(&self, stem: &[u8; 31]) -> Result<bool, StateError> {
+    if self.deleted_stems.contains(stem) { return Ok(false); }
+    let basic_key = tree_key_from_stem(stem, BASIC_DATA_LEAF_KEY);
+    Ok(self.state.trie_get(basic_key).is_some())  // disk-backed in-memory trie ONLY
+}
+```
+
+It checks `BinaryTrieState.trie_get` only. Bug 4's Option A fix added `cache_get_leaf` walks to `BinaryBackend::account` / `storage` / `slot_is_in_overlay`, but **NOT** to `stem_has_basic_data`. And the underlying `BinaryTrieState` was opened by `new_transition_state_reader` against on-disk `META_ROOT_HASH` — empty for fresh activation (no Phase 2 flush yet) — so the in-memory trie is empty and `trie_get` returns None for every leaf, including those just written into `binary_trie_cache` at the live head root.
+
+End-to-end flow on the failing read:
+
+1. Block 2753921 BinaryMerkleizer commits 20 accounts. `binary_trie_cache` layer at R1 contains their fkv_entries (basic_data + code_hash). `current_binary_root = R1`.
+2. Block 2753922 reads sender X (modified in 2753921) via `TransitionBackend::account`.
+3. `stem_has_basic_data` → `state.trie_get` reads disk-backed empty in-memory trie → returns `None` → returns `Ok(false)`.
+4. Gate fails, falls through to MPT base at `frozen_mpt_root = state_root(2753920)`.
+5. MPT base returns nonce N (post-2753920). Tx wants nonce N+1 (post-2753921). Off-by-1.
+
+This is precisely Asymmetry 3 manifesting in production: the in-memory `BinaryTrieState` rooted at the lagged disk root, not the live head, makes the gate function blind to the cache layers.
+
+**Fix**: the Asymmetry close-out section above (already landed in this session, in working tree at the time of run #7's failure) closes Bug 6:
+
+- Asymmetry 2 + 3 fix: `new_transition_state_reader` opens via `CacheAwareTrieBackend`, which serves `META_ROOT` and node-id reads from `trie_cache` at `current_binary_root` first, then disk. After the fix, `BinaryTrieState` is effectively rooted at the live head, `state.trie_get(basic_key)` walks through cache layers and returns the just-written leaf, `stem_has_basic_data` returns `true`, and `TransitionBackend::account` correctly takes the overlay branch — where `cache_get_leaf` (Bug 4) returns the new BASIC_DATA with nonce N+1.
+
+This is the structural root-cause fix. No narrow patch to `stem_has_basic_data` is added: with the cache-aware backend, the disk-vs-cache asymmetry is closed at the layer where the in-memory trie meets the disk, not patched per-call-site.
+
+**Run #7 status**: chain stuck on 2753922. Asymmetry-closeout binary needs to be rebuilt and run #8 launched on a fresh datadir.
+
+**Verification expectations for run #8**:
+- Block 2753921 (or whatever the new switch block is): `[BINARY-DEBUG] advanced current_binary_root` fires (Bug 5 still works).
+- Block switch_block + 1: commits cleanly without nonce mismatch (Bug 6 closed).
+- Chain advances past switch_block + 50, +100, +200 → Phase 7 signed off.
