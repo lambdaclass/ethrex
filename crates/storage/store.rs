@@ -2244,10 +2244,6 @@ impl Store {
             .clone();
 
         let mut cache_mut = (*cache).clone();
-        // TEMP (Bug 4 diagnosis): log the activation flush so we can see
-        // how many layers + leaves are actually being persisted at switch time.
-        let mut total_committed = 0usize;
-        let mut total_leaves = 0usize;
 
         // Drain until no more layers are found.  We use a temporary threshold
         // of 1 so every layer (not just those older than 128 blocks) is eligible.
@@ -2265,15 +2261,6 @@ impl Store {
                         .to_string(),
                 )
             })?;
-            // TEMP (Bug 4 diagnosis): tally writes for the activation summary.
-            total_committed += nodes.len();
-            for (k, _) in &nodes {
-                if k.len() == crate::mpt_wiring::MPT_ACCOUNT_LEAF_KEY_LEN
-                    || k.len() == crate::mpt_wiring::MPT_STORAGE_LEAF_KEY_LEN
-                {
-                    total_leaves += 1;
-                }
-            }
             // bypass_fkv_cursor=true: this path runs only during the binary
             // transition activation freeze (FKV generator has been stopped
             // permanently by activate() step 2). Leaves past the FKV cursor
@@ -2284,14 +2271,6 @@ impl Store {
 
         // Write the drained cache back.
         *self.trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(cache_mut);
-
-        // TEMP (Bug 4 diagnosis): summary of what we actually persisted.
-        tracing::info!(
-            "[BINARY-DEBUG] force_commit_layers from {:?}: committed {} nodes ({} leaves)",
-            from_root,
-            total_committed,
-            total_leaves,
-        );
 
         Ok(())
     }
@@ -2570,13 +2549,6 @@ fn apply_trie_updates(
         *current_binary_root
             .write()
             .map_err(|_| StoreError::LockError)? = child_state_root;
-        // TEMP (Bug 4 diagnosis): log each advance to verify the cache + head
-        // are tracking the same root the EVM-side merkleizer produced.
-        tracing::info!(
-            "[BINARY-DEBUG] advanced current_binary_root: parent={:?} child={:?}",
-            parent_state_root,
-            child_state_root,
-        );
     }
 
     // Update finished, signal block processing.

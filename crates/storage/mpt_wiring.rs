@@ -64,11 +64,11 @@ pub(crate) fn state_trie_locked_backend(
 
 /// Key length of an account-trie leaf node's nibble path: 64 nibbles
 /// (keccak(addr)) + 1 terminator byte.
-pub(crate) const MPT_ACCOUNT_LEAF_KEY_LEN: usize = 65;
+const MPT_ACCOUNT_LEAF_KEY_LEN: usize = 65;
 /// Key length of a storage-trie leaf when the entry is prefixed with the
 /// hashed account address and suffixed with a terminator:
 /// 3 prefix bytes + 64 address nibbles + 64 slot nibbles.
-pub(crate) const MPT_STORAGE_LEAF_KEY_LEN: usize = 131;
+const MPT_STORAGE_LEAF_KEY_LEN: usize = 131;
 
 /// Write committed MPT nodes to the appropriate disk tables.
 ///

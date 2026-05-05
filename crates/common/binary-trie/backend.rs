@@ -572,15 +572,6 @@ impl StateCommitter for BinaryBackend {
                 Some(info) => {
                     let stem = get_stem_for_base(addr);
 
-                    // TEMP (Bug 4 diagnosis): trace every binary account write so
-                    // we can correlate which addresses + nonces land in the
-                    // overlay vs which ones the failing-tx sender expected.
-                    // binary-trie has no tracing dep — eprintln! to stderr.
-                    eprintln!(
-                        "[BINARY-DEBUG] update_accounts addr={:?} nonce={} balance={} code_hash={:?}",
-                        addr, info.nonce, info.balance, info.code_hash,
-                    );
-
                     // If this account was previously selfdestructed in this block,
                     // clear the tombstone — writing Some(info) means the account
                     // now exists again (e.g. post-selfdestruct re-creation).
