@@ -185,9 +185,12 @@ impl BinaryTrieProvider for StoreBinaryTrieProvider {
     }
 
     /// Returns `true` if the given 32-byte tree key has any FKV row in the
-    /// `BINARY_FLATKEYVALUE` table — including an explicit `[0; 32]` marker
-    /// from a post-switch SSTORE 0. Used by the overlay/transition read path
-    /// to distinguish "explicitly zeroed in overlay" from "absent in overlay".
+    /// `BINARY_FLATKEYVALUE` table on disk — including an explicit `[0; 32]`
+    /// marker from a post-switch SSTORE 0.
+    ///
+    /// This only checks disk. The in-memory layer cache is checked separately
+    /// via `cache_get_leaf`; both `BinaryBackend::slot_is_in_overlay` and the
+    /// transition read path consult the cache first.
     fn is_slot_in_fkv(&self, tree_key: &[u8; 32]) -> Result<bool, BinaryTrieError> {
         let tx = self
             .store
@@ -198,6 +201,36 @@ impl BinaryTrieProvider for StoreBinaryTrieProvider {
             .get(BINARY_FLATKEYVALUE, tree_key)
             .map_err(|e| BinaryTrieError::StoreError(e.to_string()))?;
         Ok(found.is_some())
+    }
+
+    /// Walk the in-memory `binary_trie_cache` from the live head root
+    /// (`Store::current_binary_root`) toward older ancestors and return the
+    /// first layer's record for `tree_key`, if any.
+    ///
+    /// Returns:
+    /// - `Some(Some(value))` — leaf was written with this value in some layer
+    /// - `Some(None)` — leaf was explicitly deleted (SSTORE 0 / SELFDESTRUCT
+    ///   stem clear) in some layer
+    /// - `None` — leaf is not in any cache layer; caller must fall through
+    ///   to disk (`BINARY_FLATKEYVALUE`) or to the in-memory disk-backed trie
+    ///
+    /// Reading from `current_binary_root` (in-memory, advanced per block by
+    /// `apply_trie_updates`) is essential during catchup: the on-disk
+    /// `META_ROOT_HASH` only updates on Phase-2 flushes which fire at the
+    /// 128-layer threshold, so post-activation overlay writes from the first
+    /// 127 blocks are not visible via disk-only paths (Bug 4, hoodi 2026-05-05).
+    fn cache_get_leaf(
+        &self,
+        tree_key: &[u8; 32],
+    ) -> Result<Option<Option<[u8; 32]>>, BinaryTrieError> {
+        let cache = self
+            .store
+            .binary_trie_cache
+            .read()
+            .map_err(|_| BinaryTrieError::StoreError("binary_trie_cache RwLock poisoned".into()))?
+            .clone();
+        let state_root = self.store.current_binary_root().0;
+        Ok(cache.get(state_root, tree_key))
     }
 }
 
