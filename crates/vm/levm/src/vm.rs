@@ -619,7 +619,11 @@ impl<'a> VM<'a> {
         };
 
         // Simplified validation (skip balance deduction, nonce increment, value transfer, EOA check)
-        // Keep: gas limit checks, fee validation, nonce mismatch check
+        // Keep: gas limit checks, fee validation, nonce mismatch check.
+        // The EOA-check skip is required by EIP-8141 §Transaction origination:
+        // EIP-3607 must not apply to frame transactions, so the sender may have
+        // contract code (SENDER frames legitimately originate from contract
+        // accounts).
         let sender = frame_tx.sender;
 
         // Validate static constraints (frame count, reserved modes, atomic batch flags)
@@ -832,7 +836,7 @@ impl<'a> VM<'a> {
                 // empty delegatee still falls into the CallFrame branch below and returns
                 // success without executing anything — NOT into the default-code path.
                 use crate::opcode_handlers::frame_tx::execute_default_code;
-                match execute_default_code(self, frame, sender, target) {
+                match execute_default_code(self, frame, target) {
                     Ok((success, gas_used, logs)) => {
                         if success {
                             self.substate.commit_backup();
