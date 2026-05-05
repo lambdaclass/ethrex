@@ -67,4 +67,8 @@ spamoor_params:
 port_publisher:
   additional_services:
     enabled: true
-    public_port_start: 65500
+    # Keep 30000 (not the upstream 65500) so the existing Caddy vhosts on
+    # ethrex-office-4 (dora.focil.ethrex.xyz → :30000,
+    # spamoor.focil.ethrex.xyz → :30002) keep working without rewiring
+    # the reverse-proxy + Cloudflare DNS.
+    public_port_start: 30000
