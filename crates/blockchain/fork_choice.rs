@@ -3,6 +3,7 @@ use ethrex_common::{
     types::{BlockHash, BlockHeader, BlockNumber},
 };
 use ethrex_metrics::metrics;
+use ethrex_state_backend::BackendKind;
 use ethrex_storage::{Store, error::StoreError};
 use tracing::{error, warn};
 
@@ -106,7 +107,31 @@ pub async fn apply_fork_choice(
 
     // If the state can't be constructed from the DB, we ignore it and log a warning.
     // TODO(#5564): handle arbitrary reorgs
-    if !store.has_state_root(link_header.state_root)? {
+    //
+    // The MPT-format `link_header.state_root` is only meaningful for
+    // `BackendKind::Mpt` stores. For `Binary` and `Transition` the block's
+    // post-state lives in `BINARY_TRIE_NODES` (and `binary_trie_cache`) under
+    // the merkleizer-computed binary root, which does NOT match the canonical
+    // MPT-format `state_root` field in the header — see the gating around
+    // `validate_state_root` in `blockchain.rs::store_block`. Running
+    // `has_state_root` post-switch therefore always returns false, every FCU
+    // is silently rejected, and `LatestBlockNumber` never advances past the
+    // activation block.
+    //
+    // For non-MPT backends, the `get_block_header_by_hash` lookup above has
+    // already confirmed the link block is present in the DB. The
+    // `add_block_pipeline` path that committed it also committed the binary
+    // state to `binary_trie_cache` (Phase 1) and `BINARY_TRIE_NODES` (Phase 2
+    // when the threshold fires) atomically with `store_block`, so block
+    // existence implies state existence. There is no separate
+    // `has_binary_state(state_root)` lookup analogous to MPT because binary
+    // state is keyed by an opaque root, not the header's MPT root. Symmetric
+    // to `validate_state_root` gating.
+    let reachable = match store.backend_kind() {
+        BackendKind::Mpt => store.has_state_root(link_header.state_root)?,
+        BackendKind::Binary | BackendKind::Transition => true,
+    };
+    if !reachable {
         warn!(
             link_block=%link_block_hash,
             link_number=%link_header.number,
