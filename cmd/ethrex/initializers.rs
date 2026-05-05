@@ -9,6 +9,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
+use ethrex_rpc::WebSocketConfig;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -208,15 +209,18 @@ pub async fn init_rpc_api(
     )
     .await;
 
-    let ws_socket_opts = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
+    let ws_config = if opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(opts),
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+        })
     } else {
         None
     };
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_socket_opts,
+        ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,

@@ -30,13 +30,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
       - name: Restore cache
         id: cache-loc-report
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: tooling/loc/loc_report.json
           key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
@@ -159,7 +159,7 @@ jobs:
 
       - name: Save new loc_report.json to cache
         if: success()
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: tooling/loc/loc_report.json
           key: loc-report-${{ github.ref_name }}-${{ github.run_id }}
