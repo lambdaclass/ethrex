@@ -243,6 +243,24 @@ pub struct Store {
     /// The lock itself carries no data (`()`); it is purely a coordination
     /// primitive.
     activation_lock: Arc<std::sync::Mutex<()>>,
+
+    /// Current binary trie head root.
+    ///
+    /// Advances per block in `apply_trie_updates` (Phase 1) when a binary
+    /// `TrieUpdate` is processed: set to `child_state_root` of the just-applied
+    /// layer. Read by `new_transition_state_reader` so each block's overlay
+    /// reads see the live binary trie head, not the frozen activation snapshot.
+    ///
+    /// Why not derive from `transition_metadata.binary_root` or on-disk
+    /// `META_ROOT_HASH`: the former is frozen at activation and never updated;
+    /// the latter is updated only on `BinaryTrieLayerCache` Phase-2 disk
+    /// commits which fire at the 128-layer threshold, so during catchup the
+    /// on-disk root lags ≥ 1 block behind the in-memory layer cache. Reading
+    /// either leads to overlay reads that miss the latest block's writes
+    /// (Bug 4, hoodi 2026-05-05).
+    ///
+    /// Default: `EMPTY_BINARY_ROOT` (`H256::zero()`).
+    pub(crate) current_binary_root: Arc<RwLock<H256>>,
 }
 
 impl Clone for Store {
@@ -263,6 +281,7 @@ impl Clone for Store {
             binary_trie_cache: self.binary_trie_cache.clone(),
             transition_metadata: self.transition_metadata.clone(),
             activation_lock: self.activation_lock.clone(),
+            current_binary_root: self.current_binary_root.clone(),
         }
     }
 }
@@ -1765,6 +1784,26 @@ impl Store {
             None
         };
 
+        // Load the in-memory binary head root from disk-persisted META_ROOT_HASH.
+        // The worker advances this per-block as new layers land in
+        // `binary_trie_cache`; we seed it here so it survives restarts.
+        // For fresh DBs (no binary commits yet), defaults to EMPTY_BINARY_ROOT.
+        let initial_binary_root = {
+            use crate::api::tables::BINARY_TRIE_NODES;
+            use ethrex_binary_trie::META_ROOT_HASH;
+            let tx = backend.begin_read()?;
+            match tx.get(BINARY_TRIE_NODES, META_ROOT_HASH)? {
+                Some(b) if b.len() == 32 => H256::from_slice(&b),
+                Some(b) => {
+                    return Err(StoreError::Custom(format!(
+                        "META_ROOT_HASH has unexpected length {} (expected 32)",
+                        b.len()
+                    )));
+                }
+                None => H256::zero(),
+            }
+        };
+
         let mut background_threads = Vec::new();
         let mut store = Self {
             db_path,
@@ -1784,6 +1823,11 @@ impl Store {
             )))),
             transition_metadata: Arc::new(RwLock::new(transition_metadata)),
             activation_lock: Arc::new(std::sync::Mutex::new(())),
+            // Initialise the in-memory binary head root from disk-persisted
+            // META_ROOT_HASH (last-flushed binary root). For fresh activation
+            // (no binary commits yet), this is `EMPTY_BINARY_ROOT`. The worker
+            // advances this per-block as new layers land in `binary_trie_cache`.
+            current_binary_root: Arc::new(RwLock::new(initial_binary_root)),
         };
         let backend_clone = store.backend.clone();
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
@@ -1821,6 +1865,7 @@ impl Store {
         let flatkeyvalue_control_tx = store.flatkeyvalue_control_tx.clone();
         let trie_cache = store.trie_cache.clone();
         let binary_trie_cache = store.binary_trie_cache.clone();
+        let current_binary_root = store.current_binary_root.clone();
         /*
             When a block is executed, the write of the bottom-most diff layer to disk is done in the background through this thread.
             This is to improve block execution times, since it's not necessary when executing the next block to have this layer flushed to disk.
@@ -1852,6 +1897,7 @@ impl Store {
                             &flatkeyvalue_control_tx,
                             &trie_cache,
                             &binary_trie_cache,
+                            &current_binary_root,
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
@@ -2262,6 +2308,20 @@ impl Store {
             .store(backend_kind_to_byte(kind), Ordering::Release);
     }
 
+    /// Returns the in-memory binary trie head root (live, advances per-block).
+    ///
+    /// Defaults to `H256::zero()` (`EMPTY_BINARY_ROOT`) on a fresh store. The
+    /// worker advances this in `apply_trie_updates` after each binary
+    /// `TrieUpdate`'s Phase-1 layer write. Used by `new_transition_state_reader`
+    /// so each block's overlay reads start from the live binary head, not the
+    /// disk-persisted `META_ROOT_HASH` which lags behind in-memory layers.
+    pub fn current_binary_root(&self) -> H256 {
+        *self
+            .current_binary_root
+            .read()
+            .expect("current_binary_root RwLock poisoned")
+    }
+
     /// Returns the transition metadata loaded at startup (or updated by activation).
     ///
     /// Returns `None` for `Mpt` and `Binary` stores, or before activation fires.
@@ -2399,6 +2459,7 @@ fn apply_trie_updates(
     fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
     trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
     binary_trie_cache: &Arc<RwLock<Arc<BinaryTrieLayerCache>>>,
+    current_binary_root: &Arc<RwLock<H256>>,
     trie_update: TrieUpdate,
 ) -> Result<(), StoreError> {
     let TrieUpdate {
@@ -2456,6 +2517,16 @@ fn apply_trie_updates(
         *binary_trie_cache
             .write()
             .map_err(|_| StoreError::LockError)? = Arc::new(bin_mut);
+    }
+
+    // For Binary (Transition): advance the in-memory current binary head root.
+    // Subsequent block reads use this to walk the binary_trie_cache layers from
+    // the live head, not from the disk-persisted META_ROOT_HASH (which only
+    // updates on Phase-2 flushes that fire at the 128-layer threshold).
+    if backend_kind == BackendKind::Binary {
+        *current_binary_root
+            .write()
+            .map_err(|_| StoreError::LockError)? = child_state_root;
     }
 
     // Update finished, signal block processing.
