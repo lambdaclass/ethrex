@@ -1,64 +1,70 @@
-# focil devnet — pandaops-team-supplied config
-# Source: pandaops team, 2026-05-02
+# focil devnet — based on the upstream local-devnet-focil interop registry config
+#
+# Adds one extra ethrex node running --mempool.private so we can A/B
+# private vs gossiping mempool behavior on the same chain.
 #
 # Matrix:
-#   - 2 × ethrex+lodestar (default mempool, gossiping)
-#   - 2 × ethrex+lodestar with --mempool.private (RPC-submitted txs stay
-#     local to the node; useful for A/B'ing builder-only flow)
-#   - 2 × besu+lodestar (reference EL)
-# Lighthouse pairs dropped — :focil tag is incompatible with lodestar:focil
-# at the CL gossip layer (peer-count: 1, NoPeersSubscribedToTopic),
-# independent of EL choice. See deploy notes.
+#   - 1 × besu+lodestar (reference EL)
+#   - 1 × ethrex+lodestar (default mempool, gossiping)
+#   - 1 × ethrex+lodestar with --mempool.private
 #
-# Fork schedule:
-#   * gloas at epoch 1 (post-Glamsterdam ePBS layer)
-#   * heze (= our Hegota / EIP-7805 FOCIL) at epoch 2
-#     ethrex's chain config accepts hezeTime/heze_time/bogotaTime/
-#     bogota_time as aliases for hegota_time (see
-#     crates/common/types/genesis.rs serde alias).
+# All CLs: supernode=true (PeerDAS satisfaction at fulu/gloas).
+#
+# Fork schedule (mainnet preset, 12s slots):
+#   * gloas at epoch 0 (active from genesis)
+#   * heze (= our Hegota / EIP-7805 FOCIL) at epoch 1
 #
 # Run with:
 #   KURTOSIS_CONFIG_FILE=./fixtures/networks/focil.yaml make localnet
 
 participants:
-  - el_type: ethrex
-    el_image: ethrex:local
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
-    count: 2
-  - el_type: ethrex
-    el_image: ethrex:local
-    el_extra_params:
-      - "--mempool.private"
-    cl_type: lodestar
-    cl_image: ethpandaops/lodestar:focil
-    count: 2
   - el_type: besu
     el_image: ethpandaops/besu:focil
     cl_type: lodestar
     cl_image: ethpandaops/lodestar:focil
-    count: 2
+    supernode: true
+    count: 1
+  - el_type: ethrex
+    el_image: ethpandaops/ethrex:focil
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:focil
+    supernode: true
+    count: 1
+  - el_type: ethrex
+    el_image: ethpandaops/ethrex:focil
+    el_extra_params:
+      - "--mempool.private"
+    cl_type: lodestar
+    cl_image: ethpandaops/lodestar:focil
+    supernode: true
+    count: 1
 
 network_params:
-  preset: minimal
-  gloas_fork_epoch: 1
-  heze_fork_epoch: 2
-
-spamoor_params:
-  image: ethpandaops/spamoor:master
-  spammers: []
+  preset: mainnet
+  gloas_fork_epoch: 0
+  heze_fork_epoch: 1
 
 additional_services:
   - dora
+  - tx_fuzz
   - spamoor
 
 dora_params:
-  # Pandaops-supplied config specified bbusa/dora:focil-fix, which does not
-  # exist on Docker Hub (only :focil, :sql, :hot-fix tags are published).
-  # Using :focil which was pushed 2026-05-01 — the closest available match.
   image: bbusa/dora:focil
+
+spamoor_params:
+  spammers:
+    - scenario: eoatx
+      config:
+        throughput: 100
+    - scenario: uniswap-swaps
+      config:
+        throughput: 100
+    - scenario: blob-combined
+      config:
+        throughput: 5
 
 port_publisher:
   additional_services:
     enabled: true
-    public_port_start: 30000
+    public_port_start: 65500
