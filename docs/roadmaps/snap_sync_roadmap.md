@@ -1,7 +1,7 @@
 # Snap Sync Module Roadmap
 
 **Author:** Pablo Deymonnaz (original), ElFantasma (ongoing updates)
-**Date:** February 2026 (last updated 2026-04-15)
+**Date:** February 2026 (last updated 2026-05-05)
 **Status:** Draft for Review
 
 ---
@@ -314,22 +314,34 @@ Surfaces per-phase completion timings (Block Headers, Account Ranges, Storage Ra
 2. **Reuse `nodehash_buffer` across calls** — avoids ~700M allocations on mainnet.
 3. **Parallel state trie building across 16 nibble ranges** — splits state trie into 16 independent sub-tries built concurrently.
 
-**Benchmarks (mainnet, release profile, no validation):**
+**Original benchmarks (mainnet-8, release profile, no validation, March 2026):**
 
 | Phase | Before | After | Delta |
 |-------|--------|-------|-------|
 | Account Insertion | 1184s (19m 44s) | 818s (13m 40s) | **-31%** |
-| Storage Insertion | 2587s (43m 7s) | 2433s (40m 30s) | **-6%** |
+| Storage Insertion | 2587s (43m 7s) | 2433s (40m 30s) | -6% |
 
-| Network | Before | After | Saved |
-|---------|--------|-------|-------|
-| Hoodi | ~25m | ~13m | ~12m |
-| Sepolia | ~90m | ~43m | ~47m |
-| Mainnet | ~1h 42m | ~1h 35m | ~7m |
+**Updated benchmarks (mainnet-10, release-with-debug-assertions, May 2026 — 2026-05-05):**
+
+After several main-branch perf merges, re-benchmarked with **4 main runs vs 4 PR runs**, full validation enabled.
+
+Account Insertion (the optimization's main target):
+
+| Network | Main avg | Range | PR avg | Range | Δ |
+|---------|----------|-------|--------|-------|---|
+| Hoodi | 1m 22s | 1:20–1:30 | **0m 57s** | 0:50–1:00 | **−30%** ✅ |
+| Sepolia | 6m 52s | 5:30–8:20 | **4m 02s** | 3:30–4:30 | **−41%** ✅ |
+| Mainnet | 17m 33s | 13:40–21:20 | **16m 48s** | 16:20–17:40 | **−4%** (within main's variance) |
+
+On mainnet, single-run main numbers vary widely (13:40, 14:10, 21:00, 21:20). PR runs are tight (16:20–17:40, ±50s). The parallelization both improves the mean and stabilizes runtime.
+
+Storage Insertion shows a small consistent regression (~2–3 min absolute) across all networks: hoodi +39%, sepolia +13%, mainnet +5%. Worth investigating as a follow-up but not large enough to block.
+
+Storage healing is unchanged within ±3% — it's dominated by `release-with-debug-assertions` validation, not the optimization.
 
 **Note:** This optimization is orthogonal to the concurrency model — it operates at the trie-building level, below the orchestration layer. No dependency on actor migration.
 
-**Status:** PR #6410 open, benchmarked on mainnet
+**Status:** PR #6410 open, re-benchmarked on mainnet-10, validation passed on all 8 runs (4 main + 4 PR).
 
 ---
 
@@ -1329,5 +1341,5 @@ After 3.1:
 
 ---
 
-*Document Version: 1.3*
-*Last Updated: 2026-04-15*
+*Document Version: 1.4*
+*Last Updated: 2026-05-05*
