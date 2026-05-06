@@ -147,12 +147,17 @@ fn call_bytecode(target: Address) -> Vec<u8> {
 /// - 0xfd (REVERT)  → revert (note: REVERT alone with empty stack is itself a halt)
 fn create_failing_bytecode(initcode_byte: u8) -> Vec<u8> {
     vec![
-        0x60, initcode_byte, // PUSH1 <byte>
-        0x60, 0x00, // PUSH1 0
+        0x60,
+        initcode_byte, // PUSH1 <byte>
+        0x60,
+        0x00, // PUSH1 0
         0x53, // MSTORE8 — memory[0] = byte
-        0x60, 0x01, // PUSH1 1   (size)
-        0x60, 0x00, // PUSH1 0   (offset)
-        0x60, 0x00, // PUSH1 0   (value)
+        0x60,
+        0x01, // PUSH1 1   (size)
+        0x60,
+        0x00, // PUSH1 0   (offset)
+        0x60,
+        0x00, // PUSH1 0   (value)
         0xf0, // CREATE
         0x50, // POP (discard returned address / 0)
     ]
@@ -798,7 +803,8 @@ fn test_top_halt_after_partial_credit_to_spill_diverges_from_eels() {
     // instead of `gas_limit`. The `min(report.gas_used, _)` line below is the
     // diagnostic showing both candidate values for easier triage.
     assert_eq!(
-        report.gas_used, expected_gas_used_eels,
+        report.gas_used,
+        expected_gas_used_eels,
         "block gas_used divergence: ethrex={} expected_eels={} diff={} (== one SSTORE state-gas charge); \
          ethrex's `max(spill_outstanding, reservoir_surplus)` halt formula drops the \
          residual outstanding spill that wasn't cancelled by the CREATE-failure refund",
@@ -889,7 +895,8 @@ fn test_top_halt_phantom_drain_does_not_cancel_real_spill() {
     let expected_gas_used_ethrex_buggy = GAS_LIMIT - state_new;
 
     assert_eq!(
-        report.gas_used, expected_gas_used_eels,
+        report.gas_used,
+        expected_gas_used_eels,
         "block gas_used divergence: ethrex={} expected_eels={} diff={} (== one NEW_ACCOUNT state-gas charge); \
          the phantom drain credit from refunding the reservoir-funded second inner CREATE \
          must not cancel the real spill from the first inner CREATE",
