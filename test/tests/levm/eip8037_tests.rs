@@ -270,7 +270,7 @@ fn test_intrinsic_parity_eip7702_auth_list() {
         value: U256::zero(),
         data: Bytes::new(),
         access_list: Default::default(),
-        authorization_list: vec![auth.clone(), auth],
+        authorization_list: vec![auth, auth],
         ..Default::default()
     });
     for fork in [Fork::Prague, Fork::Osaka, Fork::Amsterdam] {

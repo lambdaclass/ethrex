@@ -307,6 +307,7 @@ impl TestRunner {
 /// For block_gas_limit = GAS_LIMIT * 2 = 1_000_000:
 /// - With the dynamic formula: cost_per_state_byte = 1, state_gas_storage_set = 32.
 /// - With the bal-devnet-4 CPSB pin: cost_per_state_byte = 1174, state_gas_storage_set = 37_568.
+///
 /// The function computes the value live so callers stay correct under both regimes.
 fn state_gas_storage_set() -> u64 {
     let cpsb = cost_per_state_byte(GAS_LIMIT * 2);
@@ -825,19 +826,19 @@ fn test_top_halt_after_partial_credit_to_spill_diverges_from_eels() {
 /// Scenario (CREATE TX; intrinsic_state = STATE_NEW; reservoir_initial = 0):
 ///   1. First inner CREATE charges `STATE_NEW` of state-gas. With reservoir = 0,
 ///      it spills the full amount to `gas_remaining`.
-///        After: state_gas_spill = STATE_NEW, state_gas_spill_outstanding = STATE_NEW.
+///      After: state_gas_spill = STATE_NEW, state_gas_spill_outstanding = STATE_NEW.
 ///   2. Inner-1 child halts on INVALID. `handle_return_create`'s halt branch
 ///      runs (no local_excess) and then `credit_state_gas_refund(STATE_NEW)`:
-///        applied_to_spill = STATE_NEW, applied_to_drain = 0.
-///        After: spill_outstanding = 0, reservoir = STATE_NEW.
+///      applied_to_spill = STATE_NEW, applied_to_drain = 0.
+///      After: spill_outstanding = 0, reservoir = STATE_NEW.
 ///   3. Second inner CREATE charges `STATE_NEW` of state-gas. With reservoir =
 ///      STATE_NEW, the charge is absorbed entirely from the reservoir — NO
 ///      spill. state_gas_spill stays at STATE_NEW.
 ///   4. Inner-2 child halts on INVALID. `credit_state_gas_refund(STATE_NEW)`:
-///        frame_outstanding_delta = 0, applied_to_spill = 0,
-///        applied_to_drain = STATE_NEW (the credit can't cancel spill that
-///        doesn't exist in this frame).
-///        After: state_gas_credit_against_drain = STATE_NEW.
+///      frame_outstanding_delta = 0, applied_to_spill = 0,
+///      applied_to_drain = STATE_NEW (the credit can't cancel spill that
+///      doesn't exist in this frame).
+///      After: state_gas_credit_against_drain = STATE_NEW.
 ///   5. Outer initcode hits INVALID → top-level halt.
 ///
 /// At top-halt, the gross spill (STATE_NEW) was real — it was permanently
