@@ -8,7 +8,13 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::H256;
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::Code;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::block_access_list::{
@@ -19,8 +25,6 @@ use ethrex_common::types::block_access_list::{
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::types::Code;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, BigEndianHash, U256,
@@ -30,10 +34,6 @@ use ethrex_common::{
         requests::Requests,
     },
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::types::TxType;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::{validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
@@ -1901,7 +1901,7 @@ impl LEVM {
 
         #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
         {
-            // Sequential fallback for eip-8025 
+            // Sequential fallback for eip-8025
             for (sender, txs) in sender_groups {
                 if cancelled.load(Ordering::Relaxed) {
                     break;
