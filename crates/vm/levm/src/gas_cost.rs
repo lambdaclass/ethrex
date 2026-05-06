@@ -166,19 +166,9 @@ pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
 pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
 
-// EIP-8037: Dynamic cost_per_state_byte formula constants (execution-specs#2687)
-pub const BLOCKS_PER_YEAR: u64 = 2_628_000;
-pub const TARGET_STATE_GROWTH_PER_YEAR: u64 = 100 * (1u64 << 30); // 100 GiB
-pub const CPSB_SIGNIFICANT_BITS: u32 = 5;
-pub const CPSB_OFFSET: u64 = 9578;
-
-/// Compute cost_per_state_byte from the block gas limit (EIP-8037, execution-specs#2687).
-///
-/// TEMPORARY for bal-devnet-4: returns the fixed value 1174 used by bal-devnet-3
-/// regardless of `block_gas_limit`. The dynamic formula (BLOCKS_PER_YEAR /
-/// TARGET_STATE_GROWTH_PER_YEAR / CPSB_SIGNIFICANT_BITS / CPSB_OFFSET) is preserved
-/// in the consts above so this commit can be reverted with a single `git revert` to
-/// restore the formula body. See execution-specs#2687.
+/// EIP-8037 cost_per_state_byte. Pinned to the bal-devnet-4..6 fixed value 1174
+/// (execution-specs#2687). The dynamic formula derived from the block gas limit
+/// is not active on devnet-6.
 pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
     1174
 }

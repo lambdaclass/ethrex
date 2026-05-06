@@ -943,28 +943,16 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        // EIP-8037 (PR #2689): On top-level tx failure (revert, exceptional halt, or OOG),
-        // the spec applies the per-frame halt rule to the top-level frame:
-        //     total_state = state_gas_used + state_gas_left
-        //     reservoir   = message.state_gas_reservoir   # at frame entry
-        //     if total_state > reservoir:
-        //         regular_gas_used += total_state - reservoir
-        //     state_gas_left  = reservoir
-        //     state_gas_used  = 0
-        // For the top-level frame, "reservoir at entry" is `state_gas_reservoir_initial`
-        // (the reservoir set up in `add_intrinsic_gas` after intrinsic gas was charged).
-        // The "state_gas_used" at halt is gross usage net of refunds already absorbed;
-        // the "state_gas_left" is the current reservoir value. After halt, both are
-        // wiped: state_gas_used → 0 (effectively, by absorbing all of it as refund) and
-        // state_gas_reservoir → reservoir_initial. The excess is reclassified into
-        // `regular_gas_reclassified`, picked up by `refund_sender` in the regular-gas
-        // dimension. Collision is handled separately in the hook.
-        // EIP-8037 (PR #2689): On top-level tx failure (revert, exceptional halt, or OOG),
+        // EIP-8037 (PR #2689): On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
         // wipe the EXECUTION portion of state-gas (intrinsic state-gas STAYS charged) so
-        // the block sees only `intrinsic_state_gas_charged` in the state dimension. Then,
-        // for ExceptionalHalt only (not REVERT opcode), reclassify the un-cancelled
-        // spill (`state_gas_spill_outstanding`) to `regular_gas_used` and restore the
-        // reservoir to its entry value. Collision is handled separately in the hook.
+        // the block sees only `intrinsic_state_gas_charged` in the state dimension. For
+        // REVERT, refill the reservoir with the execution portion so the user's
+        // `gas_used -= reservoir` subtraction in refund_sender returns both the entry
+        // reservoir and any spill that decremented `gas_remaining` (matches EELS fork.py
+        // top-level `state_gas_left += state_gas_used`). For ExceptionalHalt, restore the
+        // reservoir to its entry value and reclassify the residual gross spill to
+        // `regular_gas_used`. Collision is handled separately in the hook. See inline
+        // comments below for the reclassification formula.
         if self.env.config.fork >= Fork::Amsterdam
             && !ctx_result.is_success()
             && !ctx_result.is_collision()
@@ -989,9 +977,11 @@ impl<'a> VM<'a> {
                 .saturating_add(execution_portion);
 
             if ctx_result.is_revert_opcode() {
-                // REVERT opcode: pre-PR-2689 behaviour. Refill reservoir with the
-                // execution portion (the user gets the leftover state-gas back via the
-                // reservoir subtraction in refund_sender). No regular-gas reclassification.
+                // REVERT: refill the reservoir with the un-refunded execution portion.
+                // This matches EELS fork.py:1077 `state_gas_left += state_gas_used` at
+                // top-level Revert: the user gets back BOTH the entry reservoir AND any
+                // spill that came from `gas_remaining`, via the single
+                // `gas_used -= reservoir` subtraction in refund_sender.
                 self.state_gas_reservoir =
                     self.state_gas_reservoir.saturating_add(execution_portion);
             } else {
@@ -1038,7 +1028,6 @@ impl<'a> VM<'a> {
                 // refund-of-un-spilled-charge case where `credit_against_drain` exceeds
                 // `regular_gas_reclassified` and should not subtract from the gross
                 // spill — see `test_top_halt_phantom_drain_does_not_cancel_real_spill`.
-                let entry = self.state_gas_reservoir_at_top_message_entry;
                 let drain_cap = self
                     .state_gas_credit_against_drain
                     .min(self.regular_gas_reclassified);
@@ -1048,7 +1037,7 @@ impl<'a> VM<'a> {
                     .saturating_sub(self.regular_gas_reclassified);
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
-                self.state_gas_reservoir = entry;
+                self.state_gas_reservoir = self.state_gas_reservoir_at_top_message_entry;
             }
         }
 

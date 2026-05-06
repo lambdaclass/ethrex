@@ -204,7 +204,7 @@ impl Hook for DefaultHook {
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
         let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 
-        refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
+        refund_sender(vm, ctx_result, gas_refunded, gas_spent)?;
 
         pay_coinbase(vm, gas_spent)?;
 
@@ -225,26 +225,14 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-/// Refunds unused gas to the sender.
-///
-/// # EIP-7778 Changes
-/// - `gas_spent`: Post-refund gas (what the user actually pays)
-/// - `gas_used_pre_refund`: Pre-refund gas (for block-level accounting in Amsterdam+)
-///
-/// For Amsterdam+, the block uses pre-refund gas (`gas_used`) while the user pays post-refund
-/// gas (`gas_spent`). Before Amsterdam, both values are the same (post-refund).
+/// Refunds unused gas to the sender. The user pays `gas_spent` (post-refund);
+/// for Amsterdam+, block-level accounting is recomputed dimensionally from VM
+/// fields, not from a pre-refund total.
 pub fn refund_sender(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     gas_spent: u64,
-    // Historically used pre-Amsterdam for receipt + user refund; Amsterdam+
-    // computes block gas dimensionally from VM fields and the user pays
-    // `gas_spent`, so this parameter is currently unused in both branches.
-    // Kept in the signature for call-site symmetry with pre-Amsterdam usage
-    // and future reintroduction; rename without the `_` prefix once it's
-    // read again.
-    _gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;
 
