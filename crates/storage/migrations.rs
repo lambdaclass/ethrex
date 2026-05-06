@@ -57,10 +57,12 @@ pub fn run_pending_migrations(
 
         tracing::info!("Running migration v{version} → v{target}");
 
-        migration_for_version(version)(backend, db_path).map_err(|e| StoreError::MigrationFailed {
-            from: version,
-            to: target,
-            reason: e.to_string(),
+        migration_for_version(version)(backend, db_path).map_err(|e| {
+            StoreError::MigrationFailed {
+                from: version,
+                to: target,
+                reason: e.to_string(),
+            }
         })?;
 
         // Persist the new version to metadata.json after each migration step
@@ -164,11 +166,7 @@ fn migrate_1_to_2(backend: &dyn StorageBackend, db_path: &Path) -> Result<(), St
             match file.read_exact(&mut len_buf) {
                 Ok(()) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => {
-                    return Err(StoreError::Custom(format!(
-                        "Failed to read temp file: {e}"
-                    )))
-                }
+                Err(e) => return Err(StoreError::Custom(format!("Failed to read temp file: {e}"))),
             }
             let key_len = u32::from_le_bytes(len_buf) as usize;
             let mut key = vec![0u8; key_len];
