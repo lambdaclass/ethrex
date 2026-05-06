@@ -151,7 +151,8 @@ impl RpcExecutionWitness {
             ));
         }
 
-        // Skip headers that fail to decode, then pick parent by number.
+        // Local lookup only — malformed entries are still carried into
+        // `block_headers_bytes` and will be rejected by `from_witness`.
         let initial_state_root = self
             .headers
             .iter()
@@ -320,24 +321,16 @@ impl GuestProgramState {
         value: ExecutionWitness,
         crypto: &dyn Crypto,
     ) -> Result<Self, GuestProgramStateError> {
-        // EIP-8025: headers must form a contiguous chain in list order (each
-        // `parent_hash` matches keccak of the previous header bytes). Reordered
-        // or fragmented chains are invalid even if by-number lookup would resolve.
+        // Headers must decode and form a contiguous chain in list order.
         // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
         let mut block_headers: BTreeMap<u64, BlockHeader> = BTreeMap::new();
         let mut prev_hash: Option<H256> = None;
         for bytes in &value.block_headers_bytes {
-            let Ok(header) = BlockHeader::decode(bytes.as_ref()) else {
-                // Malformed entry is a chain break; the next parent_hash check fails.
-                prev_hash = None;
-                continue;
-            };
+            let header = BlockHeader::decode(bytes.as_ref())?;
             if let Some(expected_parent) = prev_hash
                 && header.parent_hash != expected_parent
             {
-                return Err(GuestProgramStateError::Custom(
-                    "witness headers are not contiguous".to_string(),
-                ));
+                return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
             }
             prev_hash = Some(H256(crypto.keccak256(bytes)));
             block_headers.insert(header.number, header);
