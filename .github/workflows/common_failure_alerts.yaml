@@ -39,11 +39,11 @@ jobs:
           echo "webhook=${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}" >> "$GITHUB_OUTPUT"
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Collect failed job names
         id: failed_jobs
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           result-encoding: string
           script: |

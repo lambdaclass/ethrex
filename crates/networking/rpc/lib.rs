@@ -67,6 +67,7 @@ mod eth;
 mod mempool;
 mod net;
 pub mod rpc;
+pub mod subscription_manager;
 mod tracing;
 
 pub mod clients;
@@ -87,7 +88,9 @@ pub use eth::{
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, map_debug_requests,
+    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
+    handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
     map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };
+pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

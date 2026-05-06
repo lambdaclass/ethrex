@@ -159,6 +159,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "no-precompile-cache",
+        action = ArgAction::SetTrue,
+        help = "Disable the per-block precompile result cache (benchmarking only).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_PRECOMPILE_CACHE"
+    )]
+    pub no_precompile_cache: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -450,6 +458,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            no_precompile_cache: false,
         }
     }
 }
@@ -641,6 +650,7 @@ impl Subcommand {
                     BlockchainOptions {
                         r#type: blockchain_type,
                         perf_logs_enabled: true,
+                        precompile_cache_enabled: !opts.no_precompile_cache,
                         ..Default::default()
                     },
                 )
