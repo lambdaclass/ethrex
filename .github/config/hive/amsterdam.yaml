@@ -1,4 +1,4 @@
 # Amsterdam (BAL) hive test configuration
-# Pinned from ethereum/execution-specs devnets/bal/4 @ 2026-04-21
-fixtures: https://github.com/ethereum/execution-spec-tests/releases/download/bal%40v6.0.0/fixtures_bal.tar.gz
-eels_commit: 524b44617e410ab21b5122f0be5113b62a0e76ee
+# Pinned to snobal-devnet-6@v1.1.0
+fixtures: https://github.com/ethereum/execution-spec-tests/releases/download/snobal-devnet-6%40v1.1.0/fixtures_snobal-devnet-6.tar.gz
+eels_commit: e87390b69ca5113f8f99db81dae7e4d6a8420342
