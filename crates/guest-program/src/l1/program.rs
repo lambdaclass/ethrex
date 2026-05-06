@@ -57,8 +57,9 @@ pub fn execution_program(
     })
 }
 
-/// Wrapper to pass Crypto into libssz_merkle::hash_tree_root,
-/// so hashing is computed by precompiles
+/// Wrapper to bridge `ethrex_crypto::Crypto` to `libssz_merkle::Sha256Hasher`,
+/// so `hash_tree_root` is computed via crypto precompiles in the zkVM.
+/// Required because the orphan rule prevents a direct impl on `Arc<dyn Crypto>`.
 #[cfg(feature = "eip-8025")]
 struct CryptoWrapper(Arc<dyn Crypto>);
 
