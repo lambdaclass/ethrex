@@ -318,9 +318,23 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
-                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
-                ),
+                InvalidForkChoice::NewHeadAlreadyCanonical => {
+                    // The fork-choice was effectively accepted: head is canonical and
+                    // points to a known block. Treat it like the Ok(head) branch:
+                    //   - mark the node synced so eth_syncing reports `false`,
+                    //   - return the head header so the caller can build a payload
+                    //     when payloadAttributes is non-null (engine API spec).
+                    context.blockchain.set_synced();
+                    let head_block = context
+                        .storage
+                        .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
+                    return Ok((
+                        head_block,
+                        ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                            fork_choice_state.head_block_hash,
+                        )),
+                    ));
+                }
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
