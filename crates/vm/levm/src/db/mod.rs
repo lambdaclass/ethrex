@@ -109,7 +109,6 @@ impl CachingDatabase {
             })
     }
 
-    /// Access the shared precompile result cache.
     pub fn precompile_cache(&self) -> &PrecompileCache {
         &self.precompile_cache
     }
@@ -271,8 +270,6 @@ impl CrossBlockCache {
         self.cache.clone()
     }
 
-    /// Replace the inner database. See [`CachingDatabase::set_inner`] for the
-    /// caller invariant.
     pub fn set_inner(&self, inner: Arc<dyn Database>) {
         self.cache.set_inner(inner);
     }
