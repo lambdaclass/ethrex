@@ -396,4 +396,11 @@ mod test {
                 .unwrap()
         )
     }
+
+    // TEMP: intentional failure to verify the always() change makes the L1 Test
+    // wrapper actually fail. Revert this commit before merging.
+    #[test]
+    fn always_blocks_demo_intentional_failure() {
+        panic!("intentional CI failure for PR #6582 verification — revert before merge");
+    }
 }
