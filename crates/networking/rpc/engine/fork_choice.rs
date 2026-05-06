@@ -224,6 +224,22 @@ async fn handle_forkchoice(
         "New fork choice update",
     );
 
+    // Record the finalized block number so TransitionActivator can check caught_up.
+    // Best-effort: if the block header isn't found (e.g. finalized hash is zero or
+    // the block isn't stored yet), skip silently — the syncer will record it on
+    // the next FCU that has a known finalized block.
+    if !fork_choice_state.finalized_block_hash.is_zero() {
+        if let Ok(Some(finalized_header)) = context
+            .storage
+            .get_block_header_by_hash(fork_choice_state.finalized_block_hash)
+        {
+            syncer.update_fcu_finalized(
+                fork_choice_state.finalized_block_hash,
+                finalized_header.number,
+            );
+        }
+    }
+
     if let Some(latest_valid_hash) = context
         .storage
         .get_latest_valid_ancestor(fork_choice_state.head_block_hash)

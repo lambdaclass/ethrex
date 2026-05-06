@@ -15,12 +15,16 @@ use ethrex_common::types::{AccountInfo, AccountUpdate, Code};
 
 /// Identifies which trie backend is active.
 ///
-/// Single variant today (`Mpt`). Adding a new variant forces a compiler-guided
-/// audit of every exhaustive match in the storage layer, ensuring no backend
-/// path is silently skipped.
+/// Adding a new variant forces a compiler-guided audit of every exhaustive
+/// match in the storage layer, ensuring no backend path is silently skipped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
+    /// MPT-only mode (default). Byte `0` on disk.
     Mpt,
+    /// EIP-7864 binary trie only. Byte `1` on disk.
+    Binary,
+    /// Transition mode: MPT base (frozen) + binary overlay. Byte `2` on disk.
+    Transition,
 }
 
 /// Closure type for reading code by hash from the database.
@@ -72,6 +76,24 @@ pub enum NodeUpdates {
         state_updates: Vec<(Vec<u8>, Vec<u8>)>,
         /// Per-account storage trie changes.
         storage_updates: Vec<(H256, Vec<(Vec<u8>, Vec<u8>)>)>,
+    },
+    Binary {
+        /// Serialized binary trie node changes. Each entry is
+        /// `(key, value)` where `key` is either an 8-byte LE node ID
+        /// or a `0xFF`-prefixed meta key (`META_ROOT`, `META_NEXT_ID`).
+        /// An empty `value` signals deletion of that key.
+        node_diffs: Vec<(Vec<u8>, Vec<u8>)>,
+        /// Stems of SELFDESTRUCTed accounts so the storage layer can
+        /// write tombstone entries (`[0xFE, stem...]`) in `BINARY_TRIE_NODES`.
+        deleted_stems: Vec<[u8; 31]>,
+        /// Inline flat-key-value updates. Key = `stem[0..31] || sub_index`
+        /// (32 bytes total); value = `Some(leaf_bytes)` for inserts,
+        /// `None` for deletions. Populated on every commit; no background
+        /// generator thread is needed because the binary trie starts empty
+        /// post-switch and grows only from commits (unlike MPT which may
+        /// receive snap-synced raw nodes that need a separate denormalization
+        /// pass).
+        fkv_entries: Vec<([u8; 32], Option<[u8; 32]>)>,
     },
 }
 

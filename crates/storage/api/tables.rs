@@ -102,10 +102,76 @@ pub const MISC_VALUES: &str = "misc_values";
 ///
 /// Value encoding: 1 byte.
 /// - `0` = MPT nibble-path format (current default).
+/// - `1` = Binary trie format (`BackendKind::Binary`).
+/// - `2` = Transition format (`BackendKind::Transition`): MPT frozen at switch
+///   block, binary overlay active. Decoded on startup to reconstruct
+///   `TransitionBackend`. (Phase 6+)
 ///
 /// When a new backend is added it must claim a unique byte value here and
 /// document it alongside this constant.
 pub const STATE_BACKEND_FORMAT_KEY: &[u8] = b"state_backend_format";
+
+/// Key in `MISC_VALUES` storing the block number at which the MPT→binary
+/// transition was activated.
+///
+/// Value encoding: 8 bytes, big-endian u64.
+/// Written atomically alongside `TRANSITION_MPT_FROZEN_ROOT_KEY` and
+/// `TRANSITION_BINARY_ROOT_KEY` when `Store::persist_transition_metadata` fires.
+pub const TRANSITION_SWITCH_BLOCK_KEY: &[u8] = b"transition_switch_block";
+
+/// Key in `MISC_VALUES` storing the MPT state root at the switch block.
+///
+/// Value encoding: 32 bytes (raw H256).
+/// This is the post-state root of the last block processed entirely by MPT,
+/// i.e. `header.state_root` of the block at `switch_block - 1`.
+pub const TRANSITION_MPT_FROZEN_ROOT_KEY: &[u8] = b"transition_mpt_frozen_root";
+
+/// Key in `MISC_VALUES` storing the binary trie root at the switch block.
+///
+/// Value encoding: 32 bytes (raw H256).
+/// On activation this is written as `EMPTY_BINARY_ROOT` (`H256([0u8; 32])`).
+/// After each block committed in transition mode the storage layer updates
+/// this key with the new binary overlay root.
+pub const TRANSITION_BINARY_ROOT_KEY: &[u8] = b"transition_binary_root";
+
+/// Binary trie node store column family.
+///
+/// Key space:
+/// - `[u64 LE; 8 bytes]` = serialized binary trie node (InternalNode or StemNode).
+/// - `[0xFF, ...]` (any 0xFF-prefixed key) = metadata: `META_ROOT`, `META_NEXT_ID`,
+///   `META_BLOCK_KEY`, `META_BASE_HASH_KEY` (see `node_store.rs`).
+/// - `[0xFE, stem...; 32 bytes]` = tombstone marker for a SELFDESTRUCTed stem.
+///   Value is an empty slice (presence-only). Must be disjoint from valid 8-byte
+///   NodeId LE keys and the 0xFF meta-key range — documented here and in `node_store.rs`.
+pub const BINARY_TRIE_NODES: &str = "BinaryTrieNodes";
+
+/// Binary trie flat key-value store.
+///
+/// Stores per-leaf state values for O(1) state reads without trie traversal.
+/// Populated inline by `binary_commit_nodes_to_disk` on every commit.
+///
+/// Key: 32-byte `stem[0..31] || sub_index[0..1]` (canonical binary trie tree key).
+/// Value: 32-byte raw leaf value (packed BASIC_DATA for sub-index 0, raw
+///        code_hash for sub-index 1, raw U256 BE for storage slots).
+///
+/// This is a **separate** table from `ACCOUNT_FLATKEYVALUE` / `STORAGE_FLATKEYVALUE`
+/// (those are MPT-specific). Using a separate table eliminates backend-discriminator
+/// coupling and keeps each backend's FKV loop entirely self-contained.
+pub const BINARY_FLATKEYVALUE: &str = "BinaryFlatKeyValue";
+
+/// Binary trie storage-key side-index column family.
+///
+/// Tracks which storage keys each account has written into the binary trie.
+/// Required for SELFDESTRUCT (`removed_storage`) since the binary trie has no
+/// prefix-enumeration — all storage keys for an address must be tracked here.
+///
+/// Key:   20-byte address (`addr.as_bytes()`).
+/// Value: packed list of 32-byte storage keys (`N * 32` bytes, where N is the
+///        number of distinct storage slots ever written for this address).
+///
+/// Populated by `BinaryTrieState::flush` (via `prepare_flush`) for dirty entries.
+/// Read at `BinaryTrieState::open` time to restore the in-memory side-index.
+pub const BINARY_STORAGE_KEYS: &str = "BinaryStorageKeys";
 
 /// Execution witnesses column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
@@ -117,7 +183,7 @@ pub const STATE_BACKEND_FORMAT_KEY: &[u8] = b"state_backend_format";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+pub const TABLES: [&str; 22] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -137,4 +203,7 @@ pub const TABLES: [&str; 19] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    BINARY_TRIE_NODES,
+    BINARY_FLATKEYVALUE,
+    BINARY_STORAGE_KEYS,
 ];

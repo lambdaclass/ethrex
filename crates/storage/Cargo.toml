@@ -10,6 +10,7 @@ license.workspace = true
 
 [dependencies]
 ethrex-rlp.workspace = true
+ethrex-binary-trie.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true

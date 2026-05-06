@@ -216,6 +216,9 @@ docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 docs-serve: mermaid-init.js mermaid.min.js ## 📚 Generate and serve the documentation
 	mdbook serve --open
 
+binary-trie-vectors: ## Regenerate EIP-7864 binary-trie test vectors (requires python3 + blake3 pip pkg)
+	cd crates/common/binary-trie/testgen && python3 generate_vectors.py
+
 update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree
 	cargo tree --manifest-path crates/guest-program/bin/sp1/Cargo.toml
