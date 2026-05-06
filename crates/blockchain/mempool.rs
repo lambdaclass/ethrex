@@ -32,6 +32,11 @@ struct MempoolInner {
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
     in_flight_txs: FxHashSet<H256>,
+    /// Hashes of transactions admitted with `--mempool.private` set: they
+    /// MUST NOT be propagated to peers via any P2P path (broadcast,
+    /// new-peer pooled-hash dump, or `GetPooledTransactions` responses).
+    /// Cleared on transaction removal alongside `broadcast_pool`.
+    private_pool: FxHashSet<H256>,
     /// Maps blob versioned hashes to transaction hashes that include them and a position inside
     /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
@@ -67,6 +72,7 @@ impl MempoolInner {
 
         self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
         self.broadcast_pool.remove(hash);
+        self.private_pool.remove(hash);
 
         Ok(())
     }
@@ -189,6 +195,8 @@ impl Mempool {
         inner.transaction_pool.insert(hash, transaction);
         if broadcast {
             inner.broadcast_pool.insert(hash);
+        } else {
+            inner.private_pool.insert(hash);
         }
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);
@@ -474,6 +482,15 @@ impl Mempool {
     pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
         let contains = self.read()?.transaction_pool.contains_key(&tx_hash);
         Ok(contains)
+    }
+
+    /// Returns `true` if the transaction was admitted with `--mempool.private`
+    /// set (via [`Self::add_transaction_no_broadcast`]). Callers on the P2P
+    /// path MUST consult this before serving the tx to peers — the private
+    /// pool intentionally bypasses gossip, the new-peer pooled-hash dump,
+    /// and `GetPooledTransactions` responses.
+    pub fn is_private(&self, hash: H256) -> Result<bool, StoreError> {
+        Ok(self.read()?.private_pool.contains(&hash))
     }
 
     pub fn find_tx_to_replace(

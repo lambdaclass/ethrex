@@ -763,14 +763,24 @@ async fn send_all_pooled_tx_hashes(
     state: &mut Established,
     connection: &mut PeerConnection,
 ) -> Result<(), PeerConnectionError> {
-    let txs: Vec<MempoolTransaction> = state
-        .blockchain
-        .mempool
+    let mempool = &state.blockchain.mempool;
+    let mut txs: Vec<MempoolTransaction> = Vec::new();
+    for tx in mempool
         .get_all_txs_by_sender()?
         .into_values()
         .flatten()
         .filter(|tx| !tx.is_privileged())
-        .collect();
+    {
+        // --mempool.private: locally-submitted private txs MUST NOT be
+        // disclosed via the new-peer pooled-hashes dump.
+        if mempool
+            .is_private(tx.hash())
+            .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?
+        {
+            continue;
+        }
+        txs.push(tx);
+    }
     if !txs.is_empty() {
         state
             .tx_broadcaster

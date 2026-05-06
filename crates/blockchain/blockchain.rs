@@ -2326,11 +2326,10 @@ impl Blockchain {
             .await
     }
 
-    /// EIP-equivalent of `add_blob_transaction_to_pool` for transactions
-    /// submitted via this node's local RPC. When
-    /// `BlockchainOptions::private_mempool` is `true`, the transaction is
-    /// added to the mempool but is NOT queued for P2P broadcast — it stays
-    /// available only for blocks built locally.
+    /// Local-RPC counterpart of [`Self::add_blob_transaction_to_pool`].
+    /// When `BlockchainOptions::private_mempool` is `true`, the transaction
+    /// is added to the mempool but is NOT queued for P2P broadcast — it
+    /// stays available only for blocks built locally.
     #[cfg(feature = "c-kzg")]
     pub async fn add_local_blob_transaction_to_pool(
         &self,
@@ -2607,6 +2606,15 @@ impl Blockchain {
     }
 
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
+        // --mempool.private: never serve private txs over P2P, even if a peer
+        // somehow learned the hash. The spec for `GetPooledTransactions`
+        // explicitly allows skipping unavailable transactions, so we mirror
+        // the "not found" path the caller already handles.
+        if self.mempool.is_private(*hash)? {
+            return Err(StoreError::Custom(format!(
+                "Hash {hash} is private and must not propagate",
+            )));
+        }
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
                 "Hash {hash} not found in the mempool",
