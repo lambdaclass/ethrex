@@ -471,11 +471,8 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Point the cross-block cache at this block's parent state. Misses fall
-        // through to `vm.db.store` (a `StoreVmDatabase` for `parent_header`,
-        // optionally wrapped by `DatabaseLogger` when witness pre-generation is
-        // enabled). Invalidate if the cache no longer extends this parent
-        // (reorg or sibling block).
+        // Invalidate if the cache no longer extends this parent (reorg or
+        // sibling block); then point its inner at the new parent's state.
         if !self
             .cross_block_cache
             .is_valid_for_parent(parent_header.number, parent_header.hash())
@@ -713,7 +710,6 @@ impl Blockchain {
             let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            // Merged per-address updates, consumed by witness gen and cache promotion.
             let mut accumulator: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
 
             for updates in rx {
@@ -885,8 +881,7 @@ impl Blockchain {
             }
         }
 
-        // Snapshot merged updates before consuming the map below; used by witness
-        // generation and cross-block cache promotion.
+        // Snapshot before consuming the map below.
         let accumulated_updates: Vec<AccountUpdate> = all_updates.values().cloned().collect();
 
         // Extract code updates and build work items with pre-hashed addresses
@@ -1855,10 +1850,9 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
-        // Serialize the entire pipeline so the cross-block cache lifecycle
-        // (`set_inner` → execute → `promote_block`) is atomic across callers.
-        // Recover from poisoning since the cache state is self-correcting via
-        // the parent-mismatch check on the next block.
+        // See `pipeline_lock` field doc. Poison recovery is safe: a panic mid-
+        // pipeline leaves `last_committed` stale, which the next call's
+        // parent-mismatch check invalidates.
         let _guard = self.pipeline_lock.lock().unwrap_or_else(|p| p.into_inner());
 
         // Validate if it can be the new head and find the parent
@@ -1935,13 +1929,9 @@ impl Blockchain {
         // Promote the post-state only after store_block succeeded; failure
         // earlier leaves the cache reflecting the previous block, and the next
         // block's parent-mismatch check handles invalidation.
-        if result.is_ok()
-            && let Err(e) =
-                self.cross_block_cache
-                    .promote_block(block_number, block_hash, &accumulated_updates)
-        {
-            warn!("cross-block cache promotion failed; invalidating: {e}");
-            self.cross_block_cache.invalidate();
+        if result.is_ok() {
+            self.cross_block_cache
+                .promote_block(block_number, block_hash, &accumulated_updates);
         }
 
         let instants = std::array::from_fn(move |i| {
