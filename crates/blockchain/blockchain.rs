@@ -213,7 +213,7 @@ pub struct Blockchain {
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
     /// Cross-block state cache. Invalidated on parent mismatch.
-    cross_block_cache: Arc<CrossBlockCache>,
+    cross_block_cache: CrossBlockCache,
     /// Serializes `add_block_pipeline_inner` so the cross-block cache lifecycle
     /// (`set_inner` → execute → `promote_block`) is atomic per block. Required
     /// for callers that share `Arc<Blockchain>` across tasks (L2 peer actors).
@@ -345,7 +345,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
-            cross_block_cache: Arc::new(CrossBlockCache::unset()),
+            cross_block_cache: CrossBlockCache::empty(),
             pipeline_lock: StdMutex::new(()),
         }
     }
@@ -358,7 +358,7 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
-            cross_block_cache: Arc::new(CrossBlockCache::unset()),
+            cross_block_cache: CrossBlockCache::empty(),
             pipeline_lock: StdMutex::new(()),
         }
     }
@@ -1836,9 +1836,10 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
-        // See `pipeline_lock` field doc. Poison recovery is safe: a panic mid-
-        // pipeline leaves `last_committed` stale, which the next call's
-        // parent-mismatch check invalidates.
+        // See `pipeline_lock` field doc. Poison recovery is safe: `last_committed`
+        // is only written after `store_block` succeeds, so a mid-pipeline panic
+        // leaves it pointing at the previously committed block — exactly what
+        // the next call's parent-mismatch check expects.
         let _guard = self.pipeline_lock.lock().unwrap_or_else(|p| p.into_inner());
 
         // Validate if it can be the new head and find the parent

@@ -12,7 +12,6 @@ use std::sync::{Arc, OnceLock, RwLock};
 pub mod gen_db;
 
 // Bounded so the cache survives cross-block reuse without unbounded growth.
-// Caps are first-pass values; revisit once we have benchmarks.
 #[allow(clippy::unwrap_used)]
 const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(1024 * 1024).unwrap();
 #[allow(clippy::unwrap_used)]
@@ -90,7 +89,7 @@ impl Default for CachingDatabase {
 impl CachingDatabase {
     /// Set the inner database. When the cache holds entries, the new inner
     /// must be the post-state of the most recently promoted block (or the
-    /// cache must be `clear_all`-ed first).
+    /// cache must be `clear`-ed first).
     pub fn set_inner(&self, inner: Arc<dyn Database>) {
         *self.inner.write().unwrap_or_else(|p| p.into_inner()) = Some(inner);
     }
@@ -116,7 +115,7 @@ impl CachingDatabase {
     /// Drop all cached state (account / storage / code). `precompile_cache` and
     /// `chain_config` are intentionally retained: precompile outputs are
     /// input-deterministic and `ChainConfig` is constant for the process.
-    pub fn clear_all(&self) {
+    pub fn clear(&self) {
         self.accounts
             .write()
             .unwrap_or_else(|p| p.into_inner())
@@ -257,7 +256,7 @@ pub struct CrossBlockCache {
 impl CrossBlockCache {
     /// Empty cache with no inner database. Reads error until
     /// [`Self::set_inner`] is called.
-    pub fn unset() -> Self {
+    pub fn empty() -> Self {
         Self {
             cache: Arc::new(CachingDatabase::default()),
             last_committed: RwLock::new(None),
@@ -270,6 +269,8 @@ impl CrossBlockCache {
         self.cache.clone()
     }
 
+    /// Point the cache's inner DB at the given source. Pair with
+    /// [`Self::is_valid_for_parent`] / [`Self::invalidate`] for correct lifecycle.
     pub fn set_inner(&self, inner: Arc<dyn Database>) {
         self.cache.set_inner(inner);
     }
@@ -286,7 +287,7 @@ impl CrossBlockCache {
 
     /// Drop all cached state and reset `last_committed`.
     pub fn invalidate(&self) {
-        self.cache.clear_all();
+        self.cache.clear();
         *self
             .last_committed
             .write()
