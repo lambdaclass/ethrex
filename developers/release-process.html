@@ -249,22 +249,24 @@
 <h2 id="2nd---bump-version"><a class="header" href="#2nd---bump-version">2nd - Bump version</a></h2>
 <p>The version must be updated to <code>X.Y.Z</code> in the release branch. There are multiple <code>Cargo.toml</code> and <code>Cargo.lock</code> files that need to be updated.</p>
 <p>First, we need to update the version of the workspace package. You can find it in the <code>Cargo.toml</code> file in the root directory, under the <code>[workspace.package]</code> section.</p>
-<p>Then, we need to update three more <code>Cargo.toml</code> files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:</p>
+<p>Then, we need to update five more <code>Cargo.toml</code> files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:</p>
 <ul>
-<li><code>crates/l2/prover/src/guest_program/src/sp1/Cargo.toml</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/risc0/Cargo.toml</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/zisk/Cargo.toml</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/openvm/Cargo.toml</code></li>
+<li><code>crates/guest-program/bin/sp1/Cargo.toml</code></li>
+<li><code>crates/guest-program/bin/risc0/Cargo.toml</code></li>
+<li><code>crates/guest-program/bin/zisk/Cargo.toml</code></li>
+<li><code>crates/guest-program/bin/openvm/Cargo.toml</code></li>
 <li><code>crates/l2/tee/quote-gen/Cargo.toml</code></li>
 </ul>
 <p>After updating the version in the <code>Cargo.toml</code> files, we need to update the <code>Cargo.lock</code> files to reflect the new versions. Run <code>make update-cargo-lock</code> from the root directory to update all the <code>Cargo.lock</code> files in the repository. You should see changes in at most the following paths:</p>
 <ul>
 <li>In the root directory</li>
-<li><code>crates/l2/prover/src/guest_program/src/sp1/Cargo.lock</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/risc0/Cargo.lock</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/zisk/Cargo.lock</code></li>
-<li><code>crates/l2/prover/src/guest_program/src/openvm/Cargo.lock</code></li>
+<li><code>crates/guest-program/bin/sp1/Cargo.lock</code></li>
+<li><code>crates/guest-program/bin/risc0/Cargo.lock</code></li>
+<li><code>crates/guest-program/bin/zisk/Cargo.lock</code></li>
+<li><code>crates/guest-program/bin/openvm/Cargo.lock</code></li>
 <li><code>crates/l2/tee/quote-gen/Cargo.lock</code></li>
+<li><code>crates/vm/levm/bench/revm_comparison/Cargo.lock</code></li>
+<li><code>tooling/Cargo.lock</code></li>
 </ul>
 <p>Then, go to the <code>CLI.md</code> file located in <code>docs/</code> and update the version of the <code>--builder.extra-data</code> flag default value to match the new version (for both ethrex and ethrex l2 sections).</p>
 <p>Finally, stage and commit the changes to the release branch.</p>
