@@ -71,18 +71,13 @@ impl LEVM {
 
         preload_touched_codes(&pre_snapshot, db)?;
 
-        let mut pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db);
+        let mut pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db)?;
 
         if diff_mode {
-            let post_map = build_post_state_map(&pre_snapshot, &db.current_accounts_state, db);
-            // Storage in diff pre keeps only slots that changed AND have a non-zero pre value.
+            let (post_map, kept) =
+                build_post_state_map(&pre_snapshot, &db.current_accounts_state, db)?;
             filter_diff_pre_storage(&mut pre_map, &db.current_accounts_state);
-            // Pre keeps only accounts that ended up in post (modified) or were destroyed
-            // in this tx (those appear in pre but not post).
-            let kept =
-                modified_or_destroyed_addresses(&pre_snapshot, &db.current_accounts_state, db);
             pre_map.retain(|addr, _| kept.contains(addr));
-            // Empty entries are always dropped in diff mode.
             pre_map.retain(|_, state| !state.is_empty());
             Ok(PrestateResult::Diff(PrePostState {
                 pre: pre_map,
@@ -163,13 +158,13 @@ fn find_touched_accounts<'a>(
 /// Reads code from `db.codes`; caller must `preload_touched_codes` first.
 /// Storage values are passed through as-is (including zero); per-field filtering
 /// for diff-mode post is applied by `build_post_output`.
-fn build_account_output(account: &LevmAccount, db: &GeneralizedDatabase) -> PrestateAccountState {
+fn build_account_output(
+    account: &LevmAccount,
+    db: &GeneralizedDatabase,
+) -> Result<PrestateAccountState, EvmError> {
     let has_code = account.info.code_hash != *EMPTY_KECCACK_HASH;
     let code = if has_code {
-        db.codes
-            .get(&account.info.code_hash)
-            .map(|c| c.bytecode.clone())
-            .expect("code preloaded by preload_touched_codes")
+        get_preloaded_code(db, &account.info.code_hash)?
     } else {
         bytes::Bytes::new()
     };
@@ -185,13 +180,21 @@ fn build_account_output(account: &LevmAccount, db: &GeneralizedDatabase) -> Pres
         .map(|(k, v)| (*k, H256::from_uint(v)))
         .collect();
 
-    PrestateAccountState {
+    Ok(PrestateAccountState {
         balance: Some(account.info.balance),
         nonce: account.info.nonce,
         code,
         code_hash,
         storage,
-    }
+    })
+}
+
+/// Returns the bytecode for `hash`; caller must `preload_touched_codes` first.
+fn get_preloaded_code(db: &GeneralizedDatabase, hash: &H256) -> Result<bytes::Bytes, EvmError> {
+    db.codes
+        .get(hash)
+        .map(|c| c.bytecode.clone())
+        .ok_or_else(|| EvmError::Custom(format!("missing preloaded code for {hash:?}")))
 }
 
 /// Builds the diff-mode post entry for a touched account, emitting only fields whose
@@ -203,7 +206,7 @@ fn build_post_output(
     post_account: &LevmAccount,
     pre_snapshot: &CacheDB,
     db: &GeneralizedDatabase,
-) -> Option<PrestateAccountState> {
+) -> Result<Option<PrestateAccountState>, EvmError> {
     let mut state = PrestateAccountState::default();
     let mut modified = false;
 
@@ -218,11 +221,7 @@ fn build_post_output(
     if pre_account.info.code_hash != post_account.info.code_hash {
         if post_account.info.code_hash != *EMPTY_KECCACK_HASH {
             state.code_hash = post_account.info.code_hash;
-            state.code = db
-                .codes
-                .get(&post_account.info.code_hash)
-                .map(|c| c.bytecode.clone())
-                .expect("code preloaded by preload_touched_codes");
+            state.code = get_preloaded_code(db, &post_account.info.code_hash)?;
         }
         modified = true;
     }
@@ -239,7 +238,7 @@ fn build_post_output(
         modified = true;
     }
 
-    modified.then_some(state)
+    Ok(modified.then_some(state))
 }
 
 /// Resolves the pre-tx value of `slot` for `addr`. Slots accessed in earlier txs are in
@@ -271,11 +270,11 @@ fn build_pre_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
     db: &GeneralizedDatabase,
-) -> PrestateTrace {
+) -> Result<PrestateTrace, EvmError> {
     let mut result = PrestateTrace::new();
 
     for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
-        let mut state = build_account_output(pre_account, db);
+        let mut state = build_account_output(pre_account, db)?;
 
         // For already-cached accounts, the pre-tx values of slots first loaded in this
         // tx live in `initial_accounts_state` rather than in `pre_snapshot`. Newly-accessed
@@ -306,7 +305,7 @@ fn build_pre_state_map(
         result.insert(addr, state);
     }
 
-    result
+    Ok(result)
 }
 
 /// Loads code into `db.codes` for every touched contract whose code wasn't executed
@@ -336,30 +335,32 @@ fn preload_touched_codes(
     Ok(())
 }
 
-/// Builds the diff-mode post map. Only accounts whose state actually changed are emitted,
-/// destroyed accounts are dropped, and each entry carries only the fields that differ
-/// from the pre-tx state.
+/// Builds the diff-mode post map and the set of modified-or-destroyed addresses
+/// (used to prune diff `pre`) in a single pass.
 fn build_post_state_map(
     pre_snapshot: &CacheDB,
     post_cache: &CacheDB,
     db: &GeneralizedDatabase,
-) -> PrestateTrace {
-    let mut result = PrestateTrace::new();
+) -> Result<(PrestateTrace, std::collections::HashSet<Address>), EvmError> {
+    let mut post = PrestateTrace::new();
+    let mut modified_or_destroyed = std::collections::HashSet::new();
 
     for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
         if matches!(
             post_account.status,
             AccountStatus::Destroyed | AccountStatus::DestroyedModified,
         ) {
+            modified_or_destroyed.insert(addr);
             continue;
         }
 
-        if let Some(state) = build_post_output(addr, pre_account, post_account, pre_snapshot, db) {
-            result.insert(addr, state);
+        if let Some(state) = build_post_output(addr, pre_account, post_account, pre_snapshot, db)? {
+            modified_or_destroyed.insert(addr);
+            post.insert(addr, state);
         }
     }
 
-    result
+    Ok((post, modified_or_destroyed))
 }
 
 /// Trims storage entries in a diff-mode pre map: drops slots whose pre value is zero
@@ -377,28 +378,4 @@ fn filter_diff_pre_storage(pre: &mut PrestateTrace, post_cache: &CacheDB) {
             *v != H256::from_uint(&post_val)
         });
     }
-}
-
-/// Returns the set of addresses whose state changed in this tx (i.e. would appear
-/// in diff `post`). Used to prune diff `pre` to the same set, plus destroyed accounts
-/// which appear only in `pre`.
-fn modified_or_destroyed_addresses(
-    pre_snapshot: &CacheDB,
-    post_cache: &CacheDB,
-    db: &GeneralizedDatabase,
-) -> std::collections::HashSet<Address> {
-    let mut set = std::collections::HashSet::new();
-    for (addr, pre_account, post_account) in find_touched_accounts(pre_snapshot, post_cache, db) {
-        if matches!(
-            post_account.status,
-            AccountStatus::Destroyed | AccountStatus::DestroyedModified,
-        ) {
-            set.insert(addr);
-            continue;
-        }
-        if build_post_output(addr, pre_account, post_account, pre_snapshot, db).is_some() {
-            set.insert(addr);
-        }
-    }
-    set
 }
