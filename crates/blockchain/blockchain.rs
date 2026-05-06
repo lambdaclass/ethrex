@@ -88,7 +88,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
-use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::CrossBlockCache;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -98,6 +98,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
+use std::sync::Mutex as StdMutex;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -135,7 +136,7 @@ static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
-    Option<Vec<AccountUpdate>>,
+    Vec<AccountUpdate>,
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
     usize,                   // max queue length
     [Instant; 6],            // timing instants
@@ -211,6 +212,14 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
+    /// Cross-block state cache. Invalidated on parent mismatch.
+    cross_block_cache: CrossBlockCache,
+    /// Serializes `add_block_pipeline_inner` so the cross-block cache lifecycle
+    /// (`set_inner` → execute → `promote_block`) is atomic per block. Required
+    /// for callers that share `Arc<Blockchain>` across tasks (L2 peer actors).
+    /// `StdMutex` (not `TokioMutex`) because the pipeline is sync and must not
+    /// be held across `.await`.
+    pipeline_lock: StdMutex<()>,
 }
 
 /// Configuration options for the blockchain.
@@ -334,6 +343,7 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let cross_block_cache = CrossBlockCache::empty(blockchain_opts.precompile_cache_enabled);
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
@@ -341,17 +351,23 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            cross_block_cache,
+            pipeline_lock: StdMutex::new(()),
         }
     }
 
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions::default();
+        let cross_block_cache = CrossBlockCache::empty(options.precompile_cache_enabled);
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
+            cross_block_cache,
+            pipeline_lock: StdMutex::new(()),
         }
     }
 
@@ -449,12 +465,19 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
+        // Invalidate if the cache no longer extends this parent (reorg or
+        // sibling block); then point its inner at the new parent's state.
+        if !self
+            .cross_block_cache
+            .is_valid_for_parent(parent_header.number, parent_header.hash())
+        {
+            self.cross_block_cache.invalidate();
+        }
+
         let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(
-            CachingDatabase::new(original_store, self.options.precompile_cache_enabled),
-        );
+        self.cross_block_cache.set_inner(original_store);
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
+            self.cross_block_cache.as_database();
 
         // Replace the VM's store with the caching version
         vm.db.store = caching_store.clone();
@@ -610,7 +633,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+    ) -> Result<(AccountUpdatesList, Vec<AccountUpdate>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
         // Create 16 worker channels (crossbeam for select! support)
@@ -631,7 +654,7 @@ impl Blockchain {
         // Workers and watcher are spawned as pool tasks; the coordination logic
         // (dispatching messages, collecting results) runs on the calling thread
         // via in_place_scope, so it executes concurrently with the pool tasks.
-        let watcher_error: Arc<std::sync::Mutex<Option<StoreError>>> = Default::default();
+        let watcher_error: Arc<StdMutex<Option<StoreError>>> = Default::default();
         let result = self.merkle_pool.in_place_scope(|s| {
             // Spawn 16 unified workers (each gets clone of all 16 senders)
             for (i, rx) in workers_rx.into_iter().enumerate() {
@@ -681,27 +704,18 @@ impl Blockchain {
             let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            // Accumulator for witness generation (only used if precompute_witnesses is true)
-            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                if self.options.precompute_witnesses {
-                    Some(FxHashMap::default())
-                } else {
-                    None
-                };
+            let mut accumulator: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
-                // Accumulate updates for witness generation if enabled
-                if let Some(acc) = &mut accumulator {
-                    for update in updates.clone() {
-                        match acc.entry(update.address) {
-                            Entry::Vacant(e) => {
-                                e.insert(update);
-                            }
-                            Entry::Occupied(mut e) => {
-                                e.get_mut().merge(update);
-                            }
+                for update in updates.clone() {
+                    match accumulator.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
                         }
                     }
                 }
@@ -800,7 +814,7 @@ impl Blockchain {
                 *EMPTY_TRIE_HASH
             };
 
-            let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+            let accumulated_updates: Vec<AccountUpdate> = accumulator.into_values().collect();
 
             Ok((
                 AccountUpdatesList {
@@ -839,7 +853,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+    ) -> Result<(AccountUpdatesList, Vec<AccountUpdate>), StoreError> {
         const NUM_WORKERS: usize = 16;
         let parent_state_root = parent_header.state_root;
 
@@ -861,12 +875,8 @@ impl Blockchain {
             }
         }
 
-        // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
-        } else {
-            None
-        };
+        // Snapshot before consuming the map below.
+        let accumulated_updates: Vec<AccountUpdate> = all_updates.values().cloned().collect();
 
         // Extract code updates and build work items with pre-hashed addresses
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
@@ -1502,7 +1512,7 @@ impl Blockchain {
 
     pub fn generate_witness_from_account_updates(
         &self,
-        account_updates: Vec<AccountUpdate>,
+        account_updates: &[AccountUpdate],
         block: &Block,
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
@@ -1528,7 +1538,7 @@ impl Blockchain {
 
         let mut codes = Vec::new();
 
-        for account_update in &account_updates {
+        for account_update in account_updates {
             touched_account_storage_slots.insert(
                 account_update.address,
                 account_update
@@ -1614,7 +1624,7 @@ impl Blockchain {
         let (storage_tries_after_update, _account_updates_list) =
             self.storage.apply_account_updates_from_trie_with_witness(
                 trie,
-                &account_updates,
+                account_updates,
                 used_storage_tries,
             )?;
 
@@ -1834,6 +1844,12 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        // See `pipeline_lock` field doc. Poison recovery is safe: `last_committed`
+        // is only written after `store_block` succeeds, so a mid-pipeline panic
+        // leaves it pointing at the previously committed block — exactly what
+        // the next call's parent-mismatch check expects.
+        let _guard = self.pipeline_lock.lock().unwrap_or_else(|p| p.into_inner());
+
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1888,12 +1904,11 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        if let Some(logger) = logger
-            && let Some(account_updates) = accumulated_updates
-        {
-            let block_hash = block.hash();
+        let block_hash = block.hash();
+
+        if let Some(logger) = logger {
             let witness = self.generate_witness_from_account_updates(
-                account_updates,
+                &accumulated_updates,
                 &block,
                 parent_header,
                 &logger,
@@ -1905,6 +1920,14 @@ impl Blockchain {
         let result = self.store_block(block, account_updates_list, res);
 
         let stored = Instant::now();
+
+        // Promote the post-state only after store_block succeeded; failure
+        // earlier leaves the cache reflecting the previous block, and the next
+        // block's parent-mismatch check handles invalidation.
+        if result.is_ok() {
+            self.cross_block_cache
+                .promote_block(block_number, block_hash, &accumulated_updates);
+        }
 
         let instants = std::array::from_fn(move |i| {
             if i < instants.len() {
