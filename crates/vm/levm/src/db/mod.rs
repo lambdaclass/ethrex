@@ -345,10 +345,6 @@ impl CrossBlockCache {
             }
         }
 
-        drop(accounts);
-        drop(storage);
-        drop(code);
-
         *self
             .last_committed
             .write()
