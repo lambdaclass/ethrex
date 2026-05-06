@@ -1228,8 +1228,7 @@ impl<'a> VM<'a> {
                     // - `already_reclassified_in_subtree` = current reclassified -
                     //   snapshot at frame entry: amounts already counted at deeper
                     //   halts. Subtract to avoid double-counting.
-                    let local_excess =
-                        outstanding_delta.saturating_sub(credit_against_drain_delta);
+                    let local_excess = outstanding_delta.saturating_sub(credit_against_drain_delta);
                     let subtree_gross_spill = self
                         .state_gas_spill
                         .saturating_sub(state_gas_spill_snapshot);
@@ -1241,9 +1240,8 @@ impl<'a> VM<'a> {
                     let new_reclassify = local_excess
                         .saturating_add(credit_cancelled_spill)
                         .saturating_sub(already_reclassified_in_subtree);
-                    self.regular_gas_reclassified = self
-                        .regular_gas_reclassified
-                        .saturating_add(new_reclassify);
+                    self.regular_gas_reclassified =
+                        self.regular_gas_reclassified.saturating_add(new_reclassify);
                     self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
                     self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 }
@@ -1278,6 +1276,8 @@ impl<'a> VM<'a> {
             state_gas_reservoir_snapshot,
             state_gas_spill_outstanding_snapshot,
             state_gas_credit_against_drain_snapshot,
+            state_gas_spill_snapshot,
+            regular_gas_reclassified_snapshot,
             stack,
             ..
         } = executed_call_frame;
@@ -1335,11 +1335,28 @@ impl<'a> VM<'a> {
                         .saturating_sub(credit_against_drain_delta);
                 } else {
                     self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                    let local_excess =
-                        outstanding_delta.saturating_sub(credit_against_drain_delta);
-                    self.regular_gas_reclassified = self
+                    // ExceptionalHalt (PR #2689): reclassify the subtree's
+                    // un-cancelled local spill PLUS the credit-cancelled spill
+                    // that wasn't already reclassified at a deeper halt boundary.
+                    // Mirrors handle_return_call's formula — see comment there for
+                    // the term-by-term breakdown. Without the credit_cancelled_spill
+                    // term, a nested CREATE child whose initcode credits NEW_ACCOUNT
+                    // and then ExceptionalHalts under-reclassifies state gas by
+                    // exactly AccountCreationCost.
+                    let local_excess = outstanding_delta.saturating_sub(credit_against_drain_delta);
+                    let subtree_gross_spill = self
+                        .state_gas_spill
+                        .saturating_sub(state_gas_spill_snapshot);
+                    let credit_cancelled_spill =
+                        subtree_gross_spill.saturating_sub(outstanding_delta);
+                    let already_reclassified_in_subtree = self
                         .regular_gas_reclassified
-                        .saturating_add(local_excess);
+                        .saturating_sub(regular_gas_reclassified_snapshot);
+                    let new_reclassify = local_excess
+                        .saturating_add(credit_cancelled_spill)
+                        .saturating_sub(already_reclassified_in_subtree);
+                    self.regular_gas_reclassified =
+                        self.regular_gas_reclassified.saturating_add(new_reclassify);
                     self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
                     self.state_gas_reservoir = state_gas_reservoir_snapshot;
                 }
