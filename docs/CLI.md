@@ -75,6 +75,11 @@ Node options:
 
           [env: ETHREX_NO_MIGRATE=]
 
+      --no-precompile-cache
+          Disable the per-block precompile result cache (benchmarking only).
+          
+          [env: ETHREX_NO_PRECOMPILE_CACHE=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
 
