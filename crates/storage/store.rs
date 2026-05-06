@@ -1453,12 +1453,51 @@ impl Store {
     }
 
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
-        // Ignore unused variable warning when compiling without DB features
         let db_path = path.as_ref().to_path_buf();
 
         if engine_type != EngineType::InMemory {
-            // Check that the last used DB version matches the current version
-            validate_store_schema_version(&db_path)?;
+            let version = read_store_schema_version(&db_path)?;
+
+            match version {
+                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                    // Pre-metadata DB — cannot migrate safely
+                    return Err(StoreError::NotFoundDBVersion);
+                }
+                None => {
+                    // Fresh / empty directory — write initial metadata
+                    init_metadata_file(&db_path)?;
+                }
+                Some(v) if v < 1 => {
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!("DB version v{v} is invalid (predates migrations)"),
+                    });
+                }
+                Some(v) if v > STORE_SCHEMA_VERSION => {
+                    return Err(StoreError::MigrationFailed {
+                        from: v,
+                        to: STORE_SCHEMA_VERSION,
+                        reason: format!(
+                            "DB version v{v} is more recent than the client expects (v{STORE_SCHEMA_VERSION}). Rolling back is not supported"
+                        ),
+                    });
+                }
+                #[cfg(feature = "rocksdb")]
+                Some(v) if v < STORE_SCHEMA_VERSION => {
+                    // Open backend, run migrations, then proceed with the same Arc
+                    let backend: Arc<dyn crate::api::StorageBackend> =
+                        Arc::new(RocksDBBackend::open(&path)?);
+                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
+                }
+                Some(_) => {
+                    // version == STORE_SCHEMA_VERSION, proceed normally.
+                    // Without the `rocksdb` feature this also covers v < target,
+                    // but that path is unreachable since InMemory is the only
+                    // engine type and the outer guard excludes it.
+                }
+            }
         }
 
         match engine_type {
@@ -3188,29 +3227,24 @@ impl LatestBlockHeaderCache {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct StoreMetadata {
-    schema_version: u64,
+pub struct StoreMetadata {
+    pub schema_version: u64,
 }
 
 impl StoreMetadata {
-    fn new(schema_version: u64) -> Self {
+    pub fn new(schema_version: u64) -> Self {
         Self { schema_version }
     }
 }
 
-fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
+/// Reads the schema version from the metadata file, if it exists.
+///
+/// Returns `Some(version)` when metadata.json is present and valid,
+/// or `None` when the file does not exist.
+fn read_store_schema_version(path: &Path) -> Result<Option<u64>, StoreError> {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
-    // If metadata file does not exist, try to create it
     if !metadata_path.exists() {
-        // If datadir exists but is not empty, this is probably a DB for an
-        // old ethrex version and we should return an error
-        if path.exists() && !dir_is_empty(path)? {
-            return Err(StoreError::NotFoundDBVersion {
-                expected: STORE_SCHEMA_VERSION,
-            });
-        }
-        init_metadata_file(path)?;
-        return Ok(());
+        return Ok(None);
     }
     if !metadata_path.is_file() {
         return Err(StoreError::Custom(
@@ -3219,15 +3253,7 @@ fn validate_store_schema_version(path: &Path) -> Result<(), StoreError> {
     }
     let file_contents = std::fs::read_to_string(metadata_path)?;
     let metadata: StoreMetadata = serde_json::from_str(&file_contents)?;
-
-    // Check schema version matches the expected one
-    if metadata.schema_version != STORE_SCHEMA_VERSION {
-        return Err(StoreError::IncompatibleDBVersion {
-            found: metadata.schema_version,
-            expected: STORE_SCHEMA_VERSION,
-        });
-    }
-    Ok(())
+    Ok(Some(metadata.schema_version))
 }
 
 fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
@@ -3246,8 +3272,9 @@ fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
     Ok(is_empty)
 }
 
-/// Checks whether a valid database exists at the given path by looking for
-/// a metadata.json file with a matching schema version.
+/// Checks whether a valid (or migratable) database exists at the given path
+/// by looking for a metadata.json file with a schema version between 1 and
+/// `STORE_SCHEMA_VERSION` (inclusive).
 pub fn has_valid_db(path: &Path) -> bool {
     let metadata_path = path.join(STORE_METADATA_FILENAME);
     if !metadata_path.is_file() {
@@ -3259,7 +3286,7 @@ pub fn has_valid_db(path: &Path) -> bool {
     let Ok(metadata) = serde_json::from_str::<StoreMetadata>(&contents) else {
         return false;
     };
-    metadata.schema_version == STORE_SCHEMA_VERSION
+    metadata.schema_version >= 1 && metadata.schema_version <= STORE_SCHEMA_VERSION
 }
 
 /// Reads the chain ID from an existing database without performing a full
