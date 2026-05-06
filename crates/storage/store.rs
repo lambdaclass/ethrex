@@ -3054,11 +3054,10 @@ fn flush_all_trie_layers(
 
     let mut trie_mut = (*trie).clone();
 
-    let last_written = backend
-        .begin_read()?
-        .get(MISC_VALUES, "last_written".as_bytes())?
-        .unwrap_or_default();
-
+    // Unlike apply_trie_updates, we do NOT skip leaves above the FKV `last_written`
+    // watermark. apply_trie_updates relies on the FKV generator catching up afterwards
+    // to write deferred leaves; on flush the caller is about to exit (e.g. import CLI),
+    // so the FKV will never advance and any skipped leaf would be permanently lost.
     let mut write_tx = backend.begin_write()?;
     let nodes = trie_mut.commit(root).unwrap_or_default();
     let mut result = Ok(());
@@ -3066,9 +3065,6 @@ fn flush_all_trie_layers(
         let is_leaf = key.len() == 65 || key.len() == 131;
         let is_account = key.len() <= 65;
 
-        if is_leaf && key > last_written {
-            continue;
-        }
         let table = if is_leaf {
             if is_account {
                 &ACCOUNT_FLATKEYVALUE
