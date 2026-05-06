@@ -32,7 +32,7 @@ services:
 
   ethrex:
     container_name: ethrex
-    image: "ghcr.io/lambdaclass/ethrex:main"
+    image: "ghcr.io/lambdaclass/ethrex:${ETHREX_TAG:-main}"
     pull_policy: always
     ports:
       - 127.0.0.1:8545:8545

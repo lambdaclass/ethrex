@@ -1,0 +1,230 @@
+# Snap Sync Test — Composite GitHub Action
+#
+# Runs an ethrex node with Lighthouse against a target network and verifies
+# snap sync completes within the configured timeout.
+#
+# Supports two modes:
+#   binary — downloads Lighthouse, starts both processes directly on the runner
+#   docker — uses docker compose with the root docker-compose.yaml
+#
+# Trigger chain:
+#   release workflow -> snap-sync-test action -> poll-sync.sh
+#
+# Debugging:
+#   - On failure, the last 200 lines of ethrex and 100 lines of Lighthouse logs
+#     are written to the GitHub Actions step summary.
+#   - In binary mode, logs are in /tmp/ethrex.log and /tmp/lighthouse.log.
+#   - In docker mode, use `docker compose logs` to inspect container output.
+
+name: Snap Sync Test
+description: Run an ethrex snap sync against a target network and verify completion.
+
+inputs:
+  mode:
+    description: Execution mode — "binary" (bare metal) or "docker" (compose).
+    required: true
+  binary_path:
+    description: Path to the ethrex binary (required when mode=binary).
+    required: false
+  image_tag:
+    description: Docker image tag for ethrex (required when mode=docker).
+    required: false
+  network:
+    description: Target network name (e.g. hoodi, mainnet, sepolia).
+    required: false
+    default: hoodi
+  timeout:
+    description: Maximum wait time for sync (e.g. "3h", "90m", "5400").
+    required: false
+    default: "3h"
+  lighthouse_version:
+    description: Lighthouse release version to download (binary mode only).
+    required: false
+    default: v8.0.1
+  poll_interval:
+    description: Seconds between eth_syncing polls.
+    required: false
+    default: "60"
+
+runs:
+  using: composite
+  steps:
+    # ------------------------------------------------------------------
+    # Input validation
+    # ------------------------------------------------------------------
+    - name: Validate inputs
+      shell: bash
+      env:
+        MODE: ${{ inputs.mode }}
+        BINARY_PATH: ${{ inputs.binary_path }}
+        IMAGE_TAG: ${{ inputs.image_tag }}
+      run: |
+        if [[ "$MODE" != "binary" && "$MODE" != "docker" ]]; then
+          echo "::error::Invalid mode '${MODE}'. Must be 'binary' or 'docker'."
+          exit 1
+        fi
+        if [[ "$MODE" == "binary" && -z "$BINARY_PATH" ]]; then
+          echo "::error::binary_path is required when mode=binary."
+          exit 1
+        fi
+        if [[ "$MODE" == "docker" && -z "$IMAGE_TAG" ]]; then
+          echo "::error::image_tag is required when mode=docker."
+          exit 1
+        fi
+
+    # ==================================================================
+    # Binary mode
+    # ==================================================================
+
+    - name: "[binary] Generate JWT secret"
+      if: inputs.mode == 'binary'
+      shell: bash
+      run: |
+        openssl rand -hex 32 > /tmp/jwt.hex
+        echo "JWT secret written to /tmp/jwt.hex"
+
+    - name: "[binary] Detect platform and download Lighthouse"
+      if: inputs.mode == 'binary'
+      shell: bash
+      env:
+        LH_VERSION: ${{ inputs.lighthouse_version }}
+      run: |
+        ARCH=$(uname -m)
+        OS=$(uname -s)
+
+        case "${OS}-${ARCH}" in
+          Linux-x86_64)   PLATFORM="x86_64-unknown-linux-gnu" ;;
+          Linux-aarch64)  PLATFORM="aarch64-unknown-linux-gnu" ;;
+          Darwin-x86_64)  PLATFORM="x86_64-apple-darwin" ;;
+          Darwin-arm64)   PLATFORM="aarch64-apple-darwin" ;;
+          *)
+            echo "::error::Unsupported platform: ${OS}-${ARCH}"
+            exit 1
+            ;;
+        esac
+
+        URL="https://github.com/sigp/lighthouse/releases/download/${LH_VERSION}/lighthouse-${LH_VERSION}-${PLATFORM}.tar.gz"
+        echo "Downloading Lighthouse from: ${URL}"
+        curl -sL "$URL" | tar xz -C /tmp
+        chmod +x /tmp/lighthouse
+        echo "Lighthouse installed to /tmp/lighthouse"
+
+    - name: "[binary] Start Lighthouse"
+      if: inputs.mode == 'binary'
+      shell: bash
+      env:
+        NETWORK: ${{ inputs.network }}
+      run: |
+        echo "Starting Lighthouse for network=${NETWORK}..."
+        /tmp/lighthouse \
+          --network "$NETWORK" \
+          beacon \
+          --http \
+          --http-address 0.0.0.0 \
+          --execution-endpoint http://localhost:8551 \
+          --execution-jwt /tmp/jwt.hex \
+          --checkpoint-sync-url "https://${NETWORK}-checkpoint-sync.attestant.io" \
+          --checkpoint-sync-url-timeout 600 \
+          > /tmp/lighthouse.log 2>&1 &
+
+        LH_PID=$!
+        echo "${LH_PID}" > /tmp/lighthouse.pid
+        echo "Lighthouse started (PID=${LH_PID})"
+
+    - name: "[binary] Start ethrex"
+      if: inputs.mode == 'binary'
+      shell: bash
+      env:
+        BINARY_PATH: ${{ inputs.binary_path }}
+        NETWORK: ${{ inputs.network }}
+      run: |
+        echo "Starting ethrex for network=${NETWORK}..."
+        "$BINARY_PATH" \
+          --network "$NETWORK" \
+          --syncmode snap \
+          --authrpc.jwtsecret /tmp/jwt.hex \
+          --http.addr 0.0.0.0 \
+          > /tmp/ethrex.log 2>&1 &
+
+        ETHREX_PID=$!
+        echo "${ETHREX_PID}" > /tmp/ethrex.pid
+        echo "ethrex started (PID=${ETHREX_PID})"
+
+    - name: "[binary] Poll sync completion"
+      if: inputs.mode == 'binary'
+      shell: bash
+      env:
+        TIMEOUT: ${{ inputs.timeout }}
+        POLL_INTERVAL: ${{ inputs.poll_interval }}
+      run: |
+        "${{ github.action_path }}/poll-sync.sh" \
+          --endpoint "http://localhost:8545" \
+          --timeout "$TIMEOUT" \
+          --poll-interval "$POLL_INTERVAL" \
+          --ethrex-log /tmp/ethrex.log \
+          --lighthouse-log /tmp/lighthouse.log
+
+    - name: "[binary] Cleanup processes"
+      if: inputs.mode == 'binary' && always()
+      shell: bash
+      run: |
+        for pidfile in /tmp/ethrex.pid /tmp/lighthouse.pid; do
+          if [[ -f "$pidfile" ]]; then
+            pid=$(cat "$pidfile")
+            if kill -0 "$pid" 2>/dev/null; then
+              echo "Stopping PID ${pid} ($(basename "$pidfile" .pid))..."
+              kill "$pid" || true
+              # Wait up to 10s for graceful shutdown
+              for i in $(seq 1 10); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+              done
+              # Force kill if still alive
+              kill -0 "$pid" 2>/dev/null && kill -9 "$pid" || true
+            fi
+            rm -f "$pidfile"
+          fi
+        done
+        echo "Cleanup complete."
+
+    # ==================================================================
+    # Docker mode
+    # ==================================================================
+
+    - name: "[docker] Start services with docker compose"
+      if: inputs.mode == 'docker'
+      shell: bash
+      env:
+        ETHREX_TAG: ${{ inputs.image_tag }}
+        ETHREX_NETWORK: ${{ inputs.network }}
+      run: |
+        echo "Starting docker compose with ETHREX_TAG=${ETHREX_TAG} ETHREX_NETWORK=${ETHREX_NETWORK}..."
+        docker compose up -d
+        echo "Services started."
+
+    - name: "[docker] Poll sync completion"
+      if: inputs.mode == 'docker'
+      shell: bash
+      env:
+        TIMEOUT: ${{ inputs.timeout }}
+        POLL_INTERVAL: ${{ inputs.poll_interval }}
+      run: |
+        # Follow container logs to files in the background so dump_logs always
+        # has up-to-date output (unlike a one-shot `docker compose logs`).
+        docker compose logs --no-color --follow ethrex > /tmp/ethrex.log 2>&1 &
+        docker compose logs --no-color --follow lighthouse > /tmp/lighthouse.log 2>&1 &
+
+        "${{ github.action_path }}/poll-sync.sh" \
+          --endpoint "http://localhost:8545" \
+          --timeout "$TIMEOUT" \
+          --poll-interval "$POLL_INTERVAL" \
+          --ethrex-log /tmp/ethrex.log \
+          --lighthouse-log /tmp/lighthouse.log
+
+    - name: "[docker] Tear down services"
+      if: inputs.mode == 'docker' && always()
+      shell: bash
+      run: |
+        echo "Stopping docker compose services..."
+        docker compose down || true
+        echo "Docker compose stopped."

@@ -1,0 +1,144 @@
+# ============================================================================
+# THIS FILE BELONGS IN THE lambdaclass/homebrew-tap REPOSITORY
+# Place it at: .github/workflows/update-formula.yaml
+# ============================================================================
+#
+# Update Homebrew Formula for ethrex
+#
+# Triggered by a repository_dispatch event from ethrex's tag_latest.yaml workflow.
+# Receives the release version in client_payload.version (without 'v' prefix).
+#
+# This workflow:
+#   1. Downloads the source tarball for the new release
+#   2. Computes the SHA-256 hash
+#   3. Updates Formula/ethrex.rb with the new URL and hash
+#   4. Builds a Homebrew bottle on macOS (arm64 Sonoma)
+#   5. Updates the bottle hash in the formula
+#   6. Commits the formula changes
+#   7. Creates a GitHub release with the bottle attached
+
+name: Update Formula
+
+on:
+  repository_dispatch:
+    types: [update-formula]
+
+permissions:
+  contents: write
+
+jobs:
+  update-formula:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        env:
+          PAYLOAD_VERSION: ${{ github.event.client_payload.version }}
+        run: |
+          VERSION="$PAYLOAD_VERSION"
+          if [ -z "$VERSION" ]; then
+            echo "::error::No version found in client_payload"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Download source tarball
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          curl -L -o ethrex.tar.gz \
+            "https://github.com/lambdaclass/ethrex/archive/refs/tags/v${VERSION}.tar.gz"
+
+      - name: Compute source SHA-256
+        id: sha
+        run: |
+          SHA=$(shasum -a 256 ethrex.tar.gz | awk '{print $1}')
+          echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Source SHA-256: $SHA"
+
+      - name: Update formula URL and SHA-256
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.sha.outputs.sha256 }}
+        run: |
+          # Update the url line
+          sed -i '' "s|url \"https://github.com/lambdaclass/ethrex/archive/refs/tags/v.*\.tar\.gz\"|url \"https://github.com/lambdaclass/ethrex/archive/refs/tags/v${VERSION}.tar.gz\"|" Formula/ethrex.rb
+
+          # Update the source sha256 (the one right after url, not in the bottle block)
+          # Match the sha256 line that follows the url line
+          sed -i '' "/^  url /{ n; s/sha256 \"[a-f0-9]*\"/sha256 \"${SHA256}\"/; }" Formula/ethrex.rb
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.90
+
+      - name: Build and create bottle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          brew install --build-bottle ./Formula/ethrex.rb
+          brew bottle --json \
+            --root-url="https://github.com/lambdaclass/homebrew-tap/releases/download/v${VERSION}" \
+            ./Formula/ethrex.rb
+
+      - name: Extract bottle SHA-256 and update formula
+        id: bottle
+        run: |
+          # The bottle JSON file is created by brew bottle
+          BOTTLE_JSON=$(ls ethrex--*.bottle.json)
+          echo "Bottle JSON: $BOTTLE_JSON"
+
+          # Extract the bottle sha256 from the JSON
+          BOTTLE_SHA=$(python3 -c "
+          import json, sys
+          with open('$BOTTLE_JSON') as f:
+              data = json.load(f)
+          # Navigate to the sha256 in the bottle JSON structure
+          for formula in data.values():
+              for tag_info in formula['bottle']['tags'].values():
+                  print(tag_info['sha256'])
+                  sys.exit(0)
+          sys.exit(1)
+          ")
+          echo "bottle_sha256=$BOTTLE_SHA" >> "$GITHUB_OUTPUT"
+          echo "Bottle SHA-256: $BOTTLE_SHA"
+
+          # Get the bottle filename
+          BOTTLE_FILE=$(ls ethrex--*.bottle.tar.gz)
+          echo "bottle_file=$BOTTLE_FILE" >> "$GITHUB_OUTPUT"
+          echo "Bottle file: $BOTTLE_FILE"
+
+      - name: Update bottle SHA-256 in formula
+        env:
+          BOTTLE_SHA: ${{ steps.bottle.outputs.bottle_sha256 }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # Update the bottle block root_url
+          sed -i '' "s|root_url \"https://github.com/lambdaclass/homebrew-tap/releases/download/v[^\"]*\"|root_url \"https://github.com/lambdaclass/homebrew-tap/releases/download/v${VERSION}\"|" Formula/ethrex.rb
+
+          # Update the bottle sha256 for arm64_sonoma
+          sed -i '' "s/sha256 cellar: :any_skip_relocation, arm64_sonoma: \"[a-f0-9]*\"/sha256 cellar: :any_skip_relocation, arm64_sonoma: \"${BOTTLE_SHA}\"/" Formula/ethrex.rb
+
+      - name: Commit formula changes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ethrex.rb
+          git commit -m "Update ethrex to v${VERSION}"
+          git push
+
+      - name: Create release with bottle
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BOTTLE_FILE: ${{ steps.bottle.outputs.bottle_file }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            "$BOTTLE_FILE"
