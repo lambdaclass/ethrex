@@ -22,7 +22,7 @@ use ethrex_p2p::{
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{error::StoreError, has_valid_db};
+use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -858,10 +858,18 @@ pub async fn import_blocks(
         total_blocks_imported += size;
     }
 
-    // Drain the in-memory diff layers to disk before exiting. Without this, the trie nodes
-    // for recently-applied blocks live only in the worker thread's diff layers, and the next
-    // process boots with the parent state of those blocks missing on disk.
+    // Drain the in-memory diff layers to disk before exiting only when fewer than
+    // DB_COMMIT_THRESHOLD blocks were imported. Above that, the regular threshold-driven
+    // commits during apply_trie_updates already pushed the older layers to disk, and
+    // forcing a final flush here would collapse the still-in-memory tail layers onto the
+    // path-keyed nodes table — destroying historical-root reachability that snap-protocol
+    // hive tests depend on.
+    //
+    // Below the threshold (e.g. EEST consume-rlp per-file imports of 1-3 blocks) the
+    // threshold commit never triggers and the imported blocks would otherwise vanish on
+    // process exit, so we still need the flush there.
     if let Some(state_root) = last_state_root
+        && total_blocks_imported < DB_COMMIT_THRESHOLD
         && let Err(err) = store.flush_trie_layers_to_disk(state_root)
     {
         // Imports succeeded in memory but state didn't make it to disk. The next process
