@@ -596,8 +596,7 @@ impl GuestProgramState {
         }
         self.codes_hashed.get(&code_hash).cloned().ok_or_else(|| {
             GuestProgramStateError::Database(format!(
-                "missing bytecode for hash {} in witness",
-                hex::encode(code_hash)
+                "missing bytecode for hash {code_hash:x} in witness"
             ))
         })
     }
@@ -620,8 +619,7 @@ impl GuestProgramState {
             })
             .ok_or_else(|| {
                 GuestProgramStateError::Database(format!(
-                    "missing bytecode for hash {} in witness",
-                    hex::encode(code_hash)
+                    "missing bytecode for hash {code_hash:x} in witness"
                 ))
             })
     }
