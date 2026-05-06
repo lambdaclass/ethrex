@@ -13,16 +13,13 @@ use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, L2Config,
     error::{ChainError, InvalidBlockError},
 };
-use ethrex_common::{
-    H256,
-    types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body},
-};
+use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
     discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{DB_COMMIT_THRESHOLD, error::StoreError, has_valid_db};
+use ethrex_storage::{error::StoreError, has_valid_db};
 use tokio_util::sync::CancellationToken;
 use tracing::{Level, error, info, warn};
 
@@ -755,6 +752,14 @@ pub async fn import_blocks(
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    // Re-execute any blocks above the last committed state root so the in-memory diff
+    // layers are populated before this import appends. Required for per-file imports
+    // (e.g. EEST consume-rlp fork-transition fixtures) where each invocation's tail
+    // layers are dropped on process exit and the next file's parent state would
+    // otherwise be unreachable.
+    crate::initializers::regenerate_head_state(&store, &blockchain)
+        .await
+        .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -782,7 +787,6 @@ pub async fn import_blocks(
     };
 
     let mut total_blocks_imported = 0;
-    let mut last_state_root: Option<H256> = None;
     for blocks in chains {
         let mut block_batch = vec![];
         let size = blocks.len();
@@ -790,9 +794,6 @@ pub async fn import_blocks(
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
-        if let Some(last) = blocks.last() {
-            last_state_root = Some(last.header.state_root);
-        }
         // Execute block by block
         let mut last_progress_log = Instant::now();
         for (index, block) in blocks.into_iter().enumerate() {
@@ -856,26 +857,6 @@ pub async fn import_blocks(
         }
 
         total_blocks_imported += size;
-    }
-
-    // Drain the in-memory diff layers to disk before exiting only when fewer than
-    // DB_COMMIT_THRESHOLD blocks were imported. Above that, the regular threshold-driven
-    // commits during apply_trie_updates already pushed the older layers to disk, and
-    // forcing a final flush here would collapse the still-in-memory tail layers onto the
-    // path-keyed nodes table — destroying historical-root reachability that snap-protocol
-    // hive tests depend on.
-    //
-    // Below the threshold (e.g. EEST consume-rlp per-file imports of 1-3 blocks) the
-    // threshold commit never triggers and the imported blocks would otherwise vanish on
-    // process exit, so we still need the flush there.
-    if let Some(state_root) = last_state_root
-        && total_blocks_imported < DB_COMMIT_THRESHOLD
-        && let Err(err) = store.flush_trie_layers_to_disk(state_root)
-    {
-        // Imports succeeded in memory but state didn't make it to disk. The next process
-        // that opens this datadir will hit "state root missing" on the parent of these
-        // blocks. Surface at error level so operators notice immediately.
-        error!("Failed to flush trie layers to disk: {err}");
     }
 
     let total_duration = start_time.elapsed();
