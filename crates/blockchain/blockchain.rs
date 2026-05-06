@@ -1401,44 +1401,17 @@ impl Blockchain {
         }
 
         // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
-        let mut block_headers_bytes = Vec::new();
-
-        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
-        let first_needed_block_hash = first_blockhash_opcode_number
-            .and_then(|n| {
-                (*n < first_block_header.number.saturating_sub(1))
-                    .then(|| blockhash_opcode_references.get(n))?
-                    .copied()
-            })
-            .unwrap_or(first_block_header.parent_hash);
-
-        // At the beginning this is the header of the last block to execute.
-        let mut current_header = blocks
+        let walk_start_header = &blocks
             .last()
             .ok_or_else(|| ChainError::WitnessGeneration("Empty batch".to_string()))?
-            .header
-            .clone();
-
-        // Headers from latest - 1 until we reach first block header we need.
-        // We do it this way because we want to fetch headers by hash, not by number
-        while current_header.hash() != first_needed_block_hash {
-            let parent_hash = current_header.parent_hash;
-            let current_number = current_header.number - 1;
-
-            current_header = self
-                .storage
-                .get_block_header_by_hash(parent_hash)?
-                .ok_or_else(|| {
-                    ChainError::WitnessGeneration(format!(
-                        "Failed to get block {current_number} header"
-                    ))
-                })?;
-
-            block_headers_bytes.push(current_header.encode_to_vec());
-        }
-        // EELS expects ascending order; we walked the chain backward, so reverse.
-        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
-        block_headers_bytes.reverse();
+            .header;
+        let block_headers_bytes = build_ascending_ancestor_headers_bytes(
+            walk_start_header,
+            first_block_header.number,
+            first_block_header.parent_hash,
+            &blockhash_opcode_references,
+            &self.storage,
+        )?;
 
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
@@ -1643,39 +1616,13 @@ impl Blockchain {
         }
 
         // - We now need necessary block headers, these go from the first block referenced (via BLOCKHASH or just the first block to execute) up to the parent of the last block to execute.
-        let mut block_headers_bytes = Vec::new();
-
-        let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
-        let first_needed_block_hash = first_blockhash_opcode_number
-            .and_then(|n| {
-                (*n < block.header.number.saturating_sub(1))
-                    .then(|| blockhash_opcode_references.get(n))?
-                    .copied()
-            })
-            .unwrap_or(block.header.parent_hash);
-
-        let mut current_header = block.header.clone();
-
-        // Headers from latest - 1 until we reach first block header we need.
-        // We do it this way because we want to fetch headers by hash, not by number
-        while current_header.hash() != first_needed_block_hash {
-            let parent_hash = current_header.parent_hash;
-            let current_number = current_header.number - 1;
-
-            current_header = self
-                .storage
-                .get_block_header_by_hash(parent_hash)?
-                .ok_or_else(|| {
-                    ChainError::WitnessGeneration(format!(
-                        "Failed to get block {current_number} header"
-                    ))
-                })?;
-
-            block_headers_bytes.push(current_header.encode_to_vec());
-        }
-        // EELS expects ascending order; we walked the chain backward, so reverse.
-        // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191
-        block_headers_bytes.reverse();
+        let block_headers_bytes = build_ascending_ancestor_headers_bytes(
+            &block.header,
+            block.header.number,
+            block.header.parent_hash,
+            &blockhash_opcode_references,
+            &self.storage,
+        )?;
 
         // Get initial state trie root and embed the rest of the trie into it
         let nodes: BTreeMap<H256, Node> = used_trie_nodes
@@ -3149,6 +3096,46 @@ fn branchify(node: Node) -> Box<BranchNode> {
             Box::new(BranchNode::new(choices))
         }
     }
+}
+
+/// Walks the chain backward from `walk_start_header` via `storage`, stopping
+/// at the oldest BLOCKHASH-referenced ancestor (or the first executed block's
+/// parent), and returns the encoded ancestor headers in ascending block-number
+/// order.
+///
+/// Ref: <https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/stateless.py#L171-L191>
+fn build_ascending_ancestor_headers_bytes(
+    walk_start_header: &BlockHeader,
+    first_block_number: u64,
+    first_block_parent_hash: H256,
+    blockhash_opcode_references: &HashMap<u64, H256>,
+    storage: &Store,
+) -> Result<Vec<Vec<u8>>, ChainError> {
+    let first_blockhash_opcode_number = blockhash_opcode_references.keys().min();
+    let first_needed_block_hash = first_blockhash_opcode_number
+        .and_then(|n| {
+            (*n < first_block_number.saturating_sub(1))
+                .then(|| blockhash_opcode_references.get(n))?
+                .copied()
+        })
+        .unwrap_or(first_block_parent_hash);
+
+    let mut block_headers_bytes = Vec::new();
+    let mut current_header = walk_start_header.clone();
+    while current_header.hash() != first_needed_block_hash {
+        let parent_hash = current_header.parent_hash;
+        let current_number = current_header.number - 1;
+        current_header = storage
+            .get_block_header_by_hash(parent_hash)?
+            .ok_or_else(|| {
+                ChainError::WitnessGeneration(format!(
+                    "Failed to get block {current_number} header"
+                ))
+            })?;
+        block_headers_bytes.push(current_header.encode_to_vec());
+    }
+    block_headers_bytes.reverse();
+    Ok(block_headers_bytes)
 }
 
 fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {
