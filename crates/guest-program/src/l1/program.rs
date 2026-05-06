@@ -354,6 +354,11 @@ fn canonical_execution_witness_to_rpc(
 
     ethrex_common::types::block_execution_witness::RpcExecutionWitness {
         state: witness.state.iter().map(copy_ssz_bytes).collect(),
+        // The specs do not have a `keys` field in the witness. This field
+        // is inherited from a legacy debug_executionWitness design.
+        // A `keys` field is not currently planned to be included in
+        // the specs. It might if there is rough consensus it is valuable
+        // for execution witness validation performance.
         keys: Vec::new(),
         codes: witness.codes.iter().map(copy_ssz_bytes).collect(),
         headers: witness.headers.iter().map(copy_ssz_bytes).collect(),

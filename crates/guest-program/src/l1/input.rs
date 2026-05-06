@@ -109,6 +109,8 @@ pub struct CanonicalStatelessInput {
     pub new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     pub witness: CanonicalExecutionWitness,
     pub chain_config: CanonicalChainConfig,
+    // Currently the specs do not include proper values for this field,
+    // but it is planned to be supported in the next release.
     pub public_keys:
         libssz_types::SszList<libssz_types::SszList<u8, MAX_BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>,
 }
