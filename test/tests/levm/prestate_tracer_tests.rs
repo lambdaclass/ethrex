@@ -1154,3 +1154,78 @@ fn prestate_pre_storage_excludes_slots_not_present_in_post() {
         );
     }
 }
+
+/// SSTORE clear (V → 0): slot in pre with original value, account in post without it.
+#[test]
+fn prestate_diff_post_omits_cleared_storage_slot() {
+    // PUSH1 0; PUSH1 0; CALLDATALOAD; SSTORE; STOP — clears slot from calldata.
+    let bytecode = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0x35, 0x55, 0x00]);
+
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+    let slot = H256::from_low_u64_be(0x42);
+    let pre_value = U256::from(0xABCDu64);
+
+    let mut contract_storage = FxHashMap::default();
+    contract_storage.insert(slot, pre_value);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(bytecode, &NativeCrypto),
+            1,
+            contract_storage,
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let test_db = TestDatabase { accounts };
+    let mut db = GeneralizedDatabase::new(Arc::new(test_db));
+    let header = default_header();
+
+    let tx = call_contract_tx(contract_addr, sender_addr, slot, 0);
+    let result = LEVM::trace_tx_prestate(
+        &mut db,
+        &header,
+        &tx,
+        true,
+        false,
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+
+    let diff = match result {
+        PrestateResult::Diff(d) => d,
+        PrestateResult::Prestate(_) => panic!("expected Diff variant"),
+    };
+
+    let pre = diff
+        .pre
+        .get(&contract_addr)
+        .expect("contract whose slot was cleared must appear in diff pre");
+    assert_eq!(
+        pre.storage.get(&slot),
+        Some(&H256::from_uint(&pre_value)),
+        "diff pre must keep cleared slot with its original non-zero value"
+    );
+
+    let post = diff
+        .post
+        .get(&contract_addr)
+        .expect("contract whose slot was cleared must appear in diff post");
+    assert!(
+        !post.storage.contains_key(&slot),
+        "diff post must omit cleared slot — omission is the encoding of \"deleted\""
+    );
+}

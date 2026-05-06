@@ -227,15 +227,15 @@ fn build_post_output(
     }
 
     for (key, post_val) in &post_account.storage {
-        if post_val.is_zero() {
-            continue;
-        }
         let pre_val = pre_storage_value(addr, key, pre_snapshot, db).unwrap_or_default();
         if pre_val == *post_val {
             continue;
         }
-        state.storage.insert(*key, H256::from_uint(post_val));
         modified = true;
+        // Cleared slots (post == 0) are encoded by absence in `post.storage`.
+        if !post_val.is_zero() {
+            state.storage.insert(*key, H256::from_uint(post_val));
+        }
     }
 
     Ok(modified.then_some(state))
