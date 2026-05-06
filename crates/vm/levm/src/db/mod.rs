@@ -68,6 +68,12 @@ pub struct CachingDatabase {
     chain_config: OnceLock<ChainConfig>,
 }
 
+impl core::fmt::Debug for CachingDatabase {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CachingDatabase").finish_non_exhaustive()
+    }
+}
+
 impl Default for CachingDatabase {
     fn default() -> Self {
         Self {
@@ -243,6 +249,7 @@ impl Database for CachingDatabase {
 /// must extend `last_committed`, otherwise the cache is invalidated. Writes
 /// are deferred to [`Self::promote_block`], called only after a block has been
 /// successfully executed AND stored.
+#[derive(Debug)]
 pub struct CrossBlockCache {
     cache: Arc<CachingDatabase>,
     last_committed: RwLock<Option<(BlockNumber, BlockHash)>>,

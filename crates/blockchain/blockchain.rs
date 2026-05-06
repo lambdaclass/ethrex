@@ -191,6 +191,7 @@ pub struct L2Config {
 ///     // Process transactions from mempool
 /// }
 /// ```
+#[derive(Debug)]
 pub struct Blockchain {
     /// Underlying storage for blocks and state.
     storage: Store,
@@ -219,21 +220,6 @@ pub struct Blockchain {
     /// `StdMutex` (not `TokioMutex`) because the pipeline is sync and must not
     /// be held across `.await`.
     pipeline_lock: StdMutex<()>,
-}
-
-impl core::fmt::Debug for Blockchain {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Blockchain")
-            .field("storage", &self.storage)
-            .field("mempool", &self.mempool)
-            .field("is_synced", &self.is_synced)
-            .field("options", &self.options)
-            .field("payloads", &"<...>")
-            .field("merkle_pool", &"<...>")
-            .field("cross_block_cache", &"<...>")
-            .field("pipeline_lock", &"<...>")
-            .finish()
-    }
 }
 
 /// Configuration options for the blockchain.
