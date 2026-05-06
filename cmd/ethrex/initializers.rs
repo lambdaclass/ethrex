@@ -9,6 +9,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
+use ethrex_rpc::WebSocketConfig;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -208,15 +209,18 @@ pub async fn init_rpc_api(
     )
     .await;
 
-    let ws_socket_opts = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
+    let ws_config = if opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(opts),
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+        })
     } else {
         None
     };
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_socket_opts,
+        ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -496,9 +500,14 @@ pub async fn init_l1(
     let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
-        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+        | Err(err @ StoreError::NotFoundDBVersion) => {
             return Err(eyre::eyre!(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(err @ StoreError::MigrationFailed { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. The database may be in an inconsistent state. Please erase your DB by running `ethrex removedb` and restart node to resync."
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
@@ -519,6 +528,7 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            precompile_cache_enabled: !opts.no_precompile_cache,
         },
     );
 
@@ -641,6 +651,13 @@ pub fn migrate_datadir_if_needed(
 
     // Verify chain IDs match.
     let Some(db_chain_id) = read_chain_id_from_db(base_datadir) else {
+        warn!(
+            "Found a database at {base_datadir:?} with valid store metadata but could not \
+             read its chain ID. Skipping automatic migration to {network_datadir:?}. \
+             If this is a pre-v10 database you intend to reuse, stop ethrex and move its \
+             contents into {network_datadir:?} manually before restarting. See the logs \
+             above for the specific error from the storage layer."
+        );
         return;
     };
     let expected_chain_id = match network.get_genesis() {
