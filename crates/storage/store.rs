@@ -167,7 +167,7 @@ pub struct Store {
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
     /// Channel for sending trie updates to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieWorkerMessage>,
     /// Cached latest canonical block header.
     ///
     /// Wrapped in Arc for cheap reads with infrequent writes.
@@ -1357,6 +1357,29 @@ impl Store {
         self.apply_updates(update_batch)
     }
 
+    /// Drains every in-memory diff layer up to `latest_state_root` to disk and waits for
+    /// completion. Call before exiting any process that has applied blocks (e.g. the
+    /// `import` CLI subcommand) — otherwise the most recent diff layers stay in memory and
+    /// the next process boots with the parent state of those blocks missing on disk.
+    ///
+    /// The flush message is sent through the same channel as regular trie updates, so it
+    /// runs strictly after every preceding `apply_updates` call has finished its in-memory
+    /// phase. Returns once the worker has committed everything to disk.
+    pub fn flush_trie_layers_to_disk(&self, latest_state_root: H256) -> Result<(), StoreError> {
+        // Capacity 1 so the worker can publish the result and return to its recv loop
+        // without blocking, even if the caller hasn't reached `.recv()` yet.
+        let (notify_tx, notify_rx) = sync_channel(1);
+        self.trie_update_worker_tx
+            .send(TrieWorkerMessage::Flush {
+                latest_state_root,
+                notify: notify_tx,
+            })
+            .map_err(|e| StoreError::Custom(format!("failed to send flush message: {e}")))?;
+        notify_rx
+            .recv()
+            .map_err(|e| StoreError::Custom(format!("flush notification recv failed: {e}")))?
+    }
+
     fn apply_updates(&self, update_batch: UpdateBatch) -> Result<(), StoreError> {
         let db = self.backend.clone();
         let parent_state_root = self
@@ -1397,9 +1420,11 @@ impl Store {
             child_state_root: last_state_root,
             is_batch,
         };
-        trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-        })?;
+        trie_upd_worker_tx
+            .send(TrieWorkerMessage::Update(trie_update))
+            .map_err(|e| {
+                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            })?;
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1593,7 +1618,7 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok(trie_update) => {
+                    Ok(TrieWorkerMessage::Update(trie_update)) => {
                         // FIXME: what should we do on error?
                         let _ = apply_trie_updates(
                             backend.as_ref(),
@@ -1602,6 +1627,18 @@ impl Store {
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                    }
+                    Ok(TrieWorkerMessage::Flush {
+                        latest_state_root,
+                        notify,
+                    }) => {
+                        let result = flush_all_trie_layers(
+                            backend.as_ref(),
+                            &flatkeyvalue_control_tx,
+                            &trie_cache,
+                            latest_state_root,
+                        );
+                        let _ = notify.send(result);
                     }
                     Err(err) => {
                         debug!("Trie update sender disconnected: {err}");
@@ -2866,6 +2903,17 @@ struct TrieUpdate {
     is_batch: bool,
 }
 
+enum TrieWorkerMessage {
+    Update(TrieUpdate),
+    /// Force-persist every diff layer up to and including `latest_state_root` to disk.
+    /// Sent from `Store::flush_trie_layers_to_disk` and processed FIFO with updates,
+    /// so by the time the worker picks it up, all preceding `Update`s have been applied.
+    Flush {
+        latest_state_root: H256,
+        notify: SyncSender<Result<(), StoreError>>,
+    },
+}
+
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
 // with the other end of `fkv_ctl`
 fn apply_trie_updates(
@@ -2971,6 +3019,81 @@ fn apply_trie_updates(
     let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
     result?;
     // Phase 3: update diff layers with the removal of bottom layer.
+    *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
+    Ok(())
+}
+
+/// Persists every in-memory diff layer reachable from `latest_state_root` to disk.
+///
+/// Mirrors the disk-write path of [`apply_trie_updates`] but with `threshold = 1`, so all
+/// layers (not just those past the staleness threshold) are written. Used by
+/// [`Store::flush_trie_layers_to_disk`] to make the import command durable across process
+/// exits — without this, the per-block trie diffs live only in memory and are lost when the
+/// importer process exits.
+fn flush_all_trie_layers(
+    backend: &dyn StorageBackend,
+    fkv_ctl: &SyncSender<FKVGeneratorControlMessage>,
+    trie_cache: &Arc<RwLock<Arc<TrieLayerCache>>>,
+    latest_state_root: H256,
+) -> Result<(), StoreError> {
+    let trie = trie_cache
+        .read()
+        .map_err(|_| StoreError::LockError)?
+        .clone();
+
+    // threshold = 1: walk one layer from latest_state_root and return it as the commit root,
+    // which causes `commit` to drain that layer and every ancestor.
+    let Some(root) = trie.get_commitable_with_threshold(latest_state_root, 1) else {
+        // No layers to flush (e.g. only the genesis state is present, which is already on disk).
+        return Ok(());
+    };
+
+    // Pause the FlatKeyValue generator while the underlying trie changes, same as phase 2 of
+    // apply_trie_updates.
+    let _ = fkv_ctl.send(FKVGeneratorControlMessage::Stop);
+
+    let mut trie_mut = (*trie).clone();
+
+    let last_written = backend
+        .begin_read()?
+        .get(MISC_VALUES, "last_written".as_bytes())?
+        .unwrap_or_default();
+
+    let mut write_tx = backend.begin_write()?;
+    let nodes = trie_mut.commit(root).unwrap_or_default();
+    let mut result = Ok(());
+    for (key, value) in nodes {
+        let is_leaf = key.len() == 65 || key.len() == 131;
+        let is_account = key.len() <= 65;
+
+        if is_leaf && key > last_written {
+            continue;
+        }
+        let table = if is_leaf {
+            if is_account {
+                &ACCOUNT_FLATKEYVALUE
+            } else {
+                &STORAGE_FLATKEYVALUE
+            }
+        } else if is_account {
+            &ACCOUNT_TRIE_NODES
+        } else {
+            &STORAGE_TRIE_NODES
+        };
+        if value.is_empty() {
+            result = write_tx.delete(table, &key);
+        } else {
+            result = write_tx.put(table, &key, &value);
+        }
+        if result.is_err() {
+            break;
+        }
+    }
+    if result.is_ok() {
+        result = write_tx.commit();
+    }
+    let _ = fkv_ctl.send(FKVGeneratorControlMessage::Continue);
+    result?;
     *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
 }

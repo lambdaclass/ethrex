@@ -13,7 +13,10 @@ use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, L2Config,
     error::{ChainError, InvalidBlockError},
 };
-use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
+use ethrex_common::{
+    H256,
+    types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body},
+};
 use ethrex_p2p::{
     discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
@@ -779,6 +782,7 @@ pub async fn import_blocks(
     };
 
     let mut total_blocks_imported = 0;
+    let mut last_state_root: Option<H256> = None;
     for blocks in chains {
         let mut block_batch = vec![];
         let size = blocks.len();
@@ -786,6 +790,9 @@ pub async fn import_blocks(
             .iter()
             .map(|b| (b.header.number, b.hash()))
             .collect::<Vec<_>>();
+        if let Some(last) = blocks.last() {
+            last_state_root = Some(last.header.state_root);
+        }
         // Execute block by block
         let mut last_progress_log = Instant::now();
         for (index, block) in blocks.into_iter().enumerate() {
@@ -849,6 +856,18 @@ pub async fn import_blocks(
         }
 
         total_blocks_imported += size;
+    }
+
+    // Drain the in-memory diff layers to disk before exiting. Without this, the trie nodes
+    // for recently-applied blocks live only in the worker thread's diff layers, and the next
+    // process boots with the parent state of those blocks missing on disk.
+    if let Some(state_root) = last_state_root
+        && let Err(err) = store.flush_trie_layers_to_disk(state_root)
+    {
+        // Imports succeeded in memory but state didn't make it to disk. The next process
+        // that opens this datadir will hit "state root missing" on the parent of these
+        // blocks. Surface at error level so operators notice immediately.
+        error!("Failed to flush trie layers to disk: {err}");
     }
 
     let total_duration = start_time.elapsed();
