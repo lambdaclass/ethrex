@@ -450,13 +450,15 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 
 /// Starts the JSON-RPC API servers.
 ///
-/// This function initializes and runs three server endpoints:
+/// This function initializes and runs up to three server endpoints:
 ///
 /// 1. **HTTP Server** (`http_addr`): Public JSON-RPC endpoint for standard Ethereum
 ///    methods (`eth_*`, `debug_*`, `net_*`, `admin_*`, `web3_*`, `txpool_*`).
 ///
-/// 2. **WebSocket Server** (`ws_addr`): Optional WebSocket endpoint for the same
-///    methods as HTTP, enabling persistent connections.
+/// 2. **WebSocket Server** (`ws`): Optional endpoint that serves the same methods as
+///    HTTP plus the subscription methods `eth_subscribe` / `eth_unsubscribe` (currently
+///    only `"newHeads"` is supported). Enabled by passing a [`WebSocketConfig`]
+///    containing the listen address and the [`SubscriptionManager`] actor handle.
 ///
 /// 3. **Auth RPC Server** (`authrpc_addr`): JWT-authenticated endpoint for Engine API
 ///    methods (`engine_*`) used by consensus clients.
@@ -464,7 +466,8 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// # Arguments
 ///
 /// * `http_addr` - Socket address for the HTTP server (e.g., `127.0.0.1:8545`)
-/// * `ws_addr` - Optional socket address for WebSocket server
+/// * `ws` - Optional [`WebSocketConfig`] with the WS listen address and the
+///   [`SubscriptionManager`] actor handle. `None` disables the WebSocket server.
 /// * `authrpc_addr` - Socket address for authenticated Engine API (e.g., `127.0.0.1:8551`)
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
@@ -593,7 +596,7 @@ pub async fn start_api(
     info!("Starting Auth-RPC server at {authrpc_addr}");
 
     if let Some(ref ws_config) = ws {
-        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async {
+        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
             ws.on_upgrade(|mut socket| async move {
                 handle_websocket(&mut socket, &ctx, |req| {
                     let c = ctx.clone();
@@ -763,40 +766,90 @@ where
     Fut: std::future::Future<Output = Result<Value, E>>,
     E: Into<RpcErrorMetadata>,
 {
-    let req: RpcRequest = match serde_json::from_str(body) {
-        Ok(r) => r,
-        Err(_) => {
-            // JSON-RPC 2.0 spec: parse error responses must have "id": null.
-            let resp = serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": null,
-                "error": {
-                    "code": -32700,
-                    "message": "Parse error"
-                }
-            });
-            return Some(resp.to_string());
-        }
+    // Parse as raw JSON first so we can distinguish between:
+    //   -32700 Parse error (malformed JSON)
+    //   -32600 Invalid Request (valid JSON, but not a valid JSON-RPC request object)
+    let parsed: Value = match serde_json::from_str(body) {
+        Ok(v) => v,
+        Err(_) => return Some(ws_error_response(None, -32700, "Parse error")),
     };
 
+    // Accept both a single request and a batch (array), matching HTTP behavior.
+    let wrapper: RpcRequestWrapper = match serde_json::from_value(parsed) {
+        Ok(w) => w,
+        Err(_) => return Some(ws_error_response(None, -32600, "Invalid Request")),
+    };
+
+    match wrapper {
+        RpcRequestWrapper::Single(req) => {
+            let resp =
+                process_ws_request(req, context, out_tx, subscription_ids, route_request).await?;
+            Some(resp.to_string())
+        }
+        RpcRequestWrapper::Multiple(reqs) => {
+            // Per JSON-RPC 2.0 spec, an empty batch is an invalid request.
+            if reqs.is_empty() {
+                return Some(ws_error_response(None, -32600, "Invalid Request"));
+            }
+            let mut responses = Vec::with_capacity(reqs.len());
+            for req in reqs {
+                if let Some(resp) =
+                    process_ws_request(req, context, out_tx, subscription_ids, route_request).await
+                {
+                    responses.push(resp);
+                }
+            }
+            if responses.is_empty() {
+                None
+            } else {
+                serde_json::to_string(&responses).ok()
+            }
+        }
+    }
+}
+
+async fn process_ws_request<F, Fut, E>(
+    req: RpcRequest,
+    context: &RpcApiContext,
+    out_tx: &tokio::sync::mpsc::Sender<String>,
+    subscription_ids: &mut Vec<String>,
+    route_request: &F,
+) -> Option<Value>
+where
+    F: Fn(RpcRequest) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, E>>,
+    E: Into<RpcErrorMetadata>,
+{
     match req.method.as_str() {
         "eth_subscribe" => {
             let result = handle_eth_subscribe(&req, context, out_tx, subscription_ids).await;
-            let resp = rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
+            rpc_response(req.id, result).ok()
         }
         "eth_unsubscribe" => {
             let result = handle_eth_unsubscribe(&req, context, subscription_ids).await;
-            let resp = rpc_response(req.id, result).ok()?;
-            Some(resp.to_string())
+            rpc_response(req.id, result).ok()
         }
         _ => {
             let id = req.id.clone();
             let res = route_request(req).await;
-            let resp = rpc_response(id, res).ok()?;
-            Some(resp.to_string())
+            rpc_response(id, res).ok()
         }
     }
+}
+
+/// Build a JSON-RPC 2.0 error response. Used for transport-level errors
+/// (parse error, invalid request) where the request ID is unknown.
+fn ws_error_response(id: Option<RpcRequestId>, code: i32, message: &str) -> String {
+    let id = match id {
+        Some(id) => serde_json::to_value(id).unwrap_or(Value::Null),
+        None => Value::Null,
+    };
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": { "code": code, "message": message },
+    })
+    .to_string()
 }
 
 /// Handle `eth_subscribe`.
@@ -833,7 +886,8 @@ pub async fn handle_eth_subscribe(
                 .subscription_manager
                 .subscribe(out_tx.clone())
                 .await
-                .map_err(|e| RpcErr::Internal(format!("Subscription failed: {e}")))?;
+                .map_err(|e| RpcErr::Internal(format!("Subscription failed: {e}")))?
+                .ok_or_else(|| RpcErr::Internal("Global subscription cap reached".to_string()))?;
 
             subscription_ids.push(id.clone());
             Ok(Value::String(id))
@@ -1059,6 +1113,8 @@ pub async fn map_admin_requests(
     match req.method.as_str() {
         "admin_nodeInfo" => admin::node_info(context.storage, &context.node_data).await,
         "admin_peers" => admin::peers(&mut context).await,
+        "admin_peerScores" => admin::peer_scores(&mut context).await,
+        "admin_syncStatus" => admin::sync_status(&mut context).await,
         "admin_setLogLevel" => admin::set_log_level(req, &context.log_filter_handler),
         "admin_addPeer" => admin::add_peer(&mut context, req).await,
         unknown_admin_method => Err(RpcErr::MethodNotFound(unknown_admin_method.to_owned())),
@@ -1084,7 +1140,9 @@ pub fn map_mempool_requests(req: &RpcRequest, contex: RpcApiContext) -> Result<V
     match req.method.as_str() {
         // TODO: The endpoint name matches geth's endpoint for compatibility, consider changing it in the future
         "txpool_content" => mempool::content(contex),
+        "txpool_contentFrom" => mempool::content_from(&req.params, contex),
         "txpool_status" => mempool::status(contex),
+        "txpool_inspect" => mempool::inspect(contex),
         unknown_mempool_method => Err(RpcErr::MethodNotFound(unknown_mempool_method.to_owned())),
     }
 }

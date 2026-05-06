@@ -7,7 +7,10 @@ use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ethrex_blockchain::{BatchBlockProcessingFailure, Blockchain, error::ChainError};
+use ethrex_blockchain::{
+    BatchBlockProcessingFailure, Blockchain,
+    error::{ChainError, InvalidBlockError},
+};
 use ethrex_common::{H256, types::Block};
 use ethrex_storage::Store;
 use tokio::time::Instant;
@@ -60,7 +63,7 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
-            if attempts > MAX_HEADER_FETCH_ATTEMPTS {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
                     "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
                 );
@@ -68,12 +71,14 @@ pub async fn sync_cycle_full(
             }
             attempts += 1;
             warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 5s"
+                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
             );
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         };
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
+        // Reset failure counter on success so it tracks consecutive failures
+        attempts = 0;
 
         let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
         let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
@@ -116,53 +121,127 @@ pub async fn sync_cycle_full(
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
 
-    // Download block bodies and execute full blocks in batches
-    for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
-        let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
-        let final_batch = end_block_number == start + batch_size as u64;
-        // Retrieve batch from DB
-        if !single_batch {
-            headers = store
+    // Pipeline: download block bodies in a background task while the main loop executes.
+    // This overlaps network I/O with block execution for better throughput.
+    let (body_tx, mut body_rx) =
+        tokio::sync::mpsc::channel::<Result<(Vec<Block>, bool), SyncError>>(2);
+
+    // Clone resources for the background download task
+    let mut download_peers = peers.clone();
+    let download_store = store.clone();
+
+    let download_task = tokio::spawn(async move {
+        // If single_batch, we already have headers in memory — send them as the one and only batch.
+        if single_batch {
+            let final_batch = true;
+            let mut batch_headers = headers;
+            let mut blocks = Vec::new();
+            while !batch_headers.is_empty() {
+                let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
+                let header_batch = &batch_headers[..end];
+                match download_peers.request_block_bodies(header_batch).await {
+                    Ok(Some(bodies)) => {
+                        debug!("Obtained: {} block bodies", bodies.len());
+                        let block_batch = batch_headers
+                            .drain(..bodies.len())
+                            .zip(bodies)
+                            .map(|(header, body)| Block { header, body });
+                        blocks.extend(block_batch);
+                    }
+                    Ok(None) => {
+                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = body_tx.send(Err(e.into())).await;
+                        return;
+                    }
+                }
+            }
+            if !blocks.is_empty() {
+                let _ = body_tx.send(Ok((blocks, final_batch))).await;
+            }
+            return;
+        }
+
+        // Multi-batch path: iterate through all batches, download bodies, and send them.
+        for start in (start_block_number..end_block_number).step_by(*EXECUTE_BATCH_SIZE) {
+            let batch_size = EXECUTE_BATCH_SIZE.min((end_block_number - start) as usize);
+            let final_batch = end_block_number == start + batch_size as u64;
+
+            let batch_headers = match download_store
                 .read_fullsync_batch(start, batch_size as u64)
-                .await?
+                .await
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = body_tx.send(Err(e.into())).await;
+                    return;
+                }
+            };
+            let mut batch_headers: Vec<_> = match batch_headers
                 .into_iter()
                 .map(|opt| opt.ok_or(SyncError::MissingFullsyncBatch))
-                .collect::<Result<Vec<_>, SyncError>>()?;
+                .collect()
+            {
+                Ok(h) => h,
+                Err(e) => {
+                    let _ = body_tx.send(Err(e)).await;
+                    return;
+                }
+            };
+
+            let mut blocks = Vec::new();
+            while !batch_headers.is_empty() {
+                let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
+                let header_batch = &batch_headers[..end];
+                match download_peers.request_block_bodies(header_batch).await {
+                    Ok(Some(bodies)) => {
+                        debug!("Obtained: {} block bodies", bodies.len());
+                        let block_batch = batch_headers
+                            .drain(..bodies.len())
+                            .zip(bodies)
+                            .map(|(header, body)| Block { header, body });
+                        blocks.extend(block_batch);
+                    }
+                    Ok(None) => {
+                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                        return;
+                    }
+                    Err(e) => {
+                        let _ = body_tx.send(Err(e.into())).await;
+                        return;
+                    }
+                }
+            }
+            if !blocks.is_empty() && body_tx.send(Ok((blocks, final_batch))).await.is_err() {
+                // Receiver dropped (execution loop stopped), stop downloading
+                return;
+            }
         }
-        let mut blocks = Vec::new();
-        // Request block bodies
-        // Download block bodies
-        while !headers.is_empty() {
-            let header_batch = &headers[..min(MAX_BLOCK_BODIES_TO_REQUEST, headers.len())];
-            let bodies = peers
-                .request_block_bodies(header_batch)
-                .await?
-                .ok_or(SyncError::BodiesNotFound)?;
-            debug!("Obtained: {} block bodies", bodies.len());
-            let block_batch = headers
-                .drain(..bodies.len())
-                .zip(bodies)
-                .map(|(header, body)| Block { header, body });
-            blocks.extend(block_batch);
-        }
-        if !blocks.is_empty() {
-            // Execute blocks
-            info!(
-                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
-                blocks.len(),
-                blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
-                blocks.last().ok_or(SyncError::NoBlocks)?.hash()
-            );
-            add_blocks_in_batch(
-                blockchain.clone(),
-                cancel_token.clone(),
-                blocks,
-                final_batch,
-                store.clone(),
-            )
-            .await?;
-        }
+    });
+
+    // Main loop: receive downloaded batches and execute them
+    while let Some(result) = body_rx.recv().await {
+        let (blocks, final_batch) = result?;
+        info!(
+            "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
+            blocks.len(),
+            blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+            blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+        );
+        add_blocks_in_batch(
+            blockchain.clone(),
+            cancel_token.clone(),
+            blocks,
+            final_batch,
+            store.clone(),
+        )
+        .await?;
     }
+
+    // Ensure the download task completes and propagate any panics
+    download_task.await?;
 
     // Execute pending blocks
     if !pending_blocks.is_empty() {
@@ -268,7 +347,9 @@ async fn add_blocks_in_batch(
 
 /// Executes the given blocks and stores them
 /// If sync_head_found is true, they will be executed one by one
-/// If sync_head_found is false, they will be executed in a single batch
+/// If sync_head_found is false, they will be executed in a single batch,
+/// falling back to one-by-one pipeline execution if the batch fails with
+/// a post-execution error (works around batch-mode state corruption bugs).
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
@@ -277,26 +358,81 @@ async fn add_blocks(
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     // If we found the sync head, run the blocks sequentially to store all the blocks's state
     if sync_head_found {
-        tokio::task::spawn_blocking(move || {
-            let mut last_valid_hash = H256::default();
-            for block in blocks {
-                let block_hash = block.hash();
-                blockchain.add_block_pipeline(block, None).map_err(|e| {
-                    (
-                        e,
-                        Some(BatchBlockProcessingFailure {
-                            last_valid_hash,
-                            failed_block_hash: block_hash,
-                        }),
-                    )
-                })?;
-                last_valid_hash = block_hash;
-            }
-            Ok(())
-        })
-        .await
-        .map_err(|e| (ChainError::Custom(e.to_string()), None))?
-    } else {
-        blockchain.add_blocks_in_batch(blocks, cancel_token).await
+        return run_blocks_pipeline(blockchain, blocks).await;
     }
+
+    // Try batch execution first (faster).
+    // We clone blocks because add_blocks_in_batch takes ownership but we need
+    // them for the fallback. The clone cost is negligible (~1-5ms) vs batch
+    // execution time (median ~29s on hoodi).
+    match blockchain
+        .add_blocks_in_batch(blocks.clone(), cancel_token)
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err((ChainError::InvalidBlock(ref err), ref batch_failure))
+            if is_post_execution_error(err) =>
+        {
+            // Batch execution can produce incorrect results due to cross-block
+            // state cache pollution (e.g. `mark_modified` setting `exists = true`
+            // leaking across block boundaries). Fall back to single-block pipeline
+            // execution which uses fresh state per block.
+            let failed_block_info = batch_failure
+                .as_ref()
+                .and_then(|f| {
+                    blocks
+                        .iter()
+                        .find(|b| b.hash() == f.failed_block_hash)
+                        .map(|b| format!("block {} ({})", b.header.number, f.failed_block_hash))
+                })
+                .unwrap_or_else(|| "unknown block".to_string());
+            warn!(
+                "Batch execution failed at {failed_block_info} with: {err}. \
+                 Retrying batch with per-block pipeline execution."
+            );
+            run_blocks_pipeline(blockchain, blocks).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Returns true for errors that arise from EVM execution and could differ
+/// between batch mode (shared VM state) and single-block pipeline mode.
+/// Pre-execution validation errors (header, body, structural) would fail
+/// identically in both modes, so retrying them is pointless.
+fn is_post_execution_error(err: &InvalidBlockError) -> bool {
+    matches!(
+        err,
+        InvalidBlockError::GasUsedMismatch(_, _)
+            | InvalidBlockError::StateRootMismatch
+            | InvalidBlockError::ReceiptsRootMismatch
+            | InvalidBlockError::RequestsHashMismatch
+            | InvalidBlockError::BlockAccessListHashMismatch
+            | InvalidBlockError::BlobGasUsedMismatch
+    )
+}
+
+async fn run_blocks_pipeline(
+    blockchain: Arc<Blockchain>,
+    blocks: Vec<Block>,
+) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
+    tokio::task::spawn_blocking(move || {
+        let mut last_valid_hash = H256::default();
+        for block in blocks {
+            let block_hash = block.hash();
+            blockchain.add_block_pipeline(block, None).map_err(|e| {
+                (
+                    e,
+                    Some(BatchBlockProcessingFailure {
+                        last_valid_hash,
+                        failed_block_hash: block_hash,
+                    }),
+                )
+            })?;
+            last_valid_hash = block_hash;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| (ChainError::Custom(e.to_string()), None))?
 }

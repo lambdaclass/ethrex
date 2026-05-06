@@ -152,6 +152,43 @@ async fn peer_is_connected(peer_handler: &mut PeerHandler, enode_url: &str) -> b
         .any(|peer| peer.node.enode_url() == *enode_url)
 }
 
+pub async fn peer_scores(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
+    let Some(peer_handler) = &context.peer_handler else {
+        return Err(RpcErr::Internal("Peer handler not initialized".to_string()));
+    };
+
+    let diagnostics = peer_handler.read_peer_diagnostics().await;
+    let total = diagnostics.len();
+    let eligible = diagnostics.iter().filter(|p| p.eligible).count();
+    let avg_score = if total > 0 {
+        diagnostics.iter().map(|p| p.score).sum::<i64>() / total as i64
+    } else {
+        0
+    };
+    let total_inflight: i64 = diagnostics.iter().map(|p| p.inflight_requests).sum();
+
+    let response = serde_json::json!({
+        "peers": diagnostics,
+        "summary": {
+            "total_peers": total,
+            "eligible_peers": eligible,
+            "average_score": avg_score,
+            "total_inflight_requests": total_inflight,
+        }
+    });
+
+    Ok(response)
+}
+
+pub async fn sync_status(context: &mut RpcApiContext) -> Result<Value, RpcErr> {
+    let Some(syncer) = &context.syncer else {
+        return Err(RpcErr::Internal("Sync manager not initialized".to_string()));
+    };
+
+    let diag = syncer.get_sync_diagnostics().await;
+    serde_json::to_value(diag).map_err(|e| RpcErr::Internal(e.to_string()))
+}
+
 // TODO: Adapt the test to the new P2P architecture.
 #[cfg(test)]
 mod tests {

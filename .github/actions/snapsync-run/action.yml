@@ -35,7 +35,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     # We need to run this step because kurtosis uses cached docker images but we want the latest ethrex image
     - name: Remove cached ethrex image

@@ -61,6 +61,249 @@ PHASE_COMPLETION_PATTERNS = {
 }
 
 
+# Diagnostics polling configuration
+DIAGNOSTICS_NORMAL_INTERVAL = 30  # seconds between polls during normal operation
+DIAGNOSTICS_DEGRADED_INTERVAL = 5  # seconds between polls during degradation
+DIAGNOSTICS_NORMAL_BUFFER_SIZE = 20  # snapshots kept in normal mode
+DIAGNOSTICS_DEGRADED_BUFFER_SIZE = 60  # snapshots kept in degraded mode
+DEGRADATION_ELIGIBLE_PEERS_THRESHOLD = 5  # trigger if eligible peers below this
+DEGRADATION_STALENESS_RATIO = 0.8  # trigger if pivot age > 80% of threshold
+DEGRADATION_RECOVERY_TIMEOUT = 60  # seconds of health before leaving degraded mode
+# Watched phases: sync phases that warrant closer monitoring.
+# When the node enters a watched phase, the monitor bumps the log level to
+# TRACE (via admin_setLogLevel) and switches to fast polling (5s intervals).
+# This is useful for investigating specific sync stages — e.g. "healing" is
+# where pivot-update failures tend to occur.
+#
+# Default: empty (no phases watched). Set via --watched-phases CLI flag:
+#   --watched-phases "healing"
+#   --watched-phases "healing,storage_insertion"
+WATCHED_PHASES: set[str] = set()
+LOG_LEVEL_NORMAL = "info,ethrex_p2p::sync=debug"
+LOG_LEVEL_DEGRADED = "info,ethrex_p2p=trace"
+
+
+class DiagnosticsTracker:
+    """Polls admin_peerScores and admin_syncStatus, keeps rolling buffer, dumps on degradation."""
+
+    def __init__(self, instances: list):
+        self.instances = instances
+        self.buffers: dict[str, list[dict]] = {inst.name: [] for inst in instances}
+        self.degraded: dict[str, bool] = {inst.name: False for inst in instances}
+        self.degraded_since: dict[str, float] = {inst.name: 0 for inst in instances}
+        self.healthy_since: dict[str, float] = {inst.name: 0 for inst in instances}
+        self.last_poll: dict[str, float] = {inst.name: 0 for inst in instances}
+        self.events: list[dict] = []  # degradation events across all networks
+        self.dumped_for_run: dict[str, bool] = {inst.name: False for inst in instances}
+        self._last_progress: dict[str, Optional[str]] = {inst.name: None for inst in instances}
+        self.last_reasons: dict[str, frozenset] = {inst.name: frozenset() for inst in instances}
+
+    def poll_interval(self, name: str) -> float:
+        return DIAGNOSTICS_DEGRADED_INTERVAL if self.degraded[name] else DIAGNOSTICS_NORMAL_INTERVAL
+
+    def buffer_limit(self, name: str) -> int:
+        return DIAGNOSTICS_DEGRADED_BUFFER_SIZE if self.degraded[name] else DIAGNOSTICS_NORMAL_BUFFER_SIZE
+
+    def should_poll(self, name: str) -> bool:
+        return (time.time() - self.last_poll[name]) >= self.poll_interval(name)
+
+    def poll(self, inst, force: bool = False) -> None:
+        """Poll diagnostics RPC endpoints for a single instance."""
+        if not force and inst.status in ("success", "failed", "waiting"):
+            return
+        if not force and not self.should_poll(inst.name):
+            return
+
+        self.last_poll[inst.name] = time.time()
+        peer_scores = rpc_call(inst.rpc_url, "admin_peerScores")
+        sync_status = rpc_call(inst.rpc_url, "admin_syncStatus")
+
+        if peer_scores is None and sync_status is None:
+            return  # node not reachable, skip
+
+        snapshot = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "epoch": time.time(),
+            "peer_scores": peer_scores,
+            "sync_status": sync_status,
+        }
+
+        buf = self.buffers[inst.name]
+        buf.append(snapshot)
+        # Trim buffer to limit
+        limit = self.buffer_limit(inst.name)
+        while len(buf) > limit:
+            buf.pop(0)
+
+        self._check_alert_conditions(inst, snapshot)
+
+    def _check_alert_conditions(self, inst, snapshot: dict) -> None:
+        """Check for degradation conditions and trigger dump if needed."""
+        now = time.time()
+        name = inst.name
+        reasons = []
+
+        # Check eligible peers
+        if snapshot.get("peer_scores") and isinstance(snapshot["peer_scores"], dict):
+            summary = snapshot["peer_scores"].get("summary", {})
+            eligible = summary.get("eligible_peers", 999)
+            if eligible < DEGRADATION_ELIGIBLE_PEERS_THRESHOLD:
+                reasons.append(f"eligible_peers={eligible}")
+
+        # Check sync progress stall
+        if snapshot.get("sync_status") and isinstance(snapshot["sync_status"], dict):
+            phase = snapshot["sync_status"].get("current_phase", "idle")
+            progress_key = str(snapshot["sync_status"].get("phase_progress", {}))
+            if phase not in ("idle", ""):
+                if self._last_progress[name] is not None and self._last_progress[name] == progress_key:
+                    pass  # stall detection not yet implemented
+                self._last_progress[name] = progress_key
+
+            # Check staleness ratio
+            pivot_age = snapshot["sync_status"].get("pivot_age_seconds")
+            threshold = snapshot["sync_status"].get("staleness_threshold_seconds", 0)
+            if pivot_age and threshold and threshold > 0:
+                ratio = pivot_age / threshold
+                if ratio > DEGRADATION_STALENESS_RATIO:
+                    reasons.append(f"staleness_ratio={ratio:.2f}")
+
+            # Healing phase is high-risk for pivot failures — increase polling
+            if phase in WATCHED_PHASES:
+                reasons.append(f"watched_phase:{phase}")
+
+        reasons_set = frozenset(reasons)
+        if reasons:
+            newly_degraded = not self.degraded[name]
+            reasons_changed = reasons_set != self.last_reasons.get(name, frozenset())
+            if newly_degraded:
+                self.degraded[name] = True
+                self.degraded_since[name] = now
+                self.healthy_since[name] = 0
+                # Distinguish intentional tracing (watched phase) from real issues
+                only_watched = all(r.startswith("watched_phase:") for r in reasons)
+                event = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "network": name,
+                    "event_type": "watched_phase_start" if only_watched else "degradation_start",
+                    "reasons": reasons,
+                    "eligible_peers": snapshot.get("peer_scores", {}).get("summary", {}).get("eligible_peers"),
+                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                }
+                self.events.append(event)
+                if only_watched:
+                    print(f"👁️  [{name}] Watched phase active: {', '.join(reasons)} — increasing poll frequency")
+                else:
+                    print(f"⚠️  [{name}] Degradation detected: {', '.join(reasons)} — increasing poll frequency")
+                # Bump log level to TRACE for detailed peer comms
+                if rpc_set_log_level(inst.rpc_url, LOG_LEVEL_DEGRADED):
+                    print(f"🔍 [{name}] Log level bumped to TRACE for peer diagnostics")
+                else:
+                    print(f"⚠️  [{name}] Failed to bump log level")
+            elif reasons_changed:
+                # Already degraded but reasons changed — record and log
+                event = {
+                    "timestamp": datetime.utcnow().isoformat() + "Z",
+                    "network": name,
+                    "event_type": "reasons_changed",
+                    "reasons": reasons,
+                    "phase": snapshot.get("sync_status", {}).get("current_phase"),
+                }
+                self.events.append(event)
+                print(f"🔄 [{name}] Monitor reasons changed: {', '.join(reasons)}")
+            # Dump snapshots on degradation / watched phase
+            self._dump_snapshots(name)
+        else:
+            # Healthy — check if we can exit degraded mode
+            if self.degraded[name]:
+                if self.healthy_since[name] == 0:
+                    self.healthy_since[name] = now
+                elif (now - self.healthy_since[name]) >= DEGRADATION_RECOVERY_TIMEOUT:
+                    self.degraded[name] = False
+                    self.healthy_since[name] = 0
+                    event = {
+                        "timestamp": datetime.utcnow().isoformat() + "Z",
+                        "network": name,
+                        "event_type": "monitoring_normal",
+                    }
+                    self.events.append(event)
+                    print(f"✅ [{name}] Monitoring back to normal — resuming default poll frequency")
+                    # Restore log level to normal
+                    if rpc_set_log_level(inst.rpc_url, LOG_LEVEL_NORMAL):
+                        print(f"📝 [{name}] Log level restored to DEBUG")
+                    else:
+                        print(f"⚠️  [{name}] Failed to restore log level")
+        self.last_reasons[name] = reasons_set
+
+    def on_failure(self, inst, name: str) -> None:
+        """Called when a network fails — do a final poll and dump snapshots."""
+        # Do one last poll to capture the state at failure time
+        self.poll(inst, force=True)
+        # Bump log level to capture any post-failure details
+        rpc_set_log_level(inst.rpc_url, LOG_LEVEL_DEGRADED)
+        # Always dump on failure, even if previously dumped for degradation
+        self._dump_snapshots(name, force=True)
+        event = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "network": name,
+            "event_type": "failure",
+        }
+        self.events.append(event)
+
+    def set_run_id(self, run_id: str) -> None:
+        """Set the current run ID so snapshots go to the right directory."""
+        self.run_id = run_id
+        # Ensure the directory exists now, not at the end of the run
+        run_dir = LOGS_DIR / f"run_{run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+    def _dump_snapshots(self, name: str, force: bool = False) -> None:
+        """Dump the rolling buffer to disk."""
+        if not force and self.dumped_for_run.get(name):
+            return
+        self.dumped_for_run[name] = True
+        buf = self.buffers[name]
+        if not buf:
+            return
+        if not hasattr(self, 'run_id') or not self.run_id:
+            return
+        run_dir = LOGS_DIR / f"run_{self.run_id}"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        out_path = run_dir / f"{name}_peer_snapshots.json"
+        try:
+            import json
+            out_path.write_text(json.dumps(buf, indent=2, default=str))
+            print(f"📸 [{name}] Dumped {len(buf)} diagnostic snapshots to {out_path}")
+        except Exception as e:
+            print(f"⚠️  [{name}] Failed to dump snapshots: {e}")
+
+    def format_degradation_events(self) -> str:
+        """Format monitor events for the summary.txt."""
+        if not self.events:
+            return ""
+        lines = ["\n  Monitor Events:"]
+        for ev in self.events:
+            ts = ev["timestamp"]
+            net = ev.get("network", "?")
+            evt = ev.get("event_type", "?")
+            reasons = ev.get("reasons", [])
+            detail = f" ({', '.join(reasons)})" if reasons else ""
+            lines.append(f"    {ts} [{net}] {evt}{detail}")
+        return "\n".join(lines)
+
+    def reset(self) -> None:
+        """Reset state for a new run."""
+        for name in self.buffers:
+            self.buffers[name] = []
+            self.degraded[name] = False
+            self.degraded_since[name] = 0
+            self.healthy_since[name] = 0
+            self.last_poll[name] = 0
+            self.dumped_for_run[name] = False
+            self._last_progress[name] = None
+            self.last_reasons[name] = frozenset()
+        self.events = []
+
+
 @dataclass
 class Instance:
     name: str
@@ -155,6 +398,19 @@ def build_docker_image(profile: str, image_tag: str, ethrex_dir: str) -> bool:
             check=True
         )
         print("✅ Docker image built successfully")
+        # Prune build cache to prevent unbounded disk growth across runs
+        try:
+            result = subprocess.run(
+                ["docker", "builder", "prune", "-f"],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                reclaimed = result.stdout.strip().split("\n")[-1] if result.stdout.strip() else ""
+                print(f"🧹 Build cache pruned. {reclaimed}")
+            else:
+                print(f"⚠️ Build cache prune failed: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"⚠️ Build cache prune error: {e}")
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Failed to build Docker image: {e}")
@@ -272,6 +528,15 @@ def rpc_call(url: str, method: str) -> Optional[Any]:
         return requests.post(url, json={"jsonrpc": "2.0", "method": method, "params": [], "id": 1}, timeout=5).json().get("result")
     except Exception:
         return None
+
+
+def rpc_set_log_level(url: str, level: str) -> bool:
+    """Set the node's log level via admin_setLogLevel RPC."""
+    try:
+        resp = requests.post(url, json={"jsonrpc": "2.0", "method": "admin_setLogLevel", "params": [level], "id": 1}, timeout=5).json()
+        return resp.get("result") is not None and "error" not in resp
+    except Exception:
+        return False
 
 
 def parse_phase_timings(run_id: str, container: str) -> list[tuple[str, str, str]]:
@@ -410,18 +675,18 @@ def save_container_logs(container: str, run_id: str, suffix: str = ""):
 def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
     """Save logs for all containers (ethrex + consensus)."""
     print(f"\n📁 Saving logs for run {run_id}...")
-    
+
     for inst in instances:
         # Save ethrex logs
         save_container_logs(inst.container, run_id)
         # Save consensus logs (convention: consensus-{network})
         consensus_container = inst.container.replace("ethrex-", "consensus-")
         save_container_logs(consensus_container, run_id)
-    
+
     print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
 
-def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str, build_profile: str = ""):
+def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostname: str, branch: str, commit: str, build_profile: str = "", diagnostics_tracker: Optional['DiagnosticsTracker'] = None):
     """Append run result to the persistent log file."""
     ensure_logs_dir()
     all_success = all(i.status == "success" for i in instances)
@@ -477,15 +742,27 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
             for name, count, duration in phases:
                 lines.append(f"      {name:<{max_name_len}}  {duration}  ({count})")
 
+    # Include degradation events if any
+    if diagnostics_tracker:
+        degradation_text = diagnostics_tracker.format_degradation_events()
+        if degradation_text:
+            lines.append(degradation_text)
+
     lines.append("")
     # Append to log file
-    with open(RUN_LOG_FILE, "a") as f:
-        f.write("\n".join(lines) + "\n")
-    print(f"📝 Run logged to {RUN_LOG_FILE}")
-    # Also write summary to the run folder
-    summary_file = LOGS_DIR / f"run_{run_id}" / "summary.txt"
-    summary_file.parent.mkdir(parents=True, exist_ok=True)
-    summary_file.write_text("\n".join(lines))
+    text = "\n".join(lines) + "\n"
+    try:
+        with open(RUN_LOG_FILE, "a") as f:
+            f.write(text)
+        print(f"📝 Run logged to {RUN_LOG_FILE}")
+        # Also write summary to the run folder
+        summary_file = LOGS_DIR / f"run_{run_id}" / "summary.txt"
+        summary_file.parent.mkdir(parents=True, exist_ok=True)
+        summary_file.write_text(text)
+    except OSError as e:
+        print(f"⚠️ Failed to write run log (disk full?): {e}", flush=True)
+        # Print to stdout so the result isn't lost entirely
+        print(text, flush=True)
 
 
 def generate_run_id() -> str:
@@ -667,6 +944,7 @@ def update_instance(inst: Instance, timeout_min: int) -> bool:
 
 
 def main():
+    global WATCHED_PHASES
     p = argparse.ArgumentParser(description="Monitor Docker snapsync instances")
     p.add_argument("--networks", default="hoodi,sepolia,mainnet")
     p.add_argument("--timeout", type=int, default=SYNC_TIMEOUT)
@@ -685,7 +963,12 @@ def main():
                    help="Docker image tag to build")
     p.add_argument("--ethrex-dir", default=os.environ.get("ETHREX_DIR", "../.."),
                    help="Path to ethrex repository root")
+    p.add_argument("--watched-phases", default=",".join(WATCHED_PHASES),
+                   help="Comma-separated sync phases that trigger TRACE logging and fast polling (default: healing)")
     args = p.parse_args()
+
+    # Apply CLI override for watched phases
+    WATCHED_PHASES = {ph.strip() for ph in args.watched_phases.split(",") if ph.strip()}
 
     # Resolve ethrex directory to absolute path
     ethrex_dir = os.path.abspath(args.ethrex_dir)
@@ -699,7 +982,8 @@ def main():
     containers = [f"ethrex-{n}" for n in names]
     
     instances = [Instance(n, p, c) for n, p, c in zip(names, ports, containers)]
-    
+    tracker = DiagnosticsTracker(instances)
+
     # Detect state of already-running containers
     for inst in instances:
         if t := container_start_time(inst.container):
@@ -731,6 +1015,7 @@ def main():
     # Get run count from existing logs (persists across restarts)
     run_count = get_next_run_count()
     run_id = generate_run_id()
+    tracker.set_run_id(run_id)
 
     print(f"📁 Logs will be saved to {LOGS_DIR.absolute()}")
     print(f"📝 Run history: {RUN_LOG_FILE.absolute()}")
@@ -763,6 +1048,7 @@ def main():
                 # Reset instances since we restarted
                 for inst in instances:
                     reset_instance(inst)
+                tracker.reset()
                 time.sleep(30)  # Wait for containers to start
                 print(f"{'='*60}\n")
 
@@ -770,6 +1056,12 @@ def main():
             last_print = 0
             while True:
                 changed = any(update_instance(i, args.timeout) for i in instances)
+                # Poll diagnostics endpoints
+                for inst in instances:
+                    tracker.poll(inst)
+                    # Trigger dump on failure
+                    if inst.status == "failed" and changed:
+                        tracker.on_failure(inst, inst.name)
                 if changed or (time.time() - last_print) > STATUS_PRINT_INTERVAL:
                     print_status(instances)
                     last_print = time.time()
@@ -779,7 +1071,7 @@ def main():
                 time.sleep(CHECK_INTERVAL)
             # Log the run result and save container logs BEFORE any restart
             save_all_logs(instances, run_id, args.compose_file)
-            log_run_result(run_id, run_count, instances, hostname, branch, commit, args.build_profile)
+            log_run_result(run_id, run_count, instances, hostname, branch, commit, args.build_profile, tracker)
             # Send a single Slack summary notification for the run
             if not args.no_slack:
                 slack_notify(run_id, run_count, instances, hostname, branch, commit, args.build_profile)
@@ -791,6 +1083,7 @@ def main():
                 # Prepare for another run
                 run_count += 1
                 run_id = generate_run_id()  # New run ID for the new cycle
+                tracker.set_run_id(run_id)
 
                 # If auto-update is enabled, the loop will pull/build/restart
                 # Otherwise, just restart containers now

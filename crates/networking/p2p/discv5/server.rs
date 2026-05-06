@@ -201,7 +201,7 @@ impl DiscoveryServer {
             count = bootnodes.len(),
             "Adding bootnodes"
         );
-        peer_table.new_contacts(bootnodes, DiscoveryProtocol::Discv5)?;
+        peer_table.new_contacts(bootnodes, local_node.node_id(), DiscoveryProtocol::Discv5)?;
 
         Ok(discovery_server.start())
     }
@@ -529,7 +529,8 @@ impl DiscoveryServer {
 
         // Add the peer to the peer table
         if let Some(record) = &authdata.record {
-            self.peer_table.new_contact_records(vec![record.clone()])?;
+            self.peer_table
+                .new_contact_records(vec![record.clone()], self.local_node.node_id())?;
         }
 
         // Derive session keys (we are the recipient, node B)
@@ -724,7 +725,10 @@ impl DiscoveryServer {
         // Per spec, distance 0 means the node itself — include the local ENR explicitly.
         let mut nodes = self
             .peer_table
-            .get_nodes_at_distances(find_node_message.distances.clone())
+            .get_nodes_at_distances(
+                self.local_node.node_id(),
+                find_node_message.distances.clone(),
+            )
             .await?;
         if find_node_message.distances.contains(&0) {
             nodes.push(self.local_node_record.clone());
@@ -772,7 +776,8 @@ impl DiscoveryServer {
         nodes_message: NodesMessage,
     ) -> Result<(), DiscoveryServerError> {
         // TODO(#3746): check that we requested neighbors from the node
-        self.peer_table.new_contact_records(nodes_message.nodes)?;
+        self.peer_table
+            .new_contact_records(nodes_message.nodes, self.local_node.node_id())?;
         Ok(())
     }
 
@@ -1333,14 +1338,12 @@ mod tests {
         ).expect("Bad enode url");
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:30303").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1376,14 +1379,12 @@ mod tests {
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
         // Use port 0 to let the OS assign an available port
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1462,13 +1463,14 @@ mod tests {
         let remote_node_id = remote_node.node_id();
 
         let peer_table = PeerTableServer::spawn(
-            local_node.node_id(),
             10,
             Store::new("", EngineType::InMemory).expect("Failed to create store"),
         );
 
         // Add the remote node as a contact with its ENR record
-        peer_table.new_contact_records(vec![remote_record]).unwrap();
+        peer_table
+            .new_contact_records(vec![remote_record], local_node.node_id())
+            .unwrap();
 
         // Set up a session for the remote node (required for send_ordinary)
         let session = Session {
@@ -1565,14 +1567,12 @@ mod tests {
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
         let original_seq = local_node_record.seq;
 
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1624,14 +1624,12 @@ mod tests {
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
 
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1675,14 +1673,12 @@ mod tests {
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
         let original_seq = local_node_record.seq;
 
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1731,14 +1727,12 @@ mod tests {
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
 
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1791,14 +1785,12 @@ mod tests {
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
 
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),
@@ -1844,14 +1836,12 @@ mod tests {
         let signer = SecretKey::new(&mut rand::rngs::OsRng);
         let local_node_record = NodeRecord::from_node(&local_node, 1, &signer).unwrap();
 
-        let local_node_id = local_node.node_id();
         let mut server = DiscoveryServer {
             local_node,
             local_node_record,
             signer,
             udp_socket: Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap()),
             peer_table: PeerTableServer::spawn(
-                local_node_id,
                 10,
                 Store::new("", EngineType::InMemory).expect("Failed to create store"),
             ),

@@ -33,6 +33,15 @@ pub const SUBSCRIBER_CHANNEL_CAPACITY: usize = 512;
 /// Maximum number of active subscriptions allowed per WebSocket connection.
 pub const MAX_SUBSCRIPTIONS_PER_CONNECTION: usize = 128;
 
+/// Maximum number of active subscriptions across all connections.
+///
+/// Bounds the worst-case memory of the actor: each subscriber owns a
+/// [`SUBSCRIBER_CHANNEL_CAPACITY`]-slot `mpsc` channel, so the per-connection
+/// cap alone (`128`) does not bound total state when many connections are
+/// open. `subscribe` returns `None` once this is reached and the calling
+/// `eth_subscribe` request fails with an internal error.
+pub const MAX_TOTAL_SUBSCRIPTIONS: usize = 10_000;
+
 /// Actor that manages all active WebSocket subscriptions.
 ///
 /// Each subscription is identified by a hex-encoded string ID and backed by a
@@ -55,9 +64,10 @@ pub trait SubscriptionManagerProtocol: Send + Sync {
 
     /// Register a new subscriber.
     ///
-    /// Returns the subscription ID that the client should use in subsequent
-    /// `eth_unsubscribe` calls.
-    fn subscribe(&self, sender: Sender<String>) -> Response<String>;
+    /// Returns `Some(id)` with the subscription ID that the client should use
+    /// in subsequent `eth_unsubscribe` calls, or `None` if the global cap
+    /// [`MAX_TOTAL_SUBSCRIPTIONS`] has been reached.
+    fn subscribe(&self, sender: Sender<String>) -> Response<Option<String>>;
 
     /// Remove a subscriber by ID.
     ///
@@ -100,14 +110,10 @@ impl SubscriptionManager {
             );
         }
 
-        // Serialize the header result once; each subscriber gets its own
-        // notification envelope with a different subscription ID.
-        let result_json = header_value.to_string();
-
         let mut dead_ids: Vec<String> = Vec::new();
 
         for (sub_id, sender) in &self.subscribers {
-            let notification = build_subscription_notification(sub_id, &result_json);
+            let notification = build_subscription_notification(sub_id, &header_value);
             match sender.try_send(notification) {
                 Ok(()) => {}
                 Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
@@ -130,10 +136,17 @@ impl SubscriptionManager {
         &mut self,
         msg: subscription_manager_protocol::Subscribe,
         _ctx: &Context<Self>,
-    ) -> String {
+    ) -> Option<String> {
+        if self.subscribers.len() >= MAX_TOTAL_SUBSCRIPTIONS {
+            warn!(
+                cap = MAX_TOTAL_SUBSCRIPTIONS,
+                "Global subscription cap reached, refusing new subscriber"
+            );
+            return None;
+        }
         let id = generate_subscription_id();
         self.subscribers.insert(id.clone(), msg.sender);
-        id
+        Some(id)
     }
 
     #[request_handler]
@@ -148,12 +161,20 @@ impl SubscriptionManager {
 
 /// Build the standard Ethereum subscription notification envelope.
 ///
-/// Takes a pre-serialized `result_json` string to avoid re-serializing the
-/// header for every subscriber during fan-out.
-fn build_subscription_notification(sub_id: &str, result_json: &str) -> String {
-    format!(
-        r#"{{"jsonrpc":"2.0","method":"eth_subscription","params":{{"subscription":"{sub_id}","result":{result_json}}}}}"#
-    )
+/// `result` is cloned per subscriber — cheap relative to re-serializing the
+/// header. Using `serde_json::json!` avoids hand-rolled string interpolation,
+/// which would silently produce malformed JSON if `sub_id` or the result ever
+/// contained unescaped characters.
+fn build_subscription_notification(sub_id: &str, result: &Value) -> String {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_subscription",
+        "params": {
+            "subscription": sub_id,
+            "result": result,
+        },
+    })
+    .to_string()
 }
 
 /// Generate a random hex subscription ID (16 bytes / 128 bits).
