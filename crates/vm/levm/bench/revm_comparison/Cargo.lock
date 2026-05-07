@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1062,7 +1062,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1079,7 +1079,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1090,7 +1090,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1138,7 +1138,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "10.0.0"
+version = "11.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
