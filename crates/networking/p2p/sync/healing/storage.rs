@@ -9,8 +9,8 @@ use crate::{
     snap::{
         RequestStorageTrieNodesError,
         constants::{
-            HEALING_QUEUE_SOFT_LIMIT, MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES, NODE_BATCH_SIZE,
-            SHOW_PROGRESS_INTERVAL_DURATION,
+            HEALING_QUEUE_SOFT_LIMIT, MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES,
+            SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE,
         },
         request_storage_trienodes,
     },
@@ -415,10 +415,10 @@ async fn ask_peers_for_nodes(
             tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
             return;
         };
-        // Pop the deepest NODE_BATCH_SIZE items from the heap.
+        // Pop the deepest STORAGE_BATCH_SIZE items from the heap.
         let mut download_chunk: Vec<NodeRequest> =
-            Vec::with_capacity(NODE_BATCH_SIZE.min(download_queue.len()));
-        for _ in 0..NODE_BATCH_SIZE {
+            Vec::with_capacity(STORAGE_BATCH_SIZE.min(download_queue.len()));
+        for _ in 0..STORAGE_BATCH_SIZE {
             match download_queue.pop() {
                 Some(DepthOrderedRequest(req)) => download_chunk.push(req),
                 None => break,
