@@ -32,6 +32,7 @@ default = []
 rocksdb = ["dep:rocksdb"]
 
 [dev-dependencies]
+tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
 
 [lib]

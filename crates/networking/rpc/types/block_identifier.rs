@@ -111,6 +111,31 @@ impl BlockIdentifierOrHash {
     }
 
     pub fn parse(serde_value: Value, arg_index: u64) -> Result<BlockIdentifierOrHash, RpcErr> {
+        // EIP-1898 object form: {"blockHash": "0x.."} or {"blockNumber": "0x.." | tag}.
+        // `requireCanonical` is accepted but not enforced (matches geth's permissive behavior).
+        if let Value::Object(map) = &serde_value {
+            if map.contains_key("blockHash") && map.contains_key("blockNumber") {
+                return Err(RpcErr::BadParams(
+                    "EIP-1898 block identifier cannot specify both `blockHash` and `blockNumber`"
+                        .to_string(),
+                ));
+            }
+            if let Some(hash_value) = map.get("blockHash") {
+                let hex_str = serde_json::from_value::<String>(hash_value.clone())
+                    .map_err(|e| RpcErr::BadParams(e.to_string()))?;
+                let block_hash =
+                    BlockHash::from_str(&hex_str).map_err(|_| RpcErr::BadHexFormat(arg_index))?;
+                return Ok(BlockIdentifierOrHash::Hash(block_hash));
+            }
+            if let Some(number_value) = map.get("blockNumber") {
+                return BlockIdentifier::parse(number_value.clone(), arg_index)
+                    .map(BlockIdentifierOrHash::Identifier);
+            }
+            return Err(RpcErr::BadParams(
+                "EIP-1898 block identifier requires `blockHash` or `blockNumber`".to_string(),
+            ));
+        }
+
         // Parse as BlockHash
         if let Some(block_hash) = serde_json::from_value::<String>(serde_value.clone())
             .ok()
@@ -187,5 +212,78 @@ impl PartialEq<BlockTag> for BlockIdentifierOrHash {
             BlockIdentifierOrHash::Identifier(BlockIdentifier::Tag(tag)) => tag == other,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_eip1898_block_hash_object() {
+        let hash = "0x32a2b8016bfefb8a25030cbc6636a833584bd6ae0db2e2db7176f27a431c5563";
+        let parsed = BlockIdentifierOrHash::parse(json!({"blockHash": hash}), 0).unwrap();
+        match parsed {
+            BlockIdentifierOrHash::Hash(h) => assert_eq!(format!("{h:#x}"), hash),
+            other => panic!("expected Hash, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_eip1898_block_hash_object_with_require_canonical() {
+        let hash = "0x32a2b8016bfefb8a25030cbc6636a833584bd6ae0db2e2db7176f27a431c5563";
+        let parsed =
+            BlockIdentifierOrHash::parse(json!({"blockHash": hash, "requireCanonical": true}), 0)
+                .unwrap();
+        assert!(matches!(parsed, BlockIdentifierOrHash::Hash(_)));
+    }
+
+    #[test]
+    fn parse_eip1898_block_number_object_hex() {
+        let parsed = BlockIdentifierOrHash::parse(json!({"blockNumber": "0x10"}), 0).unwrap();
+        match parsed {
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(n)) => assert_eq!(n, 16),
+            other => panic!("expected Number(16), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_eip1898_block_number_object_tag() {
+        let parsed = BlockIdentifierOrHash::parse(json!({"blockNumber": "latest"}), 0).unwrap();
+        assert_eq!(parsed, BlockTag::Latest);
+    }
+
+    #[test]
+    fn parse_eip1898_object_missing_keys_fails() {
+        let err = BlockIdentifierOrHash::parse(json!({}), 0).unwrap_err();
+        assert!(matches!(err, RpcErr::BadParams(_)));
+    }
+
+    #[test]
+    fn parse_eip1898_object_both_keys_fails() {
+        let value = json!({
+            "blockHash": "0x32a2b8016bfefb8a25030cbc6636a833584bd6ae0db2e2db7176f27a431c5563",
+            "blockNumber": "0x10",
+        });
+        let err = BlockIdentifierOrHash::parse(value, 0).unwrap_err();
+        assert!(matches!(err, RpcErr::BadParams(_)));
+    }
+
+    #[test]
+    fn parse_string_forms_still_work() {
+        let hash = "0x32a2b8016bfefb8a25030cbc6636a833584bd6ae0db2e2db7176f27a431c5563";
+        assert!(matches!(
+            BlockIdentifierOrHash::parse(json!(hash), 0).unwrap(),
+            BlockIdentifierOrHash::Hash(_)
+        ));
+        assert!(matches!(
+            BlockIdentifierOrHash::parse(json!("0x10"), 0).unwrap(),
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(16))
+        ));
+        assert_eq!(
+            BlockIdentifierOrHash::parse(json!("latest"), 0).unwrap(),
+            BlockTag::Latest
+        );
     }
 }

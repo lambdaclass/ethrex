@@ -11,6 +11,7 @@ use crate::l2::messages::GetL1MessageProof;
 use crate::l2::native_withdrawal_proof::GetNativeWithdrawalProof;
 use crate::utils::{RpcErr, RpcNamespace, resolve_namespace};
 use axum::extract::State;
+use axum::extract::ws::WebSocketUpgrade;
 use axum::{Json, Router, http::StatusCode, routing::post};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -22,7 +23,7 @@ use ethrex_p2p::types::NodeRecord;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
 use ethrex_rpc::{
-    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper,
+    ClientVersion, GasTipEstimator, NodeData, RpcRequestWrapper, WebSocketConfig,
     types::transaction::SendRawTransactionRequest,
     utils::{RpcRequest, RpcRequestId},
 };
@@ -76,6 +77,7 @@ pub const FILTER_DURATION: Duration = {
 #[expect(clippy::too_many_arguments)]
 pub async fn start_api(
     http_addr: SocketAddr,
+    ws: Option<WebSocketConfig>,
     authrpc_addr: SocketAddr,
     storage: Store,
     blockchain: Arc<Blockchain>,
@@ -120,6 +122,7 @@ pub async fn start_api(
             log_filter_handler,
             gas_ceil: l2_gas_limit,
             block_worker_channel,
+            ws: ws.clone(),
         },
         valid_delegation_addresses,
         sponsor_pk,
@@ -147,7 +150,7 @@ pub async fn start_api(
 
     let http_router = Router::new()
         .route("/", post(handle_http_request))
-        .layer(cors)
+        .layer(cors.clone())
         .with_state(service_context.clone());
     let http_listener = TcpListener::bind(http_addr)
         .await
@@ -159,8 +162,34 @@ pub async fn start_api(
 
     info!("Not starting Auth-RPC server. The address passed as argument is {authrpc_addr}");
 
-    let _ =
-        tokio::try_join!(http_server).inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+    if let Some(ref ws_config) = ws {
+        let ws_handler = |ws: WebSocketUpgrade, State(ctx): State<RpcApiContext>| async move {
+            ws.on_upgrade(|mut socket| async move {
+                ethrex_rpc::handle_websocket(&mut socket, &ctx.l1_ctx, |req| {
+                    let c = ctx.clone();
+                    async move { map_http_requests(&req, c).await }
+                })
+                .await;
+            })
+        };
+        let ws_router = Router::new()
+            .route("/", axum::routing::any(ws_handler))
+            .layer(cors)
+            .with_state(service_context);
+        let ws_listener = TcpListener::bind(ws_config.addr)
+            .await
+            .map_err(|error| RpcErr::Internal(error.to_string()))?;
+        let ws_server = axum::serve(ws_listener, ws_router)
+            .with_graceful_shutdown(ethrex_rpc::shutdown_signal())
+            .into_future();
+        info!("Starting WS server at {}", ws_config.addr);
+
+        let _ = tokio::try_join!(http_server, ws_server)
+            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+    } else {
+        let _ = tokio::try_join!(http_server)
+            .inspect_err(|e| info!("Error shutting down servers: {e:?}"));
+    }
 
     Ok(())
 }

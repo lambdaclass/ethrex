@@ -1,5 +1,9 @@
 //! Common utilities shared across L2 tests.
 
+#[cfg(any(feature = "l2", feature = "experimental-devnet"))]
+use std::fs::File;
+#[cfg(any(feature = "l2", feature = "experimental-devnet"))]
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 /// Returns the workspace root directory.
@@ -12,9 +16,6 @@ pub fn workspace_root() -> PathBuf {
 /// Skips variables that are already set in the environment.
 #[cfg(any(feature = "l2", feature = "experimental-devnet"))]
 pub fn read_env_file_by_config() {
-    use std::fs::File;
-    use std::io::{BufRead, BufReader};
-
     let env_file_path = workspace_root().join("cmd/.env");
     let Ok(env_file) = File::open(env_file_path) else {
         println!(".env file not found, skipping");
