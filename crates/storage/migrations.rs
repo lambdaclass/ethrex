@@ -689,26 +689,57 @@ mod tests {
             temp_leftover
         );
 
-        // Re-open for spot-check.
-        let backend = RocksDBBackend::open(&db_path).unwrap();
-
         // ------- Spot-check correctness on a few entries -------
+        //
+        // For two-cf the new keys live in `receipts_v2`, which RocksDBBackend
+        // drops as "obsolete" on open (it isn't in TABLES). Use raw rocksdb
+        // for that strategy; for everything else, use the backend.
         if !migrate_only {
-            let txn = backend.begin_read().unwrap();
             let mut checks_ok = 0;
-            for sample_block in [0usize, 1, n_receipts.div_ceil(txs_per_block) / 2, n_receipts.div_ceil(txs_per_block).saturating_sub(1)] {
-                let mut hash_bytes = [0u8; 32];
-                hash_bytes[0..8].copy_from_slice(&(sample_block as u64).to_be_bytes());
-                hash_bytes[24..32].copy_from_slice(&((sample_block as u64).wrapping_mul(0x9E3779B1)).to_be_bytes());
-                let block_hash = H256(hash_bytes);
-                let new_key = receipt_key(&block_hash, 0);
-                let old_key = (block_hash, 0u64).encode_to_vec();
-                let table = if strategy == "two-cf" { "receipts_v2" } else { RECEIPTS };
-                if txn.get(table, &new_key).unwrap().is_some()
-                    && (strategy == "two-cf"
-                        || txn.get(RECEIPTS, &old_key).unwrap().is_none())
-                {
-                    checks_ok += 1;
+            let sample_blocks = [
+                0usize,
+                1,
+                n_receipts.div_ceil(txs_per_block) / 2,
+                n_receipts.div_ceil(txs_per_block).saturating_sub(1),
+            ];
+
+            if strategy == "two-cf" {
+                use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
+                let mut opts = Options::default();
+                opts.create_if_missing(false);
+                let cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, &db_path).unwrap();
+                let db =
+                    DBWithThreadMode::<MultiThreaded>::open_cf(&opts, &db_path, &cfs).unwrap();
+                let cf_v2 = db.cf_handle("receipts_v2").expect("receipts_v2 must exist");
+                for sample_block in sample_blocks {
+                    let mut hash_bytes = [0u8; 32];
+                    hash_bytes[0..8].copy_from_slice(&(sample_block as u64).to_be_bytes());
+                    hash_bytes[24..32].copy_from_slice(
+                        &((sample_block as u64).wrapping_mul(0x9E3779B1)).to_be_bytes(),
+                    );
+                    let block_hash = H256(hash_bytes);
+                    let new_key = receipt_key(&block_hash, 0);
+                    if db.get_cf(&cf_v2, &new_key).unwrap().is_some() {
+                        checks_ok += 1;
+                    }
+                }
+            } else {
+                let backend = RocksDBBackend::open(&db_path).unwrap();
+                let txn = backend.begin_read().unwrap();
+                for sample_block in sample_blocks {
+                    let mut hash_bytes = [0u8; 32];
+                    hash_bytes[0..8].copy_from_slice(&(sample_block as u64).to_be_bytes());
+                    hash_bytes[24..32].copy_from_slice(
+                        &((sample_block as u64).wrapping_mul(0x9E3779B1)).to_be_bytes(),
+                    );
+                    let block_hash = H256(hash_bytes);
+                    let new_key = receipt_key(&block_hash, 0);
+                    let old_key = (block_hash, 0u64).encode_to_vec();
+                    if txn.get(RECEIPTS, &new_key).unwrap().is_some()
+                        && txn.get(RECEIPTS, &old_key).unwrap().is_none()
+                    {
+                        checks_ok += 1;
+                    }
                 }
             }
             eprintln!("correctness spot-check: {checks_ok}/4 sample blocks re-keyed");
