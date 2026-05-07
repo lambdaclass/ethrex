@@ -482,20 +482,29 @@ pub(crate) fn migrate_1_to_2_two_cf_parallel(db_path: &Path) -> Result<(), Store
             .map_err(|e| StoreError::Custom(format!("create_cf receipts_v2: {e}")))?;
     }
 
-    // Split H256[0] into N contiguous ranges. Old keys all start with
-    // `c2 a0 <H256[0]> ...`. Build [lower_bound, upper_bound) per segment.
+    // Old-key encoding is RLP `(H256, u64)`. The list header byte encodes
+    // total payload length: 33B H256 + 1..9B for the u64. Header values are
+    // 0xe2..0xea. Segment by header byte: any old key falls in exactly one
+    // [header, header+1) range. For typical block sizes (≤127 txs) almost
+    // all keys land in 0xe2; for blocks with 128..65535 txs they land in
+    // 0xe3 — so the first two segments carry essentially all the data.
+    // We additionally split each header's range by H256[0] to get more
+    // parallel segments.
+    let headers: [u8; 9] = [0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea];
     let mut segments: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
-    for t in 0..n_threads {
-        let lo = (256 * t / n_threads) as u8;
-        let hi_exclusive = 256 * (t + 1) / n_threads;
-        let lower = vec![0xc2u8, 0xa0, lo];
-        let upper = if hi_exclusive >= 256 {
-            // Past the H256 range entirely — sentinel just above all old keys.
-            vec![0xc3u8]
-        } else {
-            vec![0xc2u8, 0xa0, hi_exclusive as u8]
-        };
-        segments.push((lower, upper));
+    let h256_splits = ((n_threads + headers.len() - 1) / headers.len()).max(1);
+    for h in headers {
+        for t in 0..h256_splits {
+            let lo = (256 * t / h256_splits) as u8;
+            let hi_exclusive = 256 * (t + 1) / h256_splits;
+            let lower = vec![h, 0xa0, lo];
+            let upper = if hi_exclusive >= 256 {
+                vec![h + 1, 0]
+            } else {
+                vec![h, 0xa0, hi_exclusive as u8]
+            };
+            segments.push((lower, upper));
+        }
     }
 
     let mut handles = Vec::new();
@@ -541,6 +550,7 @@ pub(crate) fn migrate_1_to_2_two_cf_parallel(db_path: &Path) -> Result<(), Store
                 db.write(batch)
                     .map_err(|e| StoreError::Custom(format!("final write t{tid}: {e}")))?;
             }
+            tracing::info!("two-cf-parallel t{tid}: migrated {migrated} entries");
             Ok(migrated)
         }));
     }
@@ -552,6 +562,12 @@ pub(crate) fn migrate_1_to_2_two_cf_parallel(db_path: &Path) -> Result<(), Store
             .map_err(|_| StoreError::Custom("worker panicked".into()))??;
     }
 
+    // Explicit flush of the new CF before drop+close so the SSTs land on disk
+    // and post-migration disk-size measurement reflects the actual cost.
+    if let Some(cf_new) = db.cf_handle("receipts_v2") {
+        db.flush_cf(&cf_new)
+            .map_err(|e| StoreError::Custom(format!("flush receipts_v2: {e}")))?;
+    }
     db.drop_cf("receipts")
         .map_err(|e| StoreError::Custom(format!("drop_cf receipts: {e}")))?;
     tracing::info!("two-cf-parallel migration complete: {total} entries across {n_threads} threads");
@@ -700,9 +716,21 @@ mod tests {
             };
 
             for block_n in 0..n_blocks {
+                // Scramble bytes via SplitMix64-style mix so H256[0..8] is
+                // uniformly spread (otherwise low block numbers all share
+                // H256[0] = 0 and any byte-prefix segmentation degenerates).
+                let mut s1 = (block_n as u64).wrapping_mul(0x9E3779B97F4A7C15);
+                s1 ^= s1 >> 30;
+                s1 = s1.wrapping_mul(0xBF58476D1CE4E5B9);
+                s1 ^= s1 >> 27;
+                let s2 = s1.wrapping_mul(0x94D049BB133111EB).rotate_left(17);
+                let s3 = s2.wrapping_mul(0xD2B74407B1CE6E93);
+                let s4 = s3.wrapping_mul(0x165667B19E3779F9);
                 let mut hash_bytes = [0u8; 32];
-                hash_bytes[0..8].copy_from_slice(&(block_n as u64).to_be_bytes());
-                hash_bytes[24..32].copy_from_slice(&((block_n as u64).wrapping_mul(0x9E3779B1)).to_be_bytes());
+                hash_bytes[0..8].copy_from_slice(&s1.to_le_bytes());
+                hash_bytes[8..16].copy_from_slice(&s2.to_le_bytes());
+                hash_bytes[16..24].copy_from_slice(&s3.to_le_bytes());
+                hash_bytes[24..32].copy_from_slice(&s4.to_le_bytes());
                 let block_hash = H256(hash_bytes);
 
                 let txs_in_block = txs_per_block.min(n_receipts - written);
@@ -816,7 +844,24 @@ mod tests {
                 n_receipts.div_ceil(txs_per_block).saturating_sub(1),
             ];
 
-            if strategy == "two-cf" {
+            // Same scrambled hash as the load phase.
+            let synth_hash = |block_n: usize| -> H256 {
+                let mut s1 = (block_n as u64).wrapping_mul(0x9E3779B97F4A7C15);
+                s1 ^= s1 >> 30;
+                s1 = s1.wrapping_mul(0xBF58476D1CE4E5B9);
+                s1 ^= s1 >> 27;
+                let s2 = s1.wrapping_mul(0x94D049BB133111EB).rotate_left(17);
+                let s3 = s2.wrapping_mul(0xD2B74407B1CE6E93);
+                let s4 = s3.wrapping_mul(0x165667B19E3779F9);
+                let mut hb = [0u8; 32];
+                hb[0..8].copy_from_slice(&s1.to_le_bytes());
+                hb[8..16].copy_from_slice(&s2.to_le_bytes());
+                hb[16..24].copy_from_slice(&s3.to_le_bytes());
+                hb[24..32].copy_from_slice(&s4.to_le_bytes());
+                H256(hb)
+            };
+
+            if strategy == "two-cf" || strategy == "two-cf-parallel" {
                 use rocksdb::{DBWithThreadMode, MultiThreaded, Options};
                 let mut opts = Options::default();
                 opts.create_if_missing(false);
@@ -825,12 +870,7 @@ mod tests {
                     DBWithThreadMode::<MultiThreaded>::open_cf(&opts, &db_path, &cfs).unwrap();
                 let cf_v2 = db.cf_handle("receipts_v2").expect("receipts_v2 must exist");
                 for sample_block in sample_blocks {
-                    let mut hash_bytes = [0u8; 32];
-                    hash_bytes[0..8].copy_from_slice(&(sample_block as u64).to_be_bytes());
-                    hash_bytes[24..32].copy_from_slice(
-                        &((sample_block as u64).wrapping_mul(0x9E3779B1)).to_be_bytes(),
-                    );
-                    let block_hash = H256(hash_bytes);
+                    let block_hash = synth_hash(sample_block);
                     let new_key = receipt_key(&block_hash, 0);
                     if db.get_cf(&cf_v2, &new_key).unwrap().is_some() {
                         checks_ok += 1;
@@ -840,12 +880,7 @@ mod tests {
                 let backend = RocksDBBackend::open(&db_path).unwrap();
                 let txn = backend.begin_read().unwrap();
                 for sample_block in sample_blocks {
-                    let mut hash_bytes = [0u8; 32];
-                    hash_bytes[0..8].copy_from_slice(&(sample_block as u64).to_be_bytes());
-                    hash_bytes[24..32].copy_from_slice(
-                        &((sample_block as u64).wrapping_mul(0x9E3779B1)).to_be_bytes(),
-                    );
-                    let block_hash = H256(hash_bytes);
+                    let block_hash = synth_hash(sample_block);
                     let new_key = receipt_key(&block_hash, 0);
                     let old_key = (block_hash, 0u64).encode_to_vec();
                     if txn.get(RECEIPTS, &new_key).unwrap().is_some()
