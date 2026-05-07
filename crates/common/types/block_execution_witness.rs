@@ -166,8 +166,7 @@ impl RpcExecutionWitness {
                 ))
             })?;
 
-        // EIP-8025: drop entries that don't decode. They can't be looked up by
-        // hash anyway; if execution needs them, the trie walk fails there.
+        // EIP-8025: drop undecodable entries (e.g. RLP-null `0x80` from some clients).
         // Ref: https://github.com/ethereum/execution-specs/blob/projects/zkevm/src/ethereum/forks/amsterdam/witness_state.py#L37-L42
         let nodes: BTreeMap<H256, Node> = self
             .state
