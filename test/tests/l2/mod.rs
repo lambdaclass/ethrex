@@ -3,6 +3,8 @@ mod error_selectors;
 mod integration_tests;
 #[cfg(feature = "experimental-devnet")]
 mod native_rollup;
+#[cfg(feature = "experimental-devnet")]
+mod native_rollup_l1_messages_root;
 mod sdk;
 #[cfg(feature = "l2")]
 mod shared_bridge;

@@ -147,20 +147,34 @@ contract NativeRollup {
     /// @notice Advance the L2 state by one block.
     /// @param _l1MessagesCount Number of L1 messages consumed in this block.
     /// @param _sszStatelessInput SSZ-encoded `StatelessInput` for the block.
-    /// @dev    Block fields are read from `_sszStatelessInput`; once the
-    ///         precompile reports `successful_validation == true` those bytes
-    ///         describe a correctly executed block, so the caller cannot
-    ///         substitute the new block_hash, state_root, etc.
+    /// @dev The L1 messages Merkle root in `parent_beacon_block_root` is
+    ///      recomputed over `pendingL1Messages[l1MessageIndex .. +count]`
+    ///      and must match — same shape as OCP's
+    ///      `processedPrivilegedTransactionsRollingHash` check.
     function advance(
-        uint256 _l1MessagesCount,
+        uint16 _l1MessagesCount,
         bytes calldata _sszStatelessInput
     ) external onlyAdvancer {
         uint256 startIdx = l1MessageIndex;
         require(startIdx + _l1MessagesCount <= pendingL1Messages.length, "Not enough L1 messages");
 
-        l1MessageIndex = startIdx + _l1MessagesCount;
+        _runExecutePrecompile(_sszStatelessInput);
 
-        (bool success, bytes memory result) = EXECUTE_PRECOMPILE.staticcall(_sszStatelessInput);
+        (uint256 newBlockNumber, bytes32 newBlockHash, bytes32 newStateRoot) =
+            _checkAndDecodeProvenFields(_sszStatelessInput, startIdx, _l1MessagesCount);
+
+        l1MessageIndex = startIdx + _l1MessagesCount;
+        blockHash = newBlockHash;
+        stateRoot = newStateRoot;
+        blockNumber = newBlockNumber;
+        stateRootHistory[newBlockNumber] = newStateRoot;
+        stateRootTimestamps[newBlockNumber] = block.timestamp;
+
+        emit StateAdvanced(newBlockNumber, newStateRoot);
+    }
+
+    function _runExecutePrecompile(bytes calldata sszInput) internal view {
+        (bool success, bytes memory result) = EXECUTE_PRECOMPILE.staticcall(sszInput);
         require(success, "EXECUTE precompile failed");
 
         require(result.length >= RESULT_LEN, "Invalid result length");
@@ -168,49 +182,68 @@ contract NativeRollup {
 
         uint64 provenChainId = _decodeSszUint64LE(result, RESULT_CHAIN_ID_OFFSET);
         require(provenChainId == chainId, "chain_id mismatch");
+    }
 
+    function _checkAndDecodeProvenFields(
+        bytes calldata sszInput,
+        uint256 startIdx,
+        uint16 l1MessagesCount
+    )
+        internal
+        view
+        returns (uint256 newBlockNumber, bytes32 newBlockHash, bytes32 newStateRoot)
+    {
         (
             uint64 provenBlockNumber,
             bytes32 provenParentHash,
             bytes32 provenBlockHash,
             bytes32 provenStateRoot,
-            uint64 provenGasLimit
-        ) = _decodeProvenPayloadFields(_sszStatelessInput);
+            uint64 provenGasLimit,
+            bytes32 provenL1MessagesRoot
+        ) = _decodeProvenPayloadFields(sszInput);
 
-        // Bind the proof to *this* L2 chain.
-        uint256 expectedBlockNumber = blockNumber + 1;
-        require(uint256(provenBlockNumber) == expectedBlockNumber, "block_number mismatch");
+        newBlockNumber = blockNumber + 1;
+        require(uint256(provenBlockNumber) == newBlockNumber, "block_number mismatch");
         require(provenParentHash == blockHash, "parent_hash mismatch");
         require(uint256(provenGasLimit) == l2GasLimit, "gas_limit mismatch");
 
-        blockHash = provenBlockHash;
-        stateRoot = provenStateRoot;
-        blockNumber = expectedBlockNumber;
-        stateRootHistory[expectedBlockNumber] = provenStateRoot;
-        stateRootTimestamps[expectedBlockNumber] = block.timestamp;
+        require(
+            provenL1MessagesRoot == _computeL1MessagesRoot(startIdx, l1MessagesCount),
+            "L1 messages root mismatch"
+        );
 
-        emit StateAdvanced(expectedBlockNumber, provenStateRoot);
+        newBlockHash = provenBlockHash;
+        newStateRoot = provenStateRoot;
     }
 
-    /// @dev Walk SSZ offsets on a `StatelessInput` buffer:
-    ///        StatelessInput[0..4]      -> NewPayloadRequest start
-    ///        NewPayloadRequest[0..4]   -> ExecutionPayload start
-    ///      Then read the fixed-position fields off ExecutionPayload.
+    /// @notice Merkle root over the next `number` unconsumed L1 messages.
+    ///         Mirrors `CommonBridge.getPendingTransactionsVersionedHash`.
+    function getPendingL1MessagesRoot(uint16 number) public view returns (bytes32) {
+        require(
+            uint256(number) <= pendingL1Messages.length - l1MessageIndex,
+            "NativeRollup: number exceeds pending L1 messages"
+        );
+        return _computeL1MessagesRoot(l1MessageIndex, number);
+    }
+
+    /// @dev NPR fixed prefix: ep_off(4) | vh_off(4) | parent_beacon_block_root(32) | er_off(4).
     function _decodeProvenPayloadFields(bytes calldata sszInput)
         internal
         pure
         returns (
-            uint64 blockNumber,
+            uint64 blockNumber_,
             bytes32 parentHash,
             bytes32 blockHash_,
             bytes32 stateRoot_,
-            uint64 gasLimit
+            uint64 gasLimit_,
+            bytes32 parentBeaconBlockRoot
         )
     {
         require(sszInput.length >= 20, "SSZ: input too short");
         uint256 nprAbs = _readU32LECalldata(sszInput, 0);
         // 44 = NPR fixed prefix: 3 var-field offsets (12) + parent_beacon_block_root (32).
         require(sszInput.length >= nprAbs + 44, "SSZ: NPR offset out of range");
+        parentBeaconBlockRoot = _readBytes32Calldata(sszInput, nprAbs + 8);
         uint256 epAbs = nprAbs + _readU32LECalldata(sszInput, nprAbs);
         require(
             sszInput.length >= epAbs + EP_FIXED_PREFIX_LEN,
@@ -219,9 +252,51 @@ contract NativeRollup {
 
         parentHash = _readBytes32Calldata(sszInput, epAbs + EP_PARENT_HASH_OFFSET);
         stateRoot_ = _readBytes32Calldata(sszInput, epAbs + EP_STATE_ROOT_OFFSET);
-        blockNumber = _readU64LECalldata(sszInput, epAbs + EP_BLOCK_NUMBER_OFFSET);
-        gasLimit = _readU64LECalldata(sszInput, epAbs + EP_GAS_LIMIT_OFFSET);
+        blockNumber_ = _readU64LECalldata(sszInput, epAbs + EP_BLOCK_NUMBER_OFFSET);
+        gasLimit_ = _readU64LECalldata(sszInput, epAbs + EP_GAS_LIMIT_OFFSET);
         blockHash_ = _readBytes32Calldata(sszInput, epAbs + EP_BLOCK_HASH_OFFSET);
+    }
+
+    /// @dev Must match `compute_merkle_root` in `crates/l2/common/src/merkle_tree.rs`
+    ///      — diverging silently breaks L2Bridge proofs. Single-leaf trees
+    ///      are NOT padded (lambdaworks treats `len==1` as already power-of-two).
+    function _computeL1MessagesRoot(uint256 startIdx, uint16 count)
+        internal
+        view
+        returns (bytes32)
+    {
+        if (count == 0) return bytes32(0);
+
+        uint256 len = _nextPowerOfTwo(count);
+        bytes32[] memory layer = new bytes32[](len);
+        bytes32 last;
+        for (uint256 i = 0; i < count; i++) {
+            last = pendingL1Messages[startIdx + i];
+            layer[i] = last;
+        }
+        for (uint256 i = count; i < len; i++) {
+            layer[i] = last;
+        }
+
+        while (len > 1) {
+            uint256 newLen = len / 2;
+            for (uint256 i = 0; i < newLen; i++) {
+                bytes32 a = layer[2 * i];
+                bytes32 b = layer[2 * i + 1];
+                layer[i] = a < b
+                    ? keccak256(abi.encodePacked(a, b))
+                    : keccak256(abi.encodePacked(b, a));
+            }
+            len = newLen;
+        }
+        return layer[0];
+    }
+
+    function _nextPowerOfTwo(uint256 n) internal pure returns (uint256) {
+        if (n <= 1) return 1;
+        uint256 p = 1;
+        while (p < n) p <<= 1;
+        return p;
     }
 
     // ===== Withdrawal Claiming (MPT proof-based) =====

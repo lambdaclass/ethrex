@@ -1,6 +1,6 @@
 //! NativeL1Advancer GenServer — reads produced L2 blocks from the Store,
 //! generates an execution witness, and submits them to the NativeRollup.sol
-//! contract via advance(uint256 l1MessagesCount, bytes sszStatelessInput).
+//! contract via advance(uint16 l1MessagesCount, bytes sszStatelessInput).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +27,7 @@ use spawned_concurrency::{
 };
 use tracing::{debug, error, info};
 
-const ADVANCE_FUNCTION_SIGNATURE: &str = "advance(uint256,bytes)";
+const ADVANCE_FUNCTION_SIGNATURE: &str = "advance(uint16,bytes)";
 
 #[protocol]
 pub trait NativeL1AdvancerProtocol: Send + Sync {
@@ -144,14 +144,16 @@ impl NativeL1Advancer {
             }
         };
 
-        // 4. Count L1 messages by counting relayer txs in the block
-        let l1_messages_count: u64 = block_body
+        // 4. Count L1 messages by counting relayer txs.
+        let l1_messages_count: u16 = block_body
             .transactions
             .iter()
             .filter(|tx| tx.sender(&NativeCrypto).ok() == Some(self.relayer_address))
             .count()
             .try_into()
-            .map_err(|_| NativeL1AdvancerError::Encoding("l1 messages count overflow".into()))?;
+            .map_err(|_| {
+                NativeL1AdvancerError::Encoding("l1 messages count exceeds u16::MAX".into())
+            })?;
 
         // 5. Build SSZ StatelessInput
         let ssz_input = build_ssz_stateless_input(&block_header, &block_body, &witness)
@@ -172,7 +174,7 @@ impl NativeL1Advancer {
     async fn send_advance(
         &self,
         ssz_input: &[u8],
-        l1_messages_count: u64,
+        l1_messages_count: u16,
     ) -> Result<H256, NativeL1AdvancerError> {
         let calldata = encode_calldata(
             ADVANCE_FUNCTION_SIGNATURE,

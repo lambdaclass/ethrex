@@ -181,9 +181,9 @@ Functions:
 
 - **`sendL1Message(address _to, uint256 _gasLimit, bytes _data)`** — payable; records `keccak256(abi.encodePacked(from, to, value, gasLimit, keccak256(data), nonce))` as an L1 message hash, burns `_gasLimit` gas on L1
 - **`receive()`** — payable fallback; accepts ETH without recording an L1 message (used to fund the contract)
-- **`advance(uint256 _l1MessagesCount, bytes _sszStatelessInput, bytes32 _newBlockHash, bytes32 _newStateRoot)`** — calls EXECUTE precompile with SSZ input, decodes `StatelessValidationResult`, updates on-chain state
+- **`advance(uint16 _l1MessagesCount, bytes _sszStatelessInput)`** — calls the EXECUTE precompile, decodes the block-level fields and the L1 messages Merkle root (`parent_beacon_block_root`) from the SSZ input, recomputes the root over `pendingL1Messages[l1MessageIndex .. +count]` and reverts on mismatch, then commits the new L2 state. Mirrors `OnChainProposer.commitBatch`'s `processedPrivilegedTransactionsRollingHash` check.
 - **`claimWithdrawal(address, address, uint256, uint256, uint256, bytes[], bytes[])`** — verifies MPT account + storage proofs against `stateRootHistory[blockNumber]`, enforces finality delay, transfers ETH
-- **`computeMerkleRoot(uint256 startIdx, uint256 count)`** — view function to compute L1 messages Merkle root
+- **`getPendingL1MessagesRoot(uint16 number)`** — view; recomputes the Merkle root over the next `number` unconsumed L1 messages, mirroring `CommonBridge.getPendingTransactionsVersionedHash`
 
 ### L2Bridge.sol
 
@@ -250,6 +250,7 @@ This PoC intentionally omits several things that would be needed for production:
 
 - **ZK variant** — Only the re-execution variant is implemented. The ZK variant (proof-carrying transactions + PROOFROOT opcode) requires L1 consensus changes not yet available.
 - **No forced transaction mechanism** — No censorship resistance guarantees (FOCIL integration is WIP in the spec)
+- **No L1 message inclusion deadline** — `pendingL1Messages` have no per-message deadline, so the advancer can defer processing them indefinitely without on-chain consequence. `OnChainProposer.sol` enforces this for privileged transactions via `PRIVILEGED_TX_MAX_WAIT_BEFORE_INCLUSION` + `hasExpiredPrivilegedTransactions()`; the analogous mechanism for `NativeRollup.sol` is a TODO.
 - **L2 ETH supply drain** — Base fees are burned but not credited back on L2. A production solution would use a `BaseFeeVault` pattern.
 - **No blob data support** — Only calldata-based input (spec proposes blob references via EIP-8142)
 - **`public_keys` empty** — Pre-recovered transaction public keys are not populated yet
