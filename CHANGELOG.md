@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-05-05
+
+- Optimize trie building in snap sync insertion: parallelize state trie build across 16 nibble ranges, eliminate redundant code-hash iteration, and reuse buffers (~700M alloc reduction on mainnet) [#6410](https://github.com/lambdaclass/ethrex/pull/6410)
+
 ### 2026-03-30
 
 - Replace per-block thread spawning with persistent thread pool for merkleization [#6344](https://github.com/lambdaclass/ethrex/pull/6344)
