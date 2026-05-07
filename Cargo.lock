@@ -4255,7 +4255,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-polygon"
-version = "9.0.0"
+version = "10.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
