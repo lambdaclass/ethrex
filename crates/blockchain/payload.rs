@@ -131,6 +131,17 @@ impl BuildPayloadArgs {
             hasher.update(slot_number.to_be_bytes());
         }
         hasher.update(self.gas_ceil.to_be_bytes());
+        // EIP-7805 (FOCIL): the inclusion list must be part of the payload
+        // identifier so that two FCU V5 calls for the same slot with
+        // different ILs yield distinct payload IDs (otherwise the second
+        // call would retrieve the first call's cached payload, built with
+        // the wrong IL — the Hive engine-focil "newPayloadV6 returns VALID"
+        // test catches this).
+        if let Some(il) = &self.inclusion_list_transactions {
+            for tx in il {
+                hasher.update(tx.encode_canonical_to_vec());
+            }
+        }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
         Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
