@@ -4,6 +4,55 @@ Tests intentionally excluded from CI. Source of truth for the **Known
 Issues** section the L1 workflow appends to each ef-tests job summary
 and posts as a sticky PR comment.
 
+## Hive — bal-devnet-6 Amsterdam consume-engine tests — 32 functions / 54 cases
+
+Same root cause as the blockchain-runner skip list (see *EF Tests —
+Blockchain* below): snobal-devnet-6 fixtures expect bal-devnet-6 spec
+semantics, but our impl runs ahead due to the bal-devnet-7-prep
+`set_delegation` SELFDESTRUCT-style refund subtraction. These fixtures
+are routed through hive's `eels/consume-engine` simulator and produce
+the same failures. Excluded via `KNOWN_EXCLUDED_TESTS` (substring
+match on `test_<name>[fork_Amsterdam`, anchoring to the Amsterdam fork
+so legacy Prague/Osaka variants still run).
+
+<details>
+<summary>Affected EELS test functions (32)</summary>
+
+- `test_auth_refund_block_gas_accounting`
+- `test_auth_refund_bypasses_one_fifth_cap`
+- `test_auth_state_gas_scales_with_cpsb`
+- `test_auth_with_calldata_and_access_list`
+- `test_auth_with_multiple_sstores`
+- `test_authorization_exact_state_gas_boundary`
+- `test_authorization_to_precompile_address`
+- `test_authorization_with_sstore`
+- `test_bal_7702_delegation_clear`
+- `test_bal_7702_delegation_create`
+- `test_bal_7702_delegation_update`
+- `test_bal_7702_double_auth_reset`
+- `test_bal_7702_double_auth_swap`
+- `test_bal_7702_null_address_delegation_no_code_change`
+- `test_bal_all_transaction_types`
+- `test_bal_selfdestruct_to_7702_delegation`
+- `test_bal_withdrawal_to_7702_delegation`
+- `test_duplicate_signer_authorizations`
+- `test_existing_account_auth_header_gas_used_uses_worst_case`
+- `test_existing_account_refund`
+- `test_existing_account_refund_enables_sstore`
+- `test_existing_auth_with_reverted_execution_preserves_intrinsic`
+- `test_many_authorizations_state_gas`
+- `test_mixed_auths_header_gas_used_uses_worst_case`
+- `test_mixed_new_and_existing_auths`
+- `test_mixed_valid_and_invalid_auths`
+- `test_multi_tx_block_auth_refund_and_sstore`
+- `test_multiple_refund_types_in_one_tx`
+- `test_simple_gas_accounting`
+- `test_sstore_state_gas_all_tx_types`
+- `test_transfer_with_all_tx_types`
+- `test_varying_calldata_costs`
+
+</details>
+
 ## Hive — 8 Engine withdrawal Block Re-Org tests (Paris)
 
 The hive engine simulator has not been updated to
