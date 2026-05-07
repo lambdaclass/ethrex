@@ -9,6 +9,24 @@ comment.
 > is what the test harness actually consumes. The buckets and counts below
 > mirror that constant.
 
+## EF Tests — Stateless coverage narrowed on this branch
+
+`make -C tooling/ef_tests/blockchain test` now invokes `test-stateless-zkevm`
+instead of `test-stateless`, narrowing the stateless cargo invocation to the
+EIP-8025 optional-proofs suite (`-- eip8025_optional_proofs`).
+
+**Reason.** The zkevm@v0.3.3 fixtures used by `test-stateless` are filled
+against bal@v5.6.1, which is out of sync with this branch's bal-devnet-6+
+(and bal-devnet-7-prep `set_delegation` re-application) gas accounting.
+PR [#6527](https://github.com/lambdaclass/ethrex/pull/6527) on `main`
+broadened `test-stateless` to extract the entire `for_amsterdam/` tree from
+the zkevm bundle and run all of it under `--features stateless`; that scope
+trips ~549 fixtures on this branch with `GasUsedMismatch` /
+`ReceiptsRootMismatch` / `BlockAccessListHashMismatch`.
+
+Re-broaden once the zkevm bundle is regenerated against the current bal
+spec.
+
 ## EF Tests — Blockchain (bal-devnet-6, Amsterdam fork only) — 74 tests
 
 All 74 entries are anchored on `[fork_Amsterdam` in the skip list, so the
