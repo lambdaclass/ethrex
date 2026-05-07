@@ -1,9 +1,8 @@
 # Known Issues
 
-This document lists tests intentionally excluded from CI on the current branch.
-It is the source of truth for the **Known Issues** section that the L1
-workflow appends to each ef-tests job summary and posts as a sticky PR
-comment.
+This document lists tests intentionally excluded from CI. It is the source
+of truth for the **Known Issues** section that the L1 workflow appends to
+each ef-tests job summary and posts as a sticky PR comment.
 
 > **Runtime skip list:** `tooling/ef_tests/blockchain/tests/all.rs::SKIPPED_BASE`
 > is what the test harness actually consumes. The buckets and counts below
@@ -41,8 +40,6 @@ subtraction was re-applied in commit `0976534cf0`).
 - (a) bump fixtures to a snobal-devnet-7 release that locks in the new
       accounting; or
 - (b) revert the bal-devnet-7-prep subtraction for bal-devnet-6 compatibility.
-
-**Tracking.** PR [#6574](https://github.com/lambdaclass/ethrex/pull/6574).
 
 | EIP      | Bucket                                                | Count |
 | -------- | ----------------------------------------------------- | ----- |

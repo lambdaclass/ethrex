@@ -172,7 +172,7 @@ jobs:
         run: |
           {
             echo "<!-- known-issues-comment -->"
-            echo "## :warning: Known Issues — intentionally skipped on this branch"
+            echo "## :warning: Known Issues — intentionally skipped tests"
             echo ""
             echo "_Source: [\`docs/known_issues.md\`](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/known_issues.md)_"
             echo ""
