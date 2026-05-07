@@ -235,18 +235,137 @@ fn migrate_1_to_2(backend: &dyn StorageBackend, db_path: &Path) -> Result<(), St
 // `migrate_1_to_2_synthetic_load` test. Only the baseline is wired into
 // the production migration table; the others are research code.
 
+/// Seek-resume strategy: read a batch with a fresh cursor, drop the cursor,
+/// write the batch (puts + per-key deletes), then re-open the cursor seeking
+/// past the last processed key. No long-lived read iterator.
+///
+/// Pros: bounded memory; no reliance on iterator snapshot semantics across
+/// writes (each iteration sees the latest committed state).
+/// Cons: each batch pays one fresh-iterator setup + a seek + 1 cache miss.
 #[cfg(feature = "rocksdb")]
 pub(crate) fn migrate_1_to_2_seek_resume(
-    _backend: &crate::backend::rocksdb::RocksDBBackend,
+    backend: &crate::backend::rocksdb::RocksDBBackend,
 ) -> Result<(), StoreError> {
-    unimplemented!("seek-resume strategy not implemented yet")
+    use rocksdb::{Direction, IteratorMode, WriteBatch};
+
+    const BATCH_SIZE: usize = 50_000;
+    let db = backend.raw_db();
+    let cf = db
+        .cf_handle(RECEIPTS)
+        .ok_or_else(|| StoreError::Custom("receipts CF missing".into()))?;
+
+    let mut migrated: u64 = 0;
+    let mut last_key: Option<Vec<u8>> = None;
+
+    loop {
+        // Compute strict "next key" seek target: append a 0x00 byte so we
+        // land strictly past `last_key` regardless of whether the deleted
+        // tombstone is still visible.
+        let mut seek_target = last_key.clone();
+        if let Some(t) = seek_target.as_mut() {
+            t.push(0);
+        }
+        let mode = match &seek_target {
+            None => IteratorMode::Start,
+            Some(t) => IteratorMode::From(t, Direction::Forward),
+        };
+
+        let iter = db.iterator_cf(&cf, mode);
+        let mut batch_data: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::with_capacity(BATCH_SIZE);
+        for item in iter {
+            let (k, v) = item.map_err(|e| StoreError::Custom(format!("iter: {e}")))?;
+            if k.len() == 40 {
+                continue; // skip already-new-format keys
+            }
+            batch_data.push((k, v));
+            if batch_data.len() >= BATCH_SIZE {
+                break;
+            }
+        }
+        if batch_data.is_empty() {
+            break;
+        }
+        last_key = Some(batch_data.last().expect("non-empty").0.to_vec());
+
+        let mut wb = WriteBatch::default();
+        let mut count = 0u64;
+        for (key, value) in &batch_data {
+            let (block_hash, index) = match <(H256, u64)>::decode(&key[..]) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            let new_key = receipt_key(&block_hash, index);
+            wb.put_cf(&cf, &new_key, &value[..]);
+            wb.delete_cf(&cf, &key[..]);
+            count += 1;
+        }
+        db.write(wb)
+            .map_err(|e| StoreError::Custom(format!("write: {e}")))?;
+        migrated += count;
+        if migrated.is_multiple_of(1_000_000) {
+            tracing::info!("seek-resume: migrated {migrated} entries");
+        }
+    }
+
+    tracing::info!("seek-resume migration complete: {migrated} entries");
+    Ok(())
 }
 
+/// Cursor-held strategy: open the read cursor once, accumulate writes in a
+/// WriteBatch, and flush every BATCH_SIZE entries — without ever dropping
+/// the cursor. Relies on RocksDB's iterator snapshot semantics: writes after
+/// iterator creation are invisible to the iterator.
+///
+/// Pros: simplest and lowest CPU overhead (one seek for the entire migration).
+/// Cons: pins an old sequence number for the duration; long iteration with
+/// concurrent writes can keep flushed memtables alive longer than usual.
 #[cfg(feature = "rocksdb")]
 pub(crate) fn migrate_1_to_2_cursor_held(
-    _backend: &crate::backend::rocksdb::RocksDBBackend,
+    backend: &crate::backend::rocksdb::RocksDBBackend,
 ) -> Result<(), StoreError> {
-    unimplemented!("cursor-held strategy not implemented yet")
+    use rocksdb::{IteratorMode, WriteBatch};
+
+    const BATCH_SIZE: usize = 50_000;
+    let db = backend.raw_db();
+    let cf = db
+        .cf_handle(RECEIPTS)
+        .ok_or_else(|| StoreError::Custom("receipts CF missing".into()))?;
+
+    let mut migrated: u64 = 0;
+    let mut wb = WriteBatch::default();
+    let mut count = 0usize;
+
+    let iter = db.iterator_cf(&cf, IteratorMode::Start);
+    for item in iter {
+        let (key, value) = item.map_err(|e| StoreError::Custom(format!("iter: {e}")))?;
+        if key.len() == 40 {
+            continue;
+        }
+        let (block_hash, index) = match <(H256, u64)>::decode(&key[..]) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let new_key = receipt_key(&block_hash, index);
+        wb.put_cf(&cf, &new_key, &value[..]);
+        wb.delete_cf(&cf, &key[..]);
+        count += 1;
+        migrated += 1;
+
+        if count >= BATCH_SIZE {
+            db.write(std::mem::take(&mut wb))
+                .map_err(|e| StoreError::Custom(format!("write batch: {e}")))?;
+            count = 0;
+            if migrated.is_multiple_of(1_000_000) {
+                tracing::info!("cursor-held: migrated {migrated} entries");
+            }
+        }
+    }
+    if count > 0 {
+        db.write(wb)
+            .map_err(|e| StoreError::Custom(format!("final write batch: {e}")))?;
+    }
+    tracing::info!("cursor-held migration complete: {migrated} entries");
+    Ok(())
 }
 
 /// Two-CF strategy: copy re-keyed entries to a fresh `receipts_v2` CF using a
