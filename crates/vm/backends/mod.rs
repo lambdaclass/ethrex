@@ -12,10 +12,12 @@ use ethrex_common::types::{
 };
 use ethrex_common::{Address, types::fee_config::FeeConfig};
 use ethrex_crypto::Crypto;
+pub use ethrex_levm::StatelessValidator;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
 use ethrex_levm::errors::ExecutionReport;
+pub use ethrex_levm::errors::{self, InternalError, VMError};
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -27,6 +29,7 @@ pub struct Evm {
     pub db: GeneralizedDatabase,
     pub vm_type: VMType,
     pub crypto: Arc<dyn Crypto>,
+    pub stateless_validator: Option<Arc<dyn StatelessValidator>>,
 }
 
 impl core::fmt::Debug for Evm {
@@ -43,6 +46,7 @@ impl Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L1,
             crypto,
+            stateless_validator: None,
         }
     }
 
@@ -57,6 +61,7 @@ impl Evm {
             db: GeneralizedDatabase::new(Arc::new(wrapped_db)),
             vm_type: VMType::L2(fee_config),
             crypto,
+            stateless_validator: None,
         };
 
         Ok(evm)
@@ -86,6 +91,7 @@ impl Evm {
             db: GeneralizedDatabase::new(store),
             vm_type,
             crypto,
+            stateless_validator: None,
         }
     }
 
@@ -97,7 +103,13 @@ impl Evm {
         &mut self,
         block: &Block,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
-        LEVM::execute_block(block, &mut self.db, self.vm_type, self.crypto.as_ref())
+        LEVM::execute_block(
+            block,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
+        )
     }
 
     #[instrument(
@@ -121,6 +133,7 @@ impl Evm {
             queue_length,
             self.crypto.as_ref(),
             bal,
+            self.stateless_validator.as_deref(),
         )
     }
 
@@ -143,6 +156,7 @@ impl Evm {
             &mut self.db,
             self.vm_type,
             self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
         )?;
 
         // Track cumulative post-refund gas for receipt
@@ -236,7 +250,14 @@ impl Evm {
         tx: &GenericTransaction,
         header: &BlockHeader,
     ) -> Result<ExecutionResult, EvmError> {
-        LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref())
+        LEVM::simulate_tx_from_generic(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            self.stateless_validator.as_deref(),
+        )
     }
 
     pub fn create_access_list(

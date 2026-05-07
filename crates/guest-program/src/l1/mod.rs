@@ -3,9 +3,11 @@ mod output;
 mod program;
 
 pub use input::ProgramInput;
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 pub use input::{ProgramInputDecodeError, ProgramInputEncodeError};
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 pub use input::{decode_eip8025, encode_eip8025};
 pub use output::ProgramOutput;
 pub use program::execution_program;
+#[cfg(feature = "experimental-devnet")]
+pub use program::new_payload_request_to_block;

@@ -70,7 +70,7 @@ pub async fn run_test(
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto, None)
             .map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.

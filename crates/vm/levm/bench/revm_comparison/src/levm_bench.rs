@@ -101,5 +101,5 @@ fn init_vm(
         data: calldata,
         ..Default::default()
     });
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, &NativeCrypto)
+    VM::new(env, db, &tx, LevmCallTracer::disabled(), VMType::L1, &NativeCrypto, None)
 }

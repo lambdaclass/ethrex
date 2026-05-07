@@ -124,7 +124,7 @@ sp1 = ["ethrex-l2-prover/sp1", "ethrex-l2/sp1"]
 gpu = ["ethrex-l2-prover/gpu"]
 risc0 = ["ethrex-l2-prover/risc0", "ethrex-l2/risc0"]
 
-eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-rpc/eip-8025"]
+experimental-devnet = ["ethrex-blockchain/experimental-devnet", "ethrex-rpc/experimental-devnet", "ethrex-l2?/experimental-devnet", "ethrex-vm/experimental-devnet"]
 
 perf_opcode_timings = ["ethrex-vm/perf_opcode_timings"]
 cpu_profiling = ["dep:pprof"]

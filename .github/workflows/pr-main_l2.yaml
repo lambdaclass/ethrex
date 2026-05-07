@@ -102,10 +102,16 @@ jobs:
       - name: Run cargo check
         run: cargo check --workspace --features l2,l2-sql
 
+      - name: Run cargo check (experimental-devnet)
+        run: cargo check --workspace --features experimental-devnet
+
       - name: Run cargo clippy
         run: |
           cargo clippy --workspace --features l2,l2-sql -- -D warnings
           make lint
+
+      - name: Run native rollup unit tests (experimental-devnet)
+        run: cargo test -p ethrex-l2 --features experimental-devnet --lib native_rollup
 
       - name: Run cargo fmt
         run: |

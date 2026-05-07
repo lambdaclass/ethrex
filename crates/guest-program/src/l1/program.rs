@@ -3,21 +3,21 @@ use std::sync::Arc;
 use ethrex_crypto::Crypto;
 
 use crate::common::{ExecutionError, execute_blocks};
-#[cfg(not(feature = "eip-8025"))]
+#[cfg(not(feature = "experimental-devnet"))]
 use crate::l1::input::ProgramInput;
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_vm::Evm;
 
-#[cfg(not(feature = "eip-8025"))]
+#[cfg(not(feature = "experimental-devnet"))]
 use crate::common::BatchExecutionResult;
 
 /// Execute the L1 stateless validation program.
 ///
 /// This validates and executes a batch of L1 blocks, verifying state transitions
 /// without access to the full blockchain state.
-#[cfg(not(feature = "eip-8025"))]
+#[cfg(not(feature = "experimental-devnet"))]
 pub fn execution_program(
     input: ProgramInput,
     crypto: Arc<dyn Crypto>,
@@ -59,7 +59,7 @@ pub fn execution_program(
 ///
 /// The wire format is `[ssz_len: u32 LE][ssz_bytes][rkyv_bytes]`, matching
 /// [`decode_eip8025`](super::decode_eip8025).
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
@@ -80,9 +80,9 @@ pub fn execution_program(
 }
 
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
-#[cfg(feature = "eip-8025")]
-fn new_payload_request_to_block(
-    req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+#[cfg(feature = "experimental-devnet")]
+pub fn new_payload_request_to_block(
+    req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,
 ) -> Result<ethrex_common::types::Block, String> {
     use bytes::Bytes;
@@ -170,10 +170,10 @@ fn new_payload_request_to_block(
 
 /// Validate that the blob versioned hashes in the `NewPayloadRequest` match
 /// the blob commitments in the block's transactions.
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 fn validate_versioned_hashes(
     block: &ethrex_common::types::Block,
-    req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    req: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
 ) -> Result<(), ExecutionError> {
     use ethrex_common::H256;
 
@@ -200,9 +200,9 @@ fn validate_versioned_hashes(
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(feature = "experimental-devnet")]
 fn validate_eip8025_execution(
-    new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
+    new_payload_request: &ethrex_common::types::stateless_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
@@ -236,7 +236,7 @@ fn validate_eip8025_execution(
     Ok(())
 }
 
-#[cfg(all(test, feature = "eip-8025"))]
+#[cfg(all(test, feature = "experimental-devnet"))]
 mod tests {
     use std::sync::Arc;
 

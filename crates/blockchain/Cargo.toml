@@ -23,6 +23,8 @@ url = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
 spawned-concurrency = { workspace = true, optional = true }
 ethrex-guest-program = { workspace = true, optional = true, default-features = false }
+libssz = { workspace = true, optional = true }
+libssz-merkle = { workspace = true, optional = true }
 ethrex-prover = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
@@ -44,7 +46,14 @@ default = ["secp256k1"]
 secp256k1 = ["ethrex-common/secp256k1", "ethrex-vm/secp256k1"]
 c-kzg = ["ethrex-common/c-kzg", "ethrex-vm/c-kzg"]
 metrics = ["ethrex-metrics/transactions"]
-eip-8025 = ["ethrex-common/eip-8025"]
+experimental-devnet = [
+    "ethrex-common/experimental-devnet",
+    "ethrex-vm/experimental-devnet",
+    "dep:ethrex-guest-program",
+    "ethrex-guest-program/experimental-devnet",
+    "dep:libssz",
+    "dep:libssz-merkle",
+]
 
 [lints.clippy]
 unwrap_used = "deny"

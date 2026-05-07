@@ -204,6 +204,7 @@ fn fee_token_lock_reverted_on_validation_failure() {
         LevmCallTracer::disabled(),
         VMType::L2(Default::default()),
         &NativeCrypto,
+        None,
     )
     .unwrap();
 
