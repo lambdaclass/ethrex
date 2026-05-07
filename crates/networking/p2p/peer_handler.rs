@@ -501,6 +501,7 @@ impl PeerHandler {
             id: request_id,
             block_hashes: block_hashes.to_vec(),
         });
+
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
@@ -519,6 +520,7 @@ impl PeerHandler {
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
+
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
