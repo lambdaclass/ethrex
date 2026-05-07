@@ -762,6 +762,14 @@ pub async fn import_blocks(
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    // Re-execute any blocks above the last committed state root so the in-memory diff
+    // layers are populated before this import appends. Required for per-file imports
+    // (e.g. EEST consume-rlp fork-transition fixtures) where each invocation's tail
+    // layers are dropped on process exit and the next file's parent state would
+    // otherwise be unreachable.
+    crate::initializers::regenerate_head_state(&store, &blockchain)
+        .await
+        .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
