@@ -760,7 +760,14 @@ impl Blockchain {
                     context.payload.body.transactions.push(head.into());
                     context.receipts.push(receipt);
                 }
-                Err(_) => {
+                Err(err) => {
+                    debug!(
+                        tx_hash = %format!("{:#x}", tx.hash()),
+                        sender = %format!("{:#x}", sender),
+                        nonce = tx.nonce(),
+                        error = %err,
+                        "FOCIL IL-first sequencing: apply_transaction failed, skipping IL tx"
+                    );
                     if let (Some(recorder), Some(checkpoint)) =
                         (context.vm.db.bal_recorder_mut(), bal_checkpoint)
                     {

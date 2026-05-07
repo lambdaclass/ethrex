@@ -499,9 +499,9 @@ impl RpcHandler for NewPayloadV6Request {
         // malformed IL byte strings MUST be tolerated as if they were empty IL
         // entries — the V6 call should not be rejected wholesale. Real RLP
         // decoding for the satisfaction check happens below; entries that
-        // fail to decode are simply skipped. The size cap is the only
-        // hard error at this layer.
-        validate_il_byte_size(&self.inclusion_list_transactions)?;
+        // fail to decode are simply skipped. No upper size cap on the receive
+        // path either — that constraint applies only to engine_getInclusionListV1
+        // (the local builder).
 
         let requests_hash = compute_requests_hash(&self.execution_requests);
         let block_access_list_hash = self.raw_bal_hash;
@@ -662,27 +662,14 @@ fn parse_il_transactions(value: &Value) -> Result<Vec<bytes::Bytes>, RpcErr> {
         })?;
         out.push(bytes::Bytes::from(bytes));
     }
-    validate_il_byte_size(&out)?;
+    // EIP-7805 (FOCIL): MAX_BYTES_PER_INCLUSION_LIST = 8192 is a constraint on
+    // what `engine_getInclusionListV1` BUILDS, not on what V5/V6 RECEIVE. The
+    // CL may forward an IL of arbitrary size and the EL must accept it (per
+    // the Hive engine-focil "accepts IL larger than MAX_BYTES_PER_INCLUSION_LIST"
+    // test). The size cap is enforced in
+    // `crates/blockchain/inclusion_list_builder.rs` on the build side; this
+    // receive path imposes no upper bound.
     Ok(out)
-}
-
-/// EIP-7805 (FOCIL) — `MAX_BYTES_PER_INCLUSION_LIST = 8192` is on the
-/// **RLP-encoded** list, not the sum of raw entry lengths. A single 8192-byte
-/// entry RLP-encodes to ~8198 bytes (string header + list header), which the
-/// spec rejects. Compute the actual encoded length and check against the cap.
-pub(crate) fn validate_il_byte_size(il: &[bytes::Bytes]) -> Result<(), RpcErr> {
-    use ethrex_rlp::encode::RLPEncode;
-    let raw: Vec<Vec<u8>> = il.iter().map(|b| b.to_vec()).collect();
-    let mut buf = Vec::new();
-    raw.encode(&mut buf);
-    if buf.len() > ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST {
-        return Err(RpcErr::InvalidPayloadAttributes(format!(
-            "inclusionListTransactions RLP-encoded size {} exceeds {}-byte cap",
-            buf.len(),
-            ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST,
-        )));
-    }
-    Ok(())
 }
 
 // GetPayload V1-V2-V3 implementations
@@ -1563,28 +1550,17 @@ mod v6_tests {
         assert!(matches!(err, RpcErr::WrongParam(_)));
     }
 
+    /// Hive engine-focil testForkchoiceUpdatedAcceptsLargeIL: V5/V6 receive
+    /// paths must NOT enforce MAX_BYTES_PER_INCLUSION_LIST. The 8 KiB cap
+    /// only applies to engine_getInclusionListV1 (the local builder).
     #[test]
-    fn parse_il_transactions_enforces_8kib_cap() {
-        // 8193 bytes total → over cap.
-        let huge = format!(
-            "0x{}",
-            "ab".repeat(ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST + 1)
-        );
-        let err = parse_il_transactions(&json!([huge])).unwrap_err();
-        assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
-    }
-
-    /// Hive engine-focil "oversized" test: a single 8192-byte entry RLPs to
-    /// ~8198 bytes (string header + list header) and MUST be rejected even
-    /// though the raw byte sum equals the cap exactly.
-    #[test]
-    fn validate_il_byte_size_rejects_single_entry_at_raw_cap() {
-        let one = bytes::Bytes::from(vec![
-            0x42_u8;
-            ethrex_common::types::MAX_BYTES_PER_INCLUSION_LIST
-        ]);
-        let err = validate_il_byte_size(&[one]).unwrap_err();
-        assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
+    fn parse_il_transactions_accepts_oversized_inputs() {
+        // 10 KiB single entry (well over the 8 KiB build cap) must round-trip
+        // through the receive-side parser without error.
+        let big_hex = format!("0x{}", "42".repeat(10 * 1024));
+        let parsed = parse_il_transactions(&json!([big_hex])).expect("oversized parses");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].len(), 10 * 1024);
     }
 
     /// Hive engine-focil "garbage bytes" test: bytes that aren't valid RLP
