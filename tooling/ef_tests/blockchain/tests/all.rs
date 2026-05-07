@@ -6,6 +6,13 @@ use std::path::Path;
 #[cfg(all(feature = "sp1", feature = "stateless"))]
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
+// test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
+// test-stateless reads zkevm@v0.3.3 (the only bundle that ships executionWitness)
+// from a separate `vectors_zkevm/` so its older bal@v5.6.1 base never overlays
+// the snobal fixtures used by the other suites.
+#[cfg(feature = "stateless")]
+const TEST_FOLDER: &str = "vectors_zkevm/";
+#[cfg(not(feature = "stateless"))]
 const TEST_FOLDER: &str = "vectors/";
 
 // Base skips shared by all runs.
