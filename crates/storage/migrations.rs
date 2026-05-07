@@ -268,9 +268,203 @@ mod tests {
         assert_eq!(metadata.schema_version, STORE_SCHEMA_VERSION);
     }
 
+    /// Synthetic load test for `migrate_1_to_2`.
+    ///
+    /// Builds a RocksDB-backed RECEIPTS column family with old-format
+    /// (RLP-encoded `(BlockHash, u64)`) keys and synthetic receipt-shaped
+    /// values, then runs the migration end-to-end and reports timing.
+    ///
+    /// Configuration via env vars:
+    /// - `ETHREX_MIG_RECEIPTS` — number of synthetic receipts to write
+    ///   (default: 100_000; set ~30_000_000 for ~15 GB on disk uncompressed
+    ///   or ~120_000_000 for ~15 GB compressed with LZ4).
+    /// - `ETHREX_MIG_VALUE_BYTES` — average receipt payload size in bytes
+    ///   (default: 480, matching mainnet).
+    /// - `ETHREX_MIG_DIR` — directory to host the synthetic DB. Must be on
+    ///   a fast disk with enough free space. If unset, uses `tempfile::tempdir`
+    ///   (cleaned up automatically). When set, the directory is preserved
+    ///   so the migration can be re-run on the same data.
+    /// - `ETHREX_MIG_TXS_PER_BLOCK` — txs per synthetic block (default: 200).
+    /// - `ETHREX_MIG_LOAD_ONLY=1` — only load the synthetic data and exit
+    ///   (skip the migration). Useful for separating load and migration timings.
+    /// - `ETHREX_MIG_MIGRATE_ONLY=1` — skip the load (assumes ETHREX_MIG_DIR
+    ///   already contains a populated DB) and only time the migration.
+    ///
+    /// Run with:
+    ///   cargo test -p ethrex-storage --features rocksdb --release \
+    ///       migrate_1_to_2_synthetic_load -- --ignored --nocapture
+    #[test]
+    #[ignore = "writes a large RocksDB; run manually with --ignored"]
+    #[cfg(feature = "rocksdb")]
+    fn migrate_1_to_2_synthetic_load() {
+        use crate::backend::rocksdb::RocksDBBackend;
+        use ethrex_rlp::encode::RLPEncode;
+        use std::time::Instant;
+
+        fn env_usize(name: &str, default: usize) -> usize {
+            std::env::var(name)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        }
+        fn env_flag(name: &str) -> bool {
+            matches!(std::env::var(name).as_deref(), Ok("1") | Ok("true"))
+        }
+
+        let n_receipts = env_usize("ETHREX_MIG_RECEIPTS", 100_000);
+        let value_bytes = env_usize("ETHREX_MIG_VALUE_BYTES", 480);
+        let txs_per_block = env_usize("ETHREX_MIG_TXS_PER_BLOCK", 200).max(1);
+        let load_only = env_flag("ETHREX_MIG_LOAD_ONLY");
+        let migrate_only = env_flag("ETHREX_MIG_MIGRATE_ONLY");
+
+        // Either use an explicit dir (preserved across runs) or a tempdir.
+        let (db_path, _keep_alive) = match std::env::var("ETHREX_MIG_DIR") {
+            Ok(p) => {
+                let path = std::path::PathBuf::from(p);
+                std::fs::create_dir_all(&path).unwrap();
+                (path, None)
+            }
+            Err(_) => {
+                let td = tempfile::tempdir().unwrap();
+                (td.path().to_path_buf(), Some(td))
+            }
+        };
+
+        eprintln!(
+            "synthetic migration test: receipts={n_receipts} value_bytes={value_bytes} \
+             txs_per_block={txs_per_block} db_path={db_path:?}"
+        );
+
+        let backend = RocksDBBackend::open(&db_path).unwrap();
+
+        // ------- Load phase: write synthetic old-format entries -------
+        if !migrate_only {
+            // Persist v1 metadata so the migration runner sees a "needs upgrade" state.
+            write_metadata_version(&db_path, 1).unwrap();
+
+            let load_start = Instant::now();
+            let n_blocks = n_receipts.div_ceil(txs_per_block);
+            const FLUSH_EVERY: usize = 50_000;
+            let mut buf: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(FLUSH_EVERY);
+            let mut written: usize = 0;
+
+            // Deterministic but unique block hashes via a counter-based "hash":
+            // first 8 bytes = block_number (BE), rest zero-padded — keeps the
+            // synthetic dataset reproducible across invocations.
+            //
+            // Build a high-entropy value template so LZ4 compression matches
+            // mainnet's ~4× ratio. Each byte derives from a multiply-rotate
+            // mix of a per-receipt seed; mostly random, but we'll insert a
+            // small structured prefix per receipt for the seed.
+            let mix_byte = |seed: u64, i: usize| -> u8 {
+                let m = seed
+                    .wrapping_mul(0x9E3779B97F4A7C15)
+                    .wrapping_add(i as u64)
+                    .rotate_left((i & 31) as u32);
+                let m2 = m
+                    .wrapping_mul(0xBF58476D1CE4E5B9)
+                    .wrapping_add((i as u64).wrapping_mul(0x94D049BB133111EB));
+                (m2 ^ m.rotate_right(13)) as u8
+            };
+
+            for block_n in 0..n_blocks {
+                let mut hash_bytes = [0u8; 32];
+                hash_bytes[0..8].copy_from_slice(&(block_n as u64).to_be_bytes());
+                hash_bytes[24..32].copy_from_slice(&((block_n as u64).wrapping_mul(0x9E3779B1)).to_be_bytes());
+                let block_hash = H256(hash_bytes);
+
+                let txs_in_block = txs_per_block.min(n_receipts - written);
+                for idx in 0..txs_in_block {
+                    let old_key = (block_hash, idx as u64).encode_to_vec();
+                    let seed = (written as u64) ^ ((block_n as u64) << 16);
+                    // Mainnet-shaped value: alternating runs of zeros (status,
+                    // low-bit gas, mostly-empty bloom filter) and high-entropy
+                    // bytes (log topics, addresses). Targets ~3-4× LZ4 ratio.
+                    let mut value = vec![0u8; value_bytes];
+                    let mut i = 0;
+                    while i < value_bytes {
+                        let entropy_run = 32.min(value_bytes - i);
+                        for j in 0..entropy_run {
+                            value[i + j] = mix_byte(seed, i + j);
+                        }
+                        i += entropy_run;
+                        // Skip a zero-run of comparable size (already 0).
+                        i += 64.min(value_bytes - i);
+                    }
+                    buf.push((old_key, value));
+                    written += 1;
+                }
+
+                if buf.len() >= FLUSH_EVERY || written == n_receipts {
+                    let mut tx = backend.begin_write().unwrap();
+                    tx.put_batch(RECEIPTS, std::mem::take(&mut buf)).unwrap();
+                    tx.commit().unwrap();
+                    if written % (FLUSH_EVERY * 4) == 0 || written == n_receipts {
+                        eprintln!(
+                            "  loaded {written}/{n_receipts} ({:.1}%) in {:.1}s",
+                            (written as f64) / (n_receipts as f64) * 100.0,
+                            load_start.elapsed().as_secs_f64()
+                        );
+                    }
+                }
+            }
+
+            eprintln!(
+                "load complete: {n_receipts} receipts in {:.1}s ({:.0} receipts/s)",
+                load_start.elapsed().as_secs_f64(),
+                n_receipts as f64 / load_start.elapsed().as_secs_f64()
+            );
+        }
+
+        if load_only {
+            eprintln!("ETHREX_MIG_LOAD_ONLY set — skipping migration");
+            return;
+        }
+
+        // Drop and re-open to flush memtables and force the migration to read
+        // from on-disk SSTs (more representative).
+        drop(backend);
+        let backend = RocksDBBackend::open(&db_path).unwrap();
+
+        // ------- Migration phase -------
+        let mig_start = Instant::now();
+        migrate_1_to_2(&backend, &db_path).unwrap();
+        let mig_elapsed = mig_start.elapsed();
+
+        let temp_path = db_path.join("migration_v1_v2_keys.tmp");
+        let temp_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+        eprintln!(
+            "migration complete: {:.1}s ({:.0} receipts/s); temp file leftover: {} bytes",
+            mig_elapsed.as_secs_f64(),
+            n_receipts as f64 / mig_elapsed.as_secs_f64(),
+            temp_size
+        );
+
+        // ------- Spot-check correctness on a few entries -------
+        if !migrate_only {
+            let txn = backend.begin_read().unwrap();
+            let mut checks_ok = 0;
+            for sample_block in [0usize, 1, n_receipts.div_ceil(txs_per_block) / 2, n_receipts.div_ceil(txs_per_block).saturating_sub(1)] {
+                let mut hash_bytes = [0u8; 32];
+                hash_bytes[0..8].copy_from_slice(&(sample_block as u64).to_be_bytes());
+                hash_bytes[24..32].copy_from_slice(&((sample_block as u64).wrapping_mul(0x9E3779B1)).to_be_bytes());
+                let block_hash = H256(hash_bytes);
+                let new_key = receipt_key(&block_hash, 0);
+                let old_key = (block_hash, 0u64).encode_to_vec();
+                if txn.get(RECEIPTS, &new_key).unwrap().is_some()
+                    && txn.get(RECEIPTS, &old_key).unwrap().is_none()
+                {
+                    checks_ok += 1;
+                }
+            }
+            eprintln!("correctness spot-check: {checks_ok}/4 sample blocks re-keyed");
+            assert!(checks_ok > 0, "migration produced no new-format keys");
+        }
+    }
+
     #[test]
     fn migrate_1_to_2_converts_rlp_keys_to_fixed_width() {
-        use crate::api::{StorageBackend, StorageReadView};
+        use crate::api::StorageReadView;
         use ethrex_common::types::{Receipt, TxType};
         use ethrex_rlp::encode::RLPEncode;
 
