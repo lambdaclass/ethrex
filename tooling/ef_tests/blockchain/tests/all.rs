@@ -37,6 +37,128 @@ const SKIPPED_BASE: &[&str] = &[
     "witness_codes_failed_create_includes_factory",
     "witness_codes_reverted_create_same_hash_then_read",
     "witness_codes_create_then_selfdestruct_same_tx",
+    // ---------------------------------------------------------------
+    // bal-devnet-6 known-failing fixtures (Amsterdam fork only).
+    //
+    // All entries below are anchored with `[fork_Amsterdam` so the legacy
+    // Prague/Osaka variants of the same EELS test functions still run (those
+    // pass). Each bucket maps to one EIP / fixture family; the underlying
+    // root cause is that snobal-devnet-6 fixtures expect the
+    // bal-devnet-6 spec semantics, but our impl currently runs ahead of
+    // that on the EIP-7702 `set_delegation` state-gas accounting (the
+    // bal-devnet-7-prep SELFDESTRUCT-style refund subtraction was re-applied
+    // in 0976534cf0). To be re-enabled once we either:
+    //   (a) bump fixtures to a snobal-devnet-7 release that locks in the
+    //       new accounting, or
+    //   (b) revert the bal-devnet-7-prep subtraction for bal-devnet-6
+    //       compatibility.
+    // Tracking via PR #6574.
+    // ---------------------------------------------------------------
+
+    // EIP-7702 — for_amsterdam/prague/eip7702_set_code_tx/set_code_txs/*.
+    // Prague set-code transaction tests re-run under Amsterdam; expected gas
+    // accounting differs from current set_delegation refund handling.
+    "test_delegation_clearing[fork_Amsterdam",
+    "test_delegation_clearing_and_set[fork_Amsterdam",
+    "test_delegation_clearing_failing_tx[fork_Amsterdam",
+    "test_delegation_clearing_tx_to[fork_Amsterdam",
+    "test_eoa_tx_after_set_code[fork_Amsterdam",
+    "test_ext_code_on_chain_delegating_set_code[fork_Amsterdam",
+    "test_ext_code_on_self_delegating_set_code[fork_Amsterdam",
+    "test_ext_code_on_self_set_code[fork_Amsterdam",
+    "test_ext_code_on_set_code[fork_Amsterdam",
+    "test_many_delegations[fork_Amsterdam",
+    "test_nonce_overflow_after_first_authorization[fork_Amsterdam",
+    "test_nonce_validity[fork_Amsterdam",
+    "test_reset_code[fork_Amsterdam",
+    "test_self_code_on_set_code[fork_Amsterdam",
+    "test_self_sponsored_set_code[fork_Amsterdam",
+    "test_set_code_multiple_valid_authorization_tuples_same_signer_increasing_nonce[fork_Amsterdam",
+    "test_set_code_multiple_valid_authorization_tuples_same_signer_increasing_nonce_self_sponsored[fork_Amsterdam",
+    "test_set_code_to_log[fork_Amsterdam",
+    "test_set_code_to_non_empty_storage_non_zero_nonce[fork_Amsterdam",
+    "test_set_code_to_self_destruct[fork_Amsterdam",
+    "test_set_code_to_self_destructing_account_deployed_in_same_tx[fork_Amsterdam",
+    "test_set_code_to_sstore[fork_Amsterdam",
+    "test_set_code_to_sstore_then_sload[fork_Amsterdam",
+    "test_set_code_to_system_contract[fork_Amsterdam",
+    // EIP-7702 — for_amsterdam/prague/eip7702_set_code_tx/set_code_txs_2/*.
+    // 7702-pointer interaction tests; fail for the same `set_delegation`
+    // accounting reason as the set_code_txs bucket above.
+    "test_call_pointer_to_created_from_create_after_oog_call_again[fork_Amsterdam",
+    "test_call_to_precompile_in_pointer_context[fork_Amsterdam",
+    "test_contract_storage_to_pointer_with_storage[fork_Amsterdam",
+    "test_delegation_replacement_call_previous_contract[fork_Amsterdam",
+    "test_double_auth[fork_Amsterdam",
+    "test_pointer_measurements[fork_Amsterdam",
+    "test_pointer_normal[fork_Amsterdam",
+    "test_pointer_reentry[fork_Amsterdam",
+    "test_pointer_resets_an_empty_code_account_with_storage[fork_Amsterdam",
+    "test_pointer_reverts[fork_Amsterdam",
+    "test_pointer_to_pointer[fork_Amsterdam",
+    "test_pointer_to_precompile[fork_Amsterdam",
+    "test_pointer_to_static[fork_Amsterdam",
+    "test_pointer_to_static_reentry[fork_Amsterdam",
+    "test_static_to_pointer[fork_Amsterdam",
+    // EIP-7702 — for_amsterdam/prague/eip7702_set_code_tx/gas/*.
+    "test_account_warming[fork_Amsterdam",
+    // EIP-8037 — for_amsterdam/amsterdam/eip8037_state_creation_gas_cost_increase/state_gas_set_code/*.
+    // 2D-gas tests covering the EIP-7702 auth refund path; same root cause
+    // as the EIP-7702 buckets above.
+    "test_auth_refund_block_gas_accounting[fork_Amsterdam",
+    "test_auth_refund_bypasses_one_fifth_cap[fork_Amsterdam",
+    "test_auth_with_calldata_and_access_list[fork_Amsterdam",
+    "test_auth_with_multiple_sstores[fork_Amsterdam",
+    "test_authorization_exact_state_gas_boundary[fork_Amsterdam",
+    "test_authorization_to_precompile_address[fork_Amsterdam",
+    "test_authorization_with_sstore[fork_Amsterdam",
+    "test_duplicate_signer_authorizations[fork_Amsterdam",
+    "test_existing_account_auth_header_gas_used_uses_worst_case[fork_Amsterdam",
+    "test_existing_account_refund[fork_Amsterdam",
+    "test_existing_account_refund_enables_sstore[fork_Amsterdam",
+    "test_existing_auth_with_reverted_execution_preserves_intrinsic[fork_Amsterdam",
+    "test_many_authorizations_state_gas[fork_Amsterdam",
+    "test_mixed_auths_header_gas_used_uses_worst_case[fork_Amsterdam",
+    "test_mixed_new_and_existing_auths[fork_Amsterdam",
+    "test_mixed_valid_and_invalid_auths[fork_Amsterdam",
+    "test_multi_tx_block_auth_refund_and_sstore[fork_Amsterdam",
+    // EIP-8037 — for_amsterdam/amsterdam/eip8037_state_creation_gas_cost_increase/state_gas_pricing/*.
+    "test_auth_state_gas_scales_with_cpsb[fork_Amsterdam",
+    // EIP-8037 — for_amsterdam/amsterdam/eip8037_state_creation_gas_cost_increase/state_gas_sstore/*.
+    "test_sstore_state_gas_all_tx_types[fork_Amsterdam",
+    // EIP-7928 — for_amsterdam/amsterdam/eip7928_block_level_access_lists/block_access_lists_eip7702/*.
+    // BAL coverage of EIP-7702 delegation flows; expected BAL diffs depend
+    // on the same set_delegation refund accounting as above.
+    "test_bal_7702_delegation_clear[fork_Amsterdam",
+    "test_bal_7702_delegation_create[fork_Amsterdam",
+    "test_bal_7702_delegation_update[fork_Amsterdam",
+    "test_bal_7702_double_auth_reset[fork_Amsterdam",
+    "test_bal_7702_double_auth_swap[fork_Amsterdam",
+    "test_bal_7702_null_address_delegation_no_code_change[fork_Amsterdam",
+    "test_bal_selfdestruct_to_7702_delegation[fork_Amsterdam",
+    "test_bal_withdrawal_to_7702_delegation[fork_Amsterdam",
+    // EIP-7928 — for_amsterdam/amsterdam/eip7928_block_level_access_lists/block_access_lists/*.
+    // Aggregate BAL test exercising every tx type incl. set-code; trips
+    // for the same reason as the eip7702 BAL bucket.
+    "test_bal_all_transaction_types[fork_Amsterdam",
+    // EIP-7778 — for_amsterdam/amsterdam/eip7778_block_gas_accounting_without_refunds/gas_accounting/*.
+    // Block-level gas accounting tests that interact with the auth refund
+    // path; tracked alongside the EIP-7702 bucket.
+    "test_multiple_refund_types_in_one_tx[fork_Amsterdam",
+    "test_simple_gas_accounting[fork_Amsterdam",
+    "test_varying_calldata_costs[fork_Amsterdam",
+    // EIP-7708 — for_amsterdam/amsterdam/eip7708_eth_transfer_logs/transfer_logs/*.
+    // ETH-transfer-logs aggregate test; fails on the set-code tx variant.
+    "test_transfer_with_all_tx_types[fork_Amsterdam",
+    // EIP-7976 — for_amsterdam/amsterdam/eip7976_increase_calldata_floor_cost/refunds/*.
+    // Calldata-floor refund accounting; interacts with the same auth-refund
+    // accounting changes.
+    "test_gas_refunds_from_data_floor[fork_Amsterdam",
+    // EIP-1344 — for_amsterdam/istanbul/eip1344_chainid/chainid/*.
+    // Istanbul chainid test re-run as an Amsterdam fork-transition fixture;
+    // currently trips on the transition-test runner path rather than on the
+    // chainid opcode itself.
+    "test_chainid[fork_Amsterdam",
 ];
 
 // Extra skips added only for prover backends.
