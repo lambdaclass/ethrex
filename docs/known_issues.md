@@ -1,27 +1,19 @@
 # Known Issues
 
-This document lists tests intentionally excluded from CI. It is the source
-of truth for the **Known Issues** section that the L1 workflow appends to
-each ef-tests job summary and posts as a sticky PR comment.
+Tests intentionally excluded from CI. Source of truth for the **Known
+Issues** section the L1 workflow appends to each ef-tests job summary
+and posts as a sticky PR comment.
 
-> **Runtime skip list:** `tooling/ef_tests/blockchain/tests/all.rs::SKIPPED_BASE`
-> is what the test harness actually consumes. The buckets and counts below
-> mirror that constant.
+## Hive — 8 Engine withdrawal Block Re-Org tests (Paris)
 
-## Hive — Engine withdrawal Block Re-Org tests (Paris) — 8 tests
+The hive engine simulator has not been updated to
+[execution-apis PR #786](https://github.com/ethereum/execution-apis/pull/786),
+so ethrex's spec-correct `-38006 TooDeepReorg` rejection is read as a
+failure. Excluded via `KNOWN_FLAKY_TESTS` in
+`.github/scripts/check-hive-results.sh`. Re-enable once hive catches up.
 
-Excluded via `KNOWN_FLAKY_TESTS` in `.github/scripts/check-hive-results.sh`
-(substring-matched and ignored by the L1 hive job's failure check).
-
-**Reason.** These tests assert the old "accept deep reorg" behaviour. Under
-[execution-apis PR #786](https://github.com/ethereum/execution-apis/pull/786)
-the EL must reject FCUs whose `canonical_link_height < stored_finalized`
-with the new `-38006 TooDeepReorg` error, and ethrex implements that. The
-hive engine simulator has not been updated to PR #786 semantics, so it
-treats the spec-correct rejection as a failure. Re-enable once hive catches
-up.
-
-Affected test names (all under `engine-withdrawals`, fork Paris):
+<details>
+<summary>Affected test names (8)</summary>
 
 - `Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload (Paris)`
 - `Withdrawals Fork on Block 1 - 8 Block Re-Org, Sync (Paris)`
@@ -32,38 +24,46 @@ Affected test names (all under `engine-withdrawals`, fork Paris):
 - `Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org (Paris)`
 - `Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org Sync (Paris)`
 
+</details>
+
 ## EF Tests — Stateless coverage narrowed to EIP-8025 optional-proofs
 
-`make -C tooling/ef_tests/blockchain test` invokes `test-stateless-zkevm`
-instead of `test-stateless`, narrowing the stateless cargo invocation to the
-EIP-8025 optional-proofs suite (`-- eip8025_optional_proofs`).
+`make -C tooling/ef_tests/blockchain test` calls `test-stateless-zkevm`
+instead of `test-stateless`. The zkevm@v0.3.3 fixtures are filled against
+bal@v5.6.1, out of sync with current bal spec; the broad target trips ~549
+fixtures. Re-broaden once the zkevm bundle is regenerated.
 
-**Reason.** The zkevm@v0.3.3 fixtures used by `test-stateless` are filled
-against bal@v5.6.1, which is out of sync with the current bal spec
-(bal-devnet-6+, plus bal-devnet-7-prep `set_delegation` re-application).
-PR [#6527](https://github.com/lambdaclass/ethrex/pull/6527) broadened
-`test-stateless` to extract the entire `for_amsterdam/` tree from the zkevm
-bundle and run all of it under `--features stateless`; that scope trips
-~549 fixtures with `GasUsedMismatch` / `ReceiptsRootMismatch` /
-`BlockAccessListHashMismatch`.
+<details>
+<summary>Why and resolution path</summary>
 
-Re-broaden (call `test-stateless` again from `make test`) once the zkevm
-bundle is regenerated against the current bal spec.
+[PR #6527](https://github.com/lambdaclass/ethrex/pull/6527) broadened
+`test-stateless` to extract the entire `for_amsterdam/` tree from the
+zkevm bundle and run all of it under `--features stateless`; combined with
+this branch's bal-devnet-6+ semantics (and bal-devnet-7-prep
+`set_delegation` re-application) that scope produces ~549
+`GasUsedMismatch` / `ReceiptsRootMismatch` /
+`BlockAccessListHashMismatch` failures.
 
-## EF Tests — Blockchain (bal-devnet-6, Amsterdam fork only) — 74 tests
+`test-stateless-zkevm` filters cargo to the `eip8025_optional_proofs`
+suite, which still validates the stateless harness without the bal-version
+mismatch.
 
-All 74 entries are anchored on `[fork_Amsterdam` in the skip list, so the
-Prague / Osaka variants of the same EELS test functions still run.
+Re-broaden by switching `test:` back to `test-stateless` in
+`tooling/ef_tests/blockchain/Makefile` once the zkevm bundle is regenerated
+against the current bal spec.
 
-**Root cause.** snobal-devnet-6 fixtures expect bal-devnet-6 spec semantics,
-but our impl currently runs ahead of that on the EIP-7702 `set_delegation`
-state-gas accounting (the bal-devnet-7-prep SELFDESTRUCT-style refund
-subtraction was re-applied in commit `0976534cf0`).
+</details>
 
-**Resolution path.** Re-enable once we either:
-- (a) bump fixtures to a snobal-devnet-7 release that locks in the new
-      accounting; or
-- (b) revert the bal-devnet-7-prep subtraction for bal-devnet-6 compatibility.
+## EF Tests — Blockchain bal-devnet-6 (Amsterdam fork) — 74 tests
+
+snobal-devnet-6 fixtures expect bal-devnet-6 spec semantics, but our impl
+runs ahead due to the bal-devnet-7-prep `set_delegation` SELFDESTRUCT-style
+refund subtraction. Skipped in
+`tooling/ef_tests/blockchain/tests/all.rs::SKIPPED_BASE`, anchored on
+`[fork_Amsterdam` so legacy Prague / Osaka variants still run.
+
+<details>
+<summary>Bucket breakdown (74 total) and resolution path</summary>
 
 | EIP      | Bucket                                                | Count |
 | -------- | ----------------------------------------------------- | ----- |
@@ -71,8 +71,8 @@ subtraction was re-applied in commit `0976534cf0`).
 | EIP-7702 | `set_code_txs_2`                                      | 15    |
 | EIP-7702 | `gas`                                                 | 1     |
 | EIP-8037 | `state_gas_set_code`                                  | 17    |
-| EIP-8037 | `state_gas_pricing`                                   | 1    |
-| EIP-8037 | `state_gas_sstore`                                    | 1    |
+| EIP-8037 | `state_gas_pricing`                                   | 1     |
+| EIP-8037 | `state_gas_sstore`                                    | 1     |
 | EIP-7928 | `block_access_lists_eip7702`                          | 8     |
 | EIP-7928 | `block_access_lists`                                  | 1     |
 | EIP-7778 | `gas_accounting`                                      | 3     |
@@ -81,8 +81,16 @@ subtraction was re-applied in commit `0976534cf0`).
 | EIP-1344 | `chainid` (Amsterdam fork-transition fixture)         | 1     |
 | **Total**|                                                       | **74**|
 
+Re-enable once we either:
+- (a) bump fixtures to a snobal-devnet-7 release that locks in the new
+      accounting; or
+- (b) revert the bal-devnet-7-prep subtraction for bal-devnet-6
+      compatibility.
+
+</details>
+
 <details>
-<summary>Full test list</summary>
+<summary>Full test list (74)</summary>
 
 **EIP-7702 — `for_amsterdam/prague/eip7702_set_code_tx/set_code_txs/`**
 - `delegation_clearing`
