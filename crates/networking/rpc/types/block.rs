@@ -72,7 +72,13 @@ impl RpcBlock {
         hash: H256,
         full_transactions: bool,
     ) -> Result<RpcBlock, RpcErr> {
-        let size = Block::new(header.clone(), body.clone()).length();
+        // Move header/body into a temporary Block to compute the RLP-encoded
+        // size, then destructure to recover ownership — avoids cloning the
+        // entire block body.
+        let block = Block::new(header, body);
+        let size = block.length() as u64;
+        let Block { header, body } = block;
+
         let body_wrapper = if full_transactions {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
@@ -85,7 +91,7 @@ impl RpcBlock {
 
         Ok(RpcBlock {
             hash,
-            size: size as u64,
+            size,
             header,
             body: body_wrapper,
         })
