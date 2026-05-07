@@ -449,6 +449,115 @@ pub(crate) fn migrate_1_to_2_delete_range(
     unimplemented!("delete-range strategy not implemented yet")
 }
 
+/// Parallel two-CF strategy: same as `two-cf` but the keyspace is split into
+/// N segments by H256 first byte (== old-key byte 2, since RLP-encoded
+/// (H256, u64) keys start with `c2 a0`). Each thread owns its segment with
+/// its own iterator and write batches; segments don't overlap so threads
+/// don't conflict.
+///
+/// Pros: scales with cores; no read/write interleaving (each segment is
+/// disjoint).
+/// Cons: more complex; rocksdb's internal locks (memtable, WAL) become
+/// the contention point at high core counts.
+#[cfg(feature = "rocksdb")]
+pub(crate) fn migrate_1_to_2_two_cf_parallel(db_path: &Path) -> Result<(), StoreError> {
+    use crate::backend::rocksdb::RocksDBBackend;
+    use rocksdb::{DBCompressionType, IteratorMode, Options, ReadOptions, WriteBatch};
+    use std::sync::Arc;
+    use std::thread;
+
+    const BATCH_SIZE: usize = 50_000;
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8)
+        .min(8);
+
+    let backend = Arc::new(RocksDBBackend::open(db_path)?);
+    let db = backend.raw_db();
+
+    let mut cf_opts = Options::default();
+    cf_opts.set_compression_type(DBCompressionType::Lz4);
+    if db.cf_handle("receipts_v2").is_none() {
+        db.create_cf("receipts_v2", &cf_opts)
+            .map_err(|e| StoreError::Custom(format!("create_cf receipts_v2: {e}")))?;
+    }
+
+    // Split H256[0] into N contiguous ranges. Old keys all start with
+    // `c2 a0 <H256[0]> ...`. Build [lower_bound, upper_bound) per segment.
+    let mut segments: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+    for t in 0..n_threads {
+        let lo = (256 * t / n_threads) as u8;
+        let hi_exclusive = 256 * (t + 1) / n_threads;
+        let lower = vec![0xc2u8, 0xa0, lo];
+        let upper = if hi_exclusive >= 256 {
+            // Past the H256 range entirely — sentinel just above all old keys.
+            vec![0xc3u8]
+        } else {
+            vec![0xc2u8, 0xa0, hi_exclusive as u8]
+        };
+        segments.push((lower, upper));
+    }
+
+    let mut handles = Vec::new();
+    for (tid, (lower, upper)) in segments.into_iter().enumerate() {
+        let db = db.clone();
+        handles.push(thread::spawn(move || -> Result<u64, StoreError> {
+            let cf_old = db
+                .cf_handle("receipts")
+                .ok_or_else(|| StoreError::Custom("receipts CF missing".into()))?;
+            let cf_new = db
+                .cf_handle("receipts_v2")
+                .ok_or_else(|| StoreError::Custom("receipts_v2 CF missing".into()))?;
+
+            let mut readopts = ReadOptions::default();
+            readopts.set_iterate_lower_bound(lower.clone());
+            readopts.set_iterate_upper_bound(upper.clone());
+
+            let iter = db.iterator_cf_opt(&cf_old, readopts, IteratorMode::Start);
+            let mut migrated: u64 = 0;
+            let mut batch = WriteBatch::default();
+            let mut count = 0usize;
+            for item in iter {
+                let (key, value) =
+                    item.map_err(|e| StoreError::Custom(format!("iter t{tid}: {e}")))?;
+                if key.len() == 40 {
+                    continue;
+                }
+                let (block_hash, index) = match <(H256, u64)>::decode(&key[..]) {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                };
+                let new_key = receipt_key(&block_hash, index);
+                batch.put_cf(&cf_new, &new_key, &value[..]);
+                count += 1;
+                migrated += 1;
+                if count >= BATCH_SIZE {
+                    db.write(std::mem::take(&mut batch))
+                        .map_err(|e| StoreError::Custom(format!("write t{tid}: {e}")))?;
+                    count = 0;
+                }
+            }
+            if count > 0 {
+                db.write(batch)
+                    .map_err(|e| StoreError::Custom(format!("final write t{tid}: {e}")))?;
+            }
+            Ok(migrated)
+        }));
+    }
+
+    let mut total: u64 = 0;
+    for h in handles {
+        total += h
+            .join()
+            .map_err(|_| StoreError::Custom("worker panicked".into()))??;
+    }
+
+    db.drop_cf("receipts")
+        .map_err(|e| StoreError::Custom(format!("drop_cf receipts: {e}")))?;
+    tracing::info!("two-cf-parallel migration complete: {total} entries across {n_threads} threads");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -499,6 +608,7 @@ mod tests {
     /// - `seek-resume` — drop & re-open cursor after each batch flush
     /// - `cursor-held` — single cursor open across writes
     /// - `two-cf` — copy to receipts_v2 CF, drop old CF
+    /// - `two-cf-parallel` — two-cf split into N H256-prefix segments, threaded
     /// - `delete-range` — like cursor-held, single range-delete at the end
     ///
     /// Configuration via env vars:
@@ -671,6 +781,9 @@ mod tests {
             "delete-range" => {
                 let backend = RocksDBBackend::open(&db_path).unwrap();
                 migrate_1_to_2_delete_range(&backend).unwrap();
+            }
+            "two-cf-parallel" => {
+                migrate_1_to_2_two_cf_parallel(&db_path).unwrap();
             }
             other => panic!("unknown ETHREX_MIG_STRATEGY: {other}"),
         }
