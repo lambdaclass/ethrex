@@ -249,9 +249,78 @@ pub(crate) fn migrate_1_to_2_cursor_held(
     unimplemented!("cursor-held strategy not implemented yet")
 }
 
+/// Two-CF strategy: copy re-keyed entries to a fresh `receipts_v2` CF using a
+/// single open read cursor on the old `receipts` CF, flushing write batches
+/// periodically. After the full pass, drop the old CF.
+///
+/// Pros: no read/write interleaving on the same CF; old CF's SSTs never get
+/// rewritten or tombstoned (drop_cf is O(metadata)); cleanest pattern in RocksDB.
+/// Cons: needs ~1× the receipts CF size of extra disk during the migration.
 #[cfg(feature = "rocksdb")]
-pub(crate) fn migrate_1_to_2_two_cf(_db_path: &Path) -> Result<(), StoreError> {
-    unimplemented!("two-cf strategy not implemented yet")
+pub(crate) fn migrate_1_to_2_two_cf(db_path: &Path) -> Result<(), StoreError> {
+    use crate::backend::rocksdb::RocksDBBackend;
+    use rocksdb::{DBCompressionType, IteratorMode, Options, WriteBatch};
+
+    const BATCH_SIZE: usize = 50_000;
+    let backend = RocksDBBackend::open(db_path)?;
+    let db = backend.raw_db();
+
+    // Create the destination CF with the same compression as `receipts`.
+    let mut cf_opts = Options::default();
+    cf_opts.set_compression_type(DBCompressionType::Lz4);
+    if db.cf_handle("receipts_v2").is_none() {
+        db.create_cf("receipts_v2", &cf_opts)
+            .map_err(|e| StoreError::Custom(format!("create_cf receipts_v2: {e}")))?;
+    }
+
+    let cf_old = db
+        .cf_handle("receipts")
+        .ok_or_else(|| StoreError::Custom("receipts CF missing".into()))?;
+    let cf_new = db
+        .cf_handle("receipts_v2")
+        .ok_or_else(|| StoreError::Custom("receipts_v2 CF missing".into()))?;
+
+    let mut migrated: u64 = 0;
+    let mut batch = WriteBatch::default();
+    let mut batch_count = 0usize;
+    let mut iter = db.iterator_cf(&cf_old, IteratorMode::Start);
+    while let Some(item) = iter.next() {
+        let (key, value) =
+            item.map_err(|e| StoreError::Custom(format!("iterate receipts: {e}")))?;
+        if key.len() == 40 {
+            continue; // already-new-format (no-op safety)
+        }
+        let (block_hash, index) = match <(H256, u64)>::decode(&key) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let new_key = receipt_key(&block_hash, index);
+        batch.put_cf(&cf_new, &new_key, &value);
+        batch_count += 1;
+        migrated += 1;
+
+        if batch_count >= BATCH_SIZE {
+            db.write(std::mem::take(&mut batch))
+                .map_err(|e| StoreError::Custom(format!("write batch: {e}")))?;
+            batch_count = 0;
+            if migrated.is_multiple_of(1_000_000) {
+                tracing::info!("two-cf: migrated {migrated} entries");
+            }
+        }
+    }
+    if batch_count > 0 {
+        db.write(batch)
+            .map_err(|e| StoreError::Custom(format!("final write batch: {e}")))?;
+    }
+    drop(iter);
+    drop(cf_old);
+    drop(cf_new);
+
+    db.drop_cf("receipts")
+        .map_err(|e| StoreError::Custom(format!("drop_cf receipts: {e}")))?;
+
+    tracing::info!("two-cf migration complete: {migrated} entries copied");
+    Ok(())
 }
 
 #[cfg(feature = "rocksdb")]
