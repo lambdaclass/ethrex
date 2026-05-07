@@ -229,6 +229,38 @@ fn migrate_1_to_2(backend: &dyn StorageBackend, db_path: &Path) -> Result<(), St
     Ok(())
 }
 
+// ===== Alternative migration strategies for benchmarking =====
+//
+// These live next to `migrate_1_to_2` so they can be A/B-compared in the
+// `migrate_1_to_2_synthetic_load` test. Only the baseline is wired into
+// the production migration table; the others are research code.
+
+#[cfg(feature = "rocksdb")]
+pub(crate) fn migrate_1_to_2_seek_resume(
+    _backend: &crate::backend::rocksdb::RocksDBBackend,
+) -> Result<(), StoreError> {
+    unimplemented!("seek-resume strategy not implemented yet")
+}
+
+#[cfg(feature = "rocksdb")]
+pub(crate) fn migrate_1_to_2_cursor_held(
+    _backend: &crate::backend::rocksdb::RocksDBBackend,
+) -> Result<(), StoreError> {
+    unimplemented!("cursor-held strategy not implemented yet")
+}
+
+#[cfg(feature = "rocksdb")]
+pub(crate) fn migrate_1_to_2_two_cf(_db_path: &Path) -> Result<(), StoreError> {
+    unimplemented!("two-cf strategy not implemented yet")
+}
+
+#[cfg(feature = "rocksdb")]
+pub(crate) fn migrate_1_to_2_delete_range(
+    _backend: &crate::backend::rocksdb::RocksDBBackend,
+) -> Result<(), StoreError> {
+    unimplemented!("delete-range strategy not implemented yet")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,27 +300,27 @@ mod tests {
         assert_eq!(metadata.schema_version, STORE_SCHEMA_VERSION);
     }
 
-    /// Synthetic load test for `migrate_1_to_2`.
+    /// Synthetic load + migration benchmark for the v1→v2 RECEIPTS re-key.
     ///
-    /// Builds a RocksDB-backed RECEIPTS column family with old-format
-    /// (RLP-encoded `(BlockHash, u64)`) keys and synthetic receipt-shaped
-    /// values, then runs the migration end-to-end and reports timing.
+    /// Loads N synthetic receipts in old-format (RLP) keys, then runs one of
+    /// several migration strategies and reports timing. Strategies share the
+    /// same load path so timings are directly comparable.
+    ///
+    /// Strategy is selected via `ETHREX_MIG_STRATEGY`:
+    /// - `baseline` (default) — current PR: temp-file dump + point lookups
+    /// - `seek-resume` — drop & re-open cursor after each batch flush
+    /// - `cursor-held` — single cursor open across writes
+    /// - `two-cf` — copy to receipts_v2 CF, drop old CF
+    /// - `delete-range` — like cursor-held, single range-delete at the end
     ///
     /// Configuration via env vars:
-    /// - `ETHREX_MIG_RECEIPTS` — number of synthetic receipts to write
-    ///   (default: 100_000; set ~30_000_000 for ~15 GB on disk uncompressed
-    ///   or ~120_000_000 for ~15 GB compressed with LZ4).
-    /// - `ETHREX_MIG_VALUE_BYTES` — average receipt payload size in bytes
-    ///   (default: 480, matching mainnet).
-    /// - `ETHREX_MIG_DIR` — directory to host the synthetic DB. Must be on
-    ///   a fast disk with enough free space. If unset, uses `tempfile::tempdir`
-    ///   (cleaned up automatically). When set, the directory is preserved
-    ///   so the migration can be re-run on the same data.
-    /// - `ETHREX_MIG_TXS_PER_BLOCK` — txs per synthetic block (default: 200).
-    /// - `ETHREX_MIG_LOAD_ONLY=1` — only load the synthetic data and exit
-    ///   (skip the migration). Useful for separating load and migration timings.
-    /// - `ETHREX_MIG_MIGRATE_ONLY=1` — skip the load (assumes ETHREX_MIG_DIR
-    ///   already contains a populated DB) and only time the migration.
+    /// - `ETHREX_MIG_RECEIPTS` — number of synthetic receipts (default 100k).
+    /// - `ETHREX_MIG_VALUE_BYTES` — payload bytes per receipt (default 480).
+    /// - `ETHREX_MIG_DIR` — preserved DB directory; otherwise tempdir.
+    /// - `ETHREX_MIG_TXS_PER_BLOCK` — txs per synthetic block (default 200).
+    /// - `ETHREX_MIG_LOAD_ONLY=1` — load only, skip migration.
+    /// - `ETHREX_MIG_MIGRATE_ONLY=1` — skip load, run strategy only.
+    /// - `ETHREX_MIG_RESULTS_FILE` — append a CSV row to this file.
     ///
     /// Run with:
     ///   cargo test -p ethrex-storage --features rocksdb --release \
@@ -316,6 +348,8 @@ mod tests {
         let txs_per_block = env_usize("ETHREX_MIG_TXS_PER_BLOCK", 200).max(1);
         let load_only = env_flag("ETHREX_MIG_LOAD_ONLY");
         let migrate_only = env_flag("ETHREX_MIG_MIGRATE_ONLY");
+        let strategy =
+            std::env::var("ETHREX_MIG_STRATEGY").unwrap_or_else(|_| "baseline".to_string());
 
         // Either use an explicit dir (preserved across runs) or a tempdir.
         let (db_path, _keep_alive) = match std::env::var("ETHREX_MIG_DIR") {
@@ -331,8 +365,8 @@ mod tests {
         };
 
         eprintln!(
-            "synthetic migration test: receipts={n_receipts} value_bytes={value_bytes} \
-             txs_per_block={txs_per_block} db_path={db_path:?}"
+            "synthetic migration test: strategy={strategy} receipts={n_receipts} \
+             value_bytes={value_bytes} txs_per_block={txs_per_block} db_path={db_path:?}"
         );
 
         let backend = RocksDBBackend::open(&db_path).unwrap();
@@ -424,21 +458,51 @@ mod tests {
         // Drop and re-open to flush memtables and force the migration to read
         // from on-disk SSTs (more representative).
         drop(backend);
-        let backend = RocksDBBackend::open(&db_path).unwrap();
 
-        // ------- Migration phase -------
+        // Snapshot pre-migration disk size for reporting.
+        let pre_migration_bytes = dir_size_bytes(&db_path);
+
+        // ------- Migration phase: dispatch on strategy -------
         let mig_start = Instant::now();
-        migrate_1_to_2(&backend, &db_path).unwrap();
+        match strategy.as_str() {
+            "baseline" => {
+                let backend = RocksDBBackend::open(&db_path).unwrap();
+                migrate_1_to_2(&backend, &db_path).unwrap();
+            }
+            "seek-resume" => {
+                let backend = RocksDBBackend::open(&db_path).unwrap();
+                migrate_1_to_2_seek_resume(&backend).unwrap();
+            }
+            "cursor-held" => {
+                let backend = RocksDBBackend::open(&db_path).unwrap();
+                migrate_1_to_2_cursor_held(&backend).unwrap();
+            }
+            "two-cf" => {
+                migrate_1_to_2_two_cf(&db_path).unwrap();
+            }
+            "delete-range" => {
+                let backend = RocksDBBackend::open(&db_path).unwrap();
+                migrate_1_to_2_delete_range(&backend).unwrap();
+            }
+            other => panic!("unknown ETHREX_MIG_STRATEGY: {other}"),
+        }
         let mig_elapsed = mig_start.elapsed();
 
+        let post_migration_bytes = dir_size_bytes(&db_path);
         let temp_path = db_path.join("migration_v1_v2_keys.tmp");
-        let temp_size = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+        let temp_leftover = std::fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
         eprintln!(
-            "migration complete: {:.1}s ({:.0} receipts/s); temp file leftover: {} bytes",
+            "migration complete (strategy={strategy}): {:.1}s ({:.0} receipts/s); \
+             pre={:.2} GB → post={:.2} GB; temp_leftover={} bytes",
             mig_elapsed.as_secs_f64(),
             n_receipts as f64 / mig_elapsed.as_secs_f64(),
-            temp_size
+            pre_migration_bytes as f64 / 1e9,
+            post_migration_bytes as f64 / 1e9,
+            temp_leftover
         );
+
+        // Re-open for spot-check.
+        let backend = RocksDBBackend::open(&db_path).unwrap();
 
         // ------- Spot-check correctness on a few entries -------
         if !migrate_only {
@@ -451,8 +515,10 @@ mod tests {
                 let block_hash = H256(hash_bytes);
                 let new_key = receipt_key(&block_hash, 0);
                 let old_key = (block_hash, 0u64).encode_to_vec();
-                if txn.get(RECEIPTS, &new_key).unwrap().is_some()
-                    && txn.get(RECEIPTS, &old_key).unwrap().is_none()
+                let table = if strategy == "two-cf" { "receipts_v2" } else { RECEIPTS };
+                if txn.get(table, &new_key).unwrap().is_some()
+                    && (strategy == "two-cf"
+                        || txn.get(RECEIPTS, &old_key).unwrap().is_none())
                 {
                     checks_ok += 1;
                 }
@@ -460,6 +526,57 @@ mod tests {
             eprintln!("correctness spot-check: {checks_ok}/4 sample blocks re-keyed");
             assert!(checks_ok > 0, "migration produced no new-format keys");
         }
+
+        // Append a CSV row if requested.
+        if let Ok(results_file) = std::env::var("ETHREX_MIG_RESULTS_FILE") {
+            use std::io::Write as _;
+            let need_header = !std::path::Path::new(&results_file).exists();
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&results_file)
+                .unwrap();
+            if need_header {
+                writeln!(
+                    f,
+                    "strategy,receipts,value_bytes,migration_secs,migration_per_s,pre_gb,post_gb"
+                )
+                .unwrap();
+            }
+            writeln!(
+                f,
+                "{},{},{},{:.3},{:.0},{:.3},{:.3}",
+                strategy,
+                n_receipts,
+                value_bytes,
+                mig_elapsed.as_secs_f64(),
+                n_receipts as f64 / mig_elapsed.as_secs_f64(),
+                pre_migration_bytes as f64 / 1e9,
+                post_migration_bytes as f64 / 1e9
+            )
+            .unwrap();
+        }
+    }
+
+    #[cfg(feature = "rocksdb")]
+    fn dir_size_bytes(path: &std::path::Path) -> u64 {
+        fn walk(p: &std::path::Path, total: &mut u64) {
+            if let Ok(entries) = std::fs::read_dir(p) {
+                for e in entries.flatten() {
+                    let path = e.path();
+                    if let Ok(md) = e.metadata() {
+                        if md.is_dir() {
+                            walk(&path, total);
+                        } else {
+                            *total += md.len();
+                        }
+                    }
+                }
+            }
+        }
+        let mut total = 0;
+        walk(path, &mut total);
+        total
     }
 
     #[test]
