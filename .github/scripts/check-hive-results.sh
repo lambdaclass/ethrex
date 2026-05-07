@@ -63,6 +63,19 @@ KNOWN_FLAKY_TESTS=(
   "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=False, Invalid P8"
   "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=True, Invalid P8"
   "Invalid Missing Ancestor Syncing ReOrg, Transaction Value, EmptyTxs=False, CanonicalReOrg=False, Invalid P9"
+  # Engine withdrawal Block Re-Org tests (Paris) — spec-correct rejections
+  # under execution-apis PR #786 (`canonical_link_height < stored_finalized`
+  # → `-38006 TooDeepReorg`). The hive engine simulator has not been
+  # updated to PR #786 semantics, so these continue to assert the old
+  # accept-deep-reorg behavior. Re-enable once hive catches up.
+  "Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload (Paris)"
+  "Withdrawals Fork on Block 1 - 8 Block Re-Org, Sync (Paris)"
+  "Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload (Paris)"
+  "Withdrawals Fork on Block 8 - 10 Block Re-Org Sync (Paris)"
+  "Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org (Paris)"
+  "Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org Sync (Paris)"
+  "Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org (Paris)"
+  "Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org Sync (Paris)"
 )
 
 # Build a jq filter that excludes known-flaky tests.

@@ -8,6 +8,30 @@ each ef-tests job summary and posts as a sticky PR comment.
 > is what the test harness actually consumes. The buckets and counts below
 > mirror that constant.
 
+## Hive — Engine withdrawal Block Re-Org tests (Paris) — 8 tests
+
+Excluded via `KNOWN_FLAKY_TESTS` in `.github/scripts/check-hive-results.sh`
+(substring-matched and ignored by the L1 hive job's failure check).
+
+**Reason.** These tests assert the old "accept deep reorg" behaviour. Under
+[execution-apis PR #786](https://github.com/ethereum/execution-apis/pull/786)
+the EL must reject FCUs whose `canonical_link_height < stored_finalized`
+with the new `-38006 TooDeepReorg` error, and ethrex implements that. The
+hive engine simulator has not been updated to PR #786 semantics, so it
+treats the spec-correct rejection as a failure. Re-enable once hive catches
+up.
+
+Affected test names (all under `engine-withdrawals`, fork Paris):
+
+- `Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload (Paris)`
+- `Withdrawals Fork on Block 1 - 8 Block Re-Org, Sync (Paris)`
+- `Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload (Paris)`
+- `Withdrawals Fork on Block 8 - 10 Block Re-Org Sync (Paris)`
+- `Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org (Paris)`
+- `Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org Sync (Paris)`
+- `Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org (Paris)`
+- `Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org Sync (Paris)`
+
 ## EF Tests — Stateless coverage narrowed to EIP-8025 optional-proofs
 
 `make -C tooling/ef_tests/blockchain test` invokes `test-stateless-zkevm`
