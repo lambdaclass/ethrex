@@ -3130,7 +3130,11 @@ fn build_ascending_ancestor_headers_bytes(
     let mut current_header = walk_start_header.clone();
     while current_header.hash() != first_needed_block_hash {
         let parent_hash = current_header.parent_hash;
-        let current_number = current_header.number - 1;
+        let current_number = current_header.number.checked_sub(1).ok_or_else(|| {
+            ChainError::WitnessGeneration(
+                "walked past genesis without reaching first needed block hash".to_string(),
+            )
+        })?;
         current_header = storage
             .get_block_header_by_hash(parent_hash)?
             .ok_or_else(|| {
