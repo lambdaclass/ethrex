@@ -344,21 +344,14 @@ impl<'a> VM<'a> {
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    // EELS set_delegation: refund STATE_BYTES_PER_NEW_ACCOUNT * cpsb for each
-                    // existing authority. Per steel-team confirmed cross-client bug:
-                    // block.state_gas_used must INCLUDE this refund, otherwise it is higher
-                    // than expected. Two effects:
-                    //   1. state_gas_reservoir += STATE_NEW    (sender refund at tx finalize)
-                    //   2. state_gas_used      -= STATE_NEW    (block-level accounting)
-                    //   3. intrinsic_state_gas_charged -= STATE_NEW (preserve floor invariant)
-                    let refund = self.state_gas_new_account;
+                    // EELS set_delegation: `state_gas_reservoir += STATE_BYTES_PER_NEW_ACCOUNT * cpsb`.
+                    // `tx_env.intrinsic_state_gas` stays immutable — the refund only flows
+                    // to the reservoir so the sender gets it back at tx finalization; block
+                    // accounting still sees the full intrinsic state charge.
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
-                        .checked_add(refund)
+                        .checked_add(self.state_gas_new_account)
                         .ok_or(InternalError::Overflow)?;
-                    self.state_gas_used = self.state_gas_used.saturating_sub(refund);
-                    self.intrinsic_state_gas_charged =
-                        self.intrinsic_state_gas_charged.saturating_sub(refund);
                 } else {
                     refunded_gas = refunded_gas
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
