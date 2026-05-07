@@ -36,9 +36,10 @@ async fn generated_witness_has_ancestor_headers_in_ascending_order() {
         .map(|b| BlockHeader::decode(b).unwrap().number)
         .collect();
 
-    assert!(
-        numbers.windows(2).all(|w| w[0] < w[1]),
-        "ancestor headers must be ascending, got {numbers:?}"
+    assert_eq!(
+        numbers,
+        vec![block_1.header.number, block_2.header.number],
+        "expected ancestor headers [block_1, block_2] in ascending order, got {numbers:?}"
     );
 }
 
