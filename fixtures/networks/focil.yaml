@@ -52,14 +52,14 @@ additional_services:
 dora_params:
   image: bbusa/dora:focil
 
-# `:6.0.5` (default) produces an SSZ genesis state whose
-# latest_block_header.body_root disagrees with the EL genesis block root
-# when gloas is active at epoch 0 with mainnet preset. Lodestar:focil
-# refuses to start with "Genesis block root ... does not match genesis
-# state latest block root". The pandaops `bbusa-fix-gloas-genesis` tag
-# patches that.
+# `:6.0.5` (default) and the experimental `:bbusa-fix-gloas-genesis`
+# tag both produce SSZ genesis states whose latest_block_header
+# disagrees with the EL genesis block root when gloas is active at
+# epoch 0 with mainnet preset; lodestar:focil aborts at startup with
+# "Genesis block root ... does not match genesis state latest block
+# root". `:6.0.6` is the next published tag — try it first.
 ethereum_genesis_generator_params:
-  image: ethpandaops/ethereum-genesis-generator:bbusa-fix-gloas-genesis
+  image: ethpandaops/ethereum-genesis-generator:6.0.6
 
 spamoor_params:
   spammers:
