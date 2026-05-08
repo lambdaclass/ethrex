@@ -1,7 +1,7 @@
 pub mod db;
 mod tracing;
 
-use super::BlockExecutionResult;
+use super::{BlockExecutionResult, TxGasBreakdown};
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -176,7 +176,9 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
-        let mut receipts = Vec::new();
+        let n_txs = block.body.transactions.len();
+        let mut receipts = Vec::with_capacity(n_txs);
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -229,6 +231,8 @@ impl LEVM {
             }
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -324,6 +328,7 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                tx_gas_breakdowns,
             },
             bal,
         ))
@@ -393,28 +398,33 @@ impl LEVM {
             // contracts — SystemContractCallFailed takes priority over BAL errors.
             // The BAL may be inconsistent for blocks that are fundamentally invalid
             // due to a failing system contract.
-            let (receipts, block_gas_used, mut unread_storage_reads, mut unaccessed_pure_accounts) =
-                match parallel_result {
-                    Ok(result) => result,
-                    Err(parallel_err) => {
-                        let last_tx_idx =
-                            u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
-                        if Self::seed_db_from_bal(
-                            db,
-                            bal,
-                            last_tx_idx,
-                            &validation_index.accounts_by_min_index,
-                        )
-                        .is_ok()
-                            && let VMType::L1 = vm_type
-                            && let Err(e @ EvmError::SystemContractCallFailed(_)) =
-                                extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
-                        {
-                            return Err(e);
-                        }
-                        return Err(parallel_err);
+            let (
+                receipts,
+                block_gas_used,
+                mut unread_storage_reads,
+                mut unaccessed_pure_accounts,
+                tx_gas_breakdowns,
+            ) = match parallel_result {
+                Ok(result) => result,
+                Err(parallel_err) => {
+                    let last_tx_idx =
+                        u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
+                    if Self::seed_db_from_bal(
+                        db,
+                        bal,
+                        last_tx_idx,
+                        &validation_index.accounts_by_min_index,
+                    )
+                    .is_ok()
+                        && let VMType::L1 = vm_type
+                        && let Err(e @ EvmError::SystemContractCallFailed(_)) =
+                            extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
+                    {
+                        return Err(e);
                     }
-                };
+                    return Err(parallel_err);
+                }
+            };
 
             // Seed main db with post-tx state (excluding withdrawal effects) so
             // request extraction system calls see user-queued requests on predeploys.
@@ -508,6 +518,7 @@ impl LEVM {
                     receipts,
                     requests,
                     block_gas_used,
+                    tx_gas_breakdowns,
                 },
                 None,
             ));
@@ -524,7 +535,9 @@ impl LEVM {
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
-        let mut receipts = Vec::new();
+        let n_txs = block.body.transactions.len();
+        let mut receipts = Vec::with_capacity(n_txs);
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -582,6 +595,9 @@ impl LEVM {
                 false,
                 crypto,
             )?;
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
@@ -691,6 +707,7 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                tx_gas_breakdowns,
             },
             bal,
         ))
@@ -994,6 +1011,7 @@ impl LEVM {
             u64,
             FxHashSet<(Address, H256)>,
             FxHashSet<Address>,
+            Vec<TxGasBreakdown>,
         ),
         EvmError,
     > {
@@ -1168,6 +1186,7 @@ impl LEVM {
         //    position invalidates the block with GAS_ALLOWANCE_EXCEEDED.
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
         for (tx_idx, _, report, _, _, _, _, _) in &exec_results {
             let (tx, _) = txs_with_sender
                 .get(*tx_idx)
@@ -1181,6 +1200,8 @@ impl LEVM {
                     header.gas_limit,
                 )?;
             }
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(*tx_idx, tx.hash(), report));
 
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
@@ -1301,6 +1322,7 @@ impl LEVM {
             block_gas_used,
             unread_storage_reads,
             unaccessed_pure_accounts,
+            tx_gas_breakdowns,
         ))
     }
 
