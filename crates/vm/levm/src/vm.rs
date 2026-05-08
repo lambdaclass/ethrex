@@ -1039,12 +1039,31 @@ impl<'a> VM<'a> {
                 // `regular_gas_reclassified` and should not subtract from the gross
                 // spill — see `test_top_halt_phantom_drain_does_not_cancel_real_spill`.
                 let entry = self.state_gas_reservoir_at_top_message_entry;
-                let drain_cap = self
-                    .state_gas_credit_against_drain
-                    .min(self.regular_gas_reclassified);
+                // EIP-8037 (PR #2689) top-halt reclassification:
+                // every byte of gross spill that wasn't already reclassified at a
+                // deeper halt boundary moves into the regular dimension here.
+                //
+                // `state_gas_credit_against_drain` is intentionally NOT subtracted.
+                // It tracks refunds that couldn't apply to outstanding spill
+                // (e.g. the refund-target was reservoir-funded, or a sibling halt
+                // already cleared outstanding). Those refunds already affect:
+                //   - `state_gas_refund_absorbed` (reduces net state_gas at finalize)
+                //   - `state_gas_reservoir` (refill via credit_state_gas_refund)
+                // so they're irrelevant to top-halt reclassification of gross spill.
+                //
+                // The previous formula subtracted `min(credit_against_drain,
+                // regular_gas_reclassified)` to fix the phantom-drain case
+                // (`test_top_halt_phantom_drain_does_not_cancel_real_spill`), but
+                // it overcorrected on nested-halt cases where a deeper halt's spill
+                // wasn't reclassified at THAT halt's boundary (because the spill
+                // belonged to a shallower frame's snapshot range). See
+                // bal-devnet-6 block 597 tx 1: 3 nested CREATEs all halting,
+                // gross spill 2*STATE_NEW, `regular_reclassified=STATE_NEW` from
+                // the sub-frame halt, `credit_against_drain=STATE_NEW` from the
+                // sub-frame's own refund — the cap formula gave reclassify=0,
+                // dropping STATE_NEW from the regular dim.
                 let reclassify = self
                     .state_gas_spill
-                    .saturating_sub(drain_cap)
                     .saturating_sub(self.regular_gas_reclassified);
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
