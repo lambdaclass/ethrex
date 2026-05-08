@@ -1,3 +1,4 @@
+pub use crate::struct_log_tracer::{LevmStructLogTracer, StructLogConfig};
 use crate::{
     errors::{ContextResult, InternalError, TxResult, VMError},
     vm::VM,

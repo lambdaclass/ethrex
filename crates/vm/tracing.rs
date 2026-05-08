@@ -1,6 +1,7 @@
 use crate::backends::levm::LEVM;
-use ethrex_common::tracing::{CallTrace, PrestateResult};
+use ethrex_common::tracing::{CallTrace, PrestateResult, StructLogResult};
 use ethrex_common::types::Block;
+pub use ethrex_levm::tracing::StructLogConfig;
 
 use crate::{Evm, EvmError};
 
@@ -58,6 +59,32 @@ impl Evm {
             tx,
             diff_mode,
             include_empty,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Executes a single tx and captures per-opcode struct-log trace (EIP-3155).
+    /// Assumes that the received state already contains changes from previous transactions.
+    pub fn trace_tx_struct_log(
+        &mut self,
+        block: &Block,
+        tx_index: usize,
+        cfg: StructLogConfig,
+    ) -> Result<StructLogResult, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
+        LEVM::trace_tx_struct_log(
+            &mut self.db,
+            &block.header,
+            tx,
+            cfg,
             self.vm_type,
             self.crypto.as_ref(),
         )

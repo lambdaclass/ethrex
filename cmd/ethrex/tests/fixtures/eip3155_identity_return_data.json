@@ -1,0 +1,130 @@
+{
+  "gas": 21147,
+  "failed": false,
+  "returnValue": "0x",
+  "structLogs": [
+    {
+      "pc": 0,
+      "op": "PUSH1",
+      "gas": 79000,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": []
+    },
+    {
+      "pc": 2,
+      "op": "PUSH1",
+      "gas": 78997,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": [
+        "0x1"
+      ]
+    },
+    {
+      "pc": 4,
+      "op": "MSTORE8",
+      "gas": 78994,
+      "gasCost": 6,
+      "depth": 1,
+      "stack": [
+        "0x1",
+        "0x0"
+      ]
+    },
+    {
+      "pc": 5,
+      "op": "PUSH1",
+      "gas": 78988,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": []
+    },
+    {
+      "pc": 7,
+      "op": "PUSH1",
+      "gas": 78985,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": [
+        "0x1"
+      ]
+    },
+    {
+      "pc": 9,
+      "op": "PUSH1",
+      "gas": 78982,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": [
+        "0x1",
+        "0x0"
+      ]
+    },
+    {
+      "pc": 11,
+      "op": "PUSH1",
+      "gas": 78979,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": [
+        "0x1",
+        "0x0",
+        "0x1"
+      ]
+    },
+    {
+      "pc": 13,
+      "op": "PUSH1",
+      "gas": 78976,
+      "gasCost": 3,
+      "depth": 1,
+      "stack": [
+        "0x1",
+        "0x0",
+        "0x1",
+        "0x0"
+      ]
+    },
+    {
+      "pc": 15,
+      "op": "GAS",
+      "gas": 78973,
+      "gasCost": 2,
+      "depth": 1,
+      "stack": [
+        "0x1",
+        "0x0",
+        "0x1",
+        "0x0",
+        "0x4"
+      ]
+    },
+    {
+      "pc": 16,
+      "op": "STATICCALL",
+      "gas": 78971,
+      "gasCost": 77739,
+      "depth": 1,
+      "stack": [
+        "0x1",
+        "0x0",
+        "0x1",
+        "0x0",
+        "0x4",
+        "0x1347b"
+      ]
+    },
+    {
+      "pc": 17,
+      "op": "STOP",
+      "gas": 78853,
+      "gasCost": 0,
+      "depth": 1,
+      "stack": [
+        "0x1"
+      ],
+      "returnData": "0x01"
+    }
+  ]
+}

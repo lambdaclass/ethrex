@@ -5,6 +5,7 @@ use ethrex_common::{
     serde_utils,
     tracing::{CallTraceFrame, PrestateResult},
 };
+use ethrex_vm::tracing::StructLogConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -39,12 +40,30 @@ struct TraceConfig {
     reexec: Option<u32>,
 }
 
+/// The tracer variant to use for a debug trace request.
+///
+/// **Divergence from geth**: geth's default (when no `tracer` field is provided) is the
+/// struct-log / struct logger.  ethrex keeps `CallTracer` as the default for compatibility
+/// with Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
+/// (Decision D1, confirmed before merge.)
+///
+/// **Geth tracer-name note**: geth does NOT register the struct logger under any string name
+/// in its `DefaultDirectory`; it is only the implicit default when `config.Tracer == nil`
+/// (see `eth/tracers/api.go:1022`).  Because ethrex needs an explicit name for this
+/// variant, we use `"structLogger"` (matching geth's Go constructor `NewStructLogger`) as
+/// the primary name, and accept `"structLog"` as an alias for convenience.
+/// goevmlab and similar tooling send `"structLogger"` when they want per-opcode traces.
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum TracerType {
     #[default]
     CallTracer,
     PrestateTracer,
+    /// Per-opcode (EIP-3155) struct-log tracer.
+    /// Accepts both `"structLogger"` (primary, matches geth's `NewStructLogger` name) and
+    /// `"structLog"` (alias).
+    #[serde(alias = "structLog")]
+    StructLogger,
 }
 
 #[derive(Deserialize, Default)]
@@ -73,6 +92,42 @@ impl PrestateTracerConfig {
             ));
         }
         Ok(())
+    }
+}
+
+/// Configuration for the `structLogger` / `structLog` tracer (EIP-3155).
+///
+/// All fields default to `false` / `0` when omitted, matching geth's struct-logger defaults.
+///
+/// - `disableStack` — omit `stack` from each step.
+/// - `enableMemory` — include 32-byte memory chunks in each step.
+/// - `disableStorage` — skip SLOAD/SSTORE storage capture.
+/// - `enableReturnData` — include `returnData` from the previous sub-call.
+/// - `limit` — stop collecting after this many log entries; `0` means unlimited.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct StructLogTracerConfig {
+    #[serde(default)]
+    disable_stack: bool,
+    #[serde(default)]
+    enable_memory: bool,
+    #[serde(default)]
+    disable_storage: bool,
+    #[serde(default)]
+    enable_return_data: bool,
+    #[serde(default)]
+    limit: usize,
+}
+
+impl From<StructLogTracerConfig> for StructLogConfig {
+    fn from(c: StructLogTracerConfig) -> Self {
+        StructLogConfig {
+            disable_stack: c.disable_stack,
+            enable_memory: c.enable_memory,
+            disable_storage: c.disable_storage,
+            enable_return_data: c.enable_return_data,
+            limit: c.limit,
+        }
     }
 }
 
@@ -170,6 +225,21 @@ impl RpcHandler for TraceTransactionRequest {
                     PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
                     PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
                 }
+            }
+            TracerType::StructLogger => {
+                let cfg: StructLogTracerConfig = self
+                    .trace_config
+                    .tracer_config
+                    .as_ref()
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()?
+                    .unwrap_or_default();
+                let result = context
+                    .blockchain
+                    .trace_transaction_struct_log(self.tx_hash, reexec, timeout, cfg.into())
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                Ok(serde_json::to_value(result)?)
             }
         }
     }
@@ -280,6 +350,25 @@ impl RpcHandler for TraceBlockByNumberRequest {
                         })
                     })
                     .collect::<Result<_, serde_json::Error>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
+            TracerType::StructLogger => {
+                let cfg: StructLogTracerConfig = self
+                    .trace_config
+                    .tracer_config
+                    .as_ref()
+                    .map(|v| serde_json::from_value(v.clone()))
+                    .transpose()?
+                    .unwrap_or_default();
+                let struct_log_traces = context
+                    .blockchain
+                    .trace_block_struct_log(block, reexec, timeout, cfg.into())
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let block_trace: BlockTrace<_> = struct_log_traces
+                    .into_iter()
+                    .map(|(hash, result)| (hash, result).into())
+                    .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
         }

@@ -16,3 +16,5 @@ mod memory_tests;
 mod precompile_tests;
 mod prestate_tracer_tests;
 mod stack_tests;
+mod struct_log_fixture_gen;
+mod struct_log_tracer_tests;
