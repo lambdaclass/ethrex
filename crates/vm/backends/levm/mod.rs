@@ -240,6 +240,32 @@ impl LEVM {
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
+            // EIP-8037 debug: gated on env var `EIP8037_DEBUG`. Aggregator-side per-tx
+            // dump for the SEQUENTIAL `execute_block` path (RPC/sim/etc.).
+            if std::env::var("EIP8037_DEBUG").is_ok() {
+                eprintln!(
+                    "EIP8037_DEBUG aggregator-seq-eb block={} tx_idx={} tx_hash={:?} \
+                     tx_type={:?} is_create={} result={:?} tx_gas_limit={} \
+                     report_gas_used={} report_gas_spent={} report_state_gas={} \
+                     report_gas_refunded={} tx_regular={} \
+                     running_block_regular={} running_block_state={}",
+                    block.header.number,
+                    tx_idx,
+                    tx.hash(),
+                    tx.tx_type(),
+                    matches!(tx.to(), TxKind::Create),
+                    report.result,
+                    tx.gas_limit(),
+                    report.gas_used,
+                    report.gas_spent,
+                    report.state_gas_used,
+                    report.gas_refunded,
+                    tx_regular_gas,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                );
+            }
+
             if is_amsterdam {
                 // Amsterdam+: block gas = max(regular_sum, state_sum)
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
@@ -274,6 +300,27 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // EIP-8037 debug: end-of-block summary for sequential `execute_block` path.
+        if std::env::var("EIP8037_DEBUG").is_ok() {
+            let computed_max = block_regular_gas_used.max(block_state_gas_used);
+            #[expect(clippy::as_conversions, reason = "diff print only")]
+            let delta = computed_max as i128 - block.header.gas_used as i128;
+            eprintln!(
+                "EIP8037_DEBUG block_summary-seq-eb block={} hash={:?} txs={} \
+                 computed_regular={} computed_state={} computed_max={} \
+                 header_gas_used={} delta={} {}",
+                block.header.number,
+                block.header.hash(),
+                block.body.transactions.len(),
+                block_regular_gas_used,
+                block_state_gas_used,
+                computed_max,
+                block.header.gas_used,
+                delta,
+                if delta == 0 { "OK" } else { "DIVERGENCE" },
+            );
         }
 
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
@@ -599,6 +646,32 @@ impl LEVM {
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
 
+            // EIP-8037 debug: gated on env var `EIP8037_DEBUG`. Aggregator-side per-tx
+            // dump for the SEQUENTIAL `execute_block_pipeline` no-BAL branch (FullSync).
+            if std::env::var("EIP8037_DEBUG").is_ok() {
+                eprintln!(
+                    "EIP8037_DEBUG aggregator-seq-pipe block={} tx_idx={} tx_hash={:?} \
+                     tx_type={:?} is_create={} result={:?} tx_gas_limit={} \
+                     report_gas_used={} report_gas_spent={} report_state_gas={} \
+                     report_gas_refunded={} tx_regular={} \
+                     running_block_regular={} running_block_state={}",
+                    block.header.number,
+                    tx_idx,
+                    tx.hash(),
+                    tx.tx_type(),
+                    matches!(tx.to(), TxKind::Create),
+                    report.result,
+                    tx.gas_limit(),
+                    report.gas_used,
+                    report.gas_spent,
+                    report.state_gas_used,
+                    report.gas_refunded,
+                    tx_regular_gas,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                );
+            }
+
             if is_amsterdam {
                 // Amsterdam+: block gas = max(regular_sum, state_sum)
                 block_gas_used = block_regular_gas_used.max(block_state_gas_used);
@@ -628,6 +701,28 @@ impl LEVM {
             );
 
             receipts.push(receipt);
+        }
+
+        // EIP-8037 debug: end-of-block summary for SEQUENTIAL `execute_block_pipeline`
+        // no-BAL branch (FullSync). `grep DIVERGENCE` to find the failing block at a glance.
+        if std::env::var("EIP8037_DEBUG").is_ok() {
+            let computed_max = block_regular_gas_used.max(block_state_gas_used);
+            #[expect(clippy::as_conversions, reason = "diff print only")]
+            let delta = computed_max as i128 - block.header.gas_used as i128;
+            eprintln!(
+                "EIP8037_DEBUG block_summary-seq-pipe block={} hash={:?} txs={} \
+                 computed_regular={} computed_state={} computed_max={} \
+                 header_gas_used={} delta={} {}",
+                block.header.number,
+                block.header.hash(),
+                block.body.transactions.len(),
+                block_regular_gas_used,
+                block_state_gas_used,
+                computed_max,
+                block.header.gas_used,
+                delta,
+                if delta == 0 { "OK" } else { "DIVERGENCE" },
+            );
         }
 
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
