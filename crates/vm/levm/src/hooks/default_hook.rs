@@ -652,6 +652,10 @@ pub fn transfer_value(vm: &mut VM<'_>) -> Result<(), VMError> {
         let value = vm.current_call_frame.msg_value;
         let to = vm.current_call_frame.to;
 
+        if value.is_zero() {
+            return Ok(());
+        }
+
         vm.increase_account_balance(to, value)?;
 
         // EIP-7708: Emit transfer log for nonzero-value transactions to DIFFERENT accounts
