@@ -1186,6 +1186,56 @@ impl LEVM {
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
             block_state_gas_used = block_state_gas_used.saturating_add(tx_state_gas);
+
+            // EIP-8037 debug: gated on env var `EIP8037_DEBUG`. Aggregator-side per-tx
+            // dump — pairs with the vm-side log (correlate by tx_hash). Off by default.
+            if std::env::var("EIP8037_DEBUG").is_ok() {
+                eprintln!(
+                    "EIP8037_DEBUG aggregator block={} tx_idx={} tx_hash={:?} \
+                     tx_type={:?} is_create={} result={:?} tx_gas_limit={} \
+                     report_gas_used={} report_gas_spent={} report_state_gas={} \
+                     report_gas_refunded={} tx_regular={} \
+                     running_block_regular={} running_block_state={}",
+                    header.number,
+                    *tx_idx,
+                    tx.hash(),
+                    tx.tx_type(),
+                    matches!(tx.to(), ethrex_common::types::TxKind::Create),
+                    report.result,
+                    tx.gas_limit(),
+                    report.gas_used,
+                    report.gas_spent,
+                    report.state_gas_used,
+                    report.gas_refunded,
+                    tx_regular_gas,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                );
+            }
+        }
+
+        // EIP-8037 debug: end-of-block summary. Compares computed vs canonical header
+        // gas_used so divergent blocks pop out at a glance instead of needing to scan
+        // 45+ per-tx lines. Off by default.
+        if std::env::var("EIP8037_DEBUG").is_ok() {
+            let computed_max = block_regular_gas_used.max(block_state_gas_used);
+            let header_gas_used = header.gas_used;
+            #[expect(clippy::as_conversions, reason = "diff print only")]
+            let delta = computed_max as i128 - header_gas_used as i128;
+            eprintln!(
+                "EIP8037_DEBUG block_summary block={} hash={:?} txs={} \
+                 computed_regular={} computed_state={} computed_max={} \
+                 header_gas_used={} delta={} {}",
+                header.number,
+                header.hash(),
+                exec_results.len(),
+                block_regular_gas_used,
+                block_state_gas_used,
+                computed_max,
+                header_gas_used,
+                delta,
+                if delta == 0 { "OK" } else { "DIVERGENCE" },
+            );
         }
         let block_gas_used = block_regular_gas_used.max(block_state_gas_used);
         // EIP-7778: block-level overflow check using pre-refund gas.

@@ -27,7 +27,7 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    types::{AccessListEntry, Code, Fork, Log, Transaction, TxKind, fee_config::FeeConfig},
 };
 use ethrex_crypto::Crypto;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1080,6 +1080,61 @@ impl<'a> VM<'a> {
         let net_state_gas_used = self
             .state_gas_used
             .saturating_sub(execution_state_gas_refund);
+
+        // EIP-8037 debug: gated on env var `EIP8037_DEBUG`. Dumps the per-tx VM state
+        // that feeds the regular-gas formula in default_hook.rs:281-285. Used to
+        // cross-reference against canonical (geth/EELS) and pinpoint which field
+        // diverges. Off by default — no perf impact when unset.
+        if std::env::var("EIP8037_DEBUG").is_ok() {
+            #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
+            let gas_remaining = self.current_call_frame.gas_remaining.max(0) as u64;
+            let raw_consumed = self.env.gas_limit.saturating_sub(gas_remaining);
+            // floor is fallible; in a debug context don't propagate — log 0 on failure.
+            let floor = self.get_min_gas_used().unwrap_or(0);
+            // Recompute regular_gas as default_hook would (post-effective_regular,
+            // pre-floor) so we see whether the floor clamp kicked in.
+            let regular_pre_floor = raw_consumed
+                .saturating_sub(self.intrinsic_state_gas_charged)
+                .saturating_sub(self.state_gas_reservoir_initial)
+                .saturating_sub(self.state_gas_spill)
+                .saturating_add(self.regular_gas_reclassified);
+            eprintln!(
+                "EIP8037_DEBUG vm tx_hash={:?} result={:?} is_create={} \
+                 gas_limit={} gas_remaining={} raw_consumed={} \
+                 intrinsic_state={} reservoir_initial={} state_gas_used_gross={} \
+                 state_gas_spill={} spill_outstanding={} credit_against_drain={} \
+                 regular_reclassified={} refund_absorbed={} refund_pending={} \
+                 net_state_gas={} regular_pre_floor={} floor={} \
+                 effective_regular={} ctx_gas_used={} substate_refunded_gas={} \
+                 cpsb={} state_gas_new_account={} state_gas_storage_set={} \
+                 state_gas_auth_total={}",
+                self.tx.hash(),
+                ctx_result.result,
+                matches!(self.tx.to(), TxKind::Create),
+                self.env.gas_limit,
+                gas_remaining,
+                raw_consumed,
+                self.intrinsic_state_gas_charged,
+                self.state_gas_reservoir_initial,
+                self.state_gas_used,
+                self.state_gas_spill,
+                self.state_gas_spill_outstanding,
+                self.state_gas_credit_against_drain,
+                self.regular_gas_reclassified,
+                self.state_gas_refund_absorbed,
+                self.state_gas_refund_pending,
+                net_state_gas_used,
+                regular_pre_floor,
+                floor,
+                regular_pre_floor.max(floor),
+                ctx_result.gas_used,
+                self.substate.refunded_gas,
+                self.cost_per_state_byte,
+                self.state_gas_new_account,
+                self.state_gas_storage_set,
+                self.state_gas_auth_total,
+            );
+        }
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
