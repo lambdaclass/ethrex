@@ -1001,12 +1001,10 @@ impl<'a> VM<'a> {
                 //
                 // In ethrex's flat-reservoir model: `state_gas_spill` accumulates the
                 // gross lifetime spill (never decremented). At the top message:
-                //   `gross_spill - credit_against_drain - already_reclassified`
-                // gives the residual still to be re-classified, where:
-                //   - `credit_against_drain` excludes credits applied to drain (which
-                //     belong in the state dimension, not regular).
-                //   - `already_reclassified` deduplicates against deeper-frame halts
-                //     that already moved parts of the spill into the regular dim.
+                //   `gross_spill - already_reclassified`
+                // gives the residual still to be re-classified, where
+                // `already_reclassified` deduplicates against deeper-frame halts that
+                // already moved parts of the spill into the regular dim.
                 //
                 // The previous non-CREATE-tx branch used
                 // `max(spill_outstanding, reservoir_surplus)`, which dropped the
@@ -1015,25 +1013,19 @@ impl<'a> VM<'a> {
                 // whenever a credit only partially cancelled outstanding spill — see
                 // `test_top_halt_after_partial_credit_to_spill_diverges_from_eels`.
                 //
-                // `credit_against_drain` is capped by `regular_gas_reclassified` to
-                // distinguish "real drain" (a credit against a deeper-frame spill that
-                // has already been reclassified to regular dim) from "phantom drain"
-                // (a credit against a charge that itself didn't spill — e.g., a charge
-                // funded entirely from a reservoir refilled by an earlier spill-refund).
-                // Real drain SHOULD be excluded from regular reclassification (it's
-                // already counted in `regular_gas_reclassified` from the deeper halt).
-                // Phantom drain MUST NOT be excluded — doing so would lose the original
-                // gross spill from regular dim. The cap keeps EELS parity for the cases
-                // motivating PR #2689 / #6558 while fixing the
-                // refund-of-un-spilled-charge case where `credit_against_drain` exceeds
-                // `regular_gas_reclassified` and should not subtract from the gross
-                // spill — see `test_top_halt_phantom_drain_does_not_cancel_real_spill`.
-                let drain_cap = self
-                    .state_gas_credit_against_drain
-                    .min(self.regular_gas_reclassified);
+                // `state_gas_credit_against_drain` plays no role here: drain credits
+                // already affect `state_gas_refund_absorbed` (reduces net state-gas at
+                // finalize) and refill `state_gas_reservoir` via `credit_state_gas_refund`,
+                // so they have no further role in top-halt reclassification. A prior
+                // formula subtracted `min(credit_against_drain, regular_gas_reclassified)`
+                // from the gross spill, but that double-counts the already-reclassified
+                // amount whenever a deeper halt has reclassified its subtree's spill
+                // (e.g. nested CREATEs that all halt) — see
+                // `test_top_halt_phantom_drain_does_not_cancel_real_spill` for the
+                // phantom-drain case (cap was already 0) and bal-devnet-6 block 597 for
+                // the nested-halt case the cap broke.
                 let reclassify = self
                     .state_gas_spill
-                    .saturating_sub(drain_cap)
                     .saturating_sub(self.regular_gas_reclassified);
                 self.regular_gas_reclassified =
                     self.regular_gas_reclassified.saturating_add(reclassify);
