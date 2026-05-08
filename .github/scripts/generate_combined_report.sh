@@ -162,7 +162,7 @@ check_response "$block_time_response" "block time"
 version_response=$(prometheus_query "eth_exe_web3_client_version")
 
 # For ethrex: use ethrex_info with separate version/branch/commit labels
-ethrex_info_response=$(prometheus_query 'ethrex_info{instance=~"ethrex-mainnet-1:.*"}')
+ethrex_info_response=$(prometheus_query 'ethrex_info{instance=~"ethrex-mainnet-2:.*"}')
 
 # Extract version for reth/geth/nethermind by instance pattern (bash 3.2 compatible)
 # Extracts only the version portion (e.g., "v1.2.3" from "Client/v1.2.3/platform")
@@ -181,7 +181,7 @@ ethrex_info_commit=$(jq -r '.data.result[0].metric.commit // ""' <<<"$ethrex_inf
 if [[ -n "$ethrex_info_version" && -n "$ethrex_info_branch" && -n "$ethrex_info_commit" ]]; then
   version_ethrex="v${ethrex_info_version}-${ethrex_info_branch}-${ethrex_info_commit:0:8}"
 else
-  version_ethrex=$(get_version_by_instance "^ethrex-mainnet-1:")
+  version_ethrex=$(get_version_by_instance "^ethrex-mainnet-2:")
 fi
 : "${version_ethrex:=unknown}"
 

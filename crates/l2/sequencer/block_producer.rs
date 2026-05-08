@@ -16,7 +16,7 @@ use ethrex_common::H256;
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{
-    EthClient,
+    EthClient, SubscriptionManager, SubscriptionManagerProtocol,
     clients::{EthClientError, Overrides},
 };
 use ethrex_storage::Store;
@@ -35,6 +35,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
+
 use std::str::FromStr;
 
 use super::errors::BlockProducerError;
@@ -63,6 +64,8 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
+    /// Actor handle for sending new block headers to WS subscribers.
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -84,6 +87,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
             block_time_ms,
@@ -122,6 +126,7 @@ impl BlockProducer {
             block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
+            subscription_manager,
         })
     }
 
@@ -201,6 +206,8 @@ impl BlockProducer {
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+        // Save the header for newHeads notifications before block is moved into store_block.
+        let block_header = block.header.clone();
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;
@@ -216,6 +223,11 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+
+        // Notify all eth_subscribe("newHeads") subscribers.
+        if let Some(ref manager) = self.subscription_manager {
+            let _ = manager.new_head(block_header);
+        }
 
         metrics!(
             METRICS_BLOCKS.set_block_number(block_number);
@@ -291,6 +303,7 @@ impl BlockProducer {
 
 #[actor(protocol = BlockProducerProtocol)]
 impl BlockProducer {
+    #[expect(clippy::too_many_arguments)]
     pub async fn spawn(
         store: Store,
         rollup_store: StoreRollup,
@@ -299,6 +312,7 @@ impl BlockProducer {
         sequencer_state: SequencerState,
         router_address: Address,
         l2_gas_limit: u64,
+        subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
         let block_producer = Self::new(
             &cfg.block_producer,
@@ -309,6 +323,7 @@ impl BlockProducer {
             sequencer_state,
             router_address,
             l2_gas_limit,
+            subscription_manager,
         )?;
         let actor_ref = block_producer.start_with_backend(Backend::Blocking);
         Ok(actor_ref)

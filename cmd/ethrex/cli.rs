@@ -159,6 +159,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "no-precompile-cache",
+        action = ArgAction::SetTrue,
+        help = "Disable the per-block precompile result cache (benchmarking only).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_PRECOMPILE_CACHE"
+    )]
+    pub no_precompile_cache: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -450,6 +458,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            no_precompile_cache: false,
         }
     }
 }
@@ -641,6 +650,7 @@ impl Subcommand {
                     BlockchainOptions {
                         r#type: blockchain_type,
                         perf_logs_enabled: true,
+                        precompile_cache_enabled: !opts.no_precompile_cache,
                         ..Default::default()
                     },
                 )
@@ -752,6 +762,14 @@ pub async fn import_blocks(
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    // Re-execute any blocks above the last committed state root so the in-memory diff
+    // layers are populated before this import appends. Required for per-file imports
+    // (e.g. EEST consume-rlp fork-transition fixtures) where each invocation's tail
+    // layers are dropped on process exit and the next file's parent state would
+    // otherwise be unreachable.
+    crate::initializers::regenerate_head_state(&store, &blockchain)
+        .await
+        .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.

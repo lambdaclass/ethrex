@@ -452,10 +452,22 @@ impl Transaction {
             TxType::Privileged => self.gas_price(),
         };
 
-        Some(U256::saturating_add(
+        let base = U256::saturating_add(
             U256::saturating_mul(price, self.gas_limit().into()),
             self.value(),
-        ))
+        );
+
+        // EIP-4844 blob txs pay an additional `blob_gas * max_fee_per_blob_gas`
+        // upfront. Every peer client (geth, reth, nethermind, erigon, besu)
+        // includes this in the balance-sufficiency check.
+        if let Transaction::EIP4844Transaction(tx) = self {
+            let blob_gas = U256::from(crate::constants::GAS_PER_BLOB)
+                .saturating_mul(U256::from(tx.blob_versioned_hashes.len() as u64));
+            let blob_cost = blob_gas.saturating_mul(tx.max_fee_per_blob_gas);
+            return Some(base.saturating_add(blob_cost));
+        }
+
+        Some(base)
     }
 
     pub fn fee_token(&self) -> Option<Address> {
@@ -3716,5 +3728,40 @@ mod tests {
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
         assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
+    }
+
+    #[test]
+    fn test_cost_without_base_fee_eip4844_includes_blob_gas() {
+        // Regression test for mempool balance check: for EIP-4844 txs,
+        // cost_without_base_fee() MUST include blob_gas_used * max_fee_per_blob_gas.
+        // Every peer client (geth, reth, nethermind, erigon, besu) does this.
+        use crate::constants::GAS_PER_BLOB;
+
+        let max_fee_per_gas: u64 = 100;
+        let gas: u64 = 21_000;
+        let value = U256::from(7u64);
+        let max_fee_per_blob_gas = U256::from(50u64);
+        let blob_count: usize = 1;
+
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            max_fee_per_gas,
+            gas,
+            value,
+            max_fee_per_blob_gas,
+            blob_versioned_hashes: vec![H256::zero(); blob_count],
+            ..Default::default()
+        });
+
+        let got = tx.cost_without_base_fee().expect("cost is computable");
+
+        let gas_cost = U256::from(max_fee_per_gas) * U256::from(gas);
+        let blob_gas = U256::from(GAS_PER_BLOB) * U256::from(blob_count as u64);
+        let blob_cost = blob_gas * max_fee_per_blob_gas;
+        let expected = gas_cost + blob_cost + value;
+
+        assert_eq!(
+            got, expected,
+            "blob-gas term missing from cost_without_base_fee() for EIP-4844"
+        );
     }
 }
