@@ -416,11 +416,12 @@ impl GeneralizedDatabase {
                 // Skip processing account that we know wasn't mutably accessed during execution
                 continue;
             }
-            // [LIE] In case the account is not in immutable_cache (rare) we search for it in the actual database.
+            // Account must be in initial_accounts_state: load_account always inserts it there
+            // (when skip_initial_tracking is false) before it can appear in current_accounts_state.
             let initial_state_account =
                 self.initial_accounts_state.get(&address).ok_or_else(|| {
                     VMError::Internal(InternalError::Custom(format!(
-                        "Failed to get account {address} from immutable cache",
+                        "Failed to get account {address} from initial accounts state",
                     )))
                 })?;
 
