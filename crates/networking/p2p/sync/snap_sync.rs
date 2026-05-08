@@ -1116,7 +1116,12 @@ async fn insert_accounts(
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
     let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
-    db.ingest_external_file(file_paths)
+    // Move SST files into the temp DB instead of copying them. The snapshot dir
+    // and the temp DB live under the same datadir, so rename succeeds and we
+    // avoid keeping two on-disk copies of the leaf data during ingest.
+    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
+    ingest_opts.set_move_files(true);
+    db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     for account in iter {
@@ -1213,7 +1218,12 @@ async fn insert_storages(
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
     let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
-    db.ingest_external_file(file_paths)
+    // Move SST files into the temp DB instead of copying them. The snapshot dir
+    // and the temp DB live under the same datadir, so rename succeeds and we
+    // avoid keeping two on-disk copies of the leaf data during ingest.
+    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
+    ingest_opts.set_move_files(true);
+    db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let snapshot = db.snapshot();
 
