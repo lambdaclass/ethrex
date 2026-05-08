@@ -379,7 +379,15 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
+            ethrex_vm::log_gas_used_mismatch(
+                &execution_result.tx_gas_breakdowns,
+                block.header.number,
+                execution_result.block_gas_used,
+                block.header.gas_used,
+            );
+            return Err(e.into());
+        }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
@@ -505,7 +513,17 @@ impl Blockchain {
                         let (execution_result, produced_bal) = result?;
 
                         // Validate execution went alright
-                        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        if let Err(e) =
+                            validate_gas_used(execution_result.block_gas_used, &block.header)
+                        {
+                            ethrex_vm::log_gas_used_mismatch(
+                                &execution_result.tx_gas_breakdowns,
+                                block.header.number,
+                                execution_result.block_gas_used,
+                                block.header.gas_used,
+                            );
+                            return Err(e.into());
+                        }
                         validate_receipts_root(
                             &block.header,
                             &execution_result.receipts,
@@ -1149,7 +1167,15 @@ impl Blockchain {
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
+            ethrex_vm::log_gas_used_mismatch(
+                &execution_result.tx_gas_breakdowns,
+                block.header.number,
+                execution_result.block_gas_used,
+                block.header.gas_used,
+            );
+            return Err(e.into());
+        }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
