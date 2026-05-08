@@ -690,6 +690,7 @@ impl Blockchain {
                 };
 
             for updates in rx {
+                std::thread::sleep(std::time::Duration::from_micros(100));
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
                 // Accumulate updates for witness generation if enabled
