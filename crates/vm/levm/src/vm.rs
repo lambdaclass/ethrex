@@ -473,14 +473,6 @@ pub struct VM<'a> {
     /// credit`) stays consistent after the spill side is split between "still outstanding"
     /// and "already cancelled by local credit". Restored from snapshot on child revert.
     pub state_gas_credit_against_drain: u64,
-    /// EIP-8037 (PR #2689): Cumulative state-gas amount reclassified to regular_gas_used
-    /// because of an ExceptionalHalt at any frame. On halt, the spec wipes the frame's
-    /// state-gas usage and adds `state_gas_used + state_gas_left - reservoir_at_entry`
-    /// (the un-cancelled spill) to `regular_gas_used`. This counter accumulates that
-    /// reclassified amount across all halts in the tx, and is added to the regular-gas
-    /// dimension at finalization. Pre-PR-2689 behavior gave the spill back to the
-    /// reservoir; under PR #2689 it becomes regular gas instead.
-    pub regular_gas_reclassified: u64,
     /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
@@ -501,13 +493,6 @@ pub struct VM<'a> {
     /// is charged. On top-level tx failure, only this portion stays charged; the execution
     /// portion (state_gas_used - intrinsic_state_gas_charged) is wiped back to the reservoir.
     pub intrinsic_state_gas_charged: u64,
-    /// EIP-8037 (PR #2689): the `state_gas_reservoir` value at the moment the top-level
-    /// `process_message_call` begins — i.e. AFTER intrinsic gas, AFTER any pre-execution
-    /// adjustments (EIP-7702 auth refunds add to the reservoir before execution starts).
-    /// This is what the spec uses as `message.state_gas_reservoir` for the top-level frame
-    /// when applying the halt rule:
-    ///     excess = (state_gas_used + state_gas_left) - reservoir_at_entry
-    pub state_gas_reservoir_at_top_message_entry: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -566,7 +551,6 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             state_gas_spill_outstanding: 0,
             state_gas_credit_against_drain: 0,
-            regular_gas_reclassified: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
             state_gas_storage_set,
@@ -574,7 +558,6 @@ impl<'a> VM<'a> {
             state_gas_refund_pending: 0,
             state_gas_refund_absorbed: 0,
             intrinsic_state_gas_charged: 0,
-            state_gas_reservoir_at_top_message_entry: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -765,12 +748,6 @@ impl<'a> VM<'a> {
             return Err(e);
         }
 
-        // EIP-8037 (PR #2689): snapshot the reservoir AFTER prepare_execution
-        // (intrinsic gas charged + EIP-7702 auth refunds applied). This is the
-        // "state_gas_reservoir" passed to the top-level message in EELS, used
-        // by the halt rule to compute the regular-gas reclassification.
-        self.state_gas_reservoir_at_top_message_entry = self.state_gas_reservoir;
-
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
@@ -943,16 +920,13 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        // EIP-8037 (PR #2689): On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
-        // wipe the EXECUTION portion of state-gas (intrinsic state-gas STAYS charged) so
-        // the block sees only `intrinsic_state_gas_charged` in the state dimension. For
-        // REVERT, refill the reservoir with the execution portion so the user's
-        // `gas_used -= reservoir` subtraction in refund_sender returns both the entry
-        // reservoir and any spill that decremented `gas_remaining` (matches EELS fork.py
-        // top-level `state_gas_left += state_gas_used`). For ExceptionalHalt, restore the
-        // reservoir to its entry value and reclassify the residual gross spill to
-        // `regular_gas_used`. Collision is handled separately in the hook. See inline
-        // comments below for the reclassification formula.
+        // EIP-8037 (PR #2815): On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
+        // refill the reservoir with the execution portion of state-gas so the user gets
+        // back both the entry reservoir and any spill that decremented `gas_remaining`.
+        // Matches EELS fork.py::process_transaction lines 1076-1077:
+        //   `tx_output.state_gas_left += tx_output.state_gas_used` on any non-success.
+        // Halt, OOG, and REVERT all take the same path (Policy A). Collision is handled
+        // separately in the hook.
         if self.env.config.fork >= Fork::Amsterdam
             && !ctx_result.is_success()
             && !ctx_result.is_collision()
@@ -976,61 +950,7 @@ impl<'a> VM<'a> {
                 .state_gas_refund_absorbed
                 .saturating_add(execution_portion);
 
-            if ctx_result.is_revert_opcode() {
-                // REVERT: refill the reservoir with the un-refunded execution portion.
-                // This matches EELS fork.py:1077 `state_gas_left += state_gas_used` at
-                // top-level Revert: the user gets back BOTH the entry reservoir AND any
-                // spill that came from `gas_remaining`, via the single
-                // `gas_used -= reservoir` subtraction in refund_sender.
-                self.state_gas_reservoir =
-                    self.state_gas_reservoir.saturating_add(execution_portion);
-            } else {
-                // ExceptionalHalt (PR #2689): apply the spec halt rule to the top-level
-                // message uniformly, regardless of whether intrinsic_state was charged.
-                //
-                // Per EELS amsterdam/vm/interpreter.py::process_message:
-                //   total_state = evm.state_gas_used + evm.state_gas_left
-                //   reservoir   = evm.message.state_gas_reservoir   # at frame entry
-                //   if total_state > reservoir:
-                //       evm.regular_gas_used += total_state - reservoir
-                //
-                // Because EELS's `credit_state_gas_refund` decrements `state_gas_used`
-                // and increments `state_gas_left` by the same amount, `total_state` is
-                // invariant under credits. Hence `total_state - reservoir` reduces to
-                // the gross spill `S` that originally exceeded the entry reservoir.
-                //
-                // In ethrex's flat-reservoir model: `state_gas_spill` accumulates the
-                // gross lifetime spill (never decremented). At the top message:
-                //   `gross_spill - already_reclassified`
-                // gives the residual still to be re-classified, where
-                // `already_reclassified` deduplicates against deeper-frame halts that
-                // already moved parts of the spill into the regular dim.
-                //
-                // The previous non-CREATE-tx branch used
-                // `max(spill_outstanding, reservoir_surplus)`, which dropped the
-                // residual outstanding spill that wasn't cancelled by a credit. That
-                // formula diverged from EELS by `min(applied_to_spill, S - applied_to_spill)`
-                // whenever a credit only partially cancelled outstanding spill — see
-                // `test_top_halt_after_partial_credit_to_spill_diverges_from_eels`.
-                //
-                // `state_gas_credit_against_drain` plays no role here: drain credits
-                // already affect `state_gas_refund_absorbed` (reduces net state-gas at
-                // finalize) and refill `state_gas_reservoir` via `credit_state_gas_refund`,
-                // so they have no further role in top-halt reclassification. A prior
-                // formula subtracted `min(credit_against_drain, regular_gas_reclassified)`
-                // from the gross spill, but that double-counts the already-reclassified
-                // amount whenever a deeper halt has reclassified its subtree's spill
-                // (e.g. nested CREATEs that all halt) — see
-                // `test_top_halt_phantom_drain_does_not_cancel_real_spill` for the
-                // phantom-drain case (cap was already 0) and bal-devnet-6 block 597 for
-                // the nested-halt case the cap broke.
-                let reclassify = self
-                    .state_gas_spill
-                    .saturating_sub(self.regular_gas_reclassified);
-                self.regular_gas_reclassified =
-                    self.regular_gas_reclassified.saturating_add(reclassify);
-                self.state_gas_reservoir = self.state_gas_reservoir_at_top_message_entry;
-            }
+            self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(execution_portion);
         }
 
         for hook in self.hooks.clone() {
