@@ -65,6 +65,19 @@ impl Memory {
         self.len() == 0
     }
 
+    /// Returns a copy of the live byte slice for this frame (from `current_base` to
+    /// `current_base + len`).  Used by the struct-log tracer for memory capture.
+    pub fn live_bytes(&self) -> Vec<u8> {
+        if self.len == 0 {
+            return Vec::new();
+        }
+        let buf = self.buffer.borrow();
+        let end = self.current_base.saturating_add(self.len);
+        buf.get(self.current_base..end)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
+    }
+
     /// Resizes the from the current base to fit the memory specified at new_memory_size.
     ///
     /// Note: new_memory_size is increased to the next 32 byte multiple.

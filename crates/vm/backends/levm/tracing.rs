@@ -1,12 +1,20 @@
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
 use ethrex_common::types::{Block, Transaction};
-use ethrex_common::{Address, BigEndianHash, H256, U256, tracing::CallTrace, types::BlockHeader};
+use ethrex_common::{
+    Address, BigEndianHash, H256, U256,
+    tracing::{CallTrace, StructLogResult},
+    types::BlockHeader,
+};
 use ethrex_crypto::Crypto;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::vm::VMType;
-use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
+use ethrex_levm::{
+    db::gen_db::GeneralizedDatabase,
+    tracing::{LevmCallTracer, LevmStructLogTracer, StructLogConfig},
+    vm::VM,
+};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -89,6 +97,30 @@ impl LEVM {
             }
             Ok(PrestateResult::Prestate(pre_map))
         }
+    }
+
+    /// Run transaction with struct-log (EIP-3155) tracer activated.
+    pub fn trace_tx_struct_log(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &Transaction,
+        cfg: StructLogConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<StructLogResult, EvmError> {
+        let env = Self::setup_env(
+            tx,
+            tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?,
+            block_header,
+            db,
+            vm_type,
+        )?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        vm.struct_log_tracer = LevmStructLogTracer::new(cfg);
+        vm.execute()?;
+        Ok(vm.struct_log_tracer.take_result())
     }
 
     /// Run transaction with callTracer activated.

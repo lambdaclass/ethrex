@@ -132,6 +132,16 @@ impl OpcodeHandler for OpCallHandler {
             vm.increase_state_gas(STATE_GAS_NEW_ACCOUNT)?;
         }
 
+        // Struct-log: record the geth-compatible CALL gasCost.
+        // Geth's gasCost for CALL family = intrinsic_overhead + callGasTemp (forwarded gas
+        // WITHOUT stipend). LEVM's `gas_cost` already equals `call_gas_costs + gas_forwarded`,
+        // i.e. `intrinsic + callGasTemp`. Stipend is added later inside the child frame, after
+        // the tracer fires, so it is NOT part of the reported gasCost.
+        if vm.struct_log_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
+
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
         //   - When there is return data, preallocate it because it won't be possible while the next
@@ -228,6 +238,12 @@ impl OpcodeHandler for OpCallCodeHandler {
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
+        // Struct-log: geth-compatible CALLCODE gasCost (intrinsic + forwarded, no stipend).
+        if vm.struct_log_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
+
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
         //   - When there is return data, preallocate it because it won't be possible while the next
@@ -317,10 +333,16 @@ impl OpcodeHandler for OpDelegateCallHandler {
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
+        // Struct-log: geth-compatible DELEGATECALL gasCost (intrinsic + forwarded).
+        if vm.struct_log_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
+
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
         //   - When there is return data, preallocate it because it won't be possible while the next
-        //     call frame is active.
+        //     call frame is available.
         vm.current_call_frame.memory.resize(new_memory_size)?;
 
         // Trace CALL operation.
@@ -408,6 +430,12 @@ impl OpcodeHandler for OpStaticCallHandler {
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
+        // Struct-log: geth-compatible STATICCALL gasCost (intrinsic + forwarded).
+        if vm.struct_log_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
+
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
         //   - When there is return data, preallocate it because it won't be possible while the next
@@ -477,13 +505,18 @@ impl OpcodeHandler for OpCreateHandler {
         let [value_in_wei, code_offset, code_len] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::create(
-                calculate_memory_size(code_offset, code_len)?,
-                vm.current_call_frame.memory.len(),
-                code_len,
-                vm.env.config.fork,
-            )?)?;
+        let create_gas = gas_cost::create(
+            calculate_memory_size(code_offset, code_len)?,
+            vm.current_call_frame.memory.len(),
+            code_len,
+            vm.env.config.fork,
+        )?;
+        vm.current_call_frame.increase_consumed_gas(create_gas)?;
+
+        // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
+        if vm.struct_log_tracer.active {
+            vm.struct_log_tracer.last_opcode_gas_cost = Some(create_gas);
+        }
 
         vm.generic_create(value_in_wei, code_offset, code_len, None)
     }
@@ -502,13 +535,18 @@ impl OpcodeHandler for OpCreate2Handler {
         let [value_in_wei, code_offset, code_len, salt] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::create_2(
-                calculate_memory_size(code_offset, code_len)?,
-                vm.current_call_frame.memory.len(),
-                code_len,
-                vm.env.config.fork,
-            )?)?;
+        let create2_gas = gas_cost::create_2(
+            calculate_memory_size(code_offset, code_len)?,
+            vm.current_call_frame.memory.len(),
+            code_len,
+            vm.env.config.fork,
+        )?;
+        vm.current_call_frame.increase_consumed_gas(create2_gas)?;
+
+        // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
+        if vm.struct_log_tracer.active {
+            vm.struct_log_tracer.last_opcode_gas_cost = Some(create2_gas);
+        }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))
     }
