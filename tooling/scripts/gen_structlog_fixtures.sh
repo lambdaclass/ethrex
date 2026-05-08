@@ -2,7 +2,7 @@
 # gen_structlog_fixtures.sh — Regenerates EIP-3155 struct-log diff fixtures.
 #
 # This script documents the procedure to reproduce the JSON fixtures at
-# cmd/ethrex/tests/fixtures/eip3155_*.json using a local geth --dev node.
+# test/tests/levm/fixtures/eip3155_*.json using a local geth --dev node.
 #
 # The fixtures are NOT generated automatically (geth --dev node setup is
 # heavy); this script is documentation so a future maintainer can regenerate
@@ -93,7 +93,7 @@
 #     -d "{\"jsonrpc\":\"2.0\",\"method\":\"debug_traceTransaction\",
 #          \"params\":[\"$TX\",{}],\"id\":1}" \
 #     | jq '.result' \
-#     > cmd/ethrex/tests/fixtures/eip3155_sstore_basic.json
+#     > test/tests/levm/fixtures/eip3155_sstore_basic.json
 #
 # ─── Fixture 2: eip3155_mstore_memory.json ───────────────────────────────
 #
@@ -113,7 +113,7 @@
 #     -d "{\"jsonrpc\":\"2.0\",\"method\":\"debug_traceTransaction\",
 #          \"params\":[\"$TX\",{\"enableMemory\":true}],\"id\":1}" \
 #     | jq '.result' \
-#     > cmd/ethrex/tests/fixtures/eip3155_mstore_memory.json
+#     > test/tests/levm/fixtures/eip3155_mstore_memory.json
 #
 # ─── Fixture 3: eip3155_identity_return_data.json ────────────────────────
 #
@@ -142,7 +142,7 @@
 #     -d "{\"jsonrpc\":\"2.0\",\"method\":\"debug_traceTransaction\",
 #          \"params\":[\"$TX\",{\"enableReturnData\":true}],\"id\":1}" \
 #     | jq '.result' \
-#     > cmd/ethrex/tests/fixtures/eip3155_identity_return_data.json
+#     > test/tests/levm/fixtures/eip3155_identity_return_data.json
 #
 # ─── Cleanup ──────────────────────────────────────────────────────────────
 #
@@ -160,4 +160,4 @@ echo "This script documents the fixture-regeneration procedure only."
 echo "See the comments above for the full step-by-step instructions."
 echo ""
 echo "Pinned geth commit: b7719e1c3de88c2e6943321fa53b80807845ba40"
-echo "Fixtures location: cmd/ethrex/tests/fixtures/eip3155_*.json"
+echo "Fixtures location: test/tests/levm/fixtures/eip3155_*.json"

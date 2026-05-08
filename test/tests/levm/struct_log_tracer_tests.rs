@@ -116,13 +116,11 @@ fn trace_to_json(bytecode: Vec<u8>, cfg: StructLogConfig) -> serde_json::Value {
     serde_json::to_value(&result).expect("serialize")
 }
 
-/// Loads a fixture from `cmd/ethrex/tests/fixtures/` and canonicalizes it for
+/// Loads a fixture from `test/tests/levm/fixtures/` and canonicalizes it for
 /// byte-identical comparison (parse → re-serialize via serde_json).
 fn load_fixture(name: &str) -> serde_json::Value {
     let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("test crate has parent dir")
-        .join("cmd/ethrex/tests/fixtures")
+        .join("tests/levm/fixtures")
         .join(name);
     let content = std::fs::read_to_string(&fixture_path)
         .unwrap_or_else(|e| panic!("failed to read fixture {}: {}", fixture_path.display(), e));
