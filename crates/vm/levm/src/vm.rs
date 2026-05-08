@@ -4,10 +4,7 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{
-        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
-        VMError,
-    },
+    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
@@ -605,19 +602,6 @@ impl<'a> VM<'a> {
 
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
-        // If gas is already exhausted (negative), fail immediately.
-        // This can happen when intrinsic gas exceeds the gas limit in privileged L2 transactions.
-        // Without this check, casting negative gas_remaining to u64 would wrap to a huge value.
-        if self.current_call_frame.gas_remaining < 0 {
-            return Ok(ContextResult {
-                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
-                gas_used: self.current_call_frame.gas_limit,
-                gas_spent: self.current_call_frame.gas_limit,
-                output: Bytes::new(),
-            });
-        }
-
-        #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
             self.env.config.fork,
@@ -625,7 +609,7 @@ impl<'a> VM<'a> {
         ) {
             let call_frame = &mut self.current_call_frame;
 
-            let mut gas_remaining = call_frame.gas_remaining as u64;
+            let mut gas_remaining = call_frame.gas_remaining;
             let result = Self::execute_precompile(
                 call_frame.code_address,
                 &call_frame.calldata,
@@ -636,7 +620,7 @@ impl<'a> VM<'a> {
                 self.crypto,
             );
 
-            call_frame.gas_remaining = gas_remaining as i64;
+            call_frame.gas_remaining = gas_remaining;
 
             return result;
         }

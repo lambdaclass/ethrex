@@ -10,6 +10,7 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 | **RISC Zero** | RISC Zero | Production | ✓ | ✓ | [RISC0 Prover Guide](./l2/deployment/prover/risc0.md) |
 | **ZisK** | Polygon | Experimental | ✓ | Planned | Coming soon |
 | **OpenVM** | Axiom | Experimental | ✓ | Planned | Coming soon |
+| **Airbender** | Matter Labs | Experimental | ✓ | Planned | Coming soon |
 | **TEE (TDX)** | Intel | Production | — | ✓ | [TDX Prover Guide](./l2/deployment/prover/tee.md) |
 
 ## SP1 (Succinct)
@@ -88,6 +89,23 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 - Basic integration for L1 block proving
 - Precompile support is being expanded
 - L2 prover integration is planned
+
+## Airbender (Matter Labs)
+
+[Airbender](https://github.com/matter-labs/airbender-platform) is Matter Labs' RISC-V zkVM with CSR-delegated crypto acceleration.
+
+**Status:** Experimental. L1 stateless validation guest binary implemented.
+
+**Key Features:**
+- CSR-delegated crypto circuits (bigint ops, keccak permutation, blake2s)
+- std support (rebuilt via `-Z build-std`) — no `no_std` migration required
+- GPU proving via CUDA
+
+**Integration Details:**
+- Uses `airbender-crypto` for secp256k1, keccak256, bn254, sha256, ripemd160, p256
+- Guest binary at `crates/guest-program/bin/airbender/`
+- Input serialization via rkyv through Airbender's bincode v2 codec
+- SHA256 output hashing to fit 32-byte commit limit
 
 ## TEE (Intel TDX)
 

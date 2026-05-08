@@ -1,0 +1,18 @@
+[build]
+target = "riscv32im-risc0-zkvm-elf"
+rustflags = [
+  "-C", "target-feature=+m,-unaligned-scalar-mem,+relax",
+  "-C", "link-arg=-Tmemory.x",
+  "-C", "link-arg=-Tlink.x",
+  "-C", "link-arg=--save-temps",
+  "-C", "force-frame-pointers",
+  "-C", "passes=lower-atomic",
+  "--cfg", "getrandom_backend=\"custom\"",
+]
+
+[env]
+CC = "clang"
+
+[unstable]
+build-std = ["alloc", "core", "panic_abort", "compiler_builtins", "std", "proc_macro"]
+build-std-features = ["compiler-builtins-mem"]

@@ -334,15 +334,35 @@ pub fn expansion_cost(new_memory_size: usize, current_memory_size: usize) -> Res
 fn cost(memory_size: usize) -> Result<u64, VMError> {
     let memory_size = u64::try_from(memory_size).map_err(|_| InternalError::TypeConversion)?;
 
-    // memory size measured in 32 byte words
-    let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64);
+    // memory size measured in 32 byte words.
+    // With EIP-7825 gas limit of 2^24, words fits in u32 (max 524288).
+    // Compute entirely in u32 to avoid MULH on 32-bit RISC-V targets:
+    // u64 * u64 on rv32 generates a widening multiply with MULH for
+    // overflow detection, while u32 * u32 uses only MUL + MULHU.
+    // words^2 max = 524288^2 = 274,877,906,944 which fits in u64, so
+    // we widen to u64 only for the final result.
+    // On rv32, u64 * u64 emits MULH (signed multiply high) for overflow
+    // detection, which Airbender's ISA does not support. Keep multiplications
+    // in u32 and widen only the products.
+    // words max = 524288 (EIP-7825), so u32 is sufficient and words^2 fits in u64.
+    //
+    // allow (not expect) because the as_conversions lint is only active when
+    // compiled as a dependency of crates that deny it (e.g. ethrex-prover).
+    #[allow(clippy::as_conversions, clippy::arithmetic_side_effects)]
+    {
+        let words = memory_size.div_ceil(WORD_SIZE_IN_BYTES_U64) as u32;
+        // Split into hi*2^16 + lo to compute words^2 without u64*u64 (which
+        // emits MULH on rv32, unsupported by Airbender). Each partial product
+        // fits in u32, and we assemble the u64 result from the three terms.
+        let hi = words >> 16;
+        let lo = words & 0xFFFF;
+        let words_squared =
+            (u64::from(hi * hi) << 32) + (u64::from(2 * hi * lo) << 16) + u64::from(lo * lo);
+        let w = u64::from(words);
+        let gas_cost = words_squared / MEMORY_EXPANSION_QUOTIENT + 3 * w;
 
-    // Cost(words) ≈ floor(words^2 / q) + 3 * words
-    // For this to overflow memory size in words should be 2^32, which is impossible.
-    #[expect(clippy::arithmetic_side_effects)]
-    let gas_cost = words * words / MEMORY_EXPANSION_QUOTIENT + 3 * words;
-
-    Ok(gas_cost)
+        Ok(gas_cost)
+    }
 }
 
 #[inline]

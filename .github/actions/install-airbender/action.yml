@@ -1,0 +1,22 @@
+name: "Install Airbender"
+description: "Install Airbender Toolchain"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Airbender toolchain
+      shell: bash
+      run: |
+        rustup toolchain install nightly-2026-02-10
+        rustup component add rust-src llvm-tools-preview clippy --toolchain nightly-2026-02-10
+        cargo install cargo-binutils
+
+    - name: Install cargo-airbender
+      shell: bash
+      env:
+        ZKSYNC_USE_CUDA_STUBS: "true"
+      run: |
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+        retry git clone https://github.com/matter-labs/airbender-platform.git /tmp/airbender-platform
+        cd /tmp/airbender-platform
+        cargo +nightly-2026-02-10 install --path crates/cargo-airbender

@@ -144,7 +144,7 @@ jobs:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1, RISC0, and ZisK
+  # There's a separate job to build the guest programs for SP1, RISC0, ZisK, and Airbender
   # since they need to be built without the l2 features.
   build-ethrex-guest:
     strategy:
@@ -153,6 +153,7 @@ jobs:
           - sp1
           - risc0
           - zisk
+          - airbender
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -184,6 +185,10 @@ jobs:
           SETUP_KEY: none
         uses: ./.github/actions/install-zisk
 
+      - name: Install Airbender
+        if: ${{ matrix.zkvm == 'airbender' }}
+        uses: ./.github/actions/install-airbender
+
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         env:
           REF_NAME: ${{ github.ref_name }}
@@ -204,6 +209,10 @@ jobs:
           elif [ "${{ matrix.zkvm }}" = "zisk" ]; then
             mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv64ima-zisk-elf ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF
             echo "ELF_ARTIFACT=ethrex-riscv64ima-${{ matrix.zkvm }}-elf-$SANITIZED_REF" >> $GITHUB_ENV
+          elif [ "${{ matrix.zkvm }}" = "airbender" ]; then
+            cd crates/guest-program/bin/airbender && cargo airbender build && cd -
+            mv crates/guest-program/bin/airbender/dist/app/app.bin ethrex-riscv32im-${{ matrix.zkvm }}-bin-$SANITIZED_REF
+            echo "ELF_ARTIFACT=ethrex-riscv32im-${{ matrix.zkvm }}-bin-$SANITIZED_REF" >> $GITHUB_ENV
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
@@ -218,8 +227,8 @@ jobs:
           name: ${{ matrix.zkvm }}_verification_keys
           path: ${{ matrix.zkvm }}_verification_keys/
 
-  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
-  # elf and verification keys.
+  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, ZisK, and Airbender
+  # elf/bin and verification keys.
   package-ethrex-guest:
     needs:
       - build-ethrex-guest
@@ -262,6 +271,12 @@ jobs:
         with:
           name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/zisk/
+
+      - name: Download Airbender binary artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ethrex-riscv32im-airbender-bin-${{ env.SANITIZED_REF }}
+          path: ethrex_guests/airbender/
 
       - name: Archive ethrex guests
         run: |

@@ -1,3 +1,5 @@
+#[cfg(feature = "airbender")]
+pub mod airbender;
 #[cfg(feature = "openvm")]
 pub mod openvm;
 #[cfg(feature = "risc0")]

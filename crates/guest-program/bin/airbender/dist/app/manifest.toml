@@ -1,0 +1,22 @@
+package = "ethrex-guest-airbender"
+manifest = "v1"
+codec = "v0"
+target = "riscv32im-risc0-zkvm-elf"
+
+[bin]
+path = "app.bin"
+sha256 = "8163d8a050630476e2edaf9751e9464e5684e8493586e56cac5999e1fc83e397"
+
+[elf]
+path = "app.elf"
+sha256 = "9d8cdd0f6f9e614bdfed5e30b0248dcce71c2bc61fac7f620da6a1f907b03cfa"
+
+[text]
+path = "app.text"
+sha256 = "e04f2fa6f7126bbafa378367ed1b38d2386e7ec147b17b1a889c12f9ac6081b0"
+
+[build]
+profile = "release"
+git_branch = "airbender-integration"
+git_commit = "5b566493cb2f57e0f332f007fb4856a1dfe44e94"
+is_dirty = true
