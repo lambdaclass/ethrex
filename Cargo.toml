@@ -65,6 +65,7 @@ ethrex-storage = { path = "./crates/storage" }
 ethrex-vm = { path = "./crates/vm", default-features = false }
 ethrex-levm = { path = "./crates/vm/levm" }
 ethrex-trie = { path = "./crates/common/trie" }
+ethrex-dev = { path = "./crates/blockchain/dev" }
 ethrex-rlp = { path = "./crates/common/rlp" }
 ethrex-crypto = { path = "./crates/common/crypto", default-features = false }
 ethrex-metrics = { path = "./crates/blockchain/metrics" }
@@ -132,6 +133,13 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
 k256 = "0.13.4"
 anyhow = "1.0.86"
+directories = "5.0.1"
+itertools = "0.14.0"
+tracing-appender = "0.2"
+local-ip-address = "0.6"
+tikv-jemallocator = "0.6.0"
+pprof = "0.15"
+vergen-git2 = "9.1"
 
 rocksdb = { version = "0.24.0", default-features = false, features = [
   "bindgen-runtime",
