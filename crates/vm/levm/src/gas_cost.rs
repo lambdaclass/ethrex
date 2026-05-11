@@ -162,15 +162,15 @@ pub const CODE_DEPOSIT_COST: u64 = 200;
 pub const CREATE_BASE_COST: u64 = 32000;
 
 // EIP-8037: Multidimensional gas for state creation (Amsterdam only)
-pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 112;
-pub const STATE_BYTES_PER_STORAGE_SET: u64 = 32;
-pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 135; // 112 account + 23 auth-specific
+pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 120;
+pub const STATE_BYTES_PER_STORAGE_SET: u64 = 64;
+pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 143; // 120 account + 23 auth-specific
 
-/// EIP-8037 cost_per_state_byte. Pinned to the bal-devnet-4..6 fixed value 1174
-/// (execution-specs#2687). The dynamic formula derived from the block gas limit
-/// is not active on devnet-6.
+/// EIP-8037 cost_per_state_byte. Pinned to the bal-devnet-7 fixed value 1530
+/// (execution-specs#2827). The dynamic formula derived from the block gas limit
+/// is not active.
 pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
-    1174
+    1530
 }
 
 pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam

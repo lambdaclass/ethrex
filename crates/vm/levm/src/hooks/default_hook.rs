@@ -358,17 +358,25 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 ///   - STATE_BYTES_PER_STORAGE_SET * cpsb per non-zero storage slot written in this tx
 ///   - code_length * cpsb (the deployed code)
 ///
-/// Refund is clamped to the net execution state_gas_used (gross minus already-absorbed
-/// and pending credits) so it cannot go negative. Adds to both the reservoir (so the
-/// sender gets it back via the reservoir subtraction in `finalize_execution`) and to
-/// `state_gas_refund_absorbed` (so block-accounted `state_gas` is reduced accordingly).
+/// For inner CREATEs the full refund flows through the execution channel (reservoir +
+/// absorbed), clamped to the net execution state_gas_used so it cannot go negative.
+///
+/// For the tx-created top-level target (CREATE tx whose deterministic target self-destructs
+/// in the same tx), spec PR #2828 splits the refund: the NEW_ACCOUNT portion was paid via
+/// intrinsic, not execution, so it routes through `state_refund` (block-accounted only, no
+/// sender reservoir credit, no clamp against execution). The non-account portion (storage +
+/// code) still flows through the normal execution channel.
 pub fn apply_same_tx_selfdestruct_state_refund(vm: &mut VM<'_>) -> Result<(), VMError> {
     let cpsb = vm.cost_per_state_byte;
     let new_account_bytes = crate::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT;
     let storage_set_bytes = crate::gas_cost::STATE_BYTES_PER_STORAGE_SET;
+    let new_account_refund = new_account_bytes.saturating_mul(cpsb);
 
-    // Collect (address, refund_amount) first to avoid borrow conflicts with db access.
-    let mut refunds: Vec<u64> = Vec::new();
+    let is_create_tx = vm.current_call_frame.is_create;
+    let tx_target = vm.current_call_frame.to;
+
+    // Collect (exec_refund, is_tx_target) first to avoid borrow conflicts with db access.
+    let mut refunds: Vec<(u64, bool)> = Vec::new();
     let selfdestruct_addrs: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
     for addr in &selfdestruct_addrs {
         if !vm.substate.is_account_created(addr) {
@@ -386,19 +394,30 @@ pub fn apply_same_tx_selfdestruct_state_refund(vm: &mut VM<'_>) -> Result<(), VM
         let code = vm.db.get_code(code_hash)?.clone();
         let code_len: u64 = u64::try_from(code.bytecode.len()).unwrap_or(u64::MAX);
 
-        let per_byte: u64 = new_account_bytes
-            .saturating_add(created_slots.saturating_mul(storage_set_bytes))
+        let non_account_bytes = created_slots
+            .saturating_mul(storage_set_bytes)
             .saturating_add(code_len);
-        let refund = per_byte.saturating_mul(cpsb);
-        refunds.push(refund);
+        let non_account_refund = non_account_bytes.saturating_mul(cpsb);
+
+        let is_tx_target = is_create_tx && *addr == tx_target;
+        let exec_refund = if is_tx_target {
+            non_account_refund
+        } else {
+            new_account_refund.saturating_add(non_account_refund)
+        };
+        refunds.push((exec_refund, is_tx_target));
     }
 
-    for refund in refunds {
-        // EELS fork.py:1100 clamps against `tx_output.state_gas_used`, which is the
+    let mut tx_target_destroyed = false;
+    for (refund, is_tx_target) in refunds {
+        if is_tx_target {
+            tx_target_destroyed = true;
+        }
+        // EELS fork.py clamps against `tx_output.state_gas_used`, which is the
         // execution-only accumulator (intrinsic lives separately in tx_env.intrinsic_state_gas).
         // Our `vm.state_gas_used` lumps intrinsic + execution, so subtract the intrinsic
         // portion here — otherwise a CREATE tx whose initcode SELFDESTRUCTs would refund
-        // its own intrinsic NEW_ACCOUNT charge.
+        // its own intrinsic NEW_ACCOUNT charge through the execution channel.
         let execution_state_gas = vm
             .state_gas_used
             .saturating_sub(vm.intrinsic_state_gas_charged);
@@ -416,6 +435,16 @@ pub fn apply_same_tx_selfdestruct_state_refund(vm: &mut VM<'_>) -> Result<(), VM
         vm.state_gas_refund_absorbed = vm
             .state_gas_refund_absorbed
             .checked_add(clamped)
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    // Spec PR #2828 state_refund channel for the tx-created target: reduces block-accounted
+    // state_gas (intrinsic NEW_ACCOUNT folds back) without crediting the sender's reservoir
+    // and without participating in the per-iteration execution-side clamp.
+    if tx_target_destroyed && new_account_refund > 0 {
+        vm.state_gas_refund_absorbed = vm
+            .state_gas_refund_absorbed
+            .checked_add(new_account_refund)
             .ok_or(InternalError::Overflow)?;
     }
 
