@@ -214,6 +214,16 @@ impl RocksDBBackend {
     }
 }
 
+impl RocksDBBackend {
+    /// Internal accessor for the raw RocksDB handle.
+    /// Used by migration strategies that need engine-specific APIs
+    /// (drop_cf, create_cf, ingest_external_file, etc.) that aren't
+    /// part of the StorageBackend trait.
+    pub fn raw_db(&self) -> Arc<DBWithThreadMode<MultiThreaded>> {
+        self.db.clone()
+    }
+}
+
 impl Drop for RocksDBBackend {
     fn drop(&mut self) {
         // When the last reference to the db is dropped, stop background threads
