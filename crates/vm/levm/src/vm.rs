@@ -651,14 +651,16 @@ impl<'a> VM<'a> {
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
         loop {
-            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode,
-            // matching geth's structLogLegacy `pc` field.
+            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
             let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
 
+            // Hoist the active flag to avoid reading it twice per opcode.
+            let tracer_active = self.struct_log_tracer.active;
+
             // Struct-log pre-step capture (single branch on the fast path when disabled).
-            let gas_before_op = if self.struct_log_tracer.active {
+            let gas_before_op = if tracer_active {
                 #[expect(
                     clippy::as_conversions,
                     reason = "gas_remaining is i64; clamp to 0 before converting to u64"
@@ -672,6 +674,12 @@ impl<'a> VM<'a> {
                 let refund = self.substate.refunded_gas;
                 let stack_view = self.collect_stack_for_trace();
                 let mem_view = self.collect_memory_for_trace();
+                // mem_size always reflects actual memory size, regardless of enable_memory.
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "memory size is bounded by gas; fits in u64"
+                )]
+                let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
                 let storage_kv = self.read_storage_for_trace(opcode);
                 let return_data = if self.struct_log_tracer.cfg.enable_return_data {
                     self.current_call_frame.sub_return_data.clone()
@@ -691,6 +699,7 @@ impl<'a> VM<'a> {
                     refund,
                     &stack_view,
                     &mem_view,
+                    mem_size_for_trace,
                     &return_data,
                     storage_kv,
                 );
@@ -713,7 +722,7 @@ impl<'a> VM<'a> {
             }
 
             // Struct-log post-step: patch gas_cost and error into the buffered entry.
-            if self.struct_log_tracer.active {
+            if tracer_active {
                 #[expect(
                     clippy::as_conversions,
                     reason = "gas_remaining is i64; clamp to 0 before converting to u64"

@@ -2,6 +2,7 @@ use bytes::Bytes;
 use ethereum_types::H256;
 use ethereum_types::{Address, U256};
 use serde::Serialize;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 /// Collection of traces of each call frame as defined in geth's `callTracer` output
@@ -128,27 +129,30 @@ fn is_zero_nonce(n: &u64) -> bool {
 
 // ─── EIP-3155 StructLog types ──────────────────────────────────────────────
 
-/// Per-opcode trace entry matching geth's `structLogLegacy` wire format.
+/// Per-opcode trace entry in strict EIP-3155 format.
 ///
 /// Fields are kept as native types in memory; `Serialize` converts them to the
-/// exact encoding that `debug_traceTransaction` returns from geth.
+/// exact encoding specified by EIP-3155 (https://eips.ethereum.org/EIPS/eip-3155).
 #[derive(Debug)]
 pub struct StructLog {
     pub pc: u64,
-    /// Raw opcode byte.  Serialized via `opcode_name`.
+    /// Raw opcode byte value (e.g. 96 for PUSH1).
     pub op: u8,
     pub gas: u64,
     pub gas_cost: u64,
+    /// Current memory size in bytes (always emitted).
+    pub mem_size: u64,
     pub depth: u32,
+    /// Return data from the previous sub-call (always emitted; `"0x"` when disabled or empty).
+    pub return_data: bytes::Bytes,
+    /// Gas refund counter (always emitted; `"0x0"` when zero).
     pub refund: u64,
-    /// `Some(vec)` when stack capture is enabled (may be empty); `None` when disabled.
+    /// `Some(vec)` when stack capture is enabled (bottom-first); `None` when disabled (emits JSON null).
     pub stack: Option<Vec<U256>>,
-    /// `Some(chunks)` when memory capture is enabled; `None` when disabled.
+    /// `Some(chunks)` when memory capture is enabled; `None` when disabled (field omitted).
     pub memory: Option<Vec<MemoryChunk>>,
-    /// `Some(map)` at SLOAD/SSTORE steps when storage capture is enabled.
+    /// `Some(map)` at SLOAD/SSTORE steps when storage capture is enabled (single entry); `None` otherwise.
     pub storage: Option<BTreeMap<H256, H256>>,
-    /// Non-empty return data from the previous sub-call, when enabled.
-    pub return_data: Option<bytes::Bytes>,
     pub error: Option<String>,
 }
 
@@ -157,180 +161,177 @@ pub struct StructLog {
 #[derive(Debug)]
 pub struct MemoryChunk(pub [u8; 32]);
 
-/// Top-level result returned by a struct-log trace, matching geth's
-/// `executionResult` shape.
+/// Top-level result returned by a struct-log trace, in EIP-3155 format.
 #[derive(Debug)]
 pub struct StructLogResult {
-    pub gas: u64,
-    pub failed: bool,
-    pub return_value: bytes::Bytes,
+    pub gas_used: u64,
+    pub pass: bool,
+    pub output: bytes::Bytes,
     pub struct_logs: Vec<StructLog>,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-/// Returns the geth-compatible opcode mnemonic for `byte`.
+/// Returns the EIP-3155 opcode mnemonic for `byte`.
 ///
-/// `0xFE` → `"INVALID"`.  All other assigned opcodes → their uppercase name
+/// `0xFE` → `"INVALID"`.  All assigned opcodes → their uppercase name
 /// (e.g. `"PUSH1"`, `"ADD"`).  Unassigned bytes → `"opcode 0xNN"` (lowercase
-/// hex, two digits), matching geth's fallback.
-pub fn opcode_name(byte: u8) -> String {
+/// hex, two digits).
+pub fn opcode_name(byte: u8) -> Cow<'static, str> {
     match byte {
-        0x00 => "STOP".to_string(),
-        0x01 => "ADD".to_string(),
-        0x02 => "MUL".to_string(),
-        0x03 => "SUB".to_string(),
-        0x04 => "DIV".to_string(),
-        0x05 => "SDIV".to_string(),
-        0x06 => "MOD".to_string(),
-        0x07 => "SMOD".to_string(),
-        0x08 => "ADDMOD".to_string(),
-        0x09 => "MULMOD".to_string(),
-        0x0A => "EXP".to_string(),
-        0x0B => "SIGNEXTEND".to_string(),
-        0x10 => "LT".to_string(),
-        0x11 => "GT".to_string(),
-        0x12 => "SLT".to_string(),
-        0x13 => "SGT".to_string(),
-        0x14 => "EQ".to_string(),
-        0x15 => "ISZERO".to_string(),
-        0x16 => "AND".to_string(),
-        0x17 => "OR".to_string(),
-        0x18 => "XOR".to_string(),
-        0x19 => "NOT".to_string(),
-        0x1A => "BYTE".to_string(),
-        0x1B => "SHL".to_string(),
-        0x1C => "SHR".to_string(),
-        0x1D => "SAR".to_string(),
-        0x1E => "CLZ".to_string(),
-        0x20 => "KECCAK256".to_string(),
-        0x30 => "ADDRESS".to_string(),
-        0x31 => "BALANCE".to_string(),
-        0x32 => "ORIGIN".to_string(),
-        0x33 => "CALLER".to_string(),
-        0x34 => "CALLVALUE".to_string(),
-        0x35 => "CALLDATALOAD".to_string(),
-        0x36 => "CALLDATASIZE".to_string(),
-        0x37 => "CALLDATACOPY".to_string(),
-        0x38 => "CODESIZE".to_string(),
-        0x39 => "CODECOPY".to_string(),
-        0x3A => "GASPRICE".to_string(),
-        0x3B => "EXTCODESIZE".to_string(),
-        0x3C => "EXTCODECOPY".to_string(),
-        0x3D => "RETURNDATASIZE".to_string(),
-        0x3E => "RETURNDATACOPY".to_string(),
-        0x3F => "EXTCODEHASH".to_string(),
-        0x40 => "BLOCKHASH".to_string(),
-        0x41 => "COINBASE".to_string(),
-        0x42 => "TIMESTAMP".to_string(),
-        0x43 => "NUMBER".to_string(),
-        0x44 => "PREVRANDAO".to_string(),
-        0x45 => "GASLIMIT".to_string(),
-        0x46 => "CHAINID".to_string(),
-        0x47 => "SELFBALANCE".to_string(),
-        0x48 => "BASEFEE".to_string(),
-        0x49 => "BLOBHASH".to_string(),
-        0x4A => "BLOBBASEFEE".to_string(),
-        0x4B => "SLOTNUM".to_string(),
-        0x50 => "POP".to_string(),
-        0x51 => "MLOAD".to_string(),
-        0x52 => "MSTORE".to_string(),
-        0x53 => "MSTORE8".to_string(),
-        0x54 => "SLOAD".to_string(),
-        0x55 => "SSTORE".to_string(),
-        0x56 => "JUMP".to_string(),
-        0x57 => "JUMPI".to_string(),
-        0x58 => "PC".to_string(),
-        0x59 => "MSIZE".to_string(),
-        0x5A => "GAS".to_string(),
-        0x5B => "JUMPDEST".to_string(),
-        0x5C => "TLOAD".to_string(),
-        0x5D => "TSTORE".to_string(),
-        0x5E => "MCOPY".to_string(),
-        0x5F => "PUSH0".to_string(),
-        0x60 => "PUSH1".to_string(),
-        0x61 => "PUSH2".to_string(),
-        0x62 => "PUSH3".to_string(),
-        0x63 => "PUSH4".to_string(),
-        0x64 => "PUSH5".to_string(),
-        0x65 => "PUSH6".to_string(),
-        0x66 => "PUSH7".to_string(),
-        0x67 => "PUSH8".to_string(),
-        0x68 => "PUSH9".to_string(),
-        0x69 => "PUSH10".to_string(),
-        0x6A => "PUSH11".to_string(),
-        0x6B => "PUSH12".to_string(),
-        0x6C => "PUSH13".to_string(),
-        0x6D => "PUSH14".to_string(),
-        0x6E => "PUSH15".to_string(),
-        0x6F => "PUSH16".to_string(),
-        0x70 => "PUSH17".to_string(),
-        0x71 => "PUSH18".to_string(),
-        0x72 => "PUSH19".to_string(),
-        0x73 => "PUSH20".to_string(),
-        0x74 => "PUSH21".to_string(),
-        0x75 => "PUSH22".to_string(),
-        0x76 => "PUSH23".to_string(),
-        0x77 => "PUSH24".to_string(),
-        0x78 => "PUSH25".to_string(),
-        0x79 => "PUSH26".to_string(),
-        0x7A => "PUSH27".to_string(),
-        0x7B => "PUSH28".to_string(),
-        0x7C => "PUSH29".to_string(),
-        0x7D => "PUSH30".to_string(),
-        0x7E => "PUSH31".to_string(),
-        0x7F => "PUSH32".to_string(),
-        0x80 => "DUP1".to_string(),
-        0x81 => "DUP2".to_string(),
-        0x82 => "DUP3".to_string(),
-        0x83 => "DUP4".to_string(),
-        0x84 => "DUP5".to_string(),
-        0x85 => "DUP6".to_string(),
-        0x86 => "DUP7".to_string(),
-        0x87 => "DUP8".to_string(),
-        0x88 => "DUP9".to_string(),
-        0x89 => "DUP10".to_string(),
-        0x8A => "DUP11".to_string(),
-        0x8B => "DUP12".to_string(),
-        0x8C => "DUP13".to_string(),
-        0x8D => "DUP14".to_string(),
-        0x8E => "DUP15".to_string(),
-        0x8F => "DUP16".to_string(),
-        0x90 => "SWAP1".to_string(),
-        0x91 => "SWAP2".to_string(),
-        0x92 => "SWAP3".to_string(),
-        0x93 => "SWAP4".to_string(),
-        0x94 => "SWAP5".to_string(),
-        0x95 => "SWAP6".to_string(),
-        0x96 => "SWAP7".to_string(),
-        0x97 => "SWAP8".to_string(),
-        0x98 => "SWAP9".to_string(),
-        0x99 => "SWAP10".to_string(),
-        0x9A => "SWAP11".to_string(),
-        0x9B => "SWAP12".to_string(),
-        0x9C => "SWAP13".to_string(),
-        0x9D => "SWAP14".to_string(),
-        0x9E => "SWAP15".to_string(),
-        0x9F => "SWAP16".to_string(),
-        0xA0 => "LOG0".to_string(),
-        0xA1 => "LOG1".to_string(),
-        0xA2 => "LOG2".to_string(),
-        0xA3 => "LOG3".to_string(),
-        0xA4 => "LOG4".to_string(),
-        0xE6 => "DUPN".to_string(),
-        0xE7 => "SWAPN".to_string(),
-        0xE8 => "EXCHANGE".to_string(),
-        0xF0 => "CREATE".to_string(),
-        0xF1 => "CALL".to_string(),
-        0xF2 => "CALLCODE".to_string(),
-        0xF3 => "RETURN".to_string(),
-        0xF4 => "DELEGATECALL".to_string(),
-        0xF5 => "CREATE2".to_string(),
-        0xFA => "STATICCALL".to_string(),
-        0xFD => "REVERT".to_string(),
-        0xFE => "INVALID".to_string(),
-        0xFF => "SELFDESTRUCT".to_string(),
-        b => format!("opcode 0x{:02x}", b),
+        0x00 => Cow::Borrowed("STOP"),
+        0x01 => Cow::Borrowed("ADD"),
+        0x02 => Cow::Borrowed("MUL"),
+        0x03 => Cow::Borrowed("SUB"),
+        0x04 => Cow::Borrowed("DIV"),
+        0x05 => Cow::Borrowed("SDIV"),
+        0x06 => Cow::Borrowed("MOD"),
+        0x07 => Cow::Borrowed("SMOD"),
+        0x08 => Cow::Borrowed("ADDMOD"),
+        0x09 => Cow::Borrowed("MULMOD"),
+        0x0A => Cow::Borrowed("EXP"),
+        0x0B => Cow::Borrowed("SIGNEXTEND"),
+        0x10 => Cow::Borrowed("LT"),
+        0x11 => Cow::Borrowed("GT"),
+        0x12 => Cow::Borrowed("SLT"),
+        0x13 => Cow::Borrowed("SGT"),
+        0x14 => Cow::Borrowed("EQ"),
+        0x15 => Cow::Borrowed("ISZERO"),
+        0x16 => Cow::Borrowed("AND"),
+        0x17 => Cow::Borrowed("OR"),
+        0x18 => Cow::Borrowed("XOR"),
+        0x19 => Cow::Borrowed("NOT"),
+        0x1A => Cow::Borrowed("BYTE"),
+        0x1B => Cow::Borrowed("SHL"),
+        0x1C => Cow::Borrowed("SHR"),
+        0x1D => Cow::Borrowed("SAR"),
+        0x20 => Cow::Borrowed("KECCAK256"),
+        0x30 => Cow::Borrowed("ADDRESS"),
+        0x31 => Cow::Borrowed("BALANCE"),
+        0x32 => Cow::Borrowed("ORIGIN"),
+        0x33 => Cow::Borrowed("CALLER"),
+        0x34 => Cow::Borrowed("CALLVALUE"),
+        0x35 => Cow::Borrowed("CALLDATALOAD"),
+        0x36 => Cow::Borrowed("CALLDATASIZE"),
+        0x37 => Cow::Borrowed("CALLDATACOPY"),
+        0x38 => Cow::Borrowed("CODESIZE"),
+        0x39 => Cow::Borrowed("CODECOPY"),
+        0x3A => Cow::Borrowed("GASPRICE"),
+        0x3B => Cow::Borrowed("EXTCODESIZE"),
+        0x3C => Cow::Borrowed("EXTCODECOPY"),
+        0x3D => Cow::Borrowed("RETURNDATASIZE"),
+        0x3E => Cow::Borrowed("RETURNDATACOPY"),
+        0x3F => Cow::Borrowed("EXTCODEHASH"),
+        0x40 => Cow::Borrowed("BLOCKHASH"),
+        0x41 => Cow::Borrowed("COINBASE"),
+        0x42 => Cow::Borrowed("TIMESTAMP"),
+        0x43 => Cow::Borrowed("NUMBER"),
+        0x44 => Cow::Borrowed("PREVRANDAO"),
+        0x45 => Cow::Borrowed("GASLIMIT"),
+        0x46 => Cow::Borrowed("CHAINID"),
+        0x47 => Cow::Borrowed("SELFBALANCE"),
+        0x48 => Cow::Borrowed("BASEFEE"),
+        0x49 => Cow::Borrowed("BLOBHASH"),
+        0x4A => Cow::Borrowed("BLOBBASEFEE"),
+        0x50 => Cow::Borrowed("POP"),
+        0x51 => Cow::Borrowed("MLOAD"),
+        0x52 => Cow::Borrowed("MSTORE"),
+        0x53 => Cow::Borrowed("MSTORE8"),
+        0x54 => Cow::Borrowed("SLOAD"),
+        0x55 => Cow::Borrowed("SSTORE"),
+        0x56 => Cow::Borrowed("JUMP"),
+        0x57 => Cow::Borrowed("JUMPI"),
+        0x58 => Cow::Borrowed("PC"),
+        0x59 => Cow::Borrowed("MSIZE"),
+        0x5A => Cow::Borrowed("GAS"),
+        0x5B => Cow::Borrowed("JUMPDEST"),
+        0x5C => Cow::Borrowed("TLOAD"),
+        0x5D => Cow::Borrowed("TSTORE"),
+        0x5E => Cow::Borrowed("MCOPY"),
+        0x5F => Cow::Borrowed("PUSH0"),
+        0x60 => Cow::Borrowed("PUSH1"),
+        0x61 => Cow::Borrowed("PUSH2"),
+        0x62 => Cow::Borrowed("PUSH3"),
+        0x63 => Cow::Borrowed("PUSH4"),
+        0x64 => Cow::Borrowed("PUSH5"),
+        0x65 => Cow::Borrowed("PUSH6"),
+        0x66 => Cow::Borrowed("PUSH7"),
+        0x67 => Cow::Borrowed("PUSH8"),
+        0x68 => Cow::Borrowed("PUSH9"),
+        0x69 => Cow::Borrowed("PUSH10"),
+        0x6A => Cow::Borrowed("PUSH11"),
+        0x6B => Cow::Borrowed("PUSH12"),
+        0x6C => Cow::Borrowed("PUSH13"),
+        0x6D => Cow::Borrowed("PUSH14"),
+        0x6E => Cow::Borrowed("PUSH15"),
+        0x6F => Cow::Borrowed("PUSH16"),
+        0x70 => Cow::Borrowed("PUSH17"),
+        0x71 => Cow::Borrowed("PUSH18"),
+        0x72 => Cow::Borrowed("PUSH19"),
+        0x73 => Cow::Borrowed("PUSH20"),
+        0x74 => Cow::Borrowed("PUSH21"),
+        0x75 => Cow::Borrowed("PUSH22"),
+        0x76 => Cow::Borrowed("PUSH23"),
+        0x77 => Cow::Borrowed("PUSH24"),
+        0x78 => Cow::Borrowed("PUSH25"),
+        0x79 => Cow::Borrowed("PUSH26"),
+        0x7A => Cow::Borrowed("PUSH27"),
+        0x7B => Cow::Borrowed("PUSH28"),
+        0x7C => Cow::Borrowed("PUSH29"),
+        0x7D => Cow::Borrowed("PUSH30"),
+        0x7E => Cow::Borrowed("PUSH31"),
+        0x7F => Cow::Borrowed("PUSH32"),
+        0x80 => Cow::Borrowed("DUP1"),
+        0x81 => Cow::Borrowed("DUP2"),
+        0x82 => Cow::Borrowed("DUP3"),
+        0x83 => Cow::Borrowed("DUP4"),
+        0x84 => Cow::Borrowed("DUP5"),
+        0x85 => Cow::Borrowed("DUP6"),
+        0x86 => Cow::Borrowed("DUP7"),
+        0x87 => Cow::Borrowed("DUP8"),
+        0x88 => Cow::Borrowed("DUP9"),
+        0x89 => Cow::Borrowed("DUP10"),
+        0x8A => Cow::Borrowed("DUP11"),
+        0x8B => Cow::Borrowed("DUP12"),
+        0x8C => Cow::Borrowed("DUP13"),
+        0x8D => Cow::Borrowed("DUP14"),
+        0x8E => Cow::Borrowed("DUP15"),
+        0x8F => Cow::Borrowed("DUP16"),
+        0x90 => Cow::Borrowed("SWAP1"),
+        0x91 => Cow::Borrowed("SWAP2"),
+        0x92 => Cow::Borrowed("SWAP3"),
+        0x93 => Cow::Borrowed("SWAP4"),
+        0x94 => Cow::Borrowed("SWAP5"),
+        0x95 => Cow::Borrowed("SWAP6"),
+        0x96 => Cow::Borrowed("SWAP7"),
+        0x97 => Cow::Borrowed("SWAP8"),
+        0x98 => Cow::Borrowed("SWAP9"),
+        0x99 => Cow::Borrowed("SWAP10"),
+        0x9A => Cow::Borrowed("SWAP11"),
+        0x9B => Cow::Borrowed("SWAP12"),
+        0x9C => Cow::Borrowed("SWAP13"),
+        0x9D => Cow::Borrowed("SWAP14"),
+        0x9E => Cow::Borrowed("SWAP15"),
+        0x9F => Cow::Borrowed("SWAP16"),
+        0xA0 => Cow::Borrowed("LOG0"),
+        0xA1 => Cow::Borrowed("LOG1"),
+        0xA2 => Cow::Borrowed("LOG2"),
+        0xA3 => Cow::Borrowed("LOG3"),
+        0xA4 => Cow::Borrowed("LOG4"),
+        0xE6 => Cow::Borrowed("DUPN"),
+        0xE7 => Cow::Borrowed("SWAPN"),
+        0xE8 => Cow::Borrowed("EXCHANGE"),
+        0xF0 => Cow::Borrowed("CREATE"),
+        0xF1 => Cow::Borrowed("CALL"),
+        0xF2 => Cow::Borrowed("CALLCODE"),
+        0xF3 => Cow::Borrowed("RETURN"),
+        0xF4 => Cow::Borrowed("DELEGATECALL"),
+        0xF5 => Cow::Borrowed("CREATE2"),
+        0xFA => Cow::Borrowed("STATICCALL"),
+        0xFD => Cow::Borrowed("REVERT"),
+        0xFE => Cow::Borrowed("INVALID"),
+        0xFF => Cow::Borrowed("SELFDESTRUCT"),
+        b => Cow::Owned(format!("opcode 0x{:02x}", b)),
     }
 }
 
@@ -347,66 +348,6 @@ pub fn geth_uint256_hex(v: &U256) -> String {
     format!("0x{}", stripped)
 }
 
-fn is_zero_u64(n: &u64) -> bool {
-    *n == 0
-}
-
-fn serialize_stack<S>(stack: &Option<Vec<U256>>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    use serde::ser::SerializeSeq;
-    match stack {
-        None => serializer.serialize_none(),
-        Some(vec) => {
-            let mut seq = serializer.serialize_seq(Some(vec.len()))?;
-            for v in vec {
-                seq.serialize_element(&geth_uint256_hex(v))?;
-            }
-            seq.end()
-        }
-    }
-}
-
-fn serialize_return_data<S>(rd: &Option<bytes::Bytes>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match rd {
-        None => serializer.serialize_none(),
-        Some(b) => serializer.serialize_str(&format!("0x{}", hex::encode(b))),
-    }
-}
-
-fn serialize_storage<S>(
-    storage: &Option<BTreeMap<H256, H256>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    use serde::ser::SerializeMap;
-    match storage {
-        None => serializer.serialize_none(),
-        Some(map) => {
-            let mut m = serializer.serialize_map(Some(map.len()))?;
-            for (k, v) in map {
-                let k_str = format!("0x{}", hex::encode(k.as_bytes()));
-                let v_str = format!("0x{}", hex::encode(v.as_bytes()));
-                m.serialize_entry(&k_str, &v_str)?;
-            }
-            m.end()
-        }
-    }
-}
-
-fn is_return_data_absent(rd: &Option<bytes::Bytes>) -> bool {
-    match rd {
-        None => true,
-        Some(b) => b.is_empty(),
-    }
-}
-
 // ─── Serialize impls ──────────────────────────────────────────────────────
 
 impl serde::Serialize for MemoryChunk {
@@ -419,14 +360,10 @@ impl serde::Serialize for StructLog {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
 
-        // Count the number of fields that will be emitted so the map hint is accurate.
-        // Required fields: pc, op, gas, gasCost, depth = 5
-        // Optional: refund, stack, memory, storage, returnData, error
-        let mut field_count = 5;
-        if !is_zero_u64(&self.refund) {
-            field_count += 1;
-        }
-        if self.stack.is_some() {
+        // Required fields: pc, op, gas, gasCost, memSize, stack, depth, returnData, refund, opName = 10
+        // Optional: error, memory, storage
+        let mut field_count = 10;
+        if self.error.is_some() {
             field_count += 1;
         }
         if self.memory.is_some() {
@@ -435,71 +372,68 @@ impl serde::Serialize for StructLog {
         if self.storage.is_some() {
             field_count += 1;
         }
-        if !is_return_data_absent(&self.return_data) {
-            field_count += 1;
-        }
-        if self.error.is_some() {
-            field_count += 1;
-        }
 
         let mut map = serializer.serialize_map(Some(field_count))?;
 
         map.serialize_entry("pc", &self.pc)?;
-        map.serialize_entry("op", &opcode_name(self.op))?;
-        map.serialize_entry("gas", &self.gas)?;
-        map.serialize_entry("gasCost", &self.gas_cost)?;
-        map.serialize_entry("depth", &self.depth)?;
+        map.serialize_entry("op", &self.op)?;
+        map.serialize_entry("gas", &format!("{:#x}", self.gas))?;
+        map.serialize_entry("gasCost", &format!("{:#x}", self.gas_cost))?;
+        map.serialize_entry("memSize", &self.mem_size)?;
 
-        if !is_zero_u64(&self.refund) {
-            map.serialize_entry("refund", &self.refund)?;
-        }
-
-        if self.stack.is_some() {
-            // Serialize stack via the custom serializer logic inline.
-            struct StackWrapper<'a>(&'a Option<Vec<U256>>);
-            impl serde::Serialize for StackWrapper<'_> {
-                fn serialize<S: serde::Serializer>(
-                    &self,
-                    serializer: S,
-                ) -> Result<S::Ok, S::Error> {
-                    serialize_stack(self.0, serializer)
+        // stack: Some → array of hex strings; None → JSON null (required field)
+        struct StackSerializer<'a>(&'a Option<Vec<U256>>);
+        impl serde::Serialize for StackSerializer<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeSeq;
+                match self.0 {
+                    None => serializer.serialize_none(),
+                    Some(vec) => {
+                        let mut seq = serializer.serialize_seq(Some(vec.len()))?;
+                        for v in vec {
+                            seq.serialize_element(&geth_uint256_hex(v))?;
+                        }
+                        seq.end()
+                    }
                 }
             }
-            map.serialize_entry("stack", &StackWrapper(&self.stack))?;
+        }
+        map.serialize_entry("stack", &StackSerializer(&self.stack))?;
+
+        map.serialize_entry("depth", &self.depth)?;
+        map.serialize_entry(
+            "returnData",
+            &format!("0x{}", hex::encode(&self.return_data)),
+        )?;
+        map.serialize_entry("refund", &format!("{:#x}", self.refund))?;
+        map.serialize_entry("opName", &opcode_name(self.op))?;
+
+        if let Some(err) = &self.error {
+            map.serialize_entry("error", err)?;
         }
 
         if let Some(mem) = &self.memory {
             map.serialize_entry("memory", mem)?;
         }
 
-        if self.storage.is_some() {
-            struct StorageWrapper<'a>(&'a Option<BTreeMap<H256, H256>>);
-            impl serde::Serialize for StorageWrapper<'_> {
+        if let Some(storage) = &self.storage {
+            struct StorageSerializer<'a>(&'a BTreeMap<H256, H256>);
+            impl serde::Serialize for StorageSerializer<'_> {
                 fn serialize<S: serde::Serializer>(
                     &self,
                     serializer: S,
                 ) -> Result<S::Ok, S::Error> {
-                    serialize_storage(self.0, serializer)
+                    use serde::ser::SerializeMap;
+                    let mut m = serializer.serialize_map(Some(self.0.len()))?;
+                    for (k, v) in self.0 {
+                        let k_str = format!("0x{}", hex::encode(k.as_bytes()));
+                        let v_str = format!("0x{}", hex::encode(v.as_bytes()));
+                        m.serialize_entry(&k_str, &v_str)?;
+                    }
+                    m.end()
                 }
             }
-            map.serialize_entry("storage", &StorageWrapper(&self.storage))?;
-        }
-
-        if !is_return_data_absent(&self.return_data) {
-            struct RdWrapper<'a>(&'a Option<bytes::Bytes>);
-            impl serde::Serialize for RdWrapper<'_> {
-                fn serialize<S: serde::Serializer>(
-                    &self,
-                    serializer: S,
-                ) -> Result<S::Ok, S::Error> {
-                    serialize_return_data(self.0, serializer)
-                }
-            }
-            map.serialize_entry("returnData", &RdWrapper(&self.return_data))?;
-        }
-
-        if let Some(err) = &self.error {
-            map.serialize_entry("error", err)?;
+            map.serialize_entry("storage", &StorageSerializer(storage))?;
         }
 
         map.end()
@@ -510,12 +444,9 @@ impl serde::Serialize for StructLogResult {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(4))?;
-        map.serialize_entry("gas", &self.gas)?;
-        map.serialize_entry("failed", &self.failed)?;
-        map.serialize_entry(
-            "returnValue",
-            &format!("0x{}", hex::encode(&self.return_value)),
-        )?;
+        map.serialize_entry("pass", &self.pass)?;
+        map.serialize_entry("gasUsed", &format!("{:#x}", self.gas_used))?;
+        map.serialize_entry("output", &format!("0x{}", hex::encode(&self.output)))?;
         map.serialize_entry("structLogs", &self.struct_logs)?;
         map.end()
     }
@@ -532,6 +463,23 @@ mod tests {
 
     fn to_json<T: serde::Serialize>(v: &T) -> Value {
         serde_json::to_value(v).expect("serialize failed")
+    }
+
+    fn minimal_log() -> StructLog {
+        StructLog {
+            pc: 0,
+            op: 0x00,
+            gas: 0,
+            gas_cost: 0,
+            mem_size: 0,
+            depth: 1,
+            return_data: Bytes::new(),
+            refund: 0,
+            stack: Some(vec![]),
+            memory: None,
+            storage: None,
+            error: None,
+        }
     }
 
     // ── geth_uint256_hex ──────────────────────────────────────────────────
@@ -569,6 +517,11 @@ mod tests {
         assert_eq!(opcode_name(0xC1), "opcode 0xc1");
     }
 
+    #[test]
+    fn opcode_name_0x4b_unknown() {
+        assert_eq!(opcode_name(0x4B), "opcode 0x4b");
+    }
+
     // ── MemoryChunk ───────────────────────────────────────────────────────
 
     #[test]
@@ -578,41 +531,88 @@ mod tests {
         assert_eq!(j, Value::String(format!("0x{}", "0".repeat(64))));
     }
 
+    // ── StructLog — op field ──────────────────────────────────────────────
+
+    #[test]
+    fn op_is_byte_value() {
+        let log = StructLog {
+            op: 0x60, // PUSH1
+            ..minimal_log()
+        };
+        let j = to_json(&log);
+        assert_eq!(
+            j["op"],
+            Value::Number(96.into()),
+            "op must be decimal byte value"
+        );
+    }
+
+    #[test]
+    fn op_name_is_string() {
+        let log = StructLog {
+            op: 0x60, // PUSH1
+            ..minimal_log()
+        };
+        let j = to_json(&log);
+        assert_eq!(j["opName"], Value::String("PUSH1".to_string()));
+    }
+
+    // ── StructLog — gas fields ────────────────────────────────────────────
+
+    #[test]
+    fn gas_encoded_as_hex_string() {
+        let log = StructLog {
+            gas: 30000,
+            ..minimal_log()
+        };
+        let j = to_json(&log);
+        assert_eq!(j["gas"], Value::String("0x7530".to_string()));
+    }
+
+    #[test]
+    fn gas_cost_encoded_as_hex_string() {
+        let log = StructLog {
+            gas_cost: 3,
+            ..minimal_log()
+        };
+        let j = to_json(&log);
+        assert_eq!(j["gasCost"], Value::String("0x3".to_string()));
+    }
+
+    // ── StructLog — memSize field ─────────────────────────────────────────
+
+    #[test]
+    fn mem_size_field_present() {
+        let log = StructLog {
+            mem_size: 64,
+            ..minimal_log()
+        };
+        let j = to_json(&log);
+        assert!(j["memSize"].is_number(), "memSize must be a number");
+        assert_eq!(j["memSize"], Value::Number(64.into()));
+    }
+
     // ── StructLog — stack field ───────────────────────────────────────────
 
     #[test]
-    fn stack_none_omits_field() {
+    fn stack_disabled_is_null() {
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
             stack: None,
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
+            ..minimal_log()
         };
         let j = to_json(&log);
-        assert!(j.get("stack").is_none(), "stack field should be absent");
+        assert_eq!(
+            j["stack"],
+            Value::Null,
+            "disabled stack must serialize as null"
+        );
     }
 
     #[test]
     fn stack_empty_vec_present_as_array() {
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
             stack: Some(vec![]),
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
+            ..minimal_log()
         };
         let j = to_json(&log);
         let stack = j.get("stack").expect("stack field should be present");
@@ -622,17 +622,8 @@ mod tests {
     #[test]
     fn stack_values_encoded_correctly() {
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
             stack: Some(vec![U256::zero(), U256::from(1u64), U256::MAX]),
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
+            ..minimal_log()
         };
         let j = to_json(&log);
         let stack = j["stack"].as_array().expect("stack must be array");
@@ -645,21 +636,11 @@ mod tests {
 
     #[test]
     fn memory_33_bytes_two_chunks_padded() {
-        // 33 zero bytes → 2 chunks; second padded to 32 bytes
         let chunk0 = MemoryChunk([0u8; 32]);
-        let chunk1 = MemoryChunk([0u8; 32]); // last byte padded
+        let chunk1 = MemoryChunk([0u8; 32]);
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
             memory: Some(vec![chunk0, chunk1]),
-            storage: None,
-            return_data: None,
-            error: None,
+            ..minimal_log()
         };
         let j = to_json(&log);
         let mem = j["memory"].as_array().expect("memory must be array");
@@ -676,17 +657,9 @@ mod tests {
         let mut storage = BTreeMap::new();
         storage.insert(H256::from_low_u64_be(1), H256::from_low_u64_be(0x2a));
         let log = StructLog {
-            pc: 0,
             op: 0x54,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
             storage: Some(storage),
-            return_data: None,
-            error: None,
+            ..minimal_log()
         };
         let j = to_json(&log);
         let s = j["storage"].as_object().expect("storage must be object");
@@ -701,17 +674,8 @@ mod tests {
     #[test]
     fn error_some_is_present() {
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: None,
             error: Some("out of gas".to_string()),
+            ..minimal_log()
         };
         let j = to_json(&log);
         assert_eq!(j["error"], Value::String("out of gas".to_string()));
@@ -719,19 +683,7 @@ mod tests {
 
     #[test]
     fn error_none_is_absent() {
-        let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
-        };
+        let log = minimal_log();
         let j = to_json(&log);
         assert!(j.get("error").is_none());
     }
@@ -739,97 +691,44 @@ mod tests {
     // ── StructLog — refund field ──────────────────────────────────────────
 
     #[test]
-    fn refund_zero_is_absent() {
-        let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
-        };
+    fn refund_zero_is_0x0() {
+        let log = minimal_log();
         let j = to_json(&log);
-        assert!(j.get("refund").is_none());
+        assert_eq!(
+            j["refund"],
+            Value::String("0x0".to_string()),
+            "refund=0 must emit \"0x0\""
+        );
     }
 
     #[test]
-    fn refund_nonzero_is_present() {
+    fn refund_nonzero_is_hex_string() {
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
             refund: 5,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
+            ..minimal_log()
         };
         let j = to_json(&log);
-        assert_eq!(j["refund"], Value::Number(5.into()));
+        assert_eq!(j["refund"], Value::String("0x5".to_string()));
     }
 
     // ── StructLog — returnData field ──────────────────────────────────────
 
     #[test]
-    fn return_data_none_is_absent() {
-        let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: None,
-            error: None,
-        };
+    fn return_data_default_is_0x() {
+        let log = minimal_log();
         let j = to_json(&log);
-        assert!(j.get("returnData").is_none());
-    }
-
-    #[test]
-    fn return_data_empty_bytes_is_absent() {
-        let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: Some(Bytes::new()),
-            error: None,
-        };
-        let j = to_json(&log);
-        assert!(j.get("returnData").is_none());
+        assert_eq!(
+            j["returnData"],
+            Value::String("0x".to_string()),
+            "empty returnData must emit \"0x\""
+        );
     }
 
     #[test]
     fn return_data_nonempty_is_present() {
         let log = StructLog {
-            pc: 0,
-            op: 0x00,
-            gas: 0,
-            gas_cost: 0,
-            depth: 1,
-            refund: 0,
-            stack: None,
-            memory: None,
-            storage: None,
-            return_data: Some(Bytes::from_static(b"\x00\x01")),
-            error: None,
+            return_data: Bytes::from_static(b"\x00\x01"),
+            ..minimal_log()
         };
         let j = to_json(&log);
         assert_eq!(j["returnData"], Value::String("0x0001".to_string()));
@@ -840,15 +739,15 @@ mod tests {
     #[test]
     fn struct_log_result_shape() {
         let result = StructLogResult {
-            gas: 21000,
-            failed: false,
-            return_value: Bytes::from_static(b"\x00\x01"),
+            gas_used: 21000,
+            pass: true,
+            output: Bytes::from_static(b"\x00\x01"),
             struct_logs: vec![],
         };
         let j = to_json(&result);
-        assert_eq!(j["gas"], Value::Number(21000.into()));
-        assert_eq!(j["failed"], Value::Bool(false));
-        assert_eq!(j["returnValue"], Value::String("0x0001".to_string()));
+        assert_eq!(j["pass"], Value::Bool(true));
+        assert_eq!(j["gasUsed"], Value::String("0x5208".to_string()));
+        assert_eq!(j["output"], Value::String("0x0001".to_string()));
         assert_eq!(j["structLogs"], Value::Array(vec![]));
     }
 
@@ -864,42 +763,50 @@ mod tests {
             op: 0x60, // PUSH1
             gas: 30000,
             gas_cost: 3,
+            mem_size: 0,
             depth: 1,
+            return_data: Bytes::new(),
             refund: 0,
             stack: Some(vec![U256::zero(), U256::from(1u64)]),
             memory: Some(vec![MemoryChunk([0u8; 32])]),
             storage: Some(storage),
-            return_data: None,
             error: None,
         };
 
         let j = to_json(&log);
-        // Verify required fields are present with correct types
+        // pc as decimal number
         assert_eq!(j["pc"], Value::Number(0.into()));
-        assert_eq!(j["op"], Value::String("PUSH1".to_string()));
-        assert_eq!(j["gas"], Value::Number(30000.into()));
-        assert_eq!(j["gasCost"], Value::Number(3.into()));
-        assert_eq!(j["depth"], Value::Number(1.into()));
-        // refund absent (zero)
-        assert!(j.get("refund").is_none());
+        // op as decimal byte value
+        assert_eq!(j["op"], Value::Number(96.into()));
+        // gas as hex string
+        assert_eq!(j["gas"], Value::String("0x7530".to_string()));
+        // gasCost as hex string
+        assert_eq!(j["gasCost"], Value::String("0x3".to_string()));
+        // memSize as decimal number
+        assert_eq!(j["memSize"], Value::Number(0.into()));
         // stack present with two entries
         let stack = j["stack"].as_array().expect("stack");
         assert_eq!(stack.len(), 2);
         assert_eq!(stack[0], Value::String("0x0".to_string()));
         assert_eq!(stack[1], Value::String("0x1".to_string()));
+        // depth as decimal number
+        assert_eq!(j["depth"], Value::Number(1.into()));
+        // returnData always present; empty → "0x"
+        assert_eq!(j["returnData"], Value::String("0x".to_string()));
+        // refund always present; zero → "0x0"
+        assert_eq!(j["refund"], Value::String("0x0".to_string()));
+        // opName always present
+        assert_eq!(j["opName"], Value::String("PUSH1".to_string()));
         // memory present
         assert_eq!(j["memory"].as_array().expect("memory").len(), 1);
         // storage present
         assert!(j["storage"].as_object().is_some());
-        // returnData absent (None)
-        assert!(j.get("returnData").is_none());
-        // error absent (None)
+        // error absent
         assert!(j.get("error").is_none());
 
-        // Emit the full JSON for manual inspection
+        // Ensure it round-trips
         let s = serde_json::to_string(&log).expect("to_string");
-        // Ensure it parses back
         let reparsed: Value = serde_json::from_str(&s).expect("reparse");
-        assert_eq!(reparsed["op"], Value::String("PUSH1".to_string()));
+        assert_eq!(reparsed["opName"], Value::String("PUSH1".to_string()));
     }
 }

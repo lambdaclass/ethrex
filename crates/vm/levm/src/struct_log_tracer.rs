@@ -3,7 +3,6 @@ use ethrex_common::{
     Address, H256, U256,
     tracing::{MemoryChunk, StructLog, StructLogResult},
 };
-use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -23,7 +22,7 @@ pub struct StructLogConfig {
     pub limit: usize,
 }
 
-/// Per-step struct-log tracer for EIP-3155 / geth `structLogLegacy` output.
+/// Per-step struct-log tracer for EIP-3155 output.
 ///
 /// Use `LevmStructLogTracer::disabled()` when tracing is not wanted;
 /// the dispatch-loop guard is a single `if self.struct_log_tracer.active` branch
@@ -36,9 +35,6 @@ pub struct LevmStructLogTracer {
     pub cfg: StructLogConfig,
     /// Collected per-step entries.
     pub logs: Vec<StructLog>,
-    /// Per-contract accumulated storage seen at SLOAD/SSTORE steps.
-    /// Accumulated across the whole transaction (not reset per call frame).
-    pub storage: FxHashMap<Address, BTreeMap<H256, H256>>,
     /// Final output bytes (from RETURN / REVERT).
     pub output: Bytes,
     /// Top-level error string, if the transaction reverted.
@@ -61,7 +57,6 @@ impl LevmStructLogTracer {
             active: false,
             cfg: StructLogConfig::default(),
             logs: Vec::new(),
-            storage: FxHashMap::default(),
             output: Bytes::new(),
             error: None,
             gas_used: 0,
@@ -76,7 +71,6 @@ impl LevmStructLogTracer {
             active: true,
             cfg,
             logs: Vec::new(),
-            storage: FxHashMap::default(),
             output: Bytes::new(),
             error: None,
             gas_used: 0,
@@ -111,6 +105,7 @@ impl LevmStructLogTracer {
         refund: u64,
         stack_view: &[U256],
         memory_view: &[u8],
+        mem_size: u64,
         return_data: &Bytes,
         storage_kv: Option<(Address, H256, H256)>,
     ) {
@@ -119,47 +114,50 @@ impl LevmStructLogTracer {
             return;
         }
 
-        // Stack: Some(vec) when capture enabled; None when disabled.
+        // Stack: Some(vec) when capture enabled; None when disabled (emits JSON null).
         let stack = if !self.cfg.disable_stack {
             Some(stack_view.to_vec())
         } else {
             None
         };
 
-        // Memory: chunked 32-byte slices when enabled and non-empty; field omitted otherwise.
-        // Geth's `toLegacyJSON` uses `if len(s.Memory) > 0 { msg.Memory = &mem }` then emits
-        // via `omitempty` — empty memory means the field is absent, not `[]`.
-        let memory = if self.cfg.enable_memory && !memory_view.is_empty() {
-            let chunks = memory_view
-                .chunks(32)
-                .map(|c| {
-                    let mut arr = [0u8; 32];
-                    // c.len() <= 32 by construction (chunks(32)); slice is in-bounds.
-                    if let Some(dst) = arr.get_mut(..c.len()) {
-                        dst.copy_from_slice(c);
-                    }
-                    MemoryChunk(arr)
-                })
-                .collect();
-            Some(chunks)
+        // Memory: chunked 32-byte slices when enabled; field omitted otherwise.
+        // Emit Some(vec![]) when enabled and memory is empty (EIP-3155 requires
+        // the field present whenever enableMemory=true).
+        let memory = if self.cfg.enable_memory {
+            if memory_view.is_empty() {
+                Some(vec![])
+            } else {
+                let chunks = memory_view
+                    .chunks(32)
+                    .map(|c| {
+                        let mut arr = [0u8; 32];
+                        if let Some(dst) = arr.get_mut(..c.len()) {
+                            dst.copy_from_slice(c);
+                        }
+                        MemoryChunk(arr)
+                    })
+                    .collect();
+                Some(chunks)
+            }
         } else {
             None
         };
 
-        // Storage: update accumulated map and snapshot for this step.
-        let storage = if let Some((addr, key, value)) = storage_kv {
-            let contract_storage = self.storage.entry(addr).or_default();
-            contract_storage.insert(key, value);
-            Some(contract_storage.clone())
+        // Storage: single-entry map for this step only (no accumulation).
+        let storage = if let Some((_addr, key, value)) = storage_kv {
+            let mut m = BTreeMap::new();
+            m.insert(key, value);
+            Some(m)
         } else {
             None
         };
 
-        // returnData: only when enabled and non-empty.
-        let return_data_field = if self.cfg.enable_return_data && !return_data.is_empty() {
-            Some(return_data.clone())
+        // returnData: actual bytes when enabled; empty Bytes otherwise.
+        let return_data_field = if self.cfg.enable_return_data {
+            return_data.clone()
         } else {
-            None
+            Bytes::new()
         };
 
         let log = StructLog {
@@ -167,12 +165,13 @@ impl LevmStructLogTracer {
             op: opcode,
             gas,
             gas_cost: 0, // patched in finalize_step
+            mem_size,
             depth,
+            return_data: return_data_field,
             refund,
             stack,
             memory,
             storage,
-            return_data: return_data_field,
             error: None, // patched in finalize_step
         };
 
@@ -192,9 +191,9 @@ impl LevmStructLogTracer {
     /// Assembles the final `StructLogResult` after the transaction finishes.
     pub fn take_result(&mut self) -> StructLogResult {
         StructLogResult {
-            gas: self.gas_used,
-            failed: self.error.is_some(),
-            return_value: std::mem::take(&mut self.output),
+            pass: self.error.is_none(),
+            gas_used: self.gas_used,
+            output: std::mem::take(&mut self.output),
             struct_logs: std::mem::take(&mut self.logs),
         }
     }
@@ -384,10 +383,10 @@ mod tests {
         (tracer, report)
     }
 
-    // ── Task 2.8: PUSH1/PUSH1/ADD/STOP test ──────────────────────────────
+    // ── PUSH1/PUSH1/ADD/STOP test ─────────────────────────────────────────
 
     /// `PUSH1 0x01 PUSH1 0x02 ADD STOP`
-    /// Expected: 4 entries, pc=[0,2,4,5], op=["PUSH1","PUSH1","ADD","STOP"],
+    /// Expected: 4 entries, pc=[0,2,4,5], op=[PUSH1,PUSH1,ADD,STOP],
     /// gas_cost=[3,3,3,0], depth=1, stack evolves correctly.
     #[test]
     fn test_struct_log_push_add_stop() {
@@ -451,11 +450,11 @@ mod tests {
         );
     }
 
-    // ── Task 2.8: SSTORE storage capture test ─────────────────────────────
+    // ── SSTORE storage capture test ───────────────────────────────────────
 
     /// `PUSH1 0x2a PUSH1 0x01 SSTORE STOP`
     /// SSTORE step: key=0x01, new_value=0x2a.
-    /// Pin: at SSTORE step, storage = Some({H256(0x01): H256(0x2a)}).
+    /// EIP-3155: at SSTORE step, storage = Some({H256(0x01): H256(0x2a)}) — single entry only.
     /// Steps before SSTORE and STOP emit storage=None.
     #[test]
     fn test_struct_log_sstore_storage_capture() {
@@ -496,7 +495,12 @@ mod tests {
             .as_ref()
             .expect("SSTORE step must have storage");
 
-        // SSTORE: key = stack[top] = 0x01, value = stack[top-1] = 0x2a
+        // EIP-3155: single entry {key: 0x01, value: 0x2a}
+        assert_eq!(
+            sstore_storage.len(),
+            1,
+            "storage must contain exactly one entry"
+        );
         let key = H256::from_low_u64_be(0x01);
         let val = H256::from_low_u64_be(0x2a);
         assert!(
