@@ -2958,15 +2958,17 @@ impl Blockchain {
                 return Err(MempoolError::NonceTooLow);
             }
 
-            // EIP-3607: reject txs from senders with deployed code, unless the
-            // code is an EIP-7702 delegation designation (the account is still
-            // an EOA in spirit, just pointing at delegate code).
+            // EIP-3607: reject txs from senders with deployed code, unless
+            // the code is an EIP-7702 delegation designation (the account is
+            // still an EOA in spirit, just pointing at delegate code). When
+            // the code hash is set but `get_account_code` returns `None`,
+            // the store is inconsistent or pruned; we conservatively treat
+            // that as non-delegation and reject the tx.
             if sender_acc_info.code_hash != *EMPTY_KECCACK_HASH {
-                let is_delegation = match self.storage.get_account_code(sender_acc_info.code_hash) {
-                    Ok(Some(code)) => is_eip7702_delegation(code.bytecode.as_ref()),
-                    Ok(None) => false,
-                    Err(e) => return Err(e.into()),
-                };
+                let is_delegation = self
+                    .storage
+                    .get_account_code(sender_acc_info.code_hash)?
+                    .is_some_and(|code| is_eip7702_delegation(code.bytecode.as_ref()));
                 if !is_delegation {
                     return Err(MempoolError::SenderIsContract);
                 }
