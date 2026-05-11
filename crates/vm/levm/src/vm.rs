@@ -951,6 +951,33 @@ impl<'a> VM<'a> {
                 .saturating_add(execution_portion);
 
             self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(execution_portion);
+
+            // EIP-8037 bal-devnet-7 (EELS PR #2823): on a top-level CREATE tx
+            // failure, additionally refund the intrinsic `STATE_BYTES_PER_NEW_ACCOUNT *
+            // cost_per_state_byte` charge to the reservoir, mirroring the inner-CREATE
+            // rule. Routed through `state_gas_refund_absorbed` so block-level
+            // `state_gas_used` is reduced (matches EELS `tx_output.state_refund`).
+            // Also decrement `intrinsic_state_gas_charged` so `refund_sender`'s
+            // `regular_gas = raw_consumed - intrinsic_state - ...` formula no longer
+            // double-deducts the refunded amount (the refund came back to the user via
+            // the reservoir, it is no longer "state-paid"; not subtracting it from raw
+            // leaves it in the regular dimension where the burn actually sits).
+            // EELS reference: fork.py::process_transaction:
+            //   if isinstance(tx.to, Bytes0):
+            //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+            //       tx_output.state_gas_left += new_account_refund
+            //       tx_output.state_refund   += new_account_refund
+            if self.is_create()? {
+                let new_account_refund = self.state_gas_new_account;
+                self.state_gas_reservoir =
+                    self.state_gas_reservoir.saturating_add(new_account_refund);
+                self.state_gas_refund_absorbed = self
+                    .state_gas_refund_absorbed
+                    .saturating_add(new_account_refund);
+                self.intrinsic_state_gas_charged = self
+                    .intrinsic_state_gas_charged
+                    .saturating_sub(new_account_refund);
+            }
         }
 
         for hook in self.hooks.clone() {
