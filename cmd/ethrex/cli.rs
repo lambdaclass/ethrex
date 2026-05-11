@@ -184,6 +184,15 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Minimum effective priority fee (in wei) required for a transaction to be admitted into the mempool. For typed transactions this is `max_priority_fee_per_gas`; for legacy transactions it is `gas_price - base_fee`. Set to 0 to disable the floor.",
+        long = "mempool.min-tip",
+        default_value_t = 1_000_000,
+        value_name = "MIN_TIP_WEI",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MIN_TIP"
+    )]
+    pub mempool_min_tip: u64,
+    #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
@@ -450,6 +459,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_min_tip: 1_000_000,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

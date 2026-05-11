@@ -91,6 +91,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.min-tip <MIN_TIP_WEI>
+          Minimum effective priority fee (in wei) required for a transaction to be admitted into the mempool. For typed transactions this is `max_priority_fee_per_gas`; for legacy transactions it is `gas_price - base_fee`. Set to 0 to disable the floor.
+
+          [env: ETHREX_MEMPOOL_MIN_TIP=]
+          [default: 1000000]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 

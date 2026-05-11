@@ -11,11 +11,14 @@ pub const BLOB_BASE_FEE_UPDATE_FRACTION: u64 = 3338477; // Defined in [EIP-4844]
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01; // Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
 /// Minimum tip, obtained from geth's default miner config (https://github.com/ethereum/go-ethereum/blob/f750117ad19d623622cc4a46ea361a716ba7407e/miner/miner.go#L56)
 ///
-/// Scope: this constant is consumed only by the RPC gas-price estimators
-/// (`eth_gasPrice`, `eth_maxPriorityFeePerGas`). It is NOT a mempool
-/// admission gate — zero-tip transactions are currently admitted.
+/// Used as:
+/// - the default for the `--mempool.min-tip` admission floor consulted by
+///   `Blockchain::validate_transaction`; and
+/// - the floor for the RPC gas-price estimators
+///   (`eth_gasPrice`, `eth_maxPriorityFeePerGas`).
 ///
-/// TODO: This should be configurable along with the tip filter on https://github.com/lambdaclass/ethrex/issues/680
+/// Operators that want to admit zero-tip transactions can pass
+/// `--mempool.min-tip 0`.
 pub const MIN_GAS_TIP: u64 = 1000000;
 
 // Blob size related

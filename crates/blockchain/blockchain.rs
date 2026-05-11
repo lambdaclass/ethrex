@@ -231,6 +231,10 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum effective priority fee (in wei) required for a transaction to be
+    /// admitted into the mempool. Transactions below this floor are rejected at
+    /// admission. Set to 0 to disable the floor.
+    pub min_tip_wei: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -242,9 +246,13 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            min_tip_wei: DEFAULT_MIN_TIP_WEI,
         }
     }
 }
+
+/// Default min-tip floor (wei).
+pub const DEFAULT_MIN_TIP_WEI: u64 = ethrex_common::types::MIN_GAS_TIP;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -344,13 +352,20 @@ impl Blockchain {
         }
     }
 
+    /// Test-permissive `Blockchain` constructor. Mirrors `BlockchainOptions::default`
+    /// but disables admission-policy gates (e.g. the min-tip floor) so that
+    /// unrelated tests don't need to set every mempool option explicitly.
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions {
+            min_tip_wei: 0,
+            ..BlockchainOptions::default()
+        };
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -2469,6 +2484,28 @@ impl Blockchain {
         // Check priority fee is less or equal than gas fee gap
         if tx.max_priority_fee().unwrap_or(0) > tx.max_fee_per_gas().unwrap_or(0) {
             return Err(MempoolError::TxTipAboveFeeCapError);
+        }
+
+        // Admission-time minimum tip floor. For typed (1559-family) txs, the
+        // effective tip is `max_priority_fee_per_gas`. For legacy / EIP-2930
+        // it's `gas_price.saturating_sub(base_fee)`. A floor of 0 disables
+        // the check. Saturating arithmetic guards against pre-London headers
+        // where `base_fee_per_gas` is `None`.
+        if self.options.min_tip_wei > 0 {
+            let effective_tip = match tx.max_priority_fee() {
+                Some(tip) => tip,
+                None => {
+                    let base_fee = header.base_fee_per_gas.unwrap_or(0);
+                    let gas_price_u64 = u64::try_from(tx.gas_price()).unwrap_or(u64::MAX);
+                    gas_price_u64.saturating_sub(base_fee)
+                }
+            };
+            if effective_tip < self.options.min_tip_wei {
+                return Err(MempoolError::TipBelowMinimum {
+                    actual: effective_tip,
+                    limit: self.options.min_tip_wei,
+                });
+            }
         }
 
         // Check that the gas limit covers the gas needs for transaction metadata.
