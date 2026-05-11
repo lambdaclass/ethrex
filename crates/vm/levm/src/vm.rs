@@ -927,40 +927,41 @@ impl<'a> VM<'a> {
         //   `tx_output.state_gas_left += tx_output.state_gas_used` on any non-success.
         // Halt, OOG, and REVERT all take the same path (Policy A). Collision is handled
         // separately in the hook.
-        if self.env.config.fork >= Fork::Amsterdam
-            && !ctx_result.is_success()
-            && !ctx_result.is_collision()
-        {
-            debug_assert!(
-                self.state_gas_used >= self.intrinsic_state_gas_charged,
-                "invariant: intrinsic is a floor on state_gas_used ({} >= {})",
-                self.state_gas_used,
-                self.intrinsic_state_gas_charged
-            );
-            // Execution state gas still "on the books" — gross charge minus intrinsic and
-            // minus any credits already accounted for via credit_state_gas_refund (which
-            // already bumped reservoir + absorbed). This excludes double-counting when a
-            // tx credits a refund mid-execution and then fails.
-            let execution_portion = self
-                .state_gas_used
-                .saturating_sub(self.intrinsic_state_gas_charged)
-                .saturating_sub(self.state_gas_refund_absorbed)
-                .saturating_sub(self.state_gas_refund_pending);
-            self.state_gas_refund_absorbed = self
-                .state_gas_refund_absorbed
-                .saturating_add(execution_portion);
+        if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
+            // Policy A (REVERT / ExceptionalHalt / OOG, but NOT collision): refill
+            // reservoir with the execution portion of state-gas. Collision burns the
+            // forwarded gas wholesale — there is no execution state-gas to recover.
+            if !ctx_result.is_collision() {
+                debug_assert!(
+                    self.state_gas_used >= self.intrinsic_state_gas_charged,
+                    "invariant: intrinsic is a floor on state_gas_used ({} >= {})",
+                    self.state_gas_used,
+                    self.intrinsic_state_gas_charged
+                );
+                let execution_portion = self
+                    .state_gas_used
+                    .saturating_sub(self.intrinsic_state_gas_charged)
+                    .saturating_sub(self.state_gas_refund_absorbed)
+                    .saturating_sub(self.state_gas_refund_pending);
+                self.state_gas_refund_absorbed = self
+                    .state_gas_refund_absorbed
+                    .saturating_add(execution_portion);
+                self.state_gas_reservoir =
+                    self.state_gas_reservoir.saturating_add(execution_portion);
+            }
 
-            self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(execution_portion);
-
-            // EIP-8037 bal-devnet-7 (EELS PR #2823): on a top-level CREATE tx
-            // failure, additionally refund the intrinsic `STATE_BYTES_PER_NEW_ACCOUNT *
-            // cost_per_state_byte` charge to the reservoir, mirroring the inner-CREATE
-            // rule. Routed through `state_gas_refund_absorbed` so block-level
-            // `state_gas_used` is reduced (matches EELS `tx_output.state_refund`).
-            // `intrinsic_state_gas_charged` is left intact: `refund_sender`'s regular-gas
-            // formula subtracts it from `raw_consumed`, which keeps the intrinsic burn
-            // out of the regular dimension. The user gets the gas back via the reservoir,
-            // and neither dimension counts it.
+            // EIP-8037 bal-devnet-7 (EELS PR #2823): on ANY top-level CREATE-tx
+            // failure (revert / halt / OOG / collision), refund the intrinsic
+            // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the
+            // reservoir, mirroring the inner-CREATE rule. Routed through
+            // `state_gas_refund_absorbed` so block-level `state_gas_used` is reduced
+            // (matches EELS `tx_output.state_refund`). Collision specifically is the
+            // 7th of qu0b's table — handled here since it's another tx-CREATE
+            // failure variant that the spec wants refunded.
+            // `intrinsic_state_gas_charged` is left intact: `refund_sender`'s
+            // regular-gas formula subtracts it from `raw_consumed`, which keeps the
+            // intrinsic burn out of the regular dimension. The user gets the gas
+            // back via the reservoir, and neither dimension counts it.
             // EELS reference: fork.py::process_transaction:
             //   if isinstance(tx.to, Bytes0):
             //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
