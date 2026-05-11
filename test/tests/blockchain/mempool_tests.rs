@@ -555,9 +555,10 @@ async fn floor_of_zero_admits_zero_tip() {
 }
 
 #[tokio::test]
-async fn legacy_effective_tip_below_floor_rejected() {
-    // Legacy tx: effective_tip = gas_price.saturating_sub(base_fee).
-    // Test header has no base_fee (None → 0), so effective_tip = gas_price.
+async fn legacy_gas_price_below_floor_rejected() {
+    // Legacy tx: `gas_tip_cap()` returns `gas_price` so the floor applies to
+    // the raw gas price for legacy txs (geth applies `PriceLimit` to
+    // `tx.GasTipCap()` which is `gas_price` for legacy).
     let (config, header) = build_basic_config_and_header(false, false);
     let store = setup_storage(config, header).await.expect("Storage setup");
     let blockchain = blockchain_with_min_tip(store, 1_000_000);
@@ -590,9 +591,10 @@ async fn options_field_is_used_in_validate_transaction() {
     let store = setup_storage(config, header).await.expect("Storage setup");
 
     let mut bc = Blockchain::default_with_store(store);
-    let mut opts = BlockchainOptions::default();
-    opts.min_tip_wei = 5_000_000_000; // 5 gwei
-    bc.options = opts;
+    bc.options = BlockchainOptions {
+        min_tip_wei: 5_000_000_000, // 5 gwei
+        ..BlockchainOptions::default()
+    };
 
     let tx = EIP1559Transaction {
         max_priority_fee_per_gas: 1_000_000_000, // 1 gwei (below 5 gwei)
@@ -656,9 +658,9 @@ async fn shipped_default_floor_rejects_zero_tip_admits_one() {
 
 #[tokio::test]
 async fn blob_tx_under_floor_rejected() {
-    // EIP-4844 path uses the same `Transaction::effective_gas_tip` helper.
-    // Confirm an under-floor blob tx is also rejected so a regression in
-    // the per-type dispatch wouldn't slip through.
+    // EIP-4844 path uses the same `gas_tip_cap()` accessor. Confirm an
+    // under-floor blob tx is also rejected so a regression in the per-type
+    // dispatch wouldn't slip through.
     let (config, header) = build_basic_config_and_header(false, false);
     let store = setup_storage(config, header).await.expect("Storage setup");
     let blockchain = blockchain_with_min_tip(store, 1_000_000);

@@ -2487,22 +2487,19 @@ impl Blockchain {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
-        // Admission-time minimum tip floor. Defers to the existing
-        // `Transaction::effective_gas_tip` helper so typed and legacy
-        // transactions go through the same EIP-1559 definition
-        // `min(max_priority_fee_per_gas, max_fee_per_gas - base_fee)`,
-        // avoiding the asymmetry of computing it inline. `None` from the
-        // helper means the tx can't pay for inclusion at the current base
-        // fee — treat that as effective tip = 0 for the floor comparison.
+        // Admission-time minimum tip floor. Compares the raw tip cap
+        // (`max_priority_fee_per_gas` for typed txs, `gas_price` for legacy)
+        // against `min_tip_wei`, matching geth's `PriceLimit` check on
+        // `tx.GasTipCap()` and reth's check on `max_priority_fee_per_gas`.
+        // Using the raw tip cap keeps the admission decision independent of
+        // the current base fee, so a tx that paid the floor at admission
+        // doesn't get reclassified as under-floor when base fee oscillates.
         // A floor of 0 disables the check.
         if self.options.min_tip_wei > 0 {
-            let effective_tip_u256 = tx
-                .effective_gas_tip(header.base_fee_per_gas)
-                .unwrap_or(U256::zero());
-            let effective_tip = u64::try_from(effective_tip_u256).unwrap_or(u64::MAX);
-            if effective_tip < self.options.min_tip_wei {
+            let tip_cap = u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX);
+            if tip_cap < self.options.min_tip_wei {
                 return Err(MempoolError::TipBelowMinimum {
-                    actual: effective_tip,
+                    actual: tip_cap,
                     limit: self.options.min_tip_wei,
                 });
             }
