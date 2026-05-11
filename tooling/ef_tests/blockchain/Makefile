@@ -82,9 +82,6 @@ test-stateless: zkevm-vectors
 test-stateless-zkevm: zkevm-vectors
 	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
 
-test-builder-parity: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Cross-check builder vs validator on Amsterdam fixtures
-	cargo test --profile release-with-debug --features builder-parity
-
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
 	# Narrow stateless coverage to the EIP-8025 optional-proofs suite. The
