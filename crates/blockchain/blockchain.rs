@@ -2487,20 +2487,19 @@ impl Blockchain {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
-        // Admission-time minimum tip floor. For typed (1559-family) txs, the
-        // effective tip is `max_priority_fee_per_gas`. For legacy / EIP-2930
-        // it's `gas_price.saturating_sub(base_fee)`. A floor of 0 disables
-        // the check. Saturating arithmetic guards against pre-London headers
-        // where `base_fee_per_gas` is `None`.
+        // Admission-time minimum tip floor. Defers to the existing
+        // `Transaction::effective_gas_tip` helper so typed and legacy
+        // transactions go through the same EIP-1559 definition
+        // `min(max_priority_fee_per_gas, max_fee_per_gas - base_fee)`,
+        // avoiding the asymmetry of computing it inline. `None` from the
+        // helper means the tx can't pay for inclusion at the current base
+        // fee — treat that as effective tip = 0 for the floor comparison.
+        // A floor of 0 disables the check.
         if self.options.min_tip_wei > 0 {
-            let effective_tip = match tx.max_priority_fee() {
-                Some(tip) => tip,
-                None => {
-                    let base_fee = header.base_fee_per_gas.unwrap_or(0);
-                    let gas_price_u64 = u64::try_from(tx.gas_price()).unwrap_or(u64::MAX);
-                    gas_price_u64.saturating_sub(base_fee)
-                }
-            };
+            let effective_tip_u256 = tx
+                .effective_gas_tip(header.base_fee_per_gas)
+                .unwrap_or(U256::zero());
+            let effective_tip = u64::try_from(effective_tip_u256).unwrap_or(u64::MAX);
             if effective_tip < self.options.min_tip_wei {
                 return Err(MempoolError::TipBelowMinimum {
                     actual: effective_tip,

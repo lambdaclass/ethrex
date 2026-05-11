@@ -612,3 +612,73 @@ async fn options_field_is_used_in_validate_transaction() {
         }),
     ));
 }
+
+#[tokio::test]
+async fn shipped_default_floor_rejects_zero_tip_admits_one() {
+    // Pin the actual shipped default (`DEFAULT_MIN_TIP_WEI = 1`, matching
+    // geth's `PriceLimit = 1 wei`). Without this test the default could
+    // silently regress to 0 (admit-everything) or to the old 1 Mwei value.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, ethrex_blockchain::DEFAULT_MIN_TIP_WEI);
+
+    // tip = 0 → rejected
+    let zero = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&zero, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1
+        }),
+    ));
+
+    // tip = 1 → passes the tip check (may fail later for other reasons)
+    let one = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let res = blockchain
+        .validate_transaction(&one, Address::random())
+        .await;
+    assert!(!matches!(res, Err(MempoolError::TipBelowMinimum { .. })));
+}
+
+#[tokio::test]
+async fn blob_tx_under_floor_rejected() {
+    // EIP-4844 path uses the same `Transaction::effective_gas_tip` helper.
+    // Confirm an under-floor blob tx is also rejected so a regression in
+    // the per-type dispatch wouldn't slip through.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        max_fee_per_blob_gas: 1.into(),
+        gas: 50_000_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&tx, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
+}
