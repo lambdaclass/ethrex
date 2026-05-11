@@ -35,9 +35,6 @@ pub const MAX_INITCODE_SIZE: u32 = 2 * MAX_CODE_SIZE;
 // EIP-7954 (Amsterdam): increased max initcode size
 pub const AMSTERDAM_MAX_INITCODE_SIZE: u32 = 2 * AMSTERDAM_MAX_CODE_SIZE;
 
-// Max non-contract creation bytecode size
-pub const MAX_TRANSACTION_DATA_SIZE: u32 = 4 * 32 * 1024; // 128 Kb
-
 // === EIP-2028 constants ===
 
 // Gas cost for each non zero byte on transaction data

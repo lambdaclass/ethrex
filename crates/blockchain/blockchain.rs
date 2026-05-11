@@ -51,10 +51,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, error, info, instrument, warn};
-use constants::{
-    AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
-    POST_OSAKA_GAS_LIMIT_CAP,
-};
+use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -2463,10 +2460,6 @@ impl Blockchain {
             && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
-        }
-
-        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE as usize {
-            return Err(MempoolError::TxMaxDataSizeError);
         }
 
         if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP

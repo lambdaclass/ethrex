@@ -357,6 +357,64 @@ async fn transaction_with_blob_base_fee_below_min_should_fail() {
     ));
 }
 
+#[tokio::test]
+async fn validate_transaction_rejects_oversize_non_blob() {
+    // EIP-1559 tx with serialized RLP > MAX_TX_SIZE must be rejected at
+    // admission with `TxSizeExceeded`. The size cap is the first
+    // size-themed check; it runs before init-code, intrinsic gas, and
+    // balance lookups, so an unsigned tx with no sender state is enough.
+    use ethrex_common::types::MAX_TX_SIZE;
+
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Pad calldata above MAX_TX_SIZE so the *encoded* tx is also oversized.
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(vec![0u8; MAX_TX_SIZE + 1]),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    match res {
+        Err(MempoolError::TxSizeExceeded { actual, limit }) => {
+            assert!(actual > limit);
+            assert_eq!(limit, MAX_TX_SIZE);
+        }
+        other => panic!("expected TxSizeExceeded, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn validate_transaction_rejects_oversize_blob_core() {
+    // EIP-4844 tx whose *core* encoding exceeds MAX_BLOB_TX_SIZE. The blob
+    // sidecar is bounded separately and is not encoded into the canonical
+    // tx, so to trigger the cap we have to grow the access-list / data.
+    use ethrex_common::types::MAX_BLOB_TX_SIZE;
+
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        data: Bytes::from(vec![0u8; MAX_BLOB_TX_SIZE + 1]),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    match res {
+        Err(MempoolError::TxSizeExceeded { actual, limit }) => {
+            assert!(actual > limit);
+            assert_eq!(limit, MAX_BLOB_TX_SIZE);
+        }
+        other => panic!("expected TxSizeExceeded, got {:?}", other),
+    }
+}
+
 #[test]
 fn test_filter_mempool_transactions() {
     let plain_tx_decoded = Transaction::decode_canonical(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap();
