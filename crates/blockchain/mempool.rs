@@ -493,6 +493,19 @@ impl Mempool {
         Ok(self.read()?.private_pool.contains(&hash))
     }
 
+    /// Returns all broadcast-eligible txs under a single read lock. Excludes
+    /// privileged txs and any tx in the private pool. Used by the new-peer
+    /// pooled-hashes dump so the caller takes one lock instead of one per tx.
+    pub fn get_txs_for_new_peer_dump(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
+        let inner = self.read()?;
+        Ok(inner
+            .transaction_pool
+            .iter()
+            .filter(|(hash, tx)| !inner.private_pool.contains(hash) && !tx.is_privileged())
+            .map(|(_, tx)| tx.clone())
+            .collect())
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,

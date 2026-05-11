@@ -2353,6 +2353,9 @@ impl Blockchain {
         let transaction = Transaction::EIP4844Transaction(transaction);
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
 
@@ -2418,6 +2421,9 @@ impl Blockchain {
         }
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
+            if !broadcast {
+                warn!(%hash, "tx already public; --mempool.private cannot retroactively un-broadcast");
+            }
             return Ok(hash);
         }
         let sender = transaction.sender(&NativeCrypto)?;
