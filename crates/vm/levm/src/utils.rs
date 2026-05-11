@@ -344,21 +344,18 @@ impl<'a> VM<'a> {
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    // EELS set_delegation: refund STATE_BYTES_PER_NEW_ACCOUNT * cpsb for each
-                    // existing authority. Per steel-team confirmed cross-client bug:
-                    // block.state_gas_used must INCLUDE this refund, otherwise it is higher
-                    // than expected. Two effects:
-                    //   1. state_gas_reservoir += STATE_NEW    (sender refund at tx finalize)
-                    //   2. state_gas_used      -= STATE_NEW    (block-level accounting)
-                    //   3. intrinsic_state_gas_charged -= STATE_NEW (preserve floor invariant)
+                    // EELS bal-devnet-6 `set_delegation` (devnets/bal/6 spec):
+                    // `message.state_gas_reservoir += STATE_BYTES_PER_NEW_ACCOUNT × cpsb`,
+                    // with NO mutation of intrinsic_state_gas or state_gas_used. Block-level
+                    // `state_gas_used` intentionally stays "inflated" by the refund amount
+                    // — the auth refund is a sender-side credit only in bal-6, not a
+                    // block-accounting reduction. The block-level subtraction lands in
+                    // bal-devnet-7 via the separate `state_refund` channel (EELS PR #2816).
                     let refund = self.state_gas_new_account;
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
                         .checked_add(refund)
                         .ok_or(InternalError::Overflow)?;
-                    self.state_gas_used = self.state_gas_used.saturating_sub(refund);
-                    self.intrinsic_state_gas_charged =
-                        self.intrinsic_state_gas_charged.saturating_sub(refund);
                 } else {
                     refunded_gas = refunded_gas
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
