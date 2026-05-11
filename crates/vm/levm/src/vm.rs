@@ -1001,18 +1001,20 @@ impl<'a> VM<'a> {
         };
 
         // EIP-8037 clamp-and-spill: subtract execution state gas refunds.
-        // `intrinsic_state_gas` is immutable per EELS fork.py — auth refunds on existing
-        // signers go only to the reservoir (for sender refund), not block-accounted
-        // state_gas. state_gas_refund_absorbed holds ALL refunds absorbed by any frame.
-        // state_gas_refund_pending holds any remainder not yet absorbed by an ancestor
-        // (can only be non-zero at the top level if the refund amount exceeded all charges).
-        // These are NOT routed through substate.refunded_gas (regular-gas refund counter).
+        // `state_gas_refund_absorbed` + `state_gas_refund_pending` cover in-execution
+        // credits (SSTORE through-zero, inner-CREATE silent failure, etc.). `state_refund`
+        // mirrors EELS `MessageCallOutput.state_refund` — the tx-level channel used by
+        // EIP-7702 set_delegation refunds and the CREATE-tx-failure intrinsic NEW_ACCOUNT
+        // refund. EELS fork.py:1199-1205 subtracts state_refund from tx_state_gas at
+        // block aggregation; we mirror that subtraction here so block-level
+        // `block_state_gas_used` matches spec.
         let execution_state_gas_refund = self
             .state_gas_refund_absorbed
             .saturating_add(self.state_gas_refund_pending);
         let net_state_gas_used = self
             .state_gas_used
-            .saturating_sub(execution_state_gas_refund);
+            .saturating_sub(execution_state_gas_refund)
+            .saturating_sub(self.state_refund);
 
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
