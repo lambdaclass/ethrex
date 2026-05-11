@@ -439,21 +439,23 @@ fn test_top_halt_phantom_drain_with_real_spill_under_policy_a() {
     let cpsb = cost_per_state_byte(GAS_LIMIT * 2);
     let state_new = STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
 
-    // CREATE tx: intrinsic state gas survives the top-level halt wipe.
+    // bal-devnet-7 (EELS PR #2823): top-level CREATE tx failure refunds the
+    // intrinsic NEW_ACCOUNT state-gas charge in addition to Policy A's
+    // execution-portion wipe — net state_gas_used is zero.
     assert_eq!(
-        report.state_gas_used, state_new,
-        "block state_gas_used should equal intrinsic_state (one NEW_ACCOUNT) for a halted CREATE tx"
+        report.state_gas_used, 0,
+        "block state_gas_used should be 0 for a halted CREATE tx (intrinsic refunded per EELS #2823)"
     );
 
     // Policy A: inner-1 spill is refunded via reservoir (credit_state_gas_refund returns it);
-    // inner-2's charge came from the reservoir, no spill. Only the gross spill from inner-1
-    // (STATE_NEW) subtracts from gas_used alongside the intrinsic deduction.
-    // Empirically: gas_used = gas_limit - state_new.
+    // inner-2's charge came from the reservoir, no spill. The intrinsic NEW_ACCOUNT now also
+    // returns to the reservoir on tx-level CREATE failure (#2823). Net effect: only inner-1's
+    // gross spill (one STATE_NEW) subtracts from gas_used.
     let expected_gas_used = GAS_LIMIT - state_new;
 
     assert_eq!(
         report.gas_used, expected_gas_used,
-        "Policy A gas_used mismatch: got={} expected={} (gas_limit={}, state_new={})",
+        "Policy A + #2823 gas_used mismatch: got={} expected={} (gas_limit={}, state_new={})",
         report.gas_used, expected_gas_used, GAS_LIMIT, state_new,
     );
 }
