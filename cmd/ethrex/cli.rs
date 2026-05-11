@@ -185,13 +185,13 @@ pub struct Options {
     pub mempool_max_size: usize,
     #[arg(
         help = "Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap.",
-        long = "mempool.account-slots",
+        long = "mempool.max-pending-txs-per-account",
         default_value_t = 16,
-        value_name = "MEMPOOL_ACCOUNT_SLOTS",
+        value_name = "MAX_PENDING_TXS_PER_ACCOUNT",
         help_heading = "Node options",
-        env = "ETHREX_MEMPOOL_ACCOUNT_SLOTS"
+        env = "ETHREX_MEMPOOL_MAX_PENDING_TXS_PER_ACCOUNT"
     )]
-    pub mempool_account_slots: usize,
+    pub mempool_max_pending_txs_per_account: usize,
     #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
@@ -459,7 +459,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
-            mempool_account_slots: 16,
+            mempool_max_pending_txs_per_account: 16,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

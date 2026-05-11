@@ -83,8 +83,8 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction max data size exceeded")]
     TxMaxDataSizeError,
-    #[error("Sender has {count} pending transactions, exceeds the per-sender cap of {limit}")]
-    SenderSlotsExceeded { count: usize, limit: usize },
+    #[error("Sender has {count} pending transactions, exceeds the per-account cap of {limit}")]
+    MaxPendingTxsPerAccountExceeded { count: usize, limit: usize },
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error(
