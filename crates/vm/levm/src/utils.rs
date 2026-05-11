@@ -344,16 +344,25 @@ impl<'a> VM<'a> {
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    // EELS bal-devnet-6 `set_delegation` (devnets/bal/6 spec):
-                    // `message.state_gas_reservoir += STATE_BYTES_PER_NEW_ACCOUNT × cpsb`,
-                    // with NO mutation of intrinsic_state_gas or state_gas_used. Block-level
-                    // `state_gas_used` intentionally stays "inflated" by the refund amount
-                    // — the auth refund is a sender-side credit only in bal-6, not a
-                    // block-accounting reduction. The block-level subtraction lands in
-                    // bal-devnet-7 via the separate `state_refund` channel (EELS PR #2816).
+                    // EELS PR #2816 (bal-devnet-7): refund
+                    // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for each existing authority via
+                    // two independent channels:
+                    //   1. `state_gas_reservoir += refund` — sender gets the gas back via
+                    //      receipt refund at tx finalize.
+                    //   2. `state_refund += refund` — block-level state-gas accounting
+                    //      subtracts this at refund_sender (mirrors EELS
+                    //      `MessageCallOutput.state_refund`).
+                    // `state_gas_used` and `intrinsic_state_gas_charged` are intentionally
+                    // NOT decremented: spec keeps them immutable after validation so
+                    // Policy A's `execution_portion` math and refund_sender's regular-gas
+                    // formula stay correct on revert/halt/OOG paths.
                     let refund = self.state_gas_new_account;
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
+                        .checked_add(refund)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_refund = self
+                        .state_refund
                         .checked_add(refund)
                         .ok_or(InternalError::Overflow)?;
                 } else {
