@@ -32,3 +32,13 @@ pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
 pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
 pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
 pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
+
+// Mempool admission size caps — peer-policy defaults, not consensus.
+// Matches geth `txMaxSize` (legacypool) and `txMaxSize` (blobpool), reth
+// `DEFAULT_MAX_TX_INPUT_BYTES`, nethermind `MaxTxSize` / `MaxBlobTxSize`.
+/// Maximum RLP-encoded wire size for a non-blob transaction (128 KiB).
+pub const MAX_TX_SIZE: usize = 131_072;
+/// Maximum RLP-encoded core size for an EIP-4844 blob transaction (1 MiB),
+/// excluding the blob sidecar. Sidecar size is bounded separately by the
+/// per-blob byte count and the fork's max blob count.
+pub const MAX_BLOB_TX_SIZE: usize = 1_048_576;

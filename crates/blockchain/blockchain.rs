@@ -72,6 +72,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
+use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
@@ -2432,7 +2433,23 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // NOTE: We could add a tx size limit here, but it's not in the actual spec
+        // Wire size cap: peer-policy default, not consensus. Matches geth
+        // `txMaxSize` (legacypool / blobpool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
+        // nethermind `MaxTxSize` / `MaxBlobTxSize`. For EIP-4844 the canonical
+        // encoding of `Transaction` excludes the sidecar (which lives in the
+        // adjacent `BlobsBundle`), so this caps the core tx only.
+        let encoded_len = tx.encode_canonical_to_vec().len();
+        let size_limit = if matches!(tx, Transaction::EIP4844Transaction(_)) {
+            MAX_BLOB_TX_SIZE
+        } else {
+            MAX_TX_SIZE
+        };
+        if encoded_len > size_limit {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: encoded_len,
+                limit: size_limit,
+            });
+        }
 
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit
