@@ -43,27 +43,17 @@ struct TraceConfig {
 /// The tracer variant to use for a debug trace request.
 ///
 /// **Divergence from geth**: geth's default (when no `tracer` field is provided) is the
-/// struct-log / struct logger.  ethrex keeps `CallTracer` as the default for compatibility
-/// with Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
-/// (Decision D1, confirmed before merge.)
-///
-/// **Geth tracer-name note**: geth does NOT register the struct logger under any string name
-/// in its `DefaultDirectory`; it is only the implicit default when `config.Tracer == nil`
-/// (see `eth/tracers/api.go:1022`).  Because ethrex needs an explicit name for this
-/// variant, we use `"structLogger"` (matching geth's Go constructor `NewStructLogger`) as
-/// the primary name, and accept `"structLog"` as an alias for convenience.
-/// goevmlab and similar tooling send `"structLogger"` when they want per-opcode traces.
+/// per-opcode tracer. ethrex keeps `CallTracer` as the default for compatibility with
+/// Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum TracerType {
     #[default]
     CallTracer,
     PrestateTracer,
-    /// Per-opcode (EIP-3155) struct-log tracer.
-    /// Accepts both `"structLogger"` (primary, matches geth's `NewStructLogger` name) and
-    /// `"structLog"` (alias).
-    #[serde(alias = "structLog")]
-    StructLogger,
+    /// Per-opcode tracer producing strict EIP-3155 output. Selected via
+    /// `"tracer": "opcodeTracer"`.
+    OpcodeTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -95,7 +85,7 @@ impl PrestateTracerConfig {
     }
 }
 
-/// Configuration for the `structLogger` / `structLog` tracer (EIP-3155).
+/// Configuration for the `opcodeTracer` (strict EIP-3155 per-opcode output).
 ///
 /// All fields default to `false` / `0` when omitted, matching geth's struct-logger defaults.
 ///
@@ -226,7 +216,7 @@ impl RpcHandler for TraceTransactionRequest {
                     PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
                 }
             }
-            TracerType::StructLogger => {
+            TracerType::OpcodeTracer => {
                 let cfg: StructLogTracerConfig = self
                     .trace_config
                     .tracer_config
@@ -352,7 +342,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
-            TracerType::StructLogger => {
+            TracerType::OpcodeTracer => {
                 let cfg: StructLogTracerConfig = self
                     .trace_config
                     .tracer_config
