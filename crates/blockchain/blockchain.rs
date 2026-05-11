@@ -2321,6 +2321,21 @@ impl Blockchain {
             return Ok(hash);
         }
 
+        // Wire-wrapper size cap for blob txs. Matches geth `txMaxSize = 1 MiB`
+        // (blobpool) and nethermind `MaxBlobTxSize`, which both bound the
+        // wire-wrapper form including the sidecar. ethrex stores the core tx
+        // and the bundle in separate structs, so sum the two encoded sizes
+        // (the ±few bytes of outer list framing are rounding error at this
+        // scale).
+        let wrapper_len =
+            transaction.encode_canonical_to_vec().len() + blobs_bundle.encode_to_vec().len();
+        if wrapper_len > MAX_BLOB_TX_SIZE {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: wrapper_len,
+                limit: MAX_BLOB_TX_SIZE,
+            });
+        }
+
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
             blobs_bundle.validate(transaction, fork)?;
@@ -2430,22 +2445,20 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // Wire size cap: peer-policy default, not consensus. Matches geth
-        // `txMaxSize` (legacypool / blobpool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
-        // nethermind `MaxTxSize` / `MaxBlobTxSize`. For EIP-4844 the canonical
-        // encoding of `Transaction` excludes the sidecar (which lives in the
-        // adjacent `BlobsBundle`), so this caps the core tx only.
-        let encoded_len = tx.encode_canonical_to_vec().len();
-        let size_limit = if matches!(tx, Transaction::EIP4844Transaction(_)) {
-            MAX_BLOB_TX_SIZE
-        } else {
-            MAX_TX_SIZE
-        };
-        if encoded_len > size_limit {
-            return Err(MempoolError::TxSizeExceeded {
-                actual: encoded_len,
-                limit: size_limit,
-            });
+        // Wire size cap for non-blob txs: peer-policy default, not consensus.
+        // Matches geth `txMaxSize` (legacypool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
+        // nethermind `MaxTxSize`. Blob txs are bounded by their own
+        // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
+        // which sums the core tx and the sidecar to match geth/nethermind/erigon
+        // scope.
+        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
+            let encoded_len = tx.encode_canonical_to_vec().len();
+            if encoded_len > MAX_TX_SIZE {
+                return Err(MempoolError::TxSizeExceeded {
+                    actual: encoded_len,
+                    limit: MAX_TX_SIZE,
+                });
+            }
         }
 
         // Check init code size
