@@ -92,13 +92,13 @@ Node options:
           [default: 10000]
 
       --mempool.price-bump <PERCENT>
-          Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce). Matches the 10% default used by geth, reth, nethermind, erigon and besu.
+          Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).
 
           [env: ETHREX_MEMPOOL_PRICE_BUMP=]
           [default: 10]
 
       --mempool.blob-price-bump <PERCENT>
-          Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction. Matches the 100% default used by every peer EL client.
+          Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.
 
           [env: ETHREX_MEMPOOL_BLOB_PRICE_BUMP=]
           [default: 100]
