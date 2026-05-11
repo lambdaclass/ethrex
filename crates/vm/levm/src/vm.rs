@@ -957,11 +957,10 @@ impl<'a> VM<'a> {
             // cost_per_state_byte` charge to the reservoir, mirroring the inner-CREATE
             // rule. Routed through `state_gas_refund_absorbed` so block-level
             // `state_gas_used` is reduced (matches EELS `tx_output.state_refund`).
-            // Also decrement `intrinsic_state_gas_charged` so `refund_sender`'s
-            // `regular_gas = raw_consumed - intrinsic_state - ...` formula no longer
-            // double-deducts the refunded amount (the refund came back to the user via
-            // the reservoir, it is no longer "state-paid"; not subtracting it from raw
-            // leaves it in the regular dimension where the burn actually sits).
+            // `intrinsic_state_gas_charged` is left intact: `refund_sender`'s regular-gas
+            // formula subtracts it from `raw_consumed`, which keeps the intrinsic burn
+            // out of the regular dimension. The user gets the gas back via the reservoir,
+            // and neither dimension counts it.
             // EELS reference: fork.py::process_transaction:
             //   if isinstance(tx.to, Bytes0):
             //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
@@ -974,9 +973,6 @@ impl<'a> VM<'a> {
                 self.state_gas_refund_absorbed = self
                     .state_gas_refund_absorbed
                     .saturating_add(new_account_refund);
-                self.intrinsic_state_gas_charged = self
-                    .intrinsic_state_gas_charged
-                    .saturating_sub(new_account_refund);
             }
         }
 
