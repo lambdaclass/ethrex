@@ -14,9 +14,9 @@ use super::store::StoreMetadata;
 
 /// A migration function that upgrades the database schema by one version.
 ///
-/// Receives a reference to the storage backend and the database directory
-/// path (for temporary files, etc.).
-pub type MigrationFn = fn(backend: &dyn StorageBackend, db_path: &Path) -> Result<(), StoreError>;
+/// Receives a reference to the storage backend so it can read/write data
+/// as needed for the migration.
+pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError>;
 
 /// Migration functions indexed by source version.
 ///
@@ -57,12 +57,10 @@ pub fn run_pending_migrations(
 
         tracing::info!("Running migration v{version} → v{target}");
 
-        migration_for_version(version)(backend, db_path).map_err(|e| {
-            StoreError::MigrationFailed {
-                from: version,
-                to: target,
-                reason: e.to_string(),
-            }
+        migration_for_version(version)(backend).map_err(|e| StoreError::MigrationFailed {
+            from: version,
+            to: target,
+            reason: e.to_string(),
         })?;
 
         // Persist the new version to metadata.json after each migration step
@@ -102,117 +100,54 @@ fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError
 ///
 /// This enables efficient cursor-based prefix iteration by block hash.
 ///
-/// The migration works in two phases to avoid both holding a read iterator
-/// open during writes (snapshot semantics concern) and materializing all
-/// entries in memory (153M+ entries ≈ 13 GB):
-///
-/// 1. Cursor scan dumps old-format keys to a temporary file, then closes
-///    the iterator immediately.
-/// 2. Keys are read back from the file in batches; each batch does point
-///    lookups for values, writes new keys, and deletes old keys.
+/// The migration opens a single read cursor over the RECEIPTS table and
+/// accumulates writes in a WriteBatch, flushing every `BATCH_SIZE` entries.
+/// The iterator holds a RocksDB snapshot, so it sees a consistent view of
+/// the table regardless of concurrent flushes — new keys written by the
+/// migration are invisible to it.
 ///
 /// Crash safety: if interrupted, metadata still says v1, so the migration
-/// restarts from scratch on next boot. The temp file is overwritten on
-/// restart. Point lookups for already-deleted old keys return `None` and
-/// are skipped.
-fn migrate_1_to_2(backend: &dyn StorageBackend, db_path: &Path) -> Result<(), StoreError> {
-    use std::io::Read;
-
+/// restarts from scratch on next boot. New-format keys (exactly 40 bytes)
+/// are skipped by the iterator, so a partial previous run is harmless.
+fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     const BATCH_SIZE: usize = 10_000;
-    let tmp_path = db_path.join("migration_v1_v2_keys.tmp");
 
-    // Phase 1: Scan all old-format keys with a cursor, dump to temp file.
-    // Only keys are written (length-prefixed), not values — keeps the file
-    // small (~7 GB for 153M keys vs ~50+ GB with values).
-    let key_count = {
-        let txn = backend.begin_read()?;
-        let iter = txn.prefix_iterator(RECEIPTS, &[])?;
-        let mut file = std::io::BufWriter::new(std::fs::File::create(&tmp_path)?);
-        let mut count: u64 = 0;
-        for result in iter {
-            let (key, _value) = result?;
-            if key.len() == 40 {
+    let txn = backend.begin_read()?;
+    let iter = txn.prefix_iterator(RECEIPTS, &[])?;
+
+    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+    let mut delete_keys: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
+    let mut migrated: u64 = 0;
+
+    for result in iter {
+        let (key, value) = result?;
+
+        // Skip new-format keys (already migrated in a previous partial run).
+        if key.len() == 40 {
+            continue;
+        }
+
+        let (block_hash, index) = match <(H256, u64)>::decode(&key) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                tracing::warn!(
+                    "Skipping RECEIPTS key that failed RLP decode (len={})",
+                    key.len()
+                );
                 continue;
             }
-            let len = key.len() as u32;
-            file.write_all(&len.to_le_bytes())?;
-            file.write_all(&key)?;
-            count += 1;
-        }
-        file.into_inner()
-            .map_err(|e| StoreError::Custom(format!("Failed to flush temp file: {e}")))?
-            .sync_all()?;
-        tracing::info!("Migration v1→v2: dumped {count} old-format keys to temp file");
-        count
-    };
-    // Iterator and read transaction are dropped here.
+        };
 
-    if key_count == 0 {
-        let _ = std::fs::remove_file(&tmp_path);
-        tracing::info!("Migration v1→v2 complete: nothing to migrate");
-        return Ok(());
-    }
+        let new_key = receipt_key(&block_hash, index);
+        batch.push((new_key, value.to_vec()));
+        delete_keys.push(key.to_vec());
 
-    // Phase 2: Read keys back from temp file in batches, point-lookup
-    // values, and re-key.
-    let mut file = std::io::BufReader::new(std::fs::File::open(&tmp_path)?);
-    let mut migrated: u64 = 0;
-    let mut len_buf = [0u8; 4];
-
-    loop {
-        // Read a batch of keys from the temp file.
-        let mut old_keys: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
-        for _ in 0..BATCH_SIZE {
-            match file.read_exact(&mut len_buf) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => break,
-                Err(e) => return Err(StoreError::Custom(format!("Failed to read temp file: {e}"))),
-            }
-            let key_len = u32::from_le_bytes(len_buf) as usize;
-            let mut key = vec![0u8; key_len];
-            file.read_exact(&mut key).map_err(|e| {
-                StoreError::Custom(format!("Failed to read key from temp file: {e}"))
-            })?;
-            old_keys.push(key);
-        }
-
-        if old_keys.is_empty() {
-            break;
-        }
-
-        // Point-lookup values and build the write batch.
-        let txn = backend.begin_read()?;
-        let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(old_keys.len());
-        let mut delete_keys: Vec<Vec<u8>> = Vec::with_capacity(old_keys.len());
-
-        for old_key in old_keys {
-            let (block_hash, index) = match <(H256, u64)>::decode(&old_key) {
-                Ok(decoded) => decoded,
-                Err(_) => {
-                    tracing::warn!(
-                        "Skipping RECEIPTS key that failed RLP decode (len={})",
-                        old_key.len()
-                    );
-                    continue;
-                }
-            };
-            let value = match txn.get(RECEIPTS, &old_key)? {
-                Some(v) => v.to_vec(),
-                None => continue, // already deleted (crash-restart)
-            };
-            let new_key = receipt_key(&block_hash, index);
-            batch.push((new_key, value));
-            delete_keys.push(old_key);
-        }
-        drop(txn);
-
-        // Write batch.
-        if !batch.is_empty() {
+        if batch.len() >= BATCH_SIZE {
             let count = batch.len() as u64;
             let mut tx = backend.begin_write()?;
-            tx.put_batch(RECEIPTS, batch)?;
-            for dk in &delete_keys {
-                tx.delete(RECEIPTS, dk)?;
+            tx.put_batch(RECEIPTS, std::mem::take(&mut batch))?;
+            for dk in std::mem::take(&mut delete_keys) {
+                tx.delete(RECEIPTS, &dk)?;
             }
             tx.commit()?;
             migrated += count;
@@ -220,9 +155,17 @@ fn migrate_1_to_2(backend: &dyn StorageBackend, db_path: &Path) -> Result<(), St
         }
     }
 
-    // Cleanup temp file.
-    if let Err(e) = std::fs::remove_file(&tmp_path) {
-        tracing::warn!("Failed to remove migration temp file: {e}");
+    // Flush remaining entries.
+    if !batch.is_empty() {
+        let count = batch.len() as u64;
+        let mut tx = backend.begin_write()?;
+        tx.put_batch(RECEIPTS, batch)?;
+        for dk in &delete_keys {
+            tx.delete(RECEIPTS, dk)?;
+        }
+        tx.commit()?;
+        migrated += count;
+        tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
     }
 
     tracing::info!("Migration v1→v2 complete: migrated {migrated} RECEIPTS entries total");
@@ -305,8 +248,7 @@ mod tests {
         }
 
         // Run migration
-        let temp_dir = tempfile::tempdir().unwrap();
-        migrate_1_to_2(&backend, temp_dir.path()).unwrap();
+        migrate_1_to_2(&backend).unwrap();
 
         // Verify new fixed-width keys exist and old keys are gone
         let txn = backend.begin_read().unwrap();
