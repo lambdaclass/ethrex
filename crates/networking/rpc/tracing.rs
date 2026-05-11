@@ -47,6 +47,10 @@ struct TraceConfig {
 /// Blockscout-style clients that rely on the no-tracer-specified → callTracer behaviour.
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+// The wire-format names (`callTracer`, `prestateTracer`, `opcodeTracer`) are
+// fixed by client convention; variants must keep the `Tracer` suffix to
+// serialize correctly via `rename_all = "camelCase"`.
+#[allow(clippy::enum_variant_names)]
 enum TracerType {
     #[default]
     CallTracer,
