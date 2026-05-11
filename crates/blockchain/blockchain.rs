@@ -2515,9 +2515,18 @@ impl Blockchain {
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
 
+        if tx
+            .chain_id()
+            .is_some_and(|chain_id| chain_id != config.chain_id)
+        {
+            return Err(MempoolError::InvalidChainId(config.chain_id));
+        }
+
         // Per-account pending-tx cap. Replacement candidates (same
         // `(sender, nonce)`) bypass the cap — they don't grow the
-        // sender's pool footprint.
+        // sender's pool footprint. Placed after the chain-id check so a
+        // wrong-chain submission from a sender at the cap surfaces the
+        // more specific `InvalidChainId` error.
         if tx_to_replace_hash.is_none() {
             let count = self.mempool.count_for_sender(sender)?;
             if count >= self.options.max_pending_txs_per_account {
@@ -2526,13 +2535,6 @@ impl Blockchain {
                     limit: self.options.max_pending_txs_per_account,
                 });
             }
-        }
-
-        if tx
-            .chain_id()
-            .is_some_and(|chain_id| chain_id != config.chain_id)
-        {
-            return Err(MempoolError::InvalidChainId(config.chain_id));
         }
 
         Ok(tx_to_replace_hash)
