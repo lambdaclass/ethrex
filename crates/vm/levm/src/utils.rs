@@ -444,6 +444,20 @@ impl<'a> VM<'a> {
             }
             // Capture initial reservoir for block-dimensional regular gas computation.
             self.state_gas_reservoir_initial = reservoir;
+
+            // EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system
+            // transactions get an extra state-gas reservoir of
+            // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
+            // the 30M regular budget — so SSTORE-heavy system contracts
+            // (EIP-2935, EIP-4788) cannot OOG on state-gas growth alone.
+            // This is additive, not pre-consumed from gas_remaining.
+            if self.env.is_system_call {
+                let sys_reservoir = self
+                    .state_gas_storage_set
+                    .saturating_mul(SYSTEM_MAX_SSTORES_PER_CALL);
+                self.state_gas_reservoir = sys_reservoir;
+                self.state_gas_reservoir_initial = sys_reservoir;
+            }
         }
 
         Ok(())
