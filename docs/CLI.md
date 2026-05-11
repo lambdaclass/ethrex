@@ -86,6 +86,11 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.private
+          Keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected. Mirrors reth's --txpool.no-local-transactions-propagation.
+
+          [env: ETHREX_MEMPOOL_PRIVATE=]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
