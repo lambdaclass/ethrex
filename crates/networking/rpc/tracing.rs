@@ -89,42 +89,6 @@ impl PrestateTracerConfig {
     }
 }
 
-/// Configuration for the `opcodeTracer` (strict EIP-3155 per-opcode output).
-///
-/// All fields default to `false` / `0` when omitted, matching geth's struct-logger defaults.
-///
-/// - `disableStack` — omit `stack` from each step.
-/// - `enableMemory` — include 32-byte memory chunks in each step.
-/// - `disableStorage` — skip SLOAD/SSTORE storage capture.
-/// - `enableReturnData` — include `returnData` from the previous sub-call.
-/// - `limit` — stop collecting after this many log entries; `0` means unlimited.
-#[derive(Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-struct OpcodeTracerRpcConfig {
-    #[serde(default)]
-    disable_stack: bool,
-    #[serde(default)]
-    enable_memory: bool,
-    #[serde(default)]
-    disable_storage: bool,
-    #[serde(default)]
-    enable_return_data: bool,
-    #[serde(default)]
-    limit: usize,
-}
-
-impl From<OpcodeTracerRpcConfig> for OpcodeTracerConfig {
-    fn from(c: OpcodeTracerRpcConfig) -> Self {
-        OpcodeTracerConfig {
-            disable_stack: c.disable_stack,
-            enable_memory: c.enable_memory,
-            disable_storage: c.disable_storage,
-            enable_return_data: c.enable_return_data,
-            limit: c.limit,
-        }
-    }
-}
-
 type BlockTrace<TxTrace> = Vec<BlockTraceComponent<TxTrace>>;
 
 #[derive(Serialize)]
@@ -221,7 +185,7 @@ impl RpcHandler for TraceTransactionRequest {
                 }
             }
             TracerType::OpcodeTracer => {
-                let cfg: OpcodeTracerRpcConfig = self
+                let cfg: OpcodeTracerConfig = self
                     .trace_config
                     .tracer_config
                     .as_ref()
@@ -230,7 +194,7 @@ impl RpcHandler for TraceTransactionRequest {
                     .unwrap_or_default();
                 let result = context
                     .blockchain
-                    .trace_transaction_opcodes(self.tx_hash, reexec, timeout, cfg.into())
+                    .trace_transaction_opcodes(self.tx_hash, reexec, timeout, cfg)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 Ok(serde_json::to_value(result)?)
@@ -347,7 +311,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 Ok(serde_json::to_value(block_trace)?)
             }
             TracerType::OpcodeTracer => {
-                let cfg: OpcodeTracerRpcConfig = self
+                let cfg: OpcodeTracerConfig = self
                     .trace_config
                     .tracer_config
                     .as_ref()
@@ -356,7 +320,7 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .unwrap_or_default();
                 let opcode_traces = context
                     .blockchain
-                    .trace_block_opcodes(block, reexec, timeout, cfg.into())
+                    .trace_block_opcodes(block, reexec, timeout, cfg)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 let block_trace: BlockTrace<_> = opcode_traces

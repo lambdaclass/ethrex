@@ -26,7 +26,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
@@ -1222,28 +1222,22 @@ impl<'a> VM<'a> {
             return None; // stack empty
         }
 
-        let addr = self.current_call_frame.code_address;
-
-        // Convert U256 stack value to H256 using the same approach as the SLOAD/SSTORE handlers.
-        // (They use mem::transmute + reverse, matching the standard big-endian H256 layout.)
-        let u256_to_h256 = |v: U256| -> H256 {
-            #[expect(unsafe_code)]
-            unsafe {
-                let mut hash = std::mem::transmute::<U256, H256>(v);
-                hash.0.reverse();
-                hash
-            }
-        };
+        // SLOAD/SSTORE operate on the call's storage context (`to`), not the code's
+        // address. Under DELEGATECALL/CALLCODE these differ.
+        let addr = self.current_call_frame.to;
 
         let stack_values = &self.current_call_frame.stack.values;
         let key_u256 = *stack_values.get(offset)?;
-        let key = u256_to_h256(key_u256);
+        let key = BigEndianHash::from_uint(&key_u256);
 
         if opcode == SLOAD {
             let value = match self.get_storage_value(addr, key) {
-                Ok(v) => H256::from(v.to_big_endian()),
+                Ok(v) => BigEndianHash::from_uint(&v),
                 // Account not yet cached — graceful fallback per R16.
-                Err(_) => H256::zero(),
+                Err(InternalError::AccountNotFound) => H256::zero(),
+                // Any other DB/internal failure: omit the storage entry for this step
+                // rather than lying with a zero value.
+                Err(_) => return None,
             };
             Some((addr, key, value))
         } else {
@@ -1254,7 +1248,7 @@ impl<'a> VM<'a> {
             }
             // values[offset+1] is the new value being written (second from top = stack[top-1]).
             let value_u256 = *self.current_call_frame.stack.values.get(next_offset)?;
-            let value = u256_to_h256(value_u256);
+            let value = BigEndianHash::from_uint(&value_u256);
             Some((addr, key, value))
         }
     }
