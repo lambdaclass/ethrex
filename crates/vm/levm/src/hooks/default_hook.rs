@@ -143,39 +143,50 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
-        // Per EELS, collision at process_message_call level returns
-        // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
-        // The user pays tx.gas (everything), but block accounting only sees
-        // intrinsic gas (no execution gas was consumed).
+        // EIP-8037 (Amsterdam+, bal-devnet-7): CREATE-tx address collision.
+        // Per EELS process_message_call (interpreter.py:120-145) the collision
+        // returns `state_gas_left = message.state_gas_reservoir` (reservoir is
+        // PRESERVED, not burned). The failure block in fork.py:1086-1094 then
+        // adds `new_account_refund` to both `state_gas_left` and `state_refund`,
+        // so the user gets back reservoir + new_account_refund. tx_state_gas
+        // collapses to 0, tx_regular_gas = max(intrinsic_regular + message.gas,
+        // calldata_floor). The user does NOT lose the whole gas_limit.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // Block accounting: gas_used = intrinsic_regular + intrinsic_state.
-            // state_gas_used already = intrinsic_state (no execution state gas).
-            // Per EELS, `tx_env.intrinsic_state_gas` is immutable — any auth refund
-            // goes to the reservoir, not to block-accounted state_gas.
-            let state_gas = vm.state_gas_used;
+            // `vm.finalize_execution` already bumped state_gas_refund_absorbed by
+            // new_account_refund (for the CREATE-failure intrinsic refund), and
+            // state_refund carries any EIP-7702 auth refund. Subtract both so the
+            // state dimension lands at 0.
+            let exec_refund = vm
+                .state_gas_refund_absorbed
+                .saturating_add(vm.state_gas_refund_pending);
+            let state_gas = vm
+                .state_gas_used
+                .saturating_sub(exec_refund)
+                .saturating_sub(vm.state_refund);
             let floor = vm.get_min_gas_used()?;
-            // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
-            // = total_intrinsic_gas consumed so far, minus state portion
-            #[expect(
-                clippy::as_conversions,
-                reason = "gas_remaining is positive at collision"
-            )]
-            let gas_remaining = vm.current_call_frame.gas_remaining as u64;
-            let total_intrinsic = gas_limit
-                .saturating_sub(vm.state_gas_reservoir)
-                .saturating_sub(gas_remaining);
-            let regular_gas = total_intrinsic.saturating_sub(state_gas);
+            // Regular gas = gas_limit - state_gas_left, where state_gas_left =
+            // reservoir (PRESERVED across collision in EELS, with new_account_refund
+            // already folded in by vm.finalize_execution above). Mirrors EELS
+            // tx_gas_used_before_refund = tx.gas - gas_left(=0) - state_gas_left.
+            let regular_gas = gas_limit.saturating_sub(vm.state_gas_reservoir);
             let effective_regular = regular_gas.max(floor);
             ctx_result.gas_used = effective_regular
                 .checked_add(state_gas)
                 .ok_or(InternalError::Overflow)?;
-            // User pays everything (gas_left=0, state_gas_left=0)
-            ctx_result.gas_spent = gas_limit;
-            // Coinbase gets paid on what user pays
-            pay_coinbase(vm, gas_limit)?;
-            // Return 0 gas to sender (they lose everything)
+            // User pays only the effective regular (post-floor); coinbase gets the
+            // same; remainder returns to sender.
+            ctx_result.gas_spent = effective_regular;
+            pay_coinbase(vm, effective_regular)?;
+            let gas_to_return = gas_limit
+                .checked_sub(effective_regular)
+                .ok_or(InternalError::Underflow)?;
+            let wei_return_amount = vm
+                .env
+                .gas_price
+                .checked_mul(U256::from(gas_to_return))
+                .ok_or(InternalError::Overflow)?;
+            vm.increase_account_balance(vm.env.origin, wei_return_amount)?;
             return Ok(());
         }
 
