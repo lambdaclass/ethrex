@@ -59,9 +59,3 @@ manual_saturating_arithmetic = "warn"
 [lib]
 path = "./src/lib.rs"
 
-[dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "opcode_tracer_disabled"
-harness = false
