@@ -251,8 +251,9 @@ impl Default for BlockchainOptions {
     }
 }
 
-/// Default min-tip floor (wei).
-pub const DEFAULT_MIN_TIP_WEI: u64 = ethrex_common::types::MIN_GAS_TIP;
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
