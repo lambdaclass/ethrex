@@ -54,7 +54,7 @@ use ::tracing::{debug, error, info, instrument, warn};
 use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
-use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
+use ethrex_common::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
 
 use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
@@ -66,6 +66,7 @@ use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
+use ethrex_common::types::is_eip7702_delegation;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
@@ -2955,6 +2956,20 @@ impl Blockchain {
         if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
+            }
+
+            // EIP-3607: reject txs from senders with deployed code, unless the
+            // code is an EIP-7702 delegation designation (the account is still
+            // an EOA in spirit, just pointing at delegate code).
+            if sender_acc_info.code_hash != *EMPTY_KECCACK_HASH {
+                let is_delegation = match self.storage.get_account_code(sender_acc_info.code_hash) {
+                    Ok(Some(code)) => is_eip7702_delegation(code.bytecode.as_ref()),
+                    Ok(None) => false,
+                    Err(e) => return Err(e.into()),
+                };
+                if !is_delegation {
+                    return Err(MempoolError::SenderIsContract);
+                }
             }
 
             let tx_cost = tx
