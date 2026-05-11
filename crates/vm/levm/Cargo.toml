@@ -63,5 +63,5 @@ path = "./src/lib.rs"
 criterion = { version = "0.5", features = ["html_reports"] }
 
 [[bench]]
-name = "struct_log_disabled"
+name = "opcode_tracer_disabled"
 harness = false

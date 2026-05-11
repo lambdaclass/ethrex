@@ -1,4 +1,4 @@
-//! Microbench measuring the hot-path overhead of the struct-log tracer when
+//! Microbench measuring the hot-path overhead of the opcode tracer when
 //! **disabled** (`active = false`).
 //!
 //! The bench executes a tight `PUSH1 0x01  POP` × 1000 + STOP loop (2001 opcodes
@@ -7,7 +7,7 @@
 //!
 //! ## Baseline measurement
 //!
-//! Measured on `feat/eip-3155-tracer` with the struct-log tracer present but
+//! Measured on `feat/eip-3155-tracer` with the opcode tracer present but
 //! disabled (the bench state).  A pre-Phase-2 baseline via `git stash` was not
 //! feasible (too many conflicts with the Phase 2–4 hook sites), so we record
 //! the absolute number from this branch as the reference:
@@ -23,7 +23,7 @@
 //!
 //! ## Rationale
 //!
-//! Adding a single `if self.struct_log_tracer.active` branch per opcode is the
+//! Adding a single `if self.opcode_tracer.active` branch per opcode is the
 //! minimal cost for supporting the per-opcode tracer.  The branch is always
 //! not-taken when disabled, so modern CPUs predict it cheaply.  This bench
 //! measures the floor cost.
@@ -199,7 +199,7 @@ fn bench_disabled(c: &mut Criterion) {
                 GeneralizedDatabase::new(fresh_db)
             },
             |mut gen_db| {
-                // The struct_log_tracer field is `disabled()` by default — no allocation,
+                // The opcode_tracer field is `disabled()` by default — no allocation,
                 // one not-taken branch per opcode (the measured overhead).
                 let mut vm = VM::new(
                     env.clone(),

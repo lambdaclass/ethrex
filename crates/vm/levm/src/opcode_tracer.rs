@@ -1,15 +1,15 @@
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    tracing::{MemoryChunk, StructLog, StructLogResult},
+    tracing::{MemoryChunk, OpcodeStep, OpcodeTraceResult},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Configuration for the struct-log (EIP-3155) tracer.
+/// Configuration for the opcode (EIP-3155) tracer.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct StructLogConfig {
+pub struct OpcodeTracerConfig {
     /// When true, stack values are not included in each step.
     pub disable_stack: bool,
     /// When true, memory contents are included in each step.
@@ -22,19 +22,19 @@ pub struct StructLogConfig {
     pub limit: usize,
 }
 
-/// Per-step struct-log tracer for EIP-3155 output.
+/// Per-step opcode tracer for EIP-3155 output.
 ///
-/// Use `LevmStructLogTracer::disabled()` when tracing is not wanted;
-/// the dispatch-loop guard is a single `if self.struct_log_tracer.active` branch
+/// Use `LevmOpcodeTracer::disabled()` when tracing is not wanted;
+/// the dispatch-loop guard is a single `if self.opcode_tracer.active` branch
 /// with no other overhead on the fast path.
 #[derive(Debug)]
-pub struct LevmStructLogTracer {
+pub struct LevmOpcodeTracer {
     /// Whether this tracer is active.
     pub active: bool,
     /// Configuration.
-    pub cfg: StructLogConfig,
+    pub cfg: OpcodeTracerConfig,
     /// Collected per-step entries.
-    pub logs: Vec<StructLog>,
+    pub logs: Vec<OpcodeStep>,
     /// Final output bytes (from RETURN / REVERT).
     pub output: Bytes,
     /// Top-level error string, if the transaction reverted.
@@ -50,12 +50,12 @@ pub struct LevmStructLogTracer {
     pub last_opcode_gas_cost: Option<u64>,
 }
 
-impl LevmStructLogTracer {
+impl LevmOpcodeTracer {
     /// Returns an inactive tracer.  No allocations; zero overhead on the hot path.
     pub fn disabled() -> Self {
         Self {
             active: false,
-            cfg: StructLogConfig::default(),
+            cfg: OpcodeTracerConfig::default(),
             logs: Vec::new(),
             output: Bytes::new(),
             error: None,
@@ -66,7 +66,7 @@ impl LevmStructLogTracer {
     }
 
     /// Returns an active tracer with the given config.
-    pub fn new(cfg: StructLogConfig) -> Self {
+    pub fn new(cfg: OpcodeTracerConfig) -> Self {
         Self {
             active: true,
             cfg,
@@ -79,7 +79,7 @@ impl LevmStructLogTracer {
         }
     }
 
-    /// Captures pre-step state, building and buffering a `StructLog` entry.
+    /// Captures pre-step state, building and buffering an `OpcodeStep` entry.
     ///
     /// Called BEFORE the opcode executes.  `pc` must be the address of the
     /// current opcode (before `advance_pc(1)`).
@@ -160,7 +160,7 @@ impl LevmStructLogTracer {
             Bytes::new()
         };
 
-        let log = StructLog {
+        let log = OpcodeStep {
             pc,
             op: opcode,
             gas,
@@ -188,13 +188,13 @@ impl LevmStructLogTracer {
         }
     }
 
-    /// Assembles the final `StructLogResult` after the transaction finishes.
-    pub fn take_result(&mut self) -> StructLogResult {
-        StructLogResult {
+    /// Assembles the final `OpcodeTraceResult` after the transaction finishes.
+    pub fn take_result(&mut self) -> OpcodeTraceResult {
+        OpcodeTraceResult {
             pass: self.error.is_none(),
             gas_used: self.gas_used,
             output: std::mem::take(&mut self.output),
-            struct_logs: std::mem::take(&mut self.logs),
+            steps: std::mem::take(&mut self.logs),
         }
     }
 }
@@ -303,8 +303,8 @@ mod tests {
 
     fn run_bytecode(
         bytecode: Bytes,
-        cfg: StructLogConfig,
-    ) -> (LevmStructLogTracer, ExecutionReport) {
+        cfg: OpcodeTracerConfig,
+    ) -> (LevmOpcodeTracer, ExecutionReport) {
         let sender = Address::from_low_u64_be(SENDER_ADDR);
         let contract = Address::from_low_u64_be(CONTRACT_ADDR);
 
@@ -376,10 +376,10 @@ mod tests {
         )
         .unwrap();
 
-        vm.struct_log_tracer = LevmStructLogTracer::new(cfg);
+        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
         let report = vm.execute().unwrap();
 
-        let tracer = std::mem::replace(&mut vm.struct_log_tracer, LevmStructLogTracer::disabled());
+        let tracer = std::mem::replace(&mut vm.opcode_tracer, LevmOpcodeTracer::disabled());
         (tracer, report)
     }
 
@@ -389,10 +389,10 @@ mod tests {
     /// Expected: 4 entries, pc=[0,2,4,5], op=[PUSH1,PUSH1,ADD,STOP],
     /// gas_cost=[3,3,3,0], depth=1, stack evolves correctly.
     #[test]
-    fn test_struct_log_push_add_stop() {
+    fn test_opcode_tracer_push_add_stop() {
         // Bytecode: 0x60 0x01 0x60 0x02 0x01 0x00
         let bytecode = Bytes::from(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]);
-        let (tracer, _report) = run_bytecode(bytecode, StructLogConfig::default());
+        let (tracer, _report) = run_bytecode(bytecode, OpcodeTracerConfig::default());
         let logs = &tracer.logs;
 
         assert_eq!(logs.len(), 4, "expected 4 log entries");
@@ -457,11 +457,11 @@ mod tests {
     /// EIP-3155: at SSTORE step, storage = Some({H256(0x01): H256(0x2a)}) — single entry only.
     /// Steps before SSTORE and STOP emit storage=None.
     #[test]
-    fn test_struct_log_sstore_storage_capture() {
+    fn test_opcode_tracer_sstore_storage_capture() {
         // Bytecode: PUSH1 0x2a, PUSH1 0x01, SSTORE, STOP
         // 0x60 0x2a 0x60 0x01 0x55 0x00
         let bytecode = Bytes::from(vec![0x60, 0x2a, 0x60, 0x01, 0x55, 0x00]);
-        let cfg = StructLogConfig {
+        let cfg = OpcodeTracerConfig {
             disable_storage: false,
             ..Default::default()
         };
