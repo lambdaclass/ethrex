@@ -254,7 +254,16 @@ pub fn refund_sender(
         let execution_state_gas_refund = vm
             .state_gas_refund_absorbed
             .saturating_add(vm.state_gas_refund_pending);
-        let state_gas = vm.state_gas_used.saturating_sub(execution_state_gas_refund);
+        // EELS PR #2816 (bal-devnet-7): subtract `state_refund` (EIP-7702
+        // existing-authority refund channel) from the state dimension. Lives separately
+        // from `state_gas_refund_absorbed/pending` because it bypasses per-frame
+        // accounting and survives revert/halt/OOG (it's a tx-level refund, not a
+        // frame-local credit). Matches EELS
+        // `tx_state_gas = intrinsic_state + state_gas_used - state_refund`.
+        let state_gas = vm
+            .state_gas_used
+            .saturating_sub(execution_state_gas_refund)
+            .saturating_sub(vm.state_refund);
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.

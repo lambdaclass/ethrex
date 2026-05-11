@@ -493,6 +493,13 @@ pub struct VM<'a> {
     /// is charged. On top-level tx failure, only this portion stays charged; the execution
     /// portion (state_gas_used - intrinsic_state_gas_charged) is wiped back to the reservoir.
     pub intrinsic_state_gas_charged: u64,
+    /// EIP-8037 bal-devnet-7 (EELS PR #2816): state-gas refund channel.
+    /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
+    /// for refunds that bypass per-frame `state_gas_used` accounting. Populated by
+    /// `set_delegation` for existing-authority refunds, subtracted from block-level
+    /// state-gas at the end of `refund_sender`. Survives revert/halt/OOG since it lives
+    /// on the VM, not in any call-frame backup.
+    pub state_refund: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -558,6 +565,7 @@ impl<'a> VM<'a> {
             state_gas_refund_pending: 0,
             state_gas_refund_absorbed: 0,
             intrinsic_state_gas_charged: 0,
+            state_refund: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
