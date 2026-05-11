@@ -8,7 +8,7 @@ use crate::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
             EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
             TRANSACTION_LOCATIONS,
         },
     },
@@ -639,7 +639,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let key = receipt_key(&block_hash, index);
         let value = receipt.encode_to_vec();
-        self.write_async(RECEIPTS, key, value).await
+        self.write_async(RECEIPTS_V2, key, value).await
     }
 
     /// Add receipts
@@ -657,7 +657,7 @@ impl Store {
                 (key, value)
             })
             .collect();
-        self.write_batch_async(RECEIPTS, batch_items).await
+        self.write_batch_async(RECEIPTS_V2, batch_items).await
     }
 
     /// Obtain receipt for a canonical block represented by the block number.
@@ -680,7 +680,7 @@ impl Store {
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
         let key = receipt_key(&block_hash, index);
-        self.read_async(RECEIPTS, key)
+        self.read_async(RECEIPTS_V2, key)
             .await?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
@@ -1102,7 +1102,7 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
             let prefix = block_hash.as_bytes().to_vec();
-            let iter = txn.prefix_iterator(RECEIPTS, &prefix)?;
+            let iter = txn.prefix_iterator(RECEIPTS_V2, &prefix)?;
             let mut receipts = Vec::new();
             for result in iter {
                 let (k, v) = result?;
@@ -1477,7 +1477,7 @@ impl Store {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS, &key, &value)?;
+                tx.put(RECEIPTS_V2, &key, &value)?;
             }
         }
 

@@ -30,11 +30,15 @@ pub const ACCOUNT_CODES: &str = "account_codes";
 /// - [`u8; 8`] = `code_length.to_be_bytes()`
 pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
 
-/// Receipts column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// Receipts column family (legacy, pre-v2): [`Vec<u8>`] => [`Vec<u8>`]
+/// Kept only for migration reads; dropped automatically on next startup.
+pub const RECEIPTS: &str = "receipts";
+
+/// Receipts v2 column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - Key: `block_hash (32B) || index (8B big-endian u64)` — fixed-width raw key
 ///   enabling cursor-based prefix iteration by block hash.
 /// - Value: `receipt.encode_to_vec()`
-pub const RECEIPTS: &str = "receipts";
+pub const RECEIPTS_V2: &str = "receipts_v2";
 
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
@@ -119,6 +123,7 @@ pub const TABLES: [&str; 20] = [
     PENDING_BLOCKS,
     TRANSACTION_LOCATIONS,
     RECEIPTS,
+    RECEIPTS_V2,
     SNAP_STATE,
     INVALID_CHAINS,
     ACCOUNT_TRIE_NODES,

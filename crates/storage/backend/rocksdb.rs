@@ -1,6 +1,6 @@
 use crate::api::tables::{
     ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES, BLOCK_NUMBERS, BODIES,
-    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS, STORAGE_FLATKEYVALUE,
+    CANONICAL_BLOCK_HASHES, FULLSYNC_HEADERS, HEADERS, RECEIPTS_V2, STORAGE_FLATKEYVALUE,
     STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
 };
 use crate::api::{
@@ -68,7 +68,7 @@ impl RocksDBBackend {
             BLOCK_NUMBERS,
             HEADERS,
             BODIES,
-            RECEIPTS,
+            RECEIPTS_V2,
             TRANSACTION_LOCATIONS,
             FULLSYNC_HEADERS,
         ];
@@ -165,7 +165,7 @@ impl RocksDBBackend {
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                RECEIPTS => {
+                RECEIPTS_V2 => {
                     cf_opts.set_write_buffer_size(128 * 1024 * 1024); // 128MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(256 * 1024 * 1024); // 256MB

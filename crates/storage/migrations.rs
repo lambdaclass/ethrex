@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::api::StorageBackend;
-use crate::api::tables::RECEIPTS;
+use crate::api::tables::{RECEIPTS, RECEIPTS_V2};
 use crate::error::StoreError;
 use crate::store::receipt_key;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
@@ -95,20 +95,19 @@ fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError
     Ok(())
 }
 
-/// Migrates the RECEIPTS table key format from RLP-encoded `(BlockHash, u64)`
-/// to raw `block_hash (32B) || index (8B big-endian u64)`.
+/// Migrates the RECEIPTS table from RLP-encoded `(BlockHash, u64)` keys
+/// to raw `block_hash (32B) || index (8B big-endian u64)` keys in a new
+/// `receipts_v2` column family.
 ///
-/// This enables efficient cursor-based prefix iteration by block hash.
-///
-/// The migration opens a single read cursor over the RECEIPTS table and
-/// accumulates writes in a WriteBatch, flushing every `BATCH_SIZE` entries.
-/// The iterator holds a RocksDB snapshot, so it sees a consistent view of
-/// the table regardless of concurrent flushes — new keys written by the
-/// migration are invisible to it.
+/// This two-CF approach copies entries from the old `receipts` CF to
+/// `receipts_v2` with the new key format. The old `receipts` CF is **not**
+/// deleted here — it will be dropped automatically by the auto-cleanup in
+/// `RocksDBBackend::open()` on the next startup (since `RECEIPTS` is no
+/// longer listed in `TABLES`).
 ///
 /// Crash safety: if interrupted, metadata still says v1, so the migration
-/// restarts from scratch on next boot. New-format keys (exactly 40 bytes)
-/// are skipped by the iterator, so a partial previous run is harmless.
+/// restarts from scratch on next boot. Duplicate puts to `receipts_v2` are
+/// idempotent.
 fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     const BATCH_SIZE: usize = 10_000;
 
@@ -116,16 +115,10 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     let iter = txn.prefix_iterator(RECEIPTS, &[])?;
 
     let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
-    let mut delete_keys: Vec<Vec<u8>> = Vec::with_capacity(BATCH_SIZE);
     let mut migrated: u64 = 0;
 
     for result in iter {
         let (key, value) = result?;
-
-        // Skip new-format keys (already migrated in a previous partial run).
-        if key.len() == 40 {
-            continue;
-        }
 
         let (block_hash, index) = match <(H256, u64)>::decode(&key) {
             Ok(decoded) => decoded,
@@ -140,15 +133,11 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
 
         let new_key = receipt_key(&block_hash, index);
         batch.push((new_key, value.to_vec()));
-        delete_keys.push(key.to_vec());
 
         if batch.len() >= BATCH_SIZE {
             let count = batch.len() as u64;
             let mut tx = backend.begin_write()?;
-            tx.put_batch(RECEIPTS, std::mem::take(&mut batch))?;
-            for dk in std::mem::take(&mut delete_keys) {
-                tx.delete(RECEIPTS, &dk)?;
-            }
+            tx.put_batch(RECEIPTS_V2, std::mem::take(&mut batch))?;
             tx.commit()?;
             migrated += count;
             tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
@@ -159,10 +148,7 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     if !batch.is_empty() {
         let count = batch.len() as u64;
         let mut tx = backend.begin_write()?;
-        tx.put_batch(RECEIPTS, batch)?;
-        for dk in &delete_keys {
-            tx.delete(RECEIPTS, dk)?;
-        }
+        tx.put_batch(RECEIPTS_V2, batch)?;
         tx.commit()?;
         migrated += count;
         tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
@@ -213,7 +199,7 @@ mod tests {
 
     #[test]
     fn migrate_1_to_2_converts_rlp_keys_to_fixed_width() {
-        use crate::api::{StorageBackend, StorageReadView};
+        use crate::api::StorageBackend;
         use ethrex_common::types::{Receipt, TxType};
         use ethrex_rlp::encode::RLPEncode;
 
@@ -250,21 +236,22 @@ mod tests {
         // Run migration
         migrate_1_to_2(&backend).unwrap();
 
-        // Verify new fixed-width keys exist and old keys are gone
+        // Verify new fixed-width keys exist in RECEIPTS_V2
         let txn = backend.begin_read().unwrap();
         for i in 0..5u64 {
             let new_key = receipt_key(&block_hash, i);
             let value = txn
-                .get(RECEIPTS, &new_key)
+                .get(RECEIPTS_V2, &new_key)
                 .unwrap()
-                .expect("new key should exist after migration");
+                .expect("new key should exist in RECEIPTS_V2 after migration");
             let decoded = Receipt::decode(value.as_ref()).unwrap();
             assert_eq!(decoded, receipts[i as usize]);
 
+            // Old keys should still be in RECEIPTS (CF drop happens at startup, not during migration)
             let old_key = (block_hash, i).encode_to_vec();
             assert!(
-                txn.get(RECEIPTS, &old_key).unwrap().is_none(),
-                "old key should be deleted after migration"
+                txn.get(RECEIPTS, &old_key).unwrap().is_some(),
+                "old key should still exist in RECEIPTS (dropped at startup)"
             );
         }
     }
