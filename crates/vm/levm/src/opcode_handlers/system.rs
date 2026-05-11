@@ -1169,34 +1169,42 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(_) => {
-                // EELS PR #2823 (bal-devnet-7): incorporate_child_on_error reduces to
+                // EELS PR #2823 (bal-devnet-7) incorporate_child_on_error:
                 //   parent.state_gas_left += child.state_gas_used + child.state_gas_left
-                // i.e. the reverting child's inline credits (SSTORE 0→x→0,
-                // CREATE silent failure) are NOT subtracted out — they stay baked into
-                // `state_gas_left` and flow up to the parent's reservoir. Per the
-                // EELS docstring: "any inline credits the child applied are keyed to
-                // charges that are themselves rolled back, so the matching
-                // `state_gas_left + state_gas_used` sum already reflects the correct
-                // amount to return to the parent."
+                // where EELS `credit_state_gas_refund` decrements the child's
+                // `state_gas_used` (applied = min(amount, state_gas_used);
+                // state_gas_used -= applied). So `child.state_gas_used` here is
+                // already NET of any inline credits the child applied.
                 //
-                // ethrex mapping: `outstanding_delta` (spill that decremented the
-                // parent reservoir during the child) is returned plainly; the
-                // `credit_against_drain` subtraction (the pre-#2823 EELS
-                // `state_gas_refund` undo) is removed, and `state_gas_refund_absorbed`
-                // is left intact so absorbed credits leak up (no snapshot restore).
-                let outstanding_delta = self
-                    .state_gas_spill_outstanding
-                    .saturating_sub(state_gas_spill_outstanding_snapshot);
+                // ethrex bookkeeping: gross charges live in `state_gas_used`, the
+                // matching deduction lives in `state_gas_refund_absorbed`. The
+                // EELS-equivalent net is therefore the delta of (used − absorbed)
+                // during the child. We add that delta + the child's reservoir delta
+                // (refills the credit produced) to the post-revert reservoir.
+                //
+                // Equivalently:
+                //   new_res = current_res + (used_delta − absorbed_delta)
+                // because (current_res − snapshot_res) is the reservoir delta and the
+                // pre-snapshot reservoir is restored implicitly by `+ current_res`.
+                //
+                // `state_gas_refund_absorbed` is restored to snapshot so the child's
+                // absorbed credit (which targeted its own rolled-back charge) does
+                // not discount the parent's later block-accounted charges.
+                let used_delta = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
+                let absorbed_delta = self
+                    .state_gas_refund_absorbed
+                    .saturating_sub(state_gas_refund_absorbed_snapshot);
+                let child_net_used = used_delta.saturating_sub(absorbed_delta);
 
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
-                self.state_gas_reservoir =
-                    state_gas_reservoir_snapshot.saturating_add(outstanding_delta);
-                // `state_gas_refund_absorbed`: NOT restored (spec #2823).
-                // `state_gas_credit_against_drain`: NOT restored (already left
-                // elevated per Policy A so its burn propagates up the cascade).
-                let _ = state_gas_refund_absorbed_snapshot;
+                self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
+                self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(child_net_used);
+                // `state_gas_credit_against_drain`: NOT restored (left elevated per
+                // Policy A so its burn propagates up the cascade).
                 let _ = state_gas_credit_against_drain_snapshot;
+                let _ = state_gas_reservoir_snapshot;
+                let _ = state_gas_spill_outstanding_snapshot;
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1258,20 +1266,22 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // EELS PR #2823 (bal-devnet-7): see handle_return_call. Drop the
-                // `state_gas_refund_absorbed` snapshot restore and the
-                // drain-credit subtraction; the child's inline credits leak up
-                // into the parent's reservoir.
-                let outstanding_delta = self
-                    .state_gas_spill_outstanding
-                    .saturating_sub(state_gas_spill_outstanding_snapshot);
+                // EELS PR #2823 (bal-devnet-7): see handle_return_call for the full
+                // derivation. new_reservoir = current_reservoir + (used_delta −
+                // absorbed_delta) where deltas are child's effective net charges.
+                let used_delta = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
+                let absorbed_delta = self
+                    .state_gas_refund_absorbed
+                    .saturating_sub(state_gas_refund_absorbed_snapshot);
+                let child_net_used = used_delta.saturating_sub(absorbed_delta);
 
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
-                self.state_gas_reservoir =
-                    state_gas_reservoir_snapshot.saturating_add(outstanding_delta);
-                let _ = state_gas_refund_absorbed_snapshot;
+                self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
+                self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(child_net_used);
                 let _ = state_gas_credit_against_drain_snapshot;
+                let _ = state_gas_reservoir_snapshot;
+                let _ = state_gas_spill_outstanding_snapshot;
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS
