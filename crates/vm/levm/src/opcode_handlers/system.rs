@@ -1169,28 +1169,34 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(_) => {
-                // EELS PR #2815 (Policy A): HALT and REVERT both call
-                // `incorporate_child_on_error`, which folds the full child charge back
-                // into the parent's reservoir symmetrically. Do NOT roll back
-                // `state_gas_credit_against_drain` — leave it elevated so the credit's
-                // burn propagates up the cascade at ancestor incorporate boundaries
-                // (per test_nested_failure_resets_to_tx_reservoir's non_top_refund_burn).
+                // EELS PR #2823 (bal-devnet-7): incorporate_child_on_error reduces to
+                //   parent.state_gas_left += child.state_gas_used + child.state_gas_left
+                // i.e. the reverting child's inline credits (SSTORE 0→x→0,
+                // CREATE silent failure) are NOT subtracted out — they stay baked into
+                // `state_gas_left` and flow up to the parent's reservoir. Per the
+                // EELS docstring: "any inline credits the child applied are keyed to
+                // charges that are themselves rolled back, so the matching
+                // `state_gas_left + state_gas_used` sum already reflects the correct
+                // amount to return to the parent."
+                //
+                // ethrex mapping: `outstanding_delta` (spill that decremented the
+                // parent reservoir during the child) is returned plainly; the
+                // `credit_against_drain` subtraction (the pre-#2823 EELS
+                // `state_gas_refund` undo) is removed, and `state_gas_refund_absorbed`
+                // is left intact so absorbed credits leak up (no snapshot restore).
                 let outstanding_delta = self
                     .state_gas_spill_outstanding
                     .saturating_sub(state_gas_spill_outstanding_snapshot);
-                let credit_against_drain_delta = self
-                    .state_gas_credit_against_drain
-                    .saturating_sub(state_gas_credit_against_drain_snapshot);
 
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
-                self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-                // Clamp the drain term to outstanding_delta — under Policy A's HALT
-                // routing, a credit bubbled up from a grandchild's success-path pending
-                // flush can grow `credit_against_drain` past `outstanding_delta`.
-                self.state_gas_reservoir = state_gas_reservoir_snapshot
-                    .saturating_add(outstanding_delta)
-                    .saturating_sub(credit_against_drain_delta.min(outstanding_delta));
+                self.state_gas_reservoir =
+                    state_gas_reservoir_snapshot.saturating_add(outstanding_delta);
+                // `state_gas_refund_absorbed`: NOT restored (spec #2823).
+                // `state_gas_credit_against_drain`: NOT restored (already left
+                // elevated per Policy A so its burn propagates up the cascade).
+                let _ = state_gas_refund_absorbed_snapshot;
+                let _ = state_gas_credit_against_drain_snapshot;
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1252,25 +1258,20 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // EELS PR #2815 (Policy A): HALT and REVERT both call
-                // `incorporate_child_on_error`, folding the full child charge back into the
-                // parent's reservoir symmetrically. Do NOT roll back
-                // `state_gas_credit_against_drain` — leave it elevated so the credit's
-                // burn propagates up the cascade at ancestor incorporate boundaries.
+                // EELS PR #2823 (bal-devnet-7): see handle_return_call. Drop the
+                // `state_gas_refund_absorbed` snapshot restore and the
+                // drain-credit subtraction; the child's inline credits leak up
+                // into the parent's reservoir.
                 let outstanding_delta = self
                     .state_gas_spill_outstanding
                     .saturating_sub(state_gas_spill_outstanding_snapshot);
-                let credit_against_drain_delta = self
-                    .state_gas_credit_against_drain
-                    .saturating_sub(state_gas_credit_against_drain_snapshot);
 
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
-                self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-                // Clamp the drain term to outstanding_delta — see handle_return_call.
-                self.state_gas_reservoir = state_gas_reservoir_snapshot
-                    .saturating_add(outstanding_delta)
-                    .saturating_sub(credit_against_drain_delta.min(outstanding_delta));
+                self.state_gas_reservoir =
+                    state_gas_reservoir_snapshot.saturating_add(outstanding_delta);
+                let _ = state_gas_refund_absorbed_snapshot;
+                let _ = state_gas_credit_against_drain_snapshot;
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS
