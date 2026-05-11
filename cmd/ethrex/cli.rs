@@ -184,7 +184,7 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
-        help = "Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap. Matches the 16-slot default of geth, reth, nethermind and erigon.",
+        help = "Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap.",
         long = "mempool.account-slots",
         default_value_t = 16,
         value_name = "MEMPOOL_ACCOUNT_SLOTS",

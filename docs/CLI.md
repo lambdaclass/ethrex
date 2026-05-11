@@ -92,7 +92,7 @@ Node options:
           [default: 10000]
 
       --mempool.account-slots <MEMPOOL_ACCOUNT_SLOTS>
-          Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap. Matches the 16-slot default of geth, reth, nethermind and erigon.
+          Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap.
 
           [env: ETHREX_MEMPOOL_ACCOUNT_SLOTS=]
           [default: 16]
