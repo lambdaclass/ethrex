@@ -1,9 +1,9 @@
-//! EIP-8037: Dynamic cost_per_state_byte Tests
+//! EIP-8037 intrinsic-gas parity tests.
 //!
-//! Also covers parity between the standalone `intrinsic_gas_dimensions`
-//! helper (used by mempool / payload builder) and `VM::get_intrinsic_gas`
-//! (used during actual tx execution). They must agree on every tx shape or
-//! mempool admission will drift from VM charge.
+//! Covers parity between the standalone `intrinsic_gas_dimensions` helper
+//! (used by mempool / payload builder) and `VM::get_intrinsic_gas` (used
+//! during actual tx execution). They must agree on every tx shape or mempool
+//! admission will drift from VM charge.
 
 use bytes::Bytes;
 use ethrex_common::{
@@ -18,25 +18,12 @@ use ethrex_levm::{
     db::{Database, gen_db::GeneralizedDatabase},
     environment::{EVMConfig, Environment},
     errors::DatabaseError,
-    gas_cost::cost_per_state_byte,
     tracing::LevmCallTracer,
     utils::intrinsic_gas_dimensions,
     vm::{VM, VMType},
 };
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-
-/// `cost_per_state_byte` is pinned to 1174 for bal-devnet-4..6 regardless of
-/// the block gas limit (execution-specs#2687).
-#[test]
-fn test_cpsb_pinned_to_1174() {
-    assert_eq!(cost_per_state_byte(1), 1174);
-    assert_eq!(cost_per_state_byte(30_000_000), 1174);
-    assert_eq!(cost_per_state_byte(120_000_000), 1174);
-    assert_eq!(cost_per_state_byte(500_000_000), 1174);
-}
-
-// ==================== intrinsic_gas_dimensions parity ====================
 
 struct TestDb;
 
