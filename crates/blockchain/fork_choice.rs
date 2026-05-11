@@ -120,11 +120,18 @@ pub async fn apply_fork_choice(
         ));
     }
 
-    // execution-apis PR 786: depth of reorg is the number of canonical blocks that would
-    // be replaced by the new head. The shared canonical ancestor is `head` itself when
-    // head is canonical (the FCU truncates the canonical chain), or one below the lowest
-    // sidechain block in `new_canonical_blocks` otherwise. When the branch is empty and
-    // head is non-canonical, head's parent is the canonical link.
+    // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
+    // depth exceeds the limitation specific to the client software. ethrex's limit
+    // is its state-history retention: we keep the last REORG_DEPTH_LIMIT blocks of
+    // state diffs, so reorgs deeper than that cannot be unwound. We do not reject
+    // reorgs that would cross the finalized prefix — the spec's only requirement on
+    // finalized is point 2 (skip-when-ancestor-of-finalized, handled above) and
+    // point 5 (-38002 for disconnected safe/finalized). The CL is authoritative on
+    // fork choice and an EL must honor what the CL sends if it physically can.
+    //
+    // The shared canonical ancestor is `head` itself when head is canonical (the
+    // FCU truncates the canonical chain), or one below the lowest sidechain block
+    // in `new_canonical_blocks` otherwise.
     let canonical_link_height = if head_is_canonical {
         head.number
     } else {
@@ -135,22 +142,6 @@ pub async fn apply_fork_choice(
             .saturating_sub(1)
     };
     let reorg_depth = latest.saturating_sub(canonical_link_height);
-
-    // Spec check (execution-apis PR 786): reject only when the reorg would replace
-    // blocks at or below the finalized prefix. Reorgs strictly within unfinalized
-    // history are legitimate fork-choice swings the EL must honor at any depth.
-    if let Some(stored_finalized) = store.get_finalized_block_number().await?
-        && canonical_link_height < stored_finalized
-    {
-        return Err(InvalidForkChoice::TooDeepReorg {
-            reorg_depth,
-            limit: latest.saturating_sub(stored_finalized),
-        });
-    }
-
-    // Implementation cap: ethrex's state-history retention can only undo up to
-    // REORG_DEPTH_LIMIT blocks. Even an unfinalized reorg deeper than this must be
-    // rejected because the state to revert to is not in the DB.
     if reorg_depth > REORG_DEPTH_LIMIT {
         return Err(InvalidForkChoice::TooDeepReorg {
             reorg_depth,

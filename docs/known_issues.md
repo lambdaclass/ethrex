@@ -53,28 +53,6 @@ so legacy Prague/Osaka variants still run).
 
 </details>
 
-## Hive — 8 Engine withdrawal Block Re-Org tests (Paris)
-
-The hive engine simulator has not been updated to
-[execution-apis PR #786](https://github.com/ethereum/execution-apis/pull/786),
-so ethrex's spec-correct `-38006 TooDeepReorg` rejection is read as a
-failure. Excluded via `KNOWN_FLAKY_TESTS` in
-`.github/scripts/check-hive-results.sh`. Re-enable once hive catches up.
-
-<details>
-<summary>Affected test names (8)</summary>
-
-- `Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload (Paris)`
-- `Withdrawals Fork on Block 1 - 8 Block Re-Org, Sync (Paris)`
-- `Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload (Paris)`
-- `Withdrawals Fork on Block 8 - 10 Block Re-Org Sync (Paris)`
-- `Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org (Paris)`
-- `Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org Sync (Paris)`
-- `Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org (Paris)`
-- `Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org Sync (Paris)`
-
-</details>
-
 ## EF Tests — Stateless coverage narrowed to EIP-8025 optional-proofs
 
 `make -C tooling/ef_tests/blockchain test` calls `test-stateless-zkevm`

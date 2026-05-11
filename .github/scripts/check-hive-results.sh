@@ -58,11 +58,9 @@ rm -rf "${failed_logs_root}"
 mkdir -p "${failed_logs_root}"
 
 # Tests excluded from the failure count (substring match against test case
-# name). Three categories live here:
+# name). Two categories live here:
 #   1. Genuinely flaky hive-framework tests, not ethrex bugs.
-#   2. Engine-API spec-mismatch (hive hasn't caught up to a forward-looking
-#      spec change ethrex implements) — failures here are spec-correct.
-#   3. bal-devnet-6 fixture-vs-impl mismatch routed through hive's
+#   2. bal-devnet-6 fixture-vs-impl mismatch routed through hive's
 #      consume-engine simulator (mirrors the blockchain-runner skip list
 #      in tooling/ef_tests/blockchain/tests/all.rs SKIPPED_BASE).
 KNOWN_EXCLUDED_TESTS=(
@@ -70,19 +68,7 @@ KNOWN_EXCLUDED_TESTS=(
   "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=False, Invalid P8"
   "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=True, Invalid P8"
   "Invalid Missing Ancestor Syncing ReOrg, Transaction Value, EmptyTxs=False, CanonicalReOrg=False, Invalid P9"
-  # (2) Spec-mismatch — Engine withdrawal Block Re-Org (Paris). ethrex
-  # implements execution-apis PR #786 (`canonical_link_height <
-  # stored_finalized` → `-38006 TooDeepReorg`); hive still asserts the
-  # old accept-deep-reorg behaviour. Re-enable once hive catches up.
-  "Withdrawals Fork on Block 1 - 8 Block Re-Org NewPayload (Paris)"
-  "Withdrawals Fork on Block 1 - 8 Block Re-Org, Sync (Paris)"
-  "Withdrawals Fork on Block 8 - 10 Block Re-Org NewPayload (Paris)"
-  "Withdrawals Fork on Block 8 - 10 Block Re-Org Sync (Paris)"
-  "Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org (Paris)"
-  "Withdrawals Fork on Canonical Block 8 / Side Block 7 - 10 Block Re-Org Sync (Paris)"
-  "Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org (Paris)"
-  "Withdrawals Fork on Canonical Block 8 / Side Block 9 - 10 Block Re-Org Sync (Paris)"
-  # (3) bal-devnet-6 known-failing fixtures (Amsterdam fork) routed through
+  # (2) bal-devnet-6 known-failing fixtures (Amsterdam fork) routed through
   # hive's `eels/consume-engine` simulator. Same root cause as the
   # blockchain-runner SKIPPED_BASE: snobal-devnet-6 fixtures expect
   # bal-devnet-6 spec semantics, but our impl runs ahead due to

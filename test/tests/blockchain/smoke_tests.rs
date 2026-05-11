@@ -288,14 +288,12 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
 
 #[tokio::test]
 async fn unfinalized_reorg_deeper_than_32_is_allowed() {
-    // Per execution-apis PR 786, the -38006 TooDeepReorg rejection should only fire
-    // when the FCU would replace blocks at or below the finalized prefix. A reorg
-    // strictly within unfinalized history must be honored regardless of depth (up to
-    // the implementation's state-history retention cap).
-    //
-    // Build two 33-block chains branching from genesis. With finalized = genesis,
-    // the alternate chain's reorg depth (33) exceeds the previous limit (32) but
-    // does not cross finalized, so the FCU must succeed.
+    // Per execution-apis PR 786 point 6, -38006 TooDeepReorg fires when the reorg
+    // depth exceeds the implementation-specific limit. ethrex defines that limit as
+    // its state-history retention (REORG_DEPTH_LIMIT = 128), matching the stance of
+    // Erigon/Nethermind/Besu/geth — the EL trusts the CL's fork choice and only
+    // rejects when it physically cannot unwind. A 33-block reorg from genesis is
+    // well under the cap and must succeed.
 
     let store = test_store().await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
@@ -330,10 +328,7 @@ async fn unfinalized_reorg_deeper_than_32_is_allowed() {
     let head_b = *chain_b_hashes.last().unwrap();
     assert_ne!(head_a, head_b);
 
-    // FCU to chain B head: reorg depth = 33, finalized = genesis (height 0).
-    // Pre-fix this would fail with `TooDeepReorg { reorg_depth: 33, limit: 32 }`.
-    // Post-fix the spec check passes (canonical link is at height 0, not strictly
-    // below finalized which is also 0) and the implementation cap (128) is not hit.
+    // FCU to chain B head: reorg depth = 33, well under REORG_DEPTH_LIMIT (128).
     apply_fork_choice(&store, head_b, genesis_hash, genesis_hash)
         .await
         .expect("33-block unfinalized reorg should be allowed");
