@@ -549,6 +549,9 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
+        if increase.is_zero() {
+            return Ok(());
+        }
         let account = self.get_account_mut(address)?;
 
         // Get initial balance BEFORE modification (avoids duplicate lookup)
@@ -576,6 +579,9 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
+        if decrease.is_zero() {
+            return Ok(());
+        }
         let account = self.get_account_mut(address)?;
 
         // Get initial balance BEFORE modification (avoids duplicate lookup)
