@@ -41,13 +41,14 @@ pub struct LevmOpcodeTracer {
     pub error: Option<String>,
     /// Gas used by the transaction.
     pub gas_used: u64,
-    /// Running approximate size counter for limit enforcement.
-    /// Currently tracks `logs.len()`.
-    pub total_size: usize,
     /// Explicit gas cost written by CALL/CALLCODE/DELEGATECALL/STATICCALL/CREATE/CREATE2
     /// handlers before invoking the child frame.  The dispatch loop prefers this value
     /// over the (incorrect) gas-diff that would include forwarded gas.
     pub last_opcode_gas_cost: Option<u64>,
+    /// True iff the most recent `pre_step_capture` pushed a new entry. Set to false
+    /// when the `limit` cap is reached so that `finalize_step` does not overwrite the
+    /// previously retained step.
+    pub last_step_captured: bool,
 }
 
 impl LevmOpcodeTracer {
@@ -60,8 +61,8 @@ impl LevmOpcodeTracer {
             output: Bytes::new(),
             error: None,
             gas_used: 0,
-            total_size: 0,
             last_opcode_gas_cost: None,
+            last_step_captured: false,
         }
     }
 
@@ -74,8 +75,8 @@ impl LevmOpcodeTracer {
             output: Bytes::new(),
             error: None,
             gas_used: 0,
-            total_size: 0,
             last_opcode_gas_cost: None,
+            last_step_captured: false,
         }
     }
 
@@ -109,8 +110,10 @@ impl LevmOpcodeTracer {
         return_data: &Bytes,
         storage_kv: Option<(Address, H256, H256)>,
     ) {
-        // Enforce limit: stop appending once total_size reaches the cap.
-        if self.cfg.limit > 0 && self.total_size >= self.cfg.limit {
+        // Enforce limit: stop appending once the cap is reached. The flag prevents
+        // `finalize_step` from clobbering the last retained step on later opcodes.
+        if self.cfg.limit > 0 && self.logs.len() >= self.cfg.limit {
+            self.last_step_captured = false;
             return;
         }
 
@@ -176,12 +179,16 @@ impl LevmOpcodeTracer {
         };
 
         self.logs.push(log);
-        self.total_size = self.logs.len();
+        self.last_step_captured = true;
     }
 
     /// Patches the most-recently-buffered entry with the actual gas cost and any
     /// step-level error string.  Called immediately after the opcode handler returns.
+    /// No-op when the most recent `pre_step_capture` did not push (e.g. limit reached).
     pub fn finalize_step(&mut self, gas_cost: u64, error: Option<&str>) {
+        if !self.last_step_captured {
+            return;
+        }
         if let Some(log) = self.logs.last_mut() {
             log.gas_cost = gas_cost;
             log.error = error.map(str::to_owned);
