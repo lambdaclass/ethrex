@@ -231,6 +231,12 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Maximum number of pending transactions a single sender may hold in the
+    /// mempool. Matches the 16-slot default of every peer EL client
+    /// (geth `AccountSlots`, reth `TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER`,
+    /// erigon `AccountSlots`). A replacement at an existing `(sender, nonce)`
+    /// bypasses this check.
+    pub account_slots: usize,
 }
 
 impl Default for BlockchainOptions {
@@ -242,9 +248,15 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            account_slots: DEFAULT_ACCOUNT_SLOTS,
         }
     }
 }
+
+/// Default per-sender pending-slot cap. Matches geth `AccountSlots = 16`,
+/// reth `TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER = 16`, erigon `AccountSlots = 16`,
+/// and nethermind `MaxPendingBlobTxsPerSender = 16`.
+pub const DEFAULT_ACCOUNT_SLOTS: usize = 16;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -2506,6 +2518,21 @@ impl Blockchain {
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+
+        // Per-sender slot cap. Replacement candidates (same (sender, nonce))
+        // bypass the cap — they don't grow the sender's pool footprint.
+        // Peer-policy default of 16, matches geth `AccountSlots`,
+        // reth `TXPOOL_MAX_ACCOUNT_SLOTS_PER_SENDER`, erigon `AccountSlots`,
+        // and nethermind `MaxPendingBlobTxsPerSender`.
+        if tx_to_replace_hash.is_none() {
+            let count = self.mempool.count_for_sender(sender)?;
+            if count >= self.options.account_slots {
+                return Err(MempoolError::SenderSlotsExceeded {
+                    count,
+                    limit: self.options.account_slots,
+                });
+            }
+        }
 
         if tx
             .chain_id()

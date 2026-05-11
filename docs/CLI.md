@@ -91,6 +91,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.account-slots <MEMPOOL_ACCOUNT_SLOTS>
+          Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap. Matches the 16-slot default of geth, reth, nethermind and erigon.
+
+          [env: ETHREX_MEMPOOL_ACCOUNT_SLOTS=]
+          [default: 16]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 

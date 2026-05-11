@@ -451,6 +451,17 @@ impl Mempool {
         Ok(contains)
     }
 
+    /// Returns the number of pending transactions currently held in the
+    /// mempool for `sender`. Used by the per-sender slot cap at admission.
+    pub fn count_for_sender(&self, sender: Address) -> Result<usize, MempoolError> {
+        let inner = self.read()?;
+        let count = inner
+            .txs_by_sender_nonce
+            .range((sender, 0)..=(sender, u64::MAX))
+            .count();
+        Ok(count)
+    }
+
     pub fn find_tx_to_replace(
         &self,
         sender: Address,
@@ -573,4 +584,71 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::EIP1559Transaction;
+
+    fn build_tx(nonce: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            ..Default::default()
+        })
+    }
+
+    fn add_tx(pool: &Mempool, sender: Address, nonce: u64) -> H256 {
+        let tx = build_tx(nonce);
+        let mtx = MempoolTransaction::new(tx, sender);
+        let hash = mtx.hash();
+        pool.add_transaction(hash, sender, mtx).unwrap();
+        hash
+    }
+
+    #[test]
+    fn count_for_sender_empty_pool() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 0);
+    }
+
+    #[test]
+    fn count_for_sender_one_tx() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        add_tx(&pool, sender, 0);
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 1);
+    }
+
+    #[test]
+    fn count_for_sender_many_nonces() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        for nonce in 0..5 {
+            add_tx(&pool, sender, nonce);
+        }
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 5);
+    }
+
+    #[test]
+    fn count_for_sender_isolates_senders() {
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(1);
+        let b = Address::from_low_u64_be(2);
+        add_tx(&pool, a, 0);
+        add_tx(&pool, a, 1);
+        add_tx(&pool, b, 0);
+        assert_eq!(pool.count_for_sender(a).unwrap(), 2);
+        assert_eq!(pool.count_for_sender(b).unwrap(), 1);
+    }
+
+    #[test]
+    fn count_for_sender_unknown_returns_zero() {
+        let pool = Mempool::new(64);
+        let a = Address::from_low_u64_be(1);
+        let b = Address::from_low_u64_be(2);
+        add_tx(&pool, a, 0);
+        assert_eq!(pool.count_for_sender(b).unwrap(), 0);
+    }
 }

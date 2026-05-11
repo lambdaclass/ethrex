@@ -184,6 +184,15 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Maximum number of pending transactions a single sender may hold in the mempool. Replacements at an existing (sender, nonce) bypass this cap. Matches the 16-slot default of geth, reth, nethermind and erigon.",
+        long = "mempool.account-slots",
+        default_value_t = 16,
+        value_name = "MEMPOOL_ACCOUNT_SLOTS",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_ACCOUNT_SLOTS"
+    )]
+    pub mempool_account_slots: usize,
+    #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
@@ -450,6 +459,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_account_slots: 16,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
