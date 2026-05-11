@@ -437,7 +437,7 @@ make test
 
 `make test` calls `cargo test -p ethrex-test l2_integration_test --features l2 -- --nocapture`. It assumes the dev node and prover are already up on the default ports (`L2 RPC 1729`, `proof coordinator 3900`), which is exactly the state Step 4 leaves you in.
 
-Expected duration: ~30–45 minutes (the L2 was started with the Makefile defaults of `--committer.commit-time 150000` / `--block-producer.block-time 1000`, so each batch contains ~150 blocks). See [Integration tests › How long do the tests take to run?](./integration-tests.md#how-long-do-the-tests-take-to-run) and [I think my tests are taking too long, how can I debug this?](./integration-tests.md#i-think-my-tests-are-taking-too-long-how-can-i-debug-this) for what to do if it stalls.
+See [Integration tests › I think my tests are taking too long, how can I debug this?](./integration-tests.md#i-think-my-tests-are-taking-too-long-how-can-i-debug-this) for what to do if it stalls.
 
 If the suite goes green, the upgrade is successful.
 
