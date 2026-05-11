@@ -137,9 +137,9 @@ impl OpcodeHandler for OpCallHandler {
         // WITHOUT stipend). LEVM's `gas_cost` already equals `call_gas_costs + gas_forwarded`,
         // i.e. `intrinsic + callGasTemp`. Stipend is added later inside the child frame, after
         // the tracer fires, so it is NOT part of the reported gasCost.
-        if vm.struct_log_tracer.active {
+        if vm.opcode_tracer.active {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
-            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
 
         // Resize memory: this is necessary for multiple reasons:
@@ -239,9 +239,9 @@ impl OpcodeHandler for OpCallCodeHandler {
         )?;
 
         // Struct-log: geth-compatible CALLCODE gasCost (intrinsic + forwarded, no stipend).
-        if vm.struct_log_tracer.active {
+        if vm.opcode_tracer.active {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
-            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
 
         // Resize memory: this is necessary for multiple reasons:
@@ -334,9 +334,9 @@ impl OpcodeHandler for OpDelegateCallHandler {
         )?;
 
         // Struct-log: geth-compatible DELEGATECALL gasCost (intrinsic + forwarded).
-        if vm.struct_log_tracer.active {
+        if vm.opcode_tracer.active {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
-            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
 
         // Resize memory: this is necessary for multiple reasons:
@@ -431,9 +431,9 @@ impl OpcodeHandler for OpStaticCallHandler {
         )?;
 
         // Struct-log: geth-compatible STATICCALL gasCost (intrinsic + forwarded).
-        if vm.struct_log_tracer.active {
+        if vm.opcode_tracer.active {
             let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
-            vm.struct_log_tracer.last_opcode_gas_cost = Some(geth_cost);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
         }
 
         // Resize memory: this is necessary for multiple reasons:
@@ -514,8 +514,8 @@ impl OpcodeHandler for OpCreateHandler {
         vm.current_call_frame.increase_consumed_gas(create_gas)?;
 
         // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
-        if vm.struct_log_tracer.active {
-            vm.struct_log_tracer.last_opcode_gas_cost = Some(create_gas);
+        if vm.opcode_tracer.active {
+            vm.opcode_tracer.last_opcode_gas_cost = Some(create_gas);
         }
 
         vm.generic_create(value_in_wei, code_offset, code_len, None)
@@ -544,8 +544,8 @@ impl OpcodeHandler for OpCreate2Handler {
         vm.current_call_frame.increase_consumed_gas(create2_gas)?;
 
         // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
-        if vm.struct_log_tracer.active {
-            vm.struct_log_tracer.last_opcode_gas_cost = Some(create2_gas);
+        if vm.opcode_tracer.active {
+            vm.opcode_tracer.last_opcode_gas_cost = Some(create2_gas);
         }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))

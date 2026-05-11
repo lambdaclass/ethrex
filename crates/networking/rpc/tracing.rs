@@ -5,7 +5,7 @@ use ethrex_common::{
     serde_utils,
     tracing::{CallTraceFrame, PrestateResult},
 };
-use ethrex_vm::tracing::StructLogConfig;
+use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -96,7 +96,7 @@ impl PrestateTracerConfig {
 /// - `limit` — stop collecting after this many log entries; `0` means unlimited.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
-struct StructLogTracerConfig {
+struct OpcodeTracerRpcConfig {
     #[serde(default)]
     disable_stack: bool,
     #[serde(default)]
@@ -109,9 +109,9 @@ struct StructLogTracerConfig {
     limit: usize,
 }
 
-impl From<StructLogTracerConfig> for StructLogConfig {
-    fn from(c: StructLogTracerConfig) -> Self {
-        StructLogConfig {
+impl From<OpcodeTracerRpcConfig> for OpcodeTracerConfig {
+    fn from(c: OpcodeTracerRpcConfig) -> Self {
+        OpcodeTracerConfig {
             disable_stack: c.disable_stack,
             enable_memory: c.enable_memory,
             disable_storage: c.disable_storage,
@@ -217,7 +217,7 @@ impl RpcHandler for TraceTransactionRequest {
                 }
             }
             TracerType::OpcodeTracer => {
-                let cfg: StructLogTracerConfig = self
+                let cfg: OpcodeTracerRpcConfig = self
                     .trace_config
                     .tracer_config
                     .as_ref()
@@ -226,7 +226,7 @@ impl RpcHandler for TraceTransactionRequest {
                     .unwrap_or_default();
                 let result = context
                     .blockchain
-                    .trace_transaction_struct_log(self.tx_hash, reexec, timeout, cfg.into())
+                    .trace_transaction_opcodes(self.tx_hash, reexec, timeout, cfg.into())
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 Ok(serde_json::to_value(result)?)
@@ -343,19 +343,19 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 Ok(serde_json::to_value(block_trace)?)
             }
             TracerType::OpcodeTracer => {
-                let cfg: StructLogTracerConfig = self
+                let cfg: OpcodeTracerRpcConfig = self
                     .trace_config
                     .tracer_config
                     .as_ref()
                     .map(|v| serde_json::from_value(v.clone()))
                     .transpose()?
                     .unwrap_or_default();
-                let struct_log_traces = context
+                let opcode_traces = context
                     .blockchain
-                    .trace_block_struct_log(block, reexec, timeout, cfg.into())
+                    .trace_block_opcodes(block, reexec, timeout, cfg.into())
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                let block_trace: BlockTrace<_> = struct_log_traces
+                let block_trace: BlockTrace<_> = opcode_traces
                     .into_iter()
                     .map(|(hash, result)| (hash, result).into())
                     .collect();

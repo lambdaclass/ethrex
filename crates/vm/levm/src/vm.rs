@@ -13,11 +13,11 @@ use crate::{
         hook::{Hook, get_hooks},
     },
     memory::Memory,
+    opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
-    struct_log_tracer::LevmStructLogTracer,
     tracing::LevmCallTracer,
 };
 use bytes::Bytes;
@@ -436,8 +436,8 @@ pub struct VM<'a> {
     pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
-    /// Struct-log (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
-    pub struct_log_tracer: LevmStructLogTracer,
+    /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
+    pub opcode_tracer: LevmOpcodeTracer,
     /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
@@ -484,7 +484,7 @@ impl<'a> VM<'a> {
             hooks: get_hooks(&vm_type),
             storage_original_values: FxHashMap::default(),
             tracer,
-            struct_log_tracer: LevmStructLogTracer::disabled(),
+            opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
@@ -657,7 +657,7 @@ impl<'a> VM<'a> {
             self.advance_pc(1)?;
 
             // Hoist the active flag to avoid reading it twice per opcode.
-            let tracer_active = self.struct_log_tracer.active;
+            let tracer_active = self.opcode_tracer.active;
 
             // Struct-log pre-step capture (single branch on the fast path when disabled).
             let gas_before_op = if tracer_active {
@@ -681,7 +681,7 @@ impl<'a> VM<'a> {
                 )]
                 let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
                 let storage_kv = self.read_storage_for_trace(opcode);
-                let return_data = if self.struct_log_tracer.cfg.enable_return_data {
+                let return_data = if self.opcode_tracer.cfg.enable_return_data {
                     self.current_call_frame.sub_return_data.clone()
                 } else {
                     Bytes::new()
@@ -691,7 +691,7 @@ impl<'a> VM<'a> {
                     reason = "pc is usize, fits in u64 on supported targets"
                 )]
                 let pc_u64 = pc_of_current_op as u64;
-                self.struct_log_tracer.pre_step_capture(
+                self.opcode_tracer.pre_step_capture(
                     pc_u64,
                     opcode,
                     gas_before,
@@ -731,12 +731,12 @@ impl<'a> VM<'a> {
                 // Prefer the explicit opcode-overhead cost written by CALL/CREATE handlers;
                 // fall back to the gas diff for all other opcodes.
                 let gas_cost = self
-                    .struct_log_tracer
+                    .opcode_tracer
                     .last_opcode_gas_cost
                     .take()
                     .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
                 let err_str = error.get().map(|e| e.to_string());
-                self.struct_log_tracer
+                self.opcode_tracer
                     .finalize_step(gas_cost, err_str.as_deref());
             }
 
@@ -819,10 +819,10 @@ impl<'a> VM<'a> {
 
         // Struct-log end-of-tx capture: record final output, gas used, and revert error.
         // gas matches geth's `executionResult.Gas` which is post-refund (`receipt.GasUsed`).
-        if self.struct_log_tracer.active {
-            self.struct_log_tracer.output = ctx_result.output.clone();
-            self.struct_log_tracer.gas_used = ctx_result.gas_spent;
-            self.struct_log_tracer.error = match ctx_result.result {
+        if self.opcode_tracer.active {
+            self.opcode_tracer.output = ctx_result.output.clone();
+            self.opcode_tracer.gas_used = ctx_result.gas_spent;
+            self.opcode_tracer.error = match ctx_result.result {
                 TxResult::Revert(ref err) => Some(err.to_string()),
                 _ => None,
             };
@@ -860,7 +860,7 @@ impl<'a> VM<'a> {
     /// Returns an empty `Vec` when `cfg.disable_stack` is true.
     pub fn collect_stack_for_trace(&self) -> Vec<U256> {
         use crate::constants::STACK_LIMIT;
-        if self.struct_log_tracer.cfg.disable_stack {
+        if self.opcode_tracer.cfg.disable_stack {
             return Vec::new();
         }
         let s = &self.current_call_frame.stack;
@@ -875,7 +875,7 @@ impl<'a> VM<'a> {
     ///
     /// Returns an empty `Vec` when `cfg.enable_memory` is false or memory is empty.
     pub fn collect_memory_for_trace(&self) -> Vec<u8> {
-        if !self.struct_log_tracer.cfg.enable_memory {
+        if !self.opcode_tracer.cfg.enable_memory {
             return Vec::new();
         }
         self.current_call_frame.memory.live_bytes()
@@ -896,7 +896,7 @@ impl<'a> VM<'a> {
         const SLOAD: u8 = 0x54;
         const SSTORE: u8 = 0x55;
 
-        if self.struct_log_tracer.cfg.disable_storage {
+        if self.opcode_tracer.cfg.disable_storage {
             return None;
         }
         if opcode != SLOAD && opcode != SSTORE {

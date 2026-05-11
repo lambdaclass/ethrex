@@ -127,14 +127,14 @@ fn is_zero_nonce(n: &u64) -> bool {
     *n == 0
 }
 
-// ─── EIP-3155 StructLog types ──────────────────────────────────────────────
+// ─── EIP-3155 OpcodeTracer types ──────────────────────────────────────────────
 
 /// Per-opcode trace entry in strict EIP-3155 format.
 ///
 /// Fields are kept as native types in memory; `Serialize` converts them to the
 /// exact encoding specified by EIP-3155 (https://eips.ethereum.org/EIPS/eip-3155).
 #[derive(Debug)]
-pub struct StructLog {
+pub struct OpcodeStep {
     pub pc: u64,
     /// Raw opcode byte value (e.g. 96 for PUSH1).
     pub op: u8,
@@ -161,13 +161,13 @@ pub struct StructLog {
 #[derive(Debug)]
 pub struct MemoryChunk(pub [u8; 32]);
 
-/// Top-level result returned by a struct-log trace, in EIP-3155 format.
+/// Top-level result returned by an opcode trace, in EIP-3155 format.
 #[derive(Debug)]
-pub struct StructLogResult {
+pub struct OpcodeTraceResult {
     pub gas_used: u64,
     pub pass: bool,
     pub output: bytes::Bytes,
-    pub struct_logs: Vec<StructLog>,
+    pub steps: Vec<OpcodeStep>,
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -356,7 +356,7 @@ impl serde::Serialize for MemoryChunk {
     }
 }
 
-impl serde::Serialize for StructLog {
+impl serde::Serialize for OpcodeStep {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
 
@@ -440,14 +440,14 @@ impl serde::Serialize for StructLog {
     }
 }
 
-impl serde::Serialize for StructLogResult {
+impl serde::Serialize for OpcodeTraceResult {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(4))?;
         map.serialize_entry("pass", &self.pass)?;
         map.serialize_entry("gasUsed", &format!("{:#x}", self.gas_used))?;
         map.serialize_entry("output", &format!("0x{}", hex::encode(&self.output)))?;
-        map.serialize_entry("structLogs", &self.struct_logs)?;
+        map.serialize_entry("steps", &self.steps)?;
         map.end()
     }
 }
@@ -465,8 +465,8 @@ mod tests {
         serde_json::to_value(v).expect("serialize failed")
     }
 
-    fn minimal_log() -> StructLog {
-        StructLog {
+    fn minimal_log() -> OpcodeStep {
+        OpcodeStep {
             pc: 0,
             op: 0x00,
             gas: 0,
@@ -531,11 +531,11 @@ mod tests {
         assert_eq!(j, Value::String(format!("0x{}", "0".repeat(64))));
     }
 
-    // ── StructLog — op field ──────────────────────────────────────────────
+    // ── OpcodeStep — op field ──────────────────────────────────────────────
 
     #[test]
     fn op_is_byte_value() {
-        let log = StructLog {
+        let log = OpcodeStep {
             op: 0x60, // PUSH1
             ..minimal_log()
         };
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn op_name_is_string() {
-        let log = StructLog {
+        let log = OpcodeStep {
             op: 0x60, // PUSH1
             ..minimal_log()
         };
@@ -557,11 +557,11 @@ mod tests {
         assert_eq!(j["opName"], Value::String("PUSH1".to_string()));
     }
 
-    // ── StructLog — gas fields ────────────────────────────────────────────
+    // ── OpcodeStep — gas fields ────────────────────────────────────────────
 
     #[test]
     fn gas_encoded_as_hex_string() {
-        let log = StructLog {
+        let log = OpcodeStep {
             gas: 30000,
             ..minimal_log()
         };
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn gas_cost_encoded_as_hex_string() {
-        let log = StructLog {
+        let log = OpcodeStep {
             gas_cost: 3,
             ..minimal_log()
         };
@@ -579,11 +579,11 @@ mod tests {
         assert_eq!(j["gasCost"], Value::String("0x3".to_string()));
     }
 
-    // ── StructLog — memSize field ─────────────────────────────────────────
+    // ── OpcodeStep — memSize field ─────────────────────────────────────────
 
     #[test]
     fn mem_size_field_present() {
-        let log = StructLog {
+        let log = OpcodeStep {
             mem_size: 64,
             ..minimal_log()
         };
@@ -592,11 +592,11 @@ mod tests {
         assert_eq!(j["memSize"], Value::Number(64.into()));
     }
 
-    // ── StructLog — stack field ───────────────────────────────────────────
+    // ── OpcodeStep — stack field ───────────────────────────────────────────
 
     #[test]
     fn stack_disabled_is_null() {
-        let log = StructLog {
+        let log = OpcodeStep {
             stack: None,
             ..minimal_log()
         };
@@ -610,7 +610,7 @@ mod tests {
 
     #[test]
     fn stack_empty_vec_present_as_array() {
-        let log = StructLog {
+        let log = OpcodeStep {
             stack: Some(vec![]),
             ..minimal_log()
         };
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn stack_values_encoded_correctly() {
-        let log = StructLog {
+        let log = OpcodeStep {
             stack: Some(vec![U256::zero(), U256::from(1u64), U256::MAX]),
             ..minimal_log()
         };
@@ -632,13 +632,13 @@ mod tests {
         assert_eq!(stack[2], Value::String(format!("0x{}", "f".repeat(64))));
     }
 
-    // ── StructLog — memory field ──────────────────────────────────────────
+    // ── OpcodeStep — memory field ──────────────────────────────────────────
 
     #[test]
     fn memory_33_bytes_two_chunks_padded() {
         let chunk0 = MemoryChunk([0u8; 32]);
         let chunk1 = MemoryChunk([0u8; 32]);
-        let log = StructLog {
+        let log = OpcodeStep {
             memory: Some(vec![chunk0, chunk1]),
             ..minimal_log()
         };
@@ -650,13 +650,13 @@ mod tests {
         assert_eq!(mem[1], Value::String(zeros64));
     }
 
-    // ── StructLog — storage field ─────────────────────────────────────────
+    // ── OpcodeStep — storage field ─────────────────────────────────────────
 
     #[test]
     fn storage_entry_encoded_correctly() {
         let mut storage = BTreeMap::new();
         storage.insert(H256::from_low_u64_be(1), H256::from_low_u64_be(0x2a));
-        let log = StructLog {
+        let log = OpcodeStep {
             op: 0x54,
             storage: Some(storage),
             ..minimal_log()
@@ -669,11 +669,11 @@ mod tests {
         assert_eq!(got_val, &Value::String(expected_val));
     }
 
-    // ── StructLog — error field ───────────────────────────────────────────
+    // ── OpcodeStep — error field ───────────────────────────────────────────
 
     #[test]
     fn error_some_is_present() {
-        let log = StructLog {
+        let log = OpcodeStep {
             error: Some("out of gas".to_string()),
             ..minimal_log()
         };
@@ -688,7 +688,7 @@ mod tests {
         assert!(j.get("error").is_none());
     }
 
-    // ── StructLog — refund field ──────────────────────────────────────────
+    // ── OpcodeStep — refund field ──────────────────────────────────────────
 
     #[test]
     fn refund_zero_is_0x0() {
@@ -703,7 +703,7 @@ mod tests {
 
     #[test]
     fn refund_nonzero_is_hex_string() {
-        let log = StructLog {
+        let log = OpcodeStep {
             refund: 5,
             ..minimal_log()
         };
@@ -711,7 +711,7 @@ mod tests {
         assert_eq!(j["refund"], Value::String("0x5".to_string()));
     }
 
-    // ── StructLog — returnData field ──────────────────────────────────────
+    // ── OpcodeStep — returnData field ──────────────────────────────────────
 
     #[test]
     fn return_data_default_is_0x() {
@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn return_data_nonempty_is_present() {
-        let log = StructLog {
+        let log = OpcodeStep {
             return_data: Bytes::from_static(b"\x00\x01"),
             ..minimal_log()
         };
@@ -734,31 +734,31 @@ mod tests {
         assert_eq!(j["returnData"], Value::String("0x0001".to_string()));
     }
 
-    // ── StructLogResult ───────────────────────────────────────────────────
+    // ── OpcodeTraceResult ───────────────────────────────────────────────────
 
     #[test]
     fn struct_log_result_shape() {
-        let result = StructLogResult {
+        let result = OpcodeTraceResult {
             gas_used: 21000,
             pass: true,
             output: Bytes::from_static(b"\x00\x01"),
-            struct_logs: vec![],
+            steps: vec![],
         };
         let j = to_json(&result);
         assert_eq!(j["pass"], Value::Bool(true));
         assert_eq!(j["gasUsed"], Value::String("0x5208".to_string()));
         assert_eq!(j["output"], Value::String("0x0001".to_string()));
-        assert_eq!(j["structLogs"], Value::Array(vec![]));
+        assert_eq!(j["steps"], Value::Array(vec![]));
     }
 
-    // ── Full StructLog JSON shape (fixture-style) ─────────────────────────
+    // ── Full OpcodeStep JSON shape (fixture-style) ─────────────────────────
 
     #[test]
-    fn full_struct_log_fixture() {
+    fn full_opcode_step_fixture() {
         let mut storage = BTreeMap::new();
         storage.insert(H256::from_low_u64_be(1), H256::from_low_u64_be(0x2a));
 
-        let log = StructLog {
+        let log = OpcodeStep {
             pc: 0,
             op: 0x60, // PUSH1
             gas: 30000,

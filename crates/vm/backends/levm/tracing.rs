@@ -3,7 +3,7 @@ use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult,
 use ethrex_common::types::{Block, Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
-    tracing::{CallTrace, StructLogResult},
+    tracing::{CallTrace, OpcodeTraceResult},
     types::BlockHeader,
 };
 use ethrex_crypto::Crypto;
@@ -12,7 +12,7 @@ use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     db::gen_db::GeneralizedDatabase,
-    tracing::{LevmCallTracer, LevmStructLogTracer, StructLogConfig},
+    tracing::{LevmCallTracer, LevmOpcodeTracer, OpcodeTracerConfig},
     vm::VM,
 };
 
@@ -99,15 +99,15 @@ impl LEVM {
         }
     }
 
-    /// Run transaction with struct-log (EIP-3155) tracer activated.
-    pub fn trace_tx_struct_log(
+    /// Run transaction with opcode (EIP-3155) tracer activated.
+    pub fn trace_tx_opcodes(
         db: &mut GeneralizedDatabase,
         block_header: &BlockHeader,
         tx: &Transaction,
-        cfg: StructLogConfig,
+        cfg: OpcodeTracerConfig,
         vm_type: VMType,
         crypto: &dyn Crypto,
-    ) -> Result<StructLogResult, EvmError> {
+    ) -> Result<OpcodeTraceResult, EvmError> {
         let env = Self::setup_env(
             tx,
             tx.sender(crypto).map_err(|error| {
@@ -118,9 +118,9 @@ impl LEVM {
             vm_type,
         )?;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
-        vm.struct_log_tracer = LevmStructLogTracer::new(cfg);
+        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
         vm.execute()?;
-        Ok(vm.struct_log_tracer.take_result())
+        Ok(vm.opcode_tracer.take_result())
     }
 
     /// Run transaction with callTracer activated.
