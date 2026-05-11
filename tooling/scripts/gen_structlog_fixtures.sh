@@ -1,21 +1,42 @@
 #!/usr/bin/env bash
-# gen_structlog_fixtures.sh — Regenerates EIP-3155 struct-log diff fixtures.
+# gen_structlog_fixtures.sh — Reference procedure for EIP-3155 struct-log fixtures.
 #
-# This script documents the procedure to reproduce the JSON fixtures at
-# test/tests/levm/fixtures/eip3155_*.json using a local geth --dev node.
+# *** IMPORTANT: FORMAT DIVERGENCE ***
+# ethrex emits STRICT EIP-3155 format (https://eips.ethereum.org/EIPS/eip-3155).
+# geth's `evm` CLI and `debug_traceTransaction` emit `structLogLegacy` format
+# (toLegacyJSON in eth/tracers/logger/logger.go), which differs in several ways:
 #
-# The fixtures are NOT generated automatically (geth --dev node setup is
-# heavy); this script is documentation so a future maintainer can regenerate
-# them when geth's wire format drifts.
+#   - gas/gasCost: geth emits decimal numbers; EIP-3155 requires hex strings ("0x...")
+#   - op: geth emits the opcode NAME string; EIP-3155 requires the byte VALUE (decimal)
+#   - opName: EIP-3155 adds this always-present string field; geth's legacy format omits it
+#   - memSize: EIP-3155 requires this always-present decimal field; geth's legacy omits it
+#   - refund: EIP-3155 always emits this as hex string "0x0"; geth omits it when zero
+#   - returnData: EIP-3155 always emits this as "0x"; geth omits it when absent/empty
+#   - stack: EIP-3155 emits null when disabled; geth omits the field
+#   - result wrapper: EIP-3155 uses {pass, gasUsed, output}; geth uses {gas, failed, returnValue}
+#
+# Running geth's evm CLI or `debug_traceTransaction` will NOT produce byte-identical
+# output to ethrex's EIP-3155 tracer. This script is kept as a debugging aid to
+# understand gas values and opcode sequences, but it cannot serve as a reference
+# for fixture regeneration.
+#
+# To regenerate the ethrex fixtures, use the ignored helper tests in
+# test/tests/levm/struct_log_fixture_gen.rs:
+#
+#   cargo test -p ethrex-levm-test print_ -- --nocapture --ignored
+#
+# Then copy each printed JSON block to the corresponding fixture file.
+#
+# This script documents the original geth-based procedure for historical reference.
 #
 # PINNED GETH VERSION
 # ===================
-# The reference implementation used to derive these fixtures is:
+# The reference geth version (for gas arithmetic cross-check only):
 #
 #   go-ethereum commit: b7719e1c3de88c2e6943321fa53b80807845ba40
 #   repo: github.com/ethereum/go-ethereum
 #
-# Source path for the wire format:
+# Source path for geth's (non-EIP-3155) wire format:
 #   eth/tracers/logger/logger.go :: structLogLegacy :: toLegacyJSON
 #
 # TRACER NAME

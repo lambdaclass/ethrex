@@ -1,47 +1,63 @@
 {
-  "gas": 43106,
-  "failed": false,
-  "returnValue": "0x",
+  "pass": true,
+  "gasUsed": "0xa862",
+  "output": "0x",
   "structLogs": [
     {
       "pc": 0,
-      "op": "PUSH1",
-      "gas": 79000,
-      "gasCost": 3,
+      "op": 96,
+      "gas": "0x13498",
+      "gasCost": "0x3",
+      "memSize": 0,
+      "stack": [],
       "depth": 1,
-      "stack": []
+      "returnData": "0x",
+      "refund": "0x0",
+      "opName": "PUSH1"
     },
     {
       "pc": 2,
-      "op": "PUSH1",
-      "gas": 78997,
-      "gasCost": 3,
-      "depth": 1,
+      "op": 96,
+      "gas": "0x13495",
+      "gasCost": "0x3",
+      "memSize": 0,
       "stack": [
         "0x2a"
-      ]
+      ],
+      "depth": 1,
+      "returnData": "0x",
+      "refund": "0x0",
+      "opName": "PUSH1"
     },
     {
       "pc": 4,
-      "op": "SSTORE",
-      "gas": 78994,
-      "gasCost": 22100,
-      "depth": 1,
+      "op": 85,
+      "gas": "0x13492",
+      "gasCost": "0x5654",
+      "memSize": 0,
       "stack": [
         "0x2a",
         "0x1"
       ],
+      "depth": 1,
+      "returnData": "0x",
+      "refund": "0x0",
+      "opName": "SSTORE",
       "storage": {
         "0x0000000000000000000000000000000000000000000000000000000000000001": "0x000000000000000000000000000000000000000000000000000000000000002a"
       }
     },
     {
       "pc": 5,
-      "op": "STOP",
-      "gas": 56894,
-      "gasCost": 0,
+      "op": 0,
+      "gas": "0xde3e",
+      "gasCost": "0x0",
+      "memSize": 0,
+      "stack": [],
       "depth": 1,
-      "stack": []
+      "returnData": "0x",
+      "refund": "0x0",
+      "opName": "STOP"
     }
   ]
 }
