@@ -959,7 +959,11 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
         Ok(ns) => ns,
         Err(rpc_err) => return Err(rpc_err),
     };
-    // Engine is served on the authenticated port only; treat as not found here.
+    // Engine is served on the authenticated port only; reject it here regardless
+    // of the allowlist. The CLI parser already rejects `--http.api engine`, but
+    // `allowed_namespaces` can also be built programmatically (e.g. in tests or
+    // future call sites), so this explicit guard is defense-in-depth: even if
+    // Engine ends up in the set, HTTP dispatch must refuse it.
     if matches!(namespace, RpcNamespace::Engine) || !context.allowed_namespaces.contains(&namespace)
     {
         return Err(RpcErr::MethodNotFound(req.method.clone()));

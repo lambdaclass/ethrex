@@ -64,6 +64,8 @@ lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --e
 
 ### Ethrex (Execution Client)
 
+> **Note on RPC defaults:** As of the HTTP JSON-RPC hardening change, ethrex binds the HTTP RPC to `127.0.0.1` and only serves `eth,net,web3` by default. The `debug_*` namespace (which `debug_executionWitness` belongs to) is **not** in the default allowlist, so this benchmark will fail with `MethodNotFound` unless you opt in with `--http.api`. The example below already enables it.
+
 ```bash
 cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --http.api eth,net,web3,debug --network <NETWORK> --authrpc.jwtsecret ~/secrets/jwt.hex --precompute-witnesses
 ```
