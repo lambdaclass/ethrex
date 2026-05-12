@@ -210,9 +210,9 @@ fn test_unsupported_trace_format_exits_1() {
     );
 }
 
-/// Test: `run` subcommand stub returns a non-zero exit and the expected message.
+/// Test: `run` subcommand with no bytecode exits non-zero.
 #[test]
-fn test_run_stub_exits_nonzero() {
+fn test_run_no_bytecode_exits_nonzero() {
     let bin = binary();
 
     let out = Command::new(&bin)
@@ -222,13 +222,7 @@ fn test_run_stub_exits_nonzero() {
 
     assert!(
         !out.status.success(),
-        "run stub should fail, but exited with {:?}",
+        "run with no bytecode should fail, but exited with {:?}",
         out.status
-    );
-
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("Phase 5"),
-        "expected 'Phase 5' in run stub error message: {stderr}"
     );
 }
