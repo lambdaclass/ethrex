@@ -2364,6 +2364,18 @@ impl Blockchain {
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
         }
+        // Wire size cap: run before sender recovery so oversized txs don't
+        // force secp256k1 work. Matches geth's `txMaxSize` admission order
+        // (size-checked at `ValidateTransaction` entry, well before any
+        // crypto). The same check sits in `validate_transaction` so direct
+        // callers (tests, L2 paths) keep the guarantee.
+        let encoded_len = transaction.encode_canonical_len();
+        if encoded_len > MAX_TX_SIZE {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: encoded_len,
+                limit: MAX_TX_SIZE,
+            });
+        }
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
