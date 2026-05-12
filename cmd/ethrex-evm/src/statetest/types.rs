@@ -14,6 +14,25 @@ use ethrex_common::{
 };
 use serde::{Deserialize, Serialize};
 
+/// Authorization tuple for EIP-7702 set-code transactions.
+///
+/// Mirrors `EFTestAuthorizationListTuple` from `tooling/ef_tests/state/types.rs`.
+/// Accepts both `"v"` and `"yParity"` JSON keys for the y-parity field because
+/// older EF vectors used `"v"` while newer Prague vectors use `"yParity"`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestAuthTuple {
+    #[serde(deserialize_with = "ethrex_common::serde_utils::u64::deser_hex_or_dec_str")]
+    pub chain_id: u64,
+    pub address: Address,
+    #[serde(deserialize_with = "ethrex_common::serde_utils::u64::deser_hex_or_dec_str")]
+    pub nonce: u64,
+    #[serde(alias = "yParity", alias = "y_parity")]
+    pub v: U256,
+    pub r: U256,
+    pub s: U256,
+}
+
 /// A single `statetest` JSON file (the outer map keyed by test name).
 pub type StateTestFile = BTreeMap<String, StateTest>;
 
@@ -74,6 +93,9 @@ pub struct TestEnv {
     pub current_base_fee: Option<U256>,
     #[serde(default)]
     pub current_random: Option<H256>,
+    /// Excess blob gas for EIP-4844 blob fee computation. Present in Cancun+ vectors.
+    #[serde(default, deserialize_with = "deser_u64_hex_or_dec_opt")]
+    pub current_excess_blob_gas: Option<u64>,
 }
 
 /// The transaction template for a state test. Indexes are per-subtest.
@@ -91,15 +113,27 @@ pub struct TestTransaction {
     pub gas_price: Option<U256>,
     #[serde(deserialize_with = "ethrex_common::serde_utils::u64::deser_hex_or_dec_str")]
     pub nonce: u64,
-    pub secret_key: H256,
+    /// Private key for sender derivation. Optional; some vectors supply `sender` directly.
+    #[serde(default)]
+    pub secret_key: Option<H256>,
+    /// Pre-derived sender address. When present, used directly without key derivation.
+    #[serde(default)]
+    pub sender: Option<Address>,
     pub to: Option<Address>,
     pub value: Vec<U256>,
     pub max_fee_per_gas: Option<U256>,
     pub max_priority_fee_per_gas: Option<U256>,
-    // Phase 4: replace with structured `Vec<Vec<AccessListItem>>` + a custom
-    // deserializer once the statetest CLI starts constructing real txs.
     #[serde(default)]
     pub access_lists: Vec<serde_json::Value>,
+    /// EIP-7702 authorization list. Each entry delegates to a target address.
+    #[serde(default)]
+    pub authorization_list: Option<Vec<TestAuthTuple>>,
+    /// EIP-4844 blob versioned hashes for blob transactions.
+    #[serde(default)]
+    pub blob_versioned_hashes: Option<Vec<H256>>,
+    /// EIP-4844 max fee per blob gas.
+    #[serde(default)]
+    pub max_fee_per_blob_gas: Option<U256>,
 }
 
 /// Deserializes a JSON array of hex strings (`["0x", "0xdeadbeef"]`) into a
@@ -156,8 +190,29 @@ pub struct SubtestIndexes {
     pub value: usize,
 }
 
+/// Deserializes an optional `u64` from a JSON string that is either `"0x..."` hex
+/// or a decimal integer. Used for `currentExcessBlobGas`.
+fn deser_u64_hex_or_dec_opt<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<u64>, D::Error> {
+    use serde::de::Error;
+    let opt: Option<String> = Option::deserialize(d)?;
+    match opt {
+        None => Ok(None),
+        Some(s) if s.is_empty() => Ok(None),
+        Some(s) => {
+            let trimmed = s.trim_start_matches("0x");
+            let v = if trimmed.len() != s.len() {
+                u64::from_str_radix(trimmed, 16)
+            } else {
+                trimmed.parse::<u64>()
+            };
+            v.map(Some).map_err(D::Error::custom)
+        }
+    }
+}
+
 /// The chain config used when constructing Genesis from a StateTest.
-/// Currently unused by the Phase 3 helper but will be used in Phase 4.
 #[allow(dead_code)]
 pub fn default_statetest_chain_config() -> ChainConfig {
     crate::statetest::state_root::minimal_chain_config()

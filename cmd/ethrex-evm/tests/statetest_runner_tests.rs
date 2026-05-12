@@ -226,3 +226,104 @@ fn test_run_no_bytecode_exits_nonzero() {
         out.status
     );
 }
+
+/// Test: EIP-4844 blob tx fixture executes end-to-end and produces the pinned state root.
+///
+/// The recipient has no code so no opcodes stream; only the summary and stateRoot
+/// terminator appear on stderr.
+#[test]
+fn test_blob_tx_streams_correctly() {
+    let bin = binary();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("statetest_blob_tx.json");
+
+    const EXPECTED_ROOT: &str =
+        "0xe15c0784fd64389e77676be1573c6fe7d9b6d5a55d5412ca2dfe9653e3333576";
+
+    let out = Command::new(&bin)
+        .args(["statetest", fixture.to_str().expect("fixture path to str")])
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {bin:?}: {e}"));
+
+    assert!(
+        out.status.success(),
+        "expected exit 0, got {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let root = extract_state_root(&stderr);
+    assert_eq!(
+        root, EXPECTED_ROOT,
+        "blob tx state root mismatch: expected {EXPECTED_ROOT}, got {root}"
+    );
+}
+
+/// Test: EIP-7702 setcode tx fixture executes end-to-end and produces the pinned state root.
+#[test]
+fn test_setcode_tx_streams_correctly() {
+    let bin = binary();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("statetest_setcode_tx.json");
+
+    const EXPECTED_ROOT: &str =
+        "0x5233f79caeb0e912015848355e9ac9a17c85c925d4f0ff44a9471b14284ef6f3";
+
+    let out = Command::new(&bin)
+        .args(["statetest", fixture.to_str().expect("fixture path to str")])
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {bin:?}: {e}"));
+
+    assert!(
+        out.status.success(),
+        "expected exit 0, got {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let root = extract_state_root(&stderr);
+    assert_eq!(
+        root, EXPECTED_ROOT,
+        "setcode tx state root mismatch: expected {EXPECTED_ROOT}, got {root}"
+    );
+}
+
+/// Test: a fixture that omits `secretKey` and provides `sender` directly executes correctly.
+///
+/// The state root must match the simple transfer since the sender and recipient are identical.
+#[test]
+fn test_sender_field_fallback() {
+    let bin = binary();
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("statetest_sender_field.json");
+
+    const EXPECTED_ROOT: &str =
+        "0xeb9c2278f9394e0be19c9472783c810ca5fab74cbaedc09c321e2aca4ad2bbcf";
+
+    let out = Command::new(&bin)
+        .args(["statetest", fixture.to_str().expect("fixture path to str")])
+        .output()
+        .unwrap_or_else(|e| panic!("failed to run {bin:?}: {e}"));
+
+    assert!(
+        out.status.success(),
+        "expected exit 0, got {:?}\nstderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let root = extract_state_root(&stderr);
+    assert_eq!(
+        root, EXPECTED_ROOT,
+        "sender field fallback state root mismatch: expected {EXPECTED_ROOT}, got {root}"
+    );
+}

@@ -1,0 +1,52 @@
+{
+  "sender_field_fallback": {
+    "_info": {
+      "comment": "Tests that a vector omitting secretKey but providing a pre-derived sender address still executes correctly. The sender address matches the key in statetest_simple.json but the key itself is absent. Authored by hand for the ethrex-evm statetest CLI tests.",
+      "source": "cmd/ethrex-evm/tests/fixtures/statetest_sender_field.json"
+    },
+    "env": {
+      "currentCoinbase": "0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba",
+      "currentDifficulty": "0x020000",
+      "currentGasLimit": "0x5f5e100",
+      "currentNumber": "0x01",
+      "currentTimestamp": "0x03e8",
+      "currentBaseFee": "0x0a"
+    },
+    "pre": {
+      "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b": {
+        "balance": "0x56bc75e2d63100000",
+        "code": "0x",
+        "nonce": "0x00",
+        "storage": {}
+      },
+      "0xd3cda913deb6f279967059bb8533f1e83b96b185": {
+        "balance": "0x00",
+        "code": "0x",
+        "nonce": "0x00",
+        "storage": {}
+      }
+    },
+    "transaction": {
+      "data": ["0x"],
+      "gasLimit": ["0x5208"],
+      "gasPrice": "0x0a",
+      "nonce": "0x00",
+      "sender": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+      "to": "0xd3cda913deb6f279967059bb8533f1e83b96b185",
+      "value": ["0x0a"]
+    },
+    "post": {
+      "Shanghai": [
+        {
+          "hash": "0xeb9c2278f9394e0be19c9472783c810ca5fab74cbaedc09c321e2aca4ad2bbcf",
+          "logs": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+          "indexes": {
+            "data": 0,
+            "gas": 0,
+            "value": 0
+          }
+        }
+      ]
+    }
+  }
+}

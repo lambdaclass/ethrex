@@ -1,0 +1,70 @@
+{
+  "setcode_tx_simple": {
+    "_info": {
+      "comment": "Minimal EIP-7702 set-code transaction test. A sender delegates to a target address via authorizationList. The auth signature uses placeholder r/s values so it will not recover to a real signer (the auth entry is skipped during execution), but the tx itself is valid and executes. Authored by hand for the ethrex-evm statetest CLI tests.",
+      "source": "cmd/ethrex-evm/tests/fixtures/statetest_setcode_tx.json"
+    },
+    "env": {
+      "currentCoinbase": "0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba",
+      "currentDifficulty": "0x020000",
+      "currentGasLimit": "0x5f5e100",
+      "currentNumber": "0x01",
+      "currentTimestamp": "0x03e8",
+      "currentBaseFee": "0x07",
+      "currentRandom": "0x0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    "pre": {
+      "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b": {
+        "balance": "0x56bc75e2d63100000",
+        "code": "0x",
+        "nonce": "0x00",
+        "storage": {}
+      },
+      "0xd3cda913deb6f279967059bb8533f1e83b96b185": {
+        "balance": "0x00",
+        "code": "0x",
+        "nonce": "0x00",
+        "storage": {}
+      },
+      "0xcccccccccccccccccccccccccccccccccccccccc": {
+        "balance": "0x00",
+        "code": "0x",
+        "nonce": "0x00",
+        "storage": {}
+      }
+    },
+    "transaction": {
+      "data": ["0x"],
+      "gasLimit": ["0x30d40"],
+      "nonce": "0x00",
+      "secretKey": "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8",
+      "to": "0xd3cda913deb6f279967059bb8533f1e83b96b185",
+      "value": ["0x00"],
+      "maxFeePerGas": "0x0a",
+      "maxPriorityFeePerGas": "0x01",
+      "authorizationList": [
+        {
+          "chainId": "0x01",
+          "address": "0xcccccccccccccccccccccccccccccccccccccccc",
+          "nonce": "0x00",
+          "v": "0x01",
+          "r": "0x68a0a58ef79dc07f7e1e0a37af498f64ce18a4d59e4c12de2c4c8d6e2fe0cc9f",
+          "s": "0x68a0a58ef79dc07f7e1e0a37af498f64ce18a4d59e4c12de2c4c8d6e2fe0cc9f"
+        }
+      ]
+    },
+    "post": {
+      "Prague": [
+        {
+          "hash": "0x5233f79caeb0e912015848355e9ac9a17c85c925d4f0ff44a9471b14284ef6f3",
+          "logs": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
+          "indexes": {
+            "data": 0,
+            "gas": 0,
+            "value": 0
+          }
+        }
+      ]
+    }
+  }
+}

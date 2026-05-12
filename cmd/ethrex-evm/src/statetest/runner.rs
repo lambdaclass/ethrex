@@ -12,8 +12,9 @@ use std::{
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        Account, AccountInfo, Code, EIP1559Transaction, Fork, Genesis, GenesisAccount, Transaction,
-        TxKind, tx_fields::AccessList,
+        Account, AccountInfo, Code, EIP1559Transaction, EIP7702Transaction, Fork, Genesis,
+        GenesisAccount, Transaction, TxKind,
+        tx_fields::{AccessList, AuthorizationTuple},
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -196,28 +197,65 @@ fn run_subtest(
     let (gas_price_u256, max_fee_per_gas_u256, max_priority_fee_per_gas_u256) =
         compute_fee_fields(tx_template, env)?;
 
-    // Recover sender from secret_key.
-    let sender = recover_sender(tx_template)?;
+    // Resolve sender: use pre-derived address if present, otherwise derive from secret_key.
+    let sender: Address = match tx_template.sender {
+        Some(addr) => addr,
+        None => recover_sender(tx_template)?,
+    };
 
     let blob_schedule = EVMConfig::canonical_values(fork);
     let config = EVMConfig::new(fork, blob_schedule);
 
-    let base_blob_fee_per_gas =
-        get_base_fee_per_blob_gas(None, &config).map_err(|e| eyre::eyre!("base blob fee: {e}"))?;
+    let base_blob_fee_per_gas = get_base_fee_per_blob_gas(env.current_excess_blob_gas, &config)
+        .map_err(|e| eyre::eyre!("base blob fee: {e}"))?;
 
-    // Mirror tooling/ef_tests/state/runner/levm_runner.rs::prepare_vm_for_tx:
-    // always wrap in EIP1559Transaction with default fee fields. LEVM's
-    // execution layer reads the effective price from `Environment` (gas_price
-    // / tx_max_fee_per_gas) rather than the envelope, so legacy vectors work
-    // through this branch without any fee-math drift.
-    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-        to,
-        value,
-        data,
-        access_list,
-        gas_limit,
-        ..Default::default()
-    });
+    // Build the authorization list for EIP-7702 transactions if present.
+    let auth_list_resolved: Option<Vec<AuthorizationTuple>> =
+        tx_template.authorization_list.as_ref().map(|list| {
+            list.iter()
+                .map(|t| AuthorizationTuple {
+                    chain_id: U256::from(t.chain_id),
+                    address: t.address,
+                    nonce: t.nonce,
+                    y_parity: t.v,
+                    r_signature: t.r,
+                    s_signature: t.s,
+                })
+                .collect()
+        });
+
+    // Dispatch to EIP-7702 envelope when an authorization list is present;
+    // otherwise use EIP-1559. Blob hashes are passed via Environment (not the
+    // envelope), matching how levm_runner handles blob vectors.
+    let tx = match auth_list_resolved {
+        Some(list) => {
+            let call_to = match to {
+                TxKind::Call(addr) => addr,
+                TxKind::Create => {
+                    return Err(eyre::eyre!(
+                        "EIP-7702 setcode tx cannot be a contract creation"
+                    ));
+                }
+            };
+            Transaction::EIP7702Transaction(EIP7702Transaction {
+                to: call_to,
+                value,
+                data,
+                access_list,
+                authorization_list: list,
+                gas_limit,
+                ..Default::default()
+            })
+        }
+        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+            to,
+            value,
+            data,
+            access_list,
+            gas_limit,
+            ..Default::default()
+        }),
+    };
 
     let levm_env = Environment {
         origin: sender,
@@ -233,12 +271,15 @@ fn run_subtest(
         base_fee_per_gas: env.current_base_fee.unwrap_or(U256::zero()),
         base_blob_fee_per_gas,
         gas_price: gas_price_u256,
-        block_excess_blob_gas: None,
+        block_excess_blob_gas: env.current_excess_blob_gas,
         block_blob_gas_used: None,
-        tx_blob_hashes: vec![],
+        tx_blob_hashes: tx_template
+            .blob_versioned_hashes
+            .clone()
+            .unwrap_or_default(),
         tx_max_priority_fee_per_gas: max_priority_fee_per_gas_u256,
         tx_max_fee_per_gas: max_fee_per_gas_u256,
-        tx_max_fee_per_blob_gas: None,
+        tx_max_fee_per_blob_gas: tx_template.max_fee_per_blob_gas,
         tx_nonce: tx_template.nonce,
         block_gas_limit: env.current_gas_limit,
         is_privileged: false,
@@ -486,12 +527,16 @@ fn parse_access_list(raw: &[serde_json::Value], data_idx: usize) -> AccessList {
 ///
 /// EF statetests include the private key so the sender can be derived without
 /// a signature: compute the uncompressed public key, keccak256 it, take
-/// the last 20 bytes as the Ethereum address.
+/// the last 20 bytes as the Ethereum address. Returns an error when
+/// `secret_key` is `None` (the caller should use the `sender` field instead).
 fn recover_sender(tx: &crate::statetest::types::TestTransaction) -> eyre::Result<Address> {
     use ethrex_crypto::keccak::keccak_hash;
     use secp256k1::{PublicKey, SECP256K1, SecretKey};
 
-    let sk = SecretKey::from_slice(tx.secret_key.as_bytes())
+    let key_bytes = tx
+        .secret_key
+        .ok_or_else(|| eyre::eyre!("no secretKey and no sender field in transaction"))?;
+    let sk = SecretKey::from_slice(key_bytes.as_bytes())
         .map_err(|e| eyre::eyre!("invalid secret key: {e}"))?;
     let pubkey = PublicKey::from_secret_key(SECP256K1, &sk);
     // Uncompressed public key: 65 bytes, first byte is 0x04 (prefix), skip it.
