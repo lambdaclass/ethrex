@@ -76,7 +76,7 @@ fn test_5a_positional_path_trace() {
 
     // Pinned state root matches the fixture's `post.Prague[0].hash`.
     const EXPECTED_ROOT: &str =
-        "0xd985fdb5e9d3040e79c17f7245be8498c0f77d3de9778bbc8fd3906108505daf";
+        "0x3c74867c259dda33ccb2d00da964c05a2f69b9b3abfded95cbade0ecb4820b4d";
 
     let out = Command::new(&bin)
         .args([
@@ -110,15 +110,24 @@ fn test_5a_positional_path_trace() {
         "state root mismatch: expected {EXPECTED_ROOT}, got {root}"
     );
 
-    // The fixture's tx is rejected at intrinsic-gas validation; the summary
-    // line must carry the geth-compatible string so goevmlab byte-diff matches.
+    // Happy path: at least one opcode line (the implicit STOP) must stream
+    // before the summary, and the summary must NOT carry an error field.
+    let opcode_lines: Vec<&&str> = lines
+        .iter()
+        .filter(|l| l.contains("\"opName\""))
+        .collect();
+    assert!(
+        !opcode_lines.is_empty(),
+        "expected at least one opcode line in stderr; got: {stderr}"
+    );
+
     let summary = lines
         .iter()
         .rfind(|l| l.contains("\"gasUsed\""))
         .expect("no summary line found in stderr");
     assert!(
-        summary.contains("\"error\":\"intrinsic gas too low\""),
-        "summary error must use the geth-compatible string, got: {summary}"
+        !summary.contains("\"error\""),
+        "summary line must have no error field on happy path, got: {summary}"
     );
 }
 
@@ -131,7 +140,7 @@ fn test_5b_stdin_batch_mode() {
     let fixture = fixture_path();
 
     const EXPECTED_ROOT: &str =
-        "0xd985fdb5e9d3040e79c17f7245be8498c0f77d3de9778bbc8fd3906108505daf";
+        "0x3c74867c259dda33ccb2d00da964c05a2f69b9b3abfded95cbade0ecb4820b4d";
 
     let fixture_str = fixture.to_str().expect("fixture path to str").to_owned();
 

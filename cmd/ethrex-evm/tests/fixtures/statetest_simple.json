@@ -1,7 +1,7 @@
 {
   "simple_transfer": {
     "_info": {
-      "comment": "Validation-error fixture: the tx is rejected at the intrinsic-gas check, so no opcode lines stream. Used to pin the binary's geth-compatible error-string emission (TxValidation path) and stateRoot terminator. The pinned hash is the genesis state root (no state changes since the tx was rejected pre-execution)."
+      "comment": "Happy-path fixture: a 10-wei transfer from an EOA to a code-less account under Shanghai. The recipient has no bytecode so the call returns immediately via STOP; the trace contains exactly one opcode line (the implicit STOP) plus the summary + stateRoot terminator."
     },
     "env": {
       "currentCoinbase": "0x2adc25665018aa1fe0e6bc666dac8fc2697ff9ba",
@@ -27,7 +27,7 @@
     },
     "transaction": {
       "data": ["0x"],
-      "gasLimit": ["0x5208"],
+      "gasLimit": ["0x186a0"],
       "gasPrice": "0x0a",
       "nonce": "0x00",
       "secretKey": "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8",
@@ -37,7 +37,7 @@
     "post": {
       "Shanghai": [
         {
-          "hash": "0xd985fdb5e9d3040e79c17f7245be8498c0f77d3de9778bbc8fd3906108505daf",
+          "hash": "0x3c74867c259dda33ccb2d00da964c05a2f69b9b3abfded95cbade0ecb4820b4d",
           "logs": "0x1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347",
           "indexes": {
             "data": 0,
