@@ -1,10 +1,11 @@
 use ethrex_common::{
     H256,
-    types::{BlockHash, BlockHeader, BlockNumber},
+    types::{BlockHash, BlockHeader, BlockNumber, Transaction},
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
-use tracing::{error, warn};
+use rustc_hash::FxHashSet;
+use tracing::{debug, error, warn};
 
 use crate::{
     error::{self, InvalidForkChoice},
@@ -204,4 +205,159 @@ async fn find_link_with_canonical_chain(
     }
 
     Ok(None)
+}
+
+/// Result of a reorg analysis between two heads: the common ancestor plus the
+/// branches of orphaned blocks (between the common ancestor and the previous
+/// head, exclusive of the ancestor) and new canonical blocks (between the
+/// common ancestor and the new head, exclusive of the ancestor).
+///
+/// Branches are ordered from oldest to newest (i.e. block at index 0 is the
+/// child of the common ancestor).
+#[derive(Debug)]
+pub struct ReorgBranches {
+    pub common_ancestor_number: BlockNumber,
+    pub common_ancestor_hash: BlockHash,
+    pub orphaned: Vec<(BlockNumber, BlockHash)>,
+    pub new_canonical: Vec<(BlockNumber, BlockHash)>,
+}
+
+impl ReorgBranches {
+    /// Reorg depth, defined as the number of orphaned blocks between the
+    /// previous head and the common ancestor.
+    pub fn depth(&self) -> u64 {
+        self.orphaned.len() as u64
+    }
+}
+
+/// Compute the common ancestor between two block hashes and return the orphaned
+/// and new-canonical branches.
+///
+/// The algorithm walks both chains backward (by parent_hash), keeping the two
+/// pointers at equal block numbers, until they converge on a shared ancestor.
+///
+/// Returns `Ok(None)` if either hash cannot be found in the store, or if no
+/// common ancestor exists (e.g. one of the chains is not connected to the
+/// other in the DB).
+pub async fn find_common_ancestor(
+    store: &Store,
+    previous_head_hash: BlockHash,
+    new_head_hash: BlockHash,
+) -> Result<Option<ReorgBranches>, StoreError> {
+    // Fast path: same hash.
+    if previous_head_hash == new_head_hash {
+        let header = match store.get_block_header_by_hash(previous_head_hash)? {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+        return Ok(Some(ReorgBranches {
+            common_ancestor_number: header.number,
+            common_ancestor_hash: previous_head_hash,
+            orphaned: Vec::new(),
+            new_canonical: Vec::new(),
+        }));
+    }
+
+    let Some(mut prev_header) = store.get_block_header_by_hash(previous_head_hash)? else {
+        return Ok(None);
+    };
+    let Some(mut new_header) = store.get_block_header_by_hash(new_head_hash)? else {
+        return Ok(None);
+    };
+
+    let mut prev_hash = previous_head_hash;
+    let mut new_hash = new_head_hash;
+
+    let mut orphaned: Vec<(BlockNumber, BlockHash)> = Vec::new();
+    let mut new_canonical: Vec<(BlockNumber, BlockHash)> = Vec::new();
+
+    // Bring both pointers down to the same block number.
+    while new_header.number > prev_header.number {
+        new_canonical.push((new_header.number, new_hash));
+        new_hash = new_header.parent_hash;
+        new_header = match store.get_block_header_by_hash(new_hash)? {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+    }
+    while prev_header.number > new_header.number {
+        orphaned.push((prev_header.number, prev_hash));
+        prev_hash = prev_header.parent_hash;
+        prev_header = match store.get_block_header_by_hash(prev_hash)? {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+    }
+
+    // Walk both pointers in lockstep until they meet.
+    while prev_hash != new_hash {
+        if prev_header.number == 0 || new_header.number == 0 {
+            // Reached genesis without convergence.
+            return Ok(None);
+        }
+        orphaned.push((prev_header.number, prev_hash));
+        new_canonical.push((new_header.number, new_hash));
+        prev_hash = prev_header.parent_hash;
+        new_hash = new_header.parent_hash;
+        prev_header = match store.get_block_header_by_hash(prev_hash)? {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+        new_header = match store.get_block_header_by_hash(new_hash)? {
+            Some(h) => h,
+            None => return Ok(None),
+        };
+    }
+
+    // Branches were built newest -> oldest while walking; flip them to
+    // oldest -> newest for callers.
+    orphaned.reverse();
+    new_canonical.reverse();
+
+    Ok(Some(ReorgBranches {
+        common_ancestor_number: prev_header.number,
+        common_ancestor_hash: prev_hash,
+        orphaned,
+        new_canonical,
+    }))
+}
+
+/// Collect the set of transactions that should be re-injected into the mempool
+/// after a reorg: all transactions that appear in the orphaned branch but NOT
+/// in the new canonical branch.
+///
+/// Returns the list of transactions to re-inject, in the order they appeared
+/// in the orphaned chain (oldest block first, intra-block order preserved).
+pub async fn collect_orphaned_transactions(
+    store: &Store,
+    branches: &ReorgBranches,
+) -> Result<Vec<Transaction>, StoreError> {
+    // First, build the set of tx hashes that landed in the new canonical
+    // branch. We subtract these from the orphaned set so a tx that appears
+    // on both sides (e.g. a user broadcast that got picked up by both
+    // proposers) is treated as "still included" and not re-injected.
+    let mut new_canonical_hashes: FxHashSet<H256> = FxHashSet::default();
+    for (_number, hash) in &branches.new_canonical {
+        let Some(body) = store.get_block_body_by_hash(*hash).await? else {
+            continue;
+        };
+        for tx in &body.transactions {
+            new_canonical_hashes.insert(tx.hash());
+        }
+    }
+
+    // Now walk the orphaned branch and collect transactions not seen in new canonical.
+    let mut to_reinject = Vec::new();
+    for (_number, hash) in &branches.orphaned {
+        let Some(body) = store.get_block_body_by_hash(*hash).await? else {
+            debug!(block_hash = %hash, "Orphaned block body not found in store; skipping for re-injection");
+            continue;
+        };
+        for tx in body.transactions {
+            if !new_canonical_hashes.contains(&tx.hash()) {
+                to_reinject.push(tx);
+            }
+        }
+    }
+    Ok(to_reinject)
 }
