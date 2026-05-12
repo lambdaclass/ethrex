@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-9f1e34ae.js";
+            window.path_to_searchindex_js = "../../searchindex-d7096790.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-7e7556e2.js"></script>
@@ -213,6 +213,7 @@
     -p 9090:9090 \
     --name ethrex \
     ghcr.io/lambdaclass/ethrex \
+    --http.addr 0.0.0.0 \
     --authrpc.addr 0.0.0.0
 </code></pre>
 <p><strong>What this does:</strong></p>
@@ -228,6 +229,7 @@
 </li>
 <li>Mounts the Docker volume <code>ethrex</code> to persist blockchain data</li>
 </ul>
+<p><code>--http.addr 0.0.0.0</code> is required inside the container so the published port <code>8545</code> is reachable from the host. The flag only changes the container-internal bind; whether the RPC port is exposed beyond the host is still controlled by the <code>-p 8545:8545</code> mapping (and any firewall in front of the host). Only enable additional JSON-RPC namespaces with <code>--http.api eth,net,web3,...</code> when you actually need them; <code>admin_*</code>, <code>debug_*</code>, and <code>txpool_*</code> are unauthenticated.</p>
 <p><strong>Tip:</strong> You can add more Ethrex CLI arguments at the end of the command as needed.</p>
 <hr>
 <h2 id="managing-the-container"><a class="header" href="#managing-the-container">Managing the Container</a></h2>

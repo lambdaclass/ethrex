@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-9f1e34ae.js";
+            window.path_to_searchindex_js = "../../searchindex-d7096790.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-7e7556e2.js"></script>
@@ -311,13 +311,15 @@ pub struct AccountState { nonce: u64, balance: U256, storage_root: H256, code_ha
 <p><strong>Purpose:</strong> JSON-RPC API server.</p>
 <p><strong>Supported Namespaces:</strong></p>
 <ul>
-<li><code>eth_*</code> - Standard Ethereum methods</li>
-<li><code>debug_*</code> - Debugging and tracing</li>
-<li><code>txpool_*</code> - Mempool inspection</li>
-<li><code>admin_*</code> - Node administration</li>
-<li><code>engine_*</code> - Consensus client communication</li>
-<li><code>web3_*</code> - Web3 utilities</li>
+<li><code>eth_*</code> - Standard Ethereum methods (HTTP, default-enabled)</li>
+<li><code>net_*</code> - Network information (HTTP, default-enabled)</li>
+<li><code>web3_*</code> - Web3 utilities (HTTP, default-enabled)</li>
+<li><code>debug_*</code> - Debugging and tracing (HTTP, opt-in via <code>--http.api</code>)</li>
+<li><code>admin_*</code> - Node administration (HTTP, opt-in via <code>--http.api</code>)</li>
+<li><code>txpool_*</code> - Mempool inspection (HTTP, opt-in via <code>--http.api</code>)</li>
+<li><code>engine_*</code> - Consensus client communication (auth-rpc port only, JWT-authenticated)</li>
 </ul>
+<p>Namespaces not in the <code>--http.api</code> allowlist return <code>MethodNotFound</code> over HTTP/WS. The <code>engine</code> namespace is served exclusively on the authenticated RPC port and cannot be exposed via <code>--http.api</code>.</p>
 <p><strong>Architecture:</strong></p>
 <pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {

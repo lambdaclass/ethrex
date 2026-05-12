@@ -34,7 +34,7 @@
             const path_to_root = "../../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../../searchindex-9f1e34ae.js";
+            window.path_to_searchindex_js = "../../searchindex-d7096790.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../../toc-7e7556e2.js"></script>
@@ -206,7 +206,11 @@
 <li><code>9090</code>: Metrics</li>
 </ul>
 <p>You can change ports with the corresponding flags: <code>--http.port</code>, <code>--authrpc.port</code>, <code>--p2p.port</code>, <code>--discovery.port</code>, <code>--metrics.port</code>.</p>
-<p>All services listen on <code>0.0.0.0</code> by default, except for the auth RPC, which listens on <code>127.0.0.1</code>. This can also be changed with flags (e.g., <code>--http.addr</code>).</p>
+<p>The HTTP JSON-RPC and Auth RPC servers listen on <code>127.0.0.1</code> by default so a fresh install on a public host is not exposed to the open internet. P2P networking and metrics listen on <code>0.0.0.0</code>. Use the corresponding <code>--http.addr</code>, <code>--authrpc.addr</code>, <code>--metrics.addr</code> flags to override.</p>
+<p>The HTTP RPC also restricts which JSON-RPC namespaces it serves. By default only <code>eth</code>, <code>net</code>, and <code>web3</code> are reachable; enable <code>admin</code>, <code>debug</code>, or <code>txpool</code> explicitly with <code>--http.api</code>, for example:</p>
+<pre><code class="language-sh">ethrex --http.api eth,net,web3,debug
+</code></pre>
+<p><code>--http.api</code> is independent of <code>--http.addr</code>: it controls which methods are served on the port, not who can reach it. If you also need remote callers to reach the RPC port, pass <code>--http.addr 0.0.0.0</code> — only do so when the node sits behind a trusted firewall or reverse proxy, since the <code>admin_*</code>, <code>debug_*</code>, and <code>txpool_*</code> namespaces are unauthenticated.</p>
 <h2 id="log-levels"><a class="header" href="#log-levels">Log Levels</a></h2>
 <p>Control log verbosity with:</p>
 <pre><code class="language-sh">ethrex --log.level &lt;level&gt;

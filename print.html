@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-9f1e34ae.js";
+            window.path_to_searchindex_js = "searchindex-d7096790.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7e7556e2.js"></script>
@@ -458,6 +458,7 @@ chmod +x ethrex
     -p 9090:9090 \
     --name ethrex \
     ghcr.io/lambdaclass/ethrex \
+    --http.addr 0.0.0.0 \
     --authrpc.addr 0.0.0.0
 </code></pre>
 <p><strong>What this does:</strong></p>
@@ -473,6 +474,7 @@ chmod +x ethrex
 </li>
 <li>Mounts the Docker volume <code>ethrex</code> to persist blockchain data</li>
 </ul>
+<p><code>--http.addr 0.0.0.0</code> is required inside the container so the published port <code>8545</code> is reachable from the host. The flag only changes the container-internal bind; whether the RPC port is exposed beyond the host is still controlled by the <code>-p 8545:8545</code> mapping (and any firewall in front of the host). Only enable additional JSON-RPC namespaces with <code>--http.api eth,net,web3,...</code> when you actually need them; <code>admin_*</code>, <code>debug_*</code>, and <code>txpool_*</code> are unauthenticated.</p>
 <p><strong>Tip:</strong> You can add more Ethrex CLI arguments at the end of the command as needed.</p>
 <hr>
 <h2 id="managing-the-container"><a class="header" href="#managing-the-container">Managing the Container</a></h2>
@@ -647,7 +649,11 @@ docker compose up
 <li><code>9090</code>: Metrics</li>
 </ul>
 <p>You can change ports with the corresponding flags: <code>--http.port</code>, <code>--authrpc.port</code>, <code>--p2p.port</code>, <code>--discovery.port</code>, <code>--metrics.port</code>.</p>
-<p>All services listen on <code>0.0.0.0</code> by default, except for the auth RPC, which listens on <code>127.0.0.1</code>. This can also be changed with flags (e.g., <code>--http.addr</code>).</p>
+<p>The HTTP JSON-RPC and Auth RPC servers listen on <code>127.0.0.1</code> by default so a fresh install on a public host is not exposed to the open internet. P2P networking and metrics listen on <code>0.0.0.0</code>. Use the corresponding <code>--http.addr</code>, <code>--authrpc.addr</code>, <code>--metrics.addr</code> flags to override.</p>
+<p>The HTTP RPC also restricts which JSON-RPC namespaces it serves. By default only <code>eth</code>, <code>net</code>, and <code>web3</code> are reachable; enable <code>admin</code>, <code>debug</code>, or <code>txpool</code> explicitly with <code>--http.api</code>, for example:</p>
+<pre><code class="language-sh">ethrex --http.api eth,net,web3,debug
+</code></pre>
+<p><code>--http.api</code> is independent of <code>--http.addr</code>: it controls which methods are served on the port, not who can reach it. If you also need remote callers to reach the RPC port, pass <code>--http.addr 0.0.0.0</code> — only do so when the node sits behind a trusted firewall or reverse proxy, since the <code>admin_*</code>, <code>debug_*</code>, and <code>txpool_*</code> namespaces are unauthenticated.</p>
 <h2 id="log-levels"><a class="header" href="#log-levels">Log Levels</a></h2>
 <p>Control log verbosity with:</p>
 <pre><code class="language-sh">ethrex --log.level &lt;level&gt;
@@ -964,7 +970,9 @@ docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overr
 <tr><td><code>--datadir</code></td><td>Data directory for DB and keys</td><td><code>~/.ethrex</code></td></tr>
 <tr><td><code>--syncmode</code></td><td>Sync mode (<code>full</code> or <code>snap</code>)</td><td><code>snap</code></td></tr>
 <tr><td><code>--authrpc.port</code></td><td>Engine API port</td><td><code>8551</code></td></tr>
+<tr><td><code>--http.addr</code></td><td>JSON-RPC HTTP bind address</td><td><code>127.0.0.1</code></td></tr>
 <tr><td><code>--http.port</code></td><td>JSON-RPC HTTP port</td><td><code>8545</code></td></tr>
+<tr><td><code>--http.api</code></td><td>JSON-RPC namespaces enabled over HTTP/WS</td><td><code>eth,net,web3</code></td></tr>
 <tr><td><code>--discovery.port</code></td><td>P2P discovery port</td><td><code>30303</code></td></tr>
 </tbody>
 </table>
@@ -1834,13 +1842,15 @@ pub struct AccountState { nonce: u64, balance: U256, storage_root: H256, code_ha
 <p><strong>Purpose:</strong> JSON-RPC API server.</p>
 <p><strong>Supported Namespaces:</strong></p>
 <ul>
-<li><code>eth_*</code> - Standard Ethereum methods</li>
-<li><code>debug_*</code> - Debugging and tracing</li>
-<li><code>txpool_*</code> - Mempool inspection</li>
-<li><code>admin_*</code> - Node administration</li>
-<li><code>engine_*</code> - Consensus client communication</li>
-<li><code>web3_*</code> - Web3 utilities</li>
+<li><code>eth_*</code> - Standard Ethereum methods (HTTP, default-enabled)</li>
+<li><code>net_*</code> - Network information (HTTP, default-enabled)</li>
+<li><code>web3_*</code> - Web3 utilities (HTTP, default-enabled)</li>
+<li><code>debug_*</code> - Debugging and tracing (HTTP, opt-in via <code>--http.api</code>)</li>
+<li><code>admin_*</code> - Node administration (HTTP, opt-in via <code>--http.api</code>)</li>
+<li><code>txpool_*</code> - Mempool inspection (HTTP, opt-in via <code>--http.api</code>)</li>
+<li><code>engine_*</code> - Consensus client communication (auth-rpc port only, JWT-authenticated)</li>
 </ul>
+<p>Namespaces not in the <code>--http.api</code> allowlist return <code>MethodNotFound</code> over HTTP/WS. The <code>engine</code> namespace is served exclusively on the authenticated RPC port and cannot be exposed via <code>--http.api</code>.</p>
 <p><strong>Architecture:</strong></p>
 <pre class="playground"><code class="language-rust edition2024"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -10603,16 +10613,22 @@ P2P options:
 
 RPC options:
       --http.addr &lt;ADDRESS&gt;
-          Listening address for the http rpc server.
+          Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: 0.0.0.0]
+          [default: 127.0.0.1]
 
       --http.port &lt;PORT&gt;
           Listening port for the http rpc server.
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --http.api &lt;NAMESPACES&gt;
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+
+          [env: ETHREX_HTTP_API=]
+          [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
@@ -10803,16 +10819,22 @@ P2P options:
 
 RPC options:
       --http.addr &lt;ADDRESS&gt;
-          Listening address for the http rpc server.
+          Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: 0.0.0.0]
+          [default: 127.0.0.1]
 
       --http.port &lt;PORT&gt;
           Listening port for the http rpc server.
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --http.api &lt;NAMESPACES&gt;
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+
+          [env: ETHREX_HTTP_API=]
+          [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
@@ -11106,6 +11128,18 @@ L2 options:
 
           [env: SPONSOR_PRIVATE_KEY=]
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
+
+      --sponsored-gas-limit &lt;GAS_LIMIT&gt;
+          Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.
+
+          [env: ETHREX_SPONSORED_GAS_LIMIT=]
+          [default: 500000]
+
+      --http.api.ethrex &lt;BOOLEAN&gt;
+          Expose L2-specific ethrex_* RPC methods over HTTP/WS. Enabled by default for L2 nodes.
+
+          [env: ETHREX_HTTP_API_ETHREX=]
+          [default: true]
 
 Monitor options:
       --no-monitor
