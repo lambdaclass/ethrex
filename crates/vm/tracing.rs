@@ -64,7 +64,7 @@ impl Evm {
         )
     }
 
-    /// Executes a single tx and captures per-opcode trace (EIP-3155).
+    /// Executes a single tx and captures the per-opcode (EIP-3155) trace.
     /// Assumes that the received state already contains changes from previous transactions.
     pub fn trace_tx_opcodes(
         &mut self,

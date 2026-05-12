@@ -158,7 +158,7 @@ impl Blockchain {
         Ok(traces)
     }
 
-    /// Outputs the opcode (EIP-3155) trace for the given transaction.
+    /// Outputs the per-opcode (EIP-3155) trace for the given transaction.
     /// May need to re-execute blocks in order to rebuild the transaction's prestate, up to the amount given by `reexec`.
     pub async fn trace_transaction_opcodes(
         &self,

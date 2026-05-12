@@ -398,7 +398,7 @@ impl OpcodeHandler for OpJumpHandler {
             .increase_consumed_gas(gas_cost::JUMP)?;
 
         let target = vm.current_call_frame.stack.pop1()?;
-        jump(vm, target.try_into().unwrap_or(usize::MAX))?;
+        jump(vm, target.try_into().unwrap_or(usize::MAX), gas_cost::JUMP)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -414,14 +414,22 @@ impl OpcodeHandler for OpJumpIHandler {
 
         let [target, condition] = *vm.current_call_frame.stack.pop()?;
         if !condition.is_zero() {
-            jump(vm, target.try_into().unwrap_or(usize::MAX))?;
+            jump(vm, target.try_into().unwrap_or(usize::MAX), gas_cost::JUMPI)?;
         }
 
         Ok(OpcodeResult::Continue)
     }
 }
 
-fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
+/// Validate and take a jump. Fuses the destination JUMPDEST (advances PC past
+/// it and charges its 1 gas inline) to save a dispatch cycle on the hot path.
+///
+/// When the tracer is active we keep the fusion for performance and *synthesize*
+/// a JUMPDEST entry in the trace log: `parent_gas_cost` is recorded as the
+/// override for the parent JUMP/JUMPI step (so its `gasCost` doesn't absorb the
+/// JUMPDEST charge), and the JUMPDEST step is pushed directly via
+/// `synthesize_step` after the gas is charged.
+fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
     // Check target address validity.
     //   - Target bytecode has to be a JUMPDEST.
     //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
@@ -441,14 +449,97 @@ fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
                     .is_ok()
         })
     {
-        // Update PC and skip the JUMPDEST instruction.
-        vm.current_call_frame.pc = target.wrapping_add(1);
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPDEST)?;
+        if vm.opcode_tracer.active {
+            // Override the parent JUMP/JUMPI's gasCost so the dispatch loop
+            // doesn't roll the upcoming JUMPDEST charge into it.
+            vm.opcode_tracer.last_opcode_gas_cost = Some(parent_gas_cost);
 
+            // Capture the synthetic JUMPDEST step's state BEFORE charging its gas.
+            let synth = build_jumpdest_step(vm, target);
+
+            // Fuse: charge JUMPDEST + advance PC past it.
+            vm.current_call_frame.pc = target.wrapping_add(1);
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)?;
+
+            vm.opcode_tracer.synthesize_step(synth);
+        } else {
+            // Hot path: fuse JUMP/JUMPI + JUMPDEST without any trace bookkeeping.
+            vm.current_call_frame.pc = target.wrapping_add(1);
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)?;
+        }
         Ok(())
     } else {
         // Target address is invalid.
         Err(ExceptionalHalt::InvalidJump.into())
+    }
+}
+
+/// Builds a synthetic JUMPDEST trace entry. Captures gas/stack/memory/storage
+/// state at the moment of the call (i.e. *before* the JUMPDEST gas has been
+/// charged), mirroring what `pre_step_capture` would have produced if JUMPDEST
+/// were dispatched normally.
+#[expect(
+    clippy::as_conversions,
+    reason = "pc/depth/mem_size bounded; fit in target types"
+)]
+fn build_jumpdest_step(vm: &VM<'_>, target: usize) -> ethrex_common::tracing::OpcodeStep {
+    use bytes::Bytes;
+    use ethrex_common::tracing::{MemoryChunk, OpcodeStep};
+
+    let cfg = &vm.opcode_tracer.cfg;
+    let gas = vm.current_call_frame.gas_remaining.max(0) as u64;
+    let depth = (vm.call_frames.len() as u32).saturating_add(1);
+    let refund = vm.substate.refunded_gas;
+    let mem_size = vm.current_call_frame.memory.len() as u64;
+
+    let stack = if cfg.disable_stack {
+        None
+    } else {
+        Some(vm.collect_stack_for_trace())
+    };
+
+    let memory = if cfg.enable_memory {
+        let bytes = vm.collect_memory_for_trace();
+        if bytes.is_empty() {
+            Some(Vec::new())
+        } else {
+            Some(
+                bytes
+                    .chunks(32)
+                    .map(|c| {
+                        let mut arr = [0u8; 32];
+                        if let Some(dst) = arr.get_mut(..c.len()) {
+                            dst.copy_from_slice(c);
+                        }
+                        MemoryChunk(arr)
+                    })
+                    .collect(),
+            )
+        }
+    } else {
+        None
+    };
+
+    let return_data = if cfg.enable_return_data {
+        vm.current_call_frame.sub_return_data.clone()
+    } else {
+        Bytes::new()
+    };
+
+    OpcodeStep {
+        pc: target as u64,
+        op: Opcode::JUMPDEST as u8,
+        gas,
+        gas_cost: gas_cost::JUMPDEST,
+        mem_size,
+        depth,
+        return_data,
+        refund,
+        stack,
+        memory,
+        storage: None,
+        error: None,
     }
 }

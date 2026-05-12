@@ -6,7 +6,7 @@ use ethrex_common::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Configuration for the opcode (EIP-3155) tracer.
+/// Configuration for the per-opcode (EIP-3155) tracer.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OpcodeTracerConfig {
@@ -22,7 +22,8 @@ pub struct OpcodeTracerConfig {
     pub limit: usize,
 }
 
-/// Per-step opcode tracer for EIP-3155 output.
+/// Per-opcode (EIP-3155) tracer, emitted under the de-facto cross-client
+/// `structLogger` wrapper shape.
 ///
 /// Use `LevmOpcodeTracer::disabled()` when tracing is not wanted;
 /// the dispatch-loop guard is a single `if self.opcode_tracer.active` branch
@@ -42,13 +43,16 @@ pub struct LevmOpcodeTracer {
     /// Gas used by the transaction.
     pub gas_used: u64,
     /// Explicit gas cost written by CALL/CALLCODE/DELEGATECALL/STATICCALL/CREATE/CREATE2
-    /// handlers before invoking the child frame.  The dispatch loop prefers this value
+    /// handlers before invoking the child frame, and by `jump()` when JUMP/JUMPI is
+    /// fused with JUMPDEST under active tracing.  The dispatch loop prefers this value
     /// over the (incorrect) gas-diff that would include forwarded gas.
     pub last_opcode_gas_cost: Option<u64>,
-    /// True iff the most recent `pre_step_capture` pushed a new entry. Set to false
-    /// when the `limit` cap is reached so that `finalize_step` does not overwrite the
-    /// previously retained step.
-    pub last_step_captured: bool,
+    /// Index in `logs` of the entry that the next `finalize_step` should patch.
+    /// `Some(i)` is set by `pre_step_capture` after a push; `None` after the
+    /// `limit` cap is reached (so `finalize_step` is a no-op).  Synthesized
+    /// steps (e.g. fused JUMPDEST) push directly without touching this index,
+    /// preserving the parent opcode's pending finalize target.
+    pub last_step_index: Option<usize>,
 }
 
 impl LevmOpcodeTracer {
@@ -62,7 +66,7 @@ impl LevmOpcodeTracer {
             error: None,
             gas_used: 0,
             last_opcode_gas_cost: None,
-            last_step_captured: false,
+            last_step_index: None,
         }
     }
 
@@ -76,7 +80,7 @@ impl LevmOpcodeTracer {
             error: None,
             gas_used: 0,
             last_opcode_gas_cost: None,
-            last_step_captured: false,
+            last_step_index: None,
         }
     }
 
@@ -110,10 +114,11 @@ impl LevmOpcodeTracer {
         return_data: &Bytes,
         storage_kv: Option<(H256, H256)>,
     ) {
-        // Enforce limit: stop appending once the cap is reached. The flag prevents
-        // `finalize_step` from clobbering the last retained step on later opcodes.
+        // Enforce limit: stop appending once the cap is reached. Clearing the
+        // patch index ensures `finalize_step` does not clobber the last retained
+        // step on subsequent opcodes.
         if self.cfg.limit > 0 && self.logs.len() >= self.cfg.limit {
-            self.last_step_captured = false;
+            self.last_step_index = None;
             return;
         }
 
@@ -125,8 +130,8 @@ impl LevmOpcodeTracer {
         };
 
         // Memory: chunked 32-byte slices when enabled; field omitted otherwise.
-        // Emit Some(vec![]) when enabled and memory is empty (EIP-3155 requires
-        // the field present whenever enableMemory=true).
+        // When enabled and memory is empty, emit `Some(vec![])` so the field
+        // stays present (an empty array signals "captured, just empty").
         let memory = if self.cfg.enable_memory {
             if memory_view.is_empty() {
                 Some(vec![])
@@ -176,21 +181,37 @@ impl LevmOpcodeTracer {
             error: None, // patched in finalize_step
         };
 
+        self.last_step_index = Some(self.logs.len());
         self.logs.push(log);
-        self.last_step_captured = true;
     }
 
-    /// Patches the most-recently-buffered entry with the actual gas cost and any
-    /// step-level error string.  Called immediately after the opcode handler returns.
-    /// No-op when the most recent `pre_step_capture` did not push (e.g. limit reached).
+    /// Patches the entry recorded by the most recent `pre_step_capture` with the
+    /// actual gas cost and any step-level error string.  Called immediately after
+    /// the opcode handler returns.
+    ///
+    /// No-op when the most recent `pre_step_capture` did not push (limit reached).
+    /// Synthesized entries (e.g. fused JUMPDEST) push directly into `logs` without
+    /// updating `last_step_index`, so this still patches the correct parent entry.
     pub fn finalize_step(&mut self, gas_cost: u64, error: Option<&str>) {
-        if !self.last_step_captured {
+        let Some(idx) = self.last_step_index else {
             return;
-        }
-        if let Some(log) = self.logs.last_mut() {
+        };
+        if let Some(log) = self.logs.get_mut(idx) {
             log.gas_cost = gas_cost;
             log.error = error.map(str::to_owned);
         }
+    }
+
+    /// Pushes a fully-formed synthetic step (used for fused JUMPDEST under JUMP/JUMPI).
+    ///
+    /// Does **not** update `last_step_index`, so the pending `finalize_step` for the
+    /// parent opcode continues to patch the parent's entry. The limit cap is honored
+    /// — synthetic pushes are dropped once `cfg.limit` is reached.
+    pub fn synthesize_step(&mut self, step: OpcodeStep) {
+        if self.cfg.limit > 0 && self.logs.len() >= self.cfg.limit {
+            return;
+        }
+        self.logs.push(step);
     }
 
     /// Assembles the final `OpcodeTraceResult` after the transaction finishes.

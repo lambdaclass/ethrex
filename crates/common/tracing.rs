@@ -126,16 +126,22 @@ fn is_zero_nonce(n: &u64) -> bool {
     *n == 0
 }
 
-// ─── EIP-3155 OpcodeTracer types ──────────────────────────────────────────────
+// ─── OpcodeTracer types ──────────────────────────────────────────────────────
 
-/// Per-opcode trace entry in strict EIP-3155 format.
+/// Per-opcode trace entry (EIP-3155 step content), emitted under the de-facto
+/// cross-client `structLogger` wrapper.
 ///
-/// Fields are kept as native types in memory; `Serialize` converts them to the
-/// exact encoding specified by EIP-3155 (https://eips.ethereum.org/EIPS/eip-3155).
+/// Wrapper keys: `{failed, gas, returnValue, structLogs}`. Per-step `gas`,
+/// `gasCost`, `refund` are numeric; `op` is the opcode mnemonic string.
+/// `memSize`, `returnData`, and `refund` are always emitted (an extension
+/// beyond the common minimal step shape); consumers ignoring extra fields are
+/// unaffected.
 #[derive(Debug)]
 pub struct OpcodeStep {
     pub pc: u64,
-    /// Raw opcode byte value (e.g. 96 for PUSH1).
+    /// Raw opcode byte value (e.g. 0x60 for PUSH1). Serialized as its mnemonic
+    /// string (`"PUSH1"`); unassigned bytes serialize as
+    /// `"opcode 0xNN not defined"`.
     pub op: u8,
     pub gas: u64,
     pub gas_cost: u64,
@@ -144,7 +150,7 @@ pub struct OpcodeStep {
     pub depth: u32,
     /// Return data from the previous sub-call (always emitted; `"0x"` when disabled or empty).
     pub return_data: bytes::Bytes,
-    /// Gas refund counter (always emitted; `"0x0"` when zero).
+    /// Gas refund counter (always emitted).
     pub refund: u64,
     /// `Some(vec)` when stack capture is enabled (bottom-first); `None` when disabled (emits JSON null).
     pub stack: Option<Vec<U256>>,
@@ -160,10 +166,16 @@ pub struct OpcodeStep {
 #[derive(Debug)]
 pub struct MemoryChunk(pub [u8; 32]);
 
-/// Top-level result returned by an opcode trace, in EIP-3155 format.
+/// Top-level result returned by an opcode (EIP-3155) trace.
+///
+/// Wraps per-step entries as `{failed, gas, returnValue, structLogs}` matching
+/// the de-facto `debug_traceTransaction` response shape used across major
+/// execution clients.
 #[derive(Debug)]
 pub struct OpcodeTraceResult {
     pub gas_used: u64,
+    /// True iff the transaction completed without error. Serialized as the
+    /// inverted `failed` field on the wire.
     pub pass: bool,
     pub output: bytes::Bytes,
     pub steps: Vec<OpcodeStep>,
@@ -171,11 +183,11 @@ pub struct OpcodeTraceResult {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
-/// Returns the EIP-3155 opcode mnemonic for `byte`.
+/// Returns the opcode mnemonic for `byte`.
 ///
-/// `0xFE` → `"INVALID"`.  All assigned opcodes → their uppercase name
-/// (e.g. `"PUSH1"`, `"ADD"`).  Unassigned bytes → `None` (geth-compatible:
-/// the `opName` field is omitted for unknown opcodes).
+/// Known opcodes → their uppercase name (`"PUSH1"`, `"ADD"`, `"INVALID"` for
+/// 0xFE). Unassigned bytes → `None`; callers wanting the conventional unknown
+/// string should fall back to `format!("opcode 0x{:02x} not defined", byte)`.
 pub fn opcode_name(byte: u8) -> Option<&'static str> {
     match byte {
         0x00 => Some("STOP"),
@@ -361,13 +373,9 @@ impl serde::Serialize for OpcodeStep {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
 
-        // Required fields: pc, op, gas, gasCost, memSize, stack, depth, returnData, refund = 9
-        // Optional: opName (omitted for unknown opcodes, geth-compatible), error, memory, storage
-        let op_name = opcode_name(self.op);
+        // Base fields: pc, op, gas, gasCost, depth, stack, memSize, returnData, refund = 9
+        // Optional: error, memory, storage
         let mut field_count = 9;
-        if op_name.is_some() {
-            field_count += 1;
-        }
         if self.error.is_some() {
             field_count += 1;
         }
@@ -381,12 +389,17 @@ impl serde::Serialize for OpcodeStep {
         let mut map = serializer.serialize_map(Some(field_count))?;
 
         map.serialize_entry("pc", &self.pc)?;
-        map.serialize_entry("op", &self.op)?;
-        map.serialize_entry("gas", &format!("{:#x}", self.gas))?;
-        map.serialize_entry("gasCost", &format!("{:#x}", self.gas_cost))?;
-        map.serialize_entry("memSize", &self.mem_size)?;
+        // op: emit the mnemonic string. Unknown bytes use the conventional
+        // "opcode 0xNN not defined" fallback.
+        match opcode_name(self.op) {
+            Some(name) => map.serialize_entry("op", name)?,
+            None => map.serialize_entry("op", &format!("opcode 0x{:02x} not defined", self.op))?,
+        }
+        map.serialize_entry("gas", &self.gas)?;
+        map.serialize_entry("gasCost", &self.gas_cost)?;
+        map.serialize_entry("depth", &self.depth)?;
 
-        // stack: Some → array of hex strings; None → JSON null (required field)
+        // stack: Some → array of hex strings; None → JSON null (when disabled)
         struct StackSerializer<'a>(&'a Option<Vec<U256>>);
         impl serde::Serialize for StackSerializer<'_> {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -405,15 +418,12 @@ impl serde::Serialize for OpcodeStep {
         }
         map.serialize_entry("stack", &StackSerializer(&self.stack))?;
 
-        map.serialize_entry("depth", &self.depth)?;
+        map.serialize_entry("memSize", &self.mem_size)?;
         map.serialize_entry(
             "returnData",
             &format!("0x{}", hex::encode(&self.return_data)),
         )?;
-        map.serialize_entry("refund", &format!("{:#x}", self.refund))?;
-        if let Some(name) = op_name {
-            map.serialize_entry("opName", name)?;
-        }
+        map.serialize_entry("refund", &self.refund)?;
 
         if let Some(err) = &self.error {
             map.serialize_entry("error", err)?;
@@ -451,10 +461,11 @@ impl serde::Serialize for OpcodeTraceResult {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
         let mut map = serializer.serialize_map(Some(4))?;
-        map.serialize_entry("pass", &self.pass)?;
-        map.serialize_entry("gasUsed", &format!("{:#x}", self.gas_used))?;
-        map.serialize_entry("output", &format!("0x{}", hex::encode(&self.output)))?;
-        map.serialize_entry("steps", &self.steps)?;
+        // `failed` is the inverse of `pass` — matches the conventional wire shape.
+        map.serialize_entry("failed", &!self.pass)?;
+        map.serialize_entry("gas", &self.gas_used)?;
+        map.serialize_entry("returnValue", &format!("0x{}", hex::encode(&self.output)))?;
+        map.serialize_entry("structLogs", &self.steps)?;
         map.end()
     }
 }
