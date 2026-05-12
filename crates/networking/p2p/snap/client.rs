@@ -1096,6 +1096,7 @@ pub async fn request_storage_ranges(
         ));
     }
 
+
     {
         let snapshot = current_account_storages.into_values().collect::<Vec<_>>();
 
