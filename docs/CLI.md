@@ -92,7 +92,7 @@ Node options:
           [default: 10000]
 
       --mempool.delegated-sender-cap <MEMPOOL_DELEGATED_SENDER_CAP>
-          Maximum number of pending transactions in the mempool from a single EIP-7702 delegated EOA. Delegated senders are held to a tighter cap than regular accounts because their delegate contract can act on behalf of multiple identities.
+          Maximum number of pending transactions in the mempool from a single EIP-7702 delegated EOA. Delegated senders are held to a tighter cap than regular accounts because their delegate contract can act on behalf of multiple identities. Setting this to 0 admits zero pending transactions from delegated senders (i.e. blocks them entirely, NOT "unlimited"); use a large value such as u64::MAX in environments that want no cap.
 
           [env: ETHREX_MEMPOOL_DELEGATED_SENDER_CAP=]
           [default: 1]
@@ -324,7 +324,7 @@ Node options:
           [default: 10000]
 
       --mempool.delegated-sender-cap <MEMPOOL_DELEGATED_SENDER_CAP>
-          Maximum number of pending transactions in the mempool from a single EIP-7702 delegated EOA. Delegated senders are held to a tighter cap than regular accounts because their delegate contract can act on behalf of multiple identities.
+          Maximum number of pending transactions in the mempool from a single EIP-7702 delegated EOA. Delegated senders are held to a tighter cap than regular accounts because their delegate contract can act on behalf of multiple identities. Setting this to 0 admits zero pending transactions from delegated senders (i.e. blocks them entirely, NOT "unlimited"); use a large value such as u64::MAX in environments that want no cap.
 
           [env: ETHREX_MEMPOOL_DELEGATED_SENDER_CAP=]
           [default: 1]
