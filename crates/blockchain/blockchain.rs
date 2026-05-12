@@ -2967,7 +2967,7 @@ impl Blockchain {
             // we reject without loading the bytecode. Only when the metadata
             // length matches do we fetch + verify the prefix. This avoids
             // pulling potentially large contract bytecode on every contract
-            // sender that hits admission (Copilot / @MegaRedHand review).
+            // sender that hits admission.
             if sender_acc_info.code_hash != *EMPTY_KECCACK_HASH {
                 let metadata_len = self
                     .storage
@@ -2978,8 +2978,7 @@ impl Blockchain {
                     // bytecode is then missing from the store, the DB is
                     // inconsistent — surface that as `StoreError` instead of
                     // silently treating the sender as a contract (which would
-                    // wrongly reject a valid 7702-delegated EOA per
-                    // Copilot/@codex review).
+                    // wrongly reject a valid 7702-delegated EOA).
                     let code = self
                         .storage
                         .get_account_code(sender_acc_info.code_hash)?
