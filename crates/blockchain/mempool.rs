@@ -469,7 +469,7 @@ impl Mempool {
         // its expensive sidecar) or vice versa. ethrex has a single pool,
         // so the same guarantee has to be enforced here.
         if std::mem::discriminant(tx) != std::mem::discriminant(tx_in_pool.transaction()) {
-            return Err(MempoolError::UnderpricedReplacement);
+            return Err(MempoolError::ReplacementTypeMismatch);
         }
 
         // Blob replacements use a stricter bump (default 100%) because blob
@@ -825,7 +825,7 @@ mod tests {
         let err = pool
             .find_tx_to_replace(sender, 0, &new, 10, 100)
             .unwrap_err();
-        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+        assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
     }
 
     #[test]
@@ -840,7 +840,7 @@ mod tests {
         let err = pool
             .find_tx_to_replace(sender, 0, &new, 10, 100)
             .unwrap_err();
-        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+        assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
     }
 
     // --- legacy path ---------------------------------------------------
