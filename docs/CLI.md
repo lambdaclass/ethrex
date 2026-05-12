@@ -91,6 +91,12 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.reorg-depth <MEMPOOL_REORG_DEPTH>
+          Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.
+
+          [env: ETHREX_MEMPOOL_REORG_DEPTH=]
+          [default: 64]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
@@ -316,6 +322,12 @@ Node options:
 
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
+
+      --mempool.reorg-depth <MEMPOOL_REORG_DEPTH>
+          Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.
+
+          [env: ETHREX_MEMPOOL_REORG_DEPTH=]
+          [default: 64]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...

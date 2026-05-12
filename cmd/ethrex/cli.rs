@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_MEMPOOL_REORG_DEPTH, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -183,6 +183,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Maximum reorg depth (in blocks) for which transactions in orphaned blocks are re-injected into the mempool. Deeper reorgs skip re-injection.",
+        long = "mempool.reorg-depth",
+        default_value_t = DEFAULT_MEMPOOL_REORG_DEPTH,
+        value_name = "MEMPOOL_REORG_DEPTH",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_REORG_DEPTH"
+    )]
+    pub mempool_reorg_depth: u64,
     #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
@@ -392,6 +401,7 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             ..Default::default()
         }
     }
@@ -414,6 +424,7 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             ..Default::default()
         }
     }
@@ -450,6 +461,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_reorg_depth: DEFAULT_MEMPOOL_REORG_DEPTH,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
