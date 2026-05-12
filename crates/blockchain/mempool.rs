@@ -171,28 +171,26 @@ impl Mempool {
             .range((sender, 0)..=(sender, u64::MAX))
             .count();
         if count >= max_pending_txs_per_account {
-            if punish_spammer {
-                // Drop the upper half of the sender's pool entries,
-                // rounded up so odd counts still lose the median entry
-                // (`ceil(count / 2)`). A single-entry sender therefore
-                // loses its only tx; the policy applies uniformly.
-                let dropped_count = count.div_ceil(2);
-                // Collect victims first so the iterator no longer borrows
-                // `txs_by_sender_nonce` when we mutate it via removal.
-                let victims: Vec<H256> = inner
+            // Drop the upper half of the sender's pool entries, rounded up so
+            // odd counts still lose the median entry (`ceil(count / 2)`).
+            // Skip the prune when `count <= 1`: dropping the only entry adds
+            // no useful punishment (the sender already gets the new tx
+            // rejected) and turns interactions with delegated cap=1 into
+            // "every cap-breach wipes the sender's lone tx".
+            let mut dropped_count = 0usize;
+            if punish_spammer && count > 1 {
+                // Collect the sender's nonce range once, in reverse, so we
+                // can read victims and new_top_nonce in a single pass and
+                // release the immutable borrow before mutating the map.
+                let entries: Vec<(u64, H256)> = inner
                     .txs_by_sender_nonce
                     .range((sender, 0)..=(sender, u64::MAX))
                     .rev()
-                    .take(dropped_count)
-                    .map(|(_, hash)| *hash)
+                    .map(|((_, nonce), hash)| (*nonce, *hash))
                     .collect();
-                let new_top_nonce = inner
-                    .txs_by_sender_nonce
-                    .range((sender, 0)..=(sender, u64::MAX))
-                    .rev()
-                    .nth(dropped_count)
-                    .map(|((_, nonce), _)| *nonce);
-                for victim_hash in &victims {
+                dropped_count = count.div_ceil(2);
+                let new_top_nonce = entries.get(dropped_count).map(|(nonce, _)| *nonce);
+                for (_, victim_hash) in entries.iter().take(dropped_count) {
                     inner.remove_transaction_with_lock(victim_hash)?;
                 }
                 warn!(
@@ -204,7 +202,7 @@ impl Mempool {
                 );
             }
             return Err(MempoolError::MaxPendingTxsPerAccountExceeded {
-                count,
+                count: count.saturating_sub(dropped_count),
                 limit: max_pending_txs_per_account,
             });
         }
@@ -850,6 +848,51 @@ mod tests {
                 pool.get_blobs_bundle(*h).unwrap().is_some(),
                 "blob bundle for surviving tx {h:?} should still be present"
             );
+        }
+    }
+
+    #[test]
+    fn punish_spammer_skips_prune_when_count_is_one() {
+        // With cap = 1 and a single pending tx, the prune-on-breach policy
+        // would wipe the sender's only tx on every cap-breach attempt, which
+        // is especially harmful when combined with delegated cap=1 (every
+        // collision wipes the prior tx). The implementation skips the prune
+        // when `count <= 1`.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(7);
+        add_tx(&pool, sender, 0);
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 1);
+
+        submit_at_cap(&pool, sender, 1, 1, true);
+
+        // The pre-existing single tx must survive.
+        assert_eq!(pool.count_for_sender(sender).unwrap(), 1);
+    }
+
+    #[test]
+    fn punish_spammer_reports_post_prune_count() {
+        // The rejection error must reflect the sender's count AFTER the prune
+        // so RPC clients see the actual post-state, not the pre-prune count.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(8);
+        for nonce in 0..16u64 {
+            add_tx(&pool, sender, nonce);
+        }
+
+        let tx = build_tx(16);
+        let mtx = MempoolTransaction::new(tx, sender);
+        let hash = mtx.hash();
+        let err = pool
+            .add_transaction(hash, sender, mtx, 16, true)
+            .expect_err("expected per-account cap rejection");
+
+        match err {
+            MempoolError::MaxPendingTxsPerAccountExceeded { count, limit } => {
+                // 16 - ceil(16/2) = 16 - 8 = 8 remaining after the prune.
+                assert_eq!(count, 8);
+                assert_eq!(limit, 16);
+            }
+            other => panic!("expected MaxPendingTxsPerAccountExceeded, got {other:?}"),
         }
     }
 }
