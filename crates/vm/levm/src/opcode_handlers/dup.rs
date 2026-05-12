@@ -52,16 +52,25 @@ impl OpcodeHandler for OpDupNHandler {
         // Stack grows downwards, so we add the offset to get deeper elements
         // relative_offset is 1-indexed stack depth (17-235), convert to 0-indexed for array access
         // The n-th element (1-indexed) is at array index offset + (n-1)
+        let stack_len = vm.current_call_frame.stack.len();
+        let required = usize::from(relative_offset);
         let absolute_offset = vm
             .current_call_frame
             .stack
             .offset
             .checked_add(usize::from(relative_offset).wrapping_sub(1))
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+            .ok_or(ExceptionalHalt::StackUnderflow {
+                stack_len,
+                required,
+            })?;
 
         // Verify the offset is within stack bounds
         if absolute_offset >= vm.current_call_frame.stack.values.len() {
-            return Err(ExceptionalHalt::StackUnderflow.into());
+            return Err(ExceptionalHalt::StackUnderflow {
+                stack_len,
+                required,
+            }
+            .into());
         }
 
         #[expect(unsafe_code, reason = "bound already checked")]

@@ -54,10 +54,10 @@ impl From<std::array::TryFromSliceError> for VMError {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error, Serialize, Deserialize)]
 pub enum ExceptionalHalt {
-    #[error("Stack Underflow")]
-    StackUnderflow,
-    #[error("Stack Overflow")]
-    StackOverflow,
+    #[error("stack underflow ({stack_len} <=> {required})")]
+    StackUnderflow { stack_len: usize, required: usize },
+    #[error("stack limit reached {limit} ({stack_len})")]
+    StackOverflow { stack_len: usize, limit: usize },
     #[error("Invalid Jump")]
     InvalidJump,
     #[error("Opcode Not Allowed In Static Context")]

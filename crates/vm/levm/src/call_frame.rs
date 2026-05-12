@@ -55,7 +55,10 @@ impl Stack {
             self.values
                 .get_unchecked(self.offset..)
                 .first_chunk::<N>()
-                .ok_or(ExceptionalHalt::StackUnderflow)?
+                .ok_or(ExceptionalHalt::StackUnderflow {
+                    stack_len: self.len(),
+                    required: N,
+                })?
         };
         // Due to previous error check in first_chunk, next_offset is guaranteed to be < STACK_LIMIT
         self.offset = next_offset;
@@ -68,7 +71,10 @@ impl Stack {
         let value = *self
             .values
             .get(self.offset)
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+            .ok_or(ExceptionalHalt::StackUnderflow {
+                stack_len: self.len(),
+                required: 1,
+            })?;
         // The following operation can never overflow as both `self.offset` and N are within
         // STACK_LIMIT (1024).
         self.offset = self.offset.wrapping_add(1);
@@ -84,7 +90,10 @@ impl Stack {
         let next_offset = self
             .offset
             .checked_sub(1)
-            .ok_or(ExceptionalHalt::StackOverflow)?;
+            .ok_or(ExceptionalHalt::StackOverflow {
+                stack_len: self.len(),
+                limit: STACK_LIMIT,
+            })?;
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
@@ -112,7 +121,10 @@ impl Stack {
         let next_offset = self
             .offset
             .checked_sub(1)
-            .ok_or(ExceptionalHalt::StackOverflow)?;
+            .ok_or(ExceptionalHalt::StackOverflow {
+                stack_len: self.len(),
+                limit: STACK_LIMIT,
+            })?;
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
@@ -154,7 +166,11 @@ impl Stack {
         let index = self.offset + N;
 
         if index >= self.values.len() {
-            return Err(ExceptionalHalt::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow {
+                stack_len: self.len(),
+                // swap requires top element plus the N-th element
+                required: N.saturating_add(1),
+            });
         }
 
         #[expect(unsafe_code, reason = "self.offset always < STACK_LIMIT")]
@@ -181,13 +197,20 @@ impl Stack {
         #[expect(clippy::arithmetic_side_effects)]
         let index = self.offset + N;
         if index >= self.values.len() {
-            return Err(ExceptionalHalt::StackUnderflow);
+            return Err(ExceptionalHalt::StackUnderflow {
+                stack_len: self.len(),
+                // dup requires N+1 items (0-indexed depth N means index N+1)
+                required: N.saturating_add(1),
+            });
         }
 
         self.offset = self
             .offset
             .checked_sub(1)
-            .ok_or(ExceptionalHalt::StackOverflow)?;
+            .ok_or(ExceptionalHalt::StackOverflow {
+                stack_len: self.len(),
+                limit: STACK_LIMIT,
+            })?;
 
         #[expect(unsafe_code, reason = "index < size, offset-1 >= 0")]
         unsafe {

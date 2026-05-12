@@ -54,16 +54,25 @@ impl OpcodeHandler for OpSwapNHandler {
         // Stack grows downwards, so we add the offset to get deeper elements
         // SWAPN swaps top with the (n+1)th element where n = decoded relative_offset
         // The (n+1)th element (1-indexed) is at array index offset + n
+        let stack_len = vm.current_call_frame.stack.len();
+        let required = usize::from(relative_offset).saturating_add(1);
         let absolute_offset = vm
             .current_call_frame
             .stack
             .offset
             .checked_add(usize::from(relative_offset))
-            .ok_or(ExceptionalHalt::StackUnderflow)?;
+            .ok_or(ExceptionalHalt::StackUnderflow {
+                stack_len,
+                required,
+            })?;
 
         // Verify the offset is within stack bounds
         if absolute_offset >= STACK_LIMIT {
-            return Err(ExceptionalHalt::StackUnderflow.into());
+            return Err(ExceptionalHalt::StackUnderflow {
+                stack_len,
+                required,
+            }
+            .into());
         }
 
         let top_offset = vm.current_call_frame.stack.offset;
@@ -131,17 +140,30 @@ impl OpcodeHandler for OpExchangeHandler {
         // Stack grows downwards, so we add the offsets to get deeper elements
         let absolute_offset = {
             let stack_offset = vm.current_call_frame.stack.offset;
+            let stack_len = vm.current_call_frame.stack.len();
+            // EXCHANGE needs the deeper of the two elements, so required = max(r0, r1) + 1
+            let required = usize::from(relative_offset.1).saturating_add(1);
 
             let q = stack_offset
                 .checked_add(usize::from(relative_offset.0))
-                .ok_or(ExceptionalHalt::StackUnderflow)?;
+                .ok_or(ExceptionalHalt::StackUnderflow {
+                    stack_len,
+                    required,
+                })?;
             let r = stack_offset
                 .checked_add(usize::from(relative_offset.1))
-                .ok_or(ExceptionalHalt::StackUnderflow)?;
+                .ok_or(ExceptionalHalt::StackUnderflow {
+                    stack_len,
+                    required,
+                })?;
 
             // Verify both offsets are within stack bounds
             if q >= STACK_LIMIT || r >= STACK_LIMIT {
-                return Err(ExceptionalHalt::StackUnderflow.into());
+                return Err(ExceptionalHalt::StackUnderflow {
+                    stack_len,
+                    required,
+                }
+                .into());
             }
 
             (q, r)
