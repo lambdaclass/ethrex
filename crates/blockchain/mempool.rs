@@ -193,6 +193,16 @@ impl Mempool {
                 for (_, victim_hash) in entries.iter().take(dropped_count) {
                     inner.remove_transaction_with_lock(victim_hash)?;
                 }
+                // `remove_transaction_with_lock` doesn't touch `txs_order`,
+                // so each victim leaves a tombstone behind. The natural
+                // lazy-sweep eventually cleans them up via the
+                // `mempool_prune_threshold` check below, but a sustained
+                // spam loop can race ahead of the threshold. Sweep
+                // `txs_order` once here, scoped to this punishment fire, so
+                // the queue stays roughly aligned with `transaction_pool`.
+                let txpool = core::mem::take(&mut inner.transaction_pool);
+                inner.txs_order.retain(|h| txpool.contains_key(h));
+                inner.transaction_pool = txpool;
                 warn!(
                     target: "mempool",
                     sender = ?sender,
@@ -754,6 +764,14 @@ mod tests {
             .map(|((_, n), _)| *n)
             .collect();
         assert_eq!(remaining_nonces, (0..8u64).collect::<Vec<_>>());
+        // `txs_order` must NOT carry tombstones for the dropped hashes —
+        // they were cleaned up by the per-punishment sweep so the
+        // `mempool_prune_threshold` check below counts accurately.
+        assert_eq!(
+            inner.txs_order.len(),
+            inner.transaction_pool.len(),
+            "txs_order must align with transaction_pool after punishment",
+        );
     }
 
     #[test]
