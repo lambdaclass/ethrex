@@ -235,6 +235,12 @@ pub struct BlockchainOptions {
     /// the mempool. A replacement at an existing `(sender, nonce)` bypasses
     /// this check.
     pub max_pending_txs_per_account: usize,
+    /// Erigon-style punishment policy: when the per-sender cap is breached,
+    /// drop the highest-nonce half of the sender's existing pool entries
+    /// in addition to rejecting the new transaction. The breaching tx is
+    /// still rejected; this only frees pool budget for legitimate senders.
+    /// Defaults to `true`.
+    pub punish_spammer: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -247,6 +253,7 @@ impl Default for BlockchainOptions {
             precompute_witnesses: false,
             precompile_cache_enabled: true,
             max_pending_txs_per_account: DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT,
+            punish_spammer: true,
         }
     }
 }
@@ -2351,6 +2358,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             self.options.max_pending_txs_per_account,
+            self.options.punish_spammer,
         )?;
         Ok(hash)
     }
@@ -2380,6 +2388,7 @@ impl Blockchain {
             sender,
             MempoolTransaction::new(transaction, sender),
             self.options.max_pending_txs_per_account,
+            self.options.punish_spammer,
         )?;
 
         Ok(hash)

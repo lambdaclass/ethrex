@@ -530,6 +530,7 @@ pub async fn init_l1(
             precompute_witnesses: opts.precompute_witnesses,
             precompile_cache_enabled: !opts.no_precompile_cache,
             max_pending_txs_per_account: opts.mempool_max_pending_txs_per_account,
+            punish_spammer: opts.mempool_punish_spammer,
         },
     );
 
