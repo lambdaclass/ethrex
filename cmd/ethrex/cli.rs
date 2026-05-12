@@ -66,16 +66,31 @@ pub struct CLI {
     pub command: Option<Subcommand>,
 }
 
+/// Format a [`Duration`] in human-readable form (e.g. `3h`, `30m`, `45s`)
+/// matching the syntax accepted by the parser, so the value rendered in
+/// `--help` is operator-friendly instead of raw seconds.
+fn duration_default_str(d: Duration) -> clap::builder::OsStr {
+    let secs = d.as_secs();
+    let formatted = if secs % 3600 == 0 && secs > 0 {
+        format!("{}h", secs / 3600)
+    } else if secs % 60 == 0 && secs > 0 {
+        format!("{}m", secs / 60)
+    } else {
+        format!("{secs}s")
+    };
+    formatted.into()
+}
+
 /// Format the default mempool lifetime as a clap-compatible string,
 /// reusing the [`DEFAULT_MEMPOOL_LIFETIME`] constant so it stays in sync.
 fn default_mempool_lifetime_str() -> clap::builder::OsStr {
-    format!("{}s", DEFAULT_MEMPOOL_LIFETIME.as_secs()).into()
+    duration_default_str(DEFAULT_MEMPOOL_LIFETIME)
 }
 
 /// Format the default mempool dormancy as a clap-compatible string,
 /// reusing the [`DEFAULT_DORMANCY`] constant so it stays in sync.
 fn default_mempool_dormancy_str() -> clap::builder::OsStr {
-    format!("{}s", DEFAULT_DORMANCY.as_secs()).into()
+    duration_default_str(DEFAULT_DORMANCY)
 }
 
 #[derive(ClapParser, Debug, Clone)]

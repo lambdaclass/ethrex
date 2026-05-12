@@ -95,7 +95,7 @@ Node options:
           Maximum age of a mempool transaction before it is evicted by the periodic sweep. Accepts values like 3h, 30m, 45s.
 
           [env: ETHREX_MEMPOOL_LIFETIME=]
-          [default: 10800s]
+          [default: 3h]
 
       --mempool.max-nonce-gap <GAP>
           Maximum allowed gap between a sender's highest pending nonce and their on-chain nonce before the dormancy sweep is eligible to evict their pool entries.
@@ -107,7 +107,7 @@ Node options:
           Dormancy window for the nonce-gap mempool sweep. A sender is only evicted when all their pool entries are older than this and the nonce gap exceeds --mempool.max-nonce-gap. Accepts values like 3h, 30m, 45s.
 
           [env: ETHREX_MEMPOOL_DORMANCY=]
-          [default: 10800s]
+          [default: 3h]
 
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
@@ -339,7 +339,7 @@ Node options:
           Maximum age of a mempool transaction before it is evicted by the periodic sweep. Accepts values like 3h, 30m, 45s.
 
           [env: ETHREX_MEMPOOL_LIFETIME=]
-          [default: 10800s]
+          [default: 3h]
 
       --mempool.max-nonce-gap <GAP>
           Maximum allowed gap between a sender's highest pending nonce and their on-chain nonce before the dormancy sweep is eligible to evict their pool entries.
@@ -351,7 +351,7 @@ Node options:
           Dormancy window for the nonce-gap mempool sweep. A sender is only evicted when all their pool entries are older than this and the nonce gap exceeds --mempool.max-nonce-gap. Accepts values like 3h, 30m, 45s.
 
           [env: ETHREX_MEMPOOL_DORMANCY=]
-          [default: 10800s]
+          [default: 3h]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
