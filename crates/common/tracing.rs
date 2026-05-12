@@ -457,6 +457,138 @@ impl serde::Serialize for OpcodeStep {
     }
 }
 
+// ─── Streaming JSON helpers ───────────────────────────────────────────────────
+
+/// Options controlling which optional fields are included in streaming JSON
+/// output. The polarity is "disable"-prefixed to mirror the conventional
+/// `--trace.nomemory` / `--trace.nostack` / `--trace.noreturndata` CLI flags.
+#[derive(Debug, Clone, Default)]
+pub struct StreamingOpts {
+    pub disable_stack: bool,
+    pub disable_memory: bool,
+    pub disable_storage: bool,
+    pub disable_return_data: bool,
+}
+
+/// Emits one JSON object for `step` to `w`, terminated with `\n`.
+///
+/// Field order matches the conventional streaming JSON shape used by EIP-3155
+/// compatible tracers:
+/// `pc`, `op`, `gas`, `gasCost`, `memory`?, `memSize`, `stack`?, `returnData`?,
+/// `depth`, `refund`, `opName`, `error`?
+///
+/// `op` is a plain decimal integer. `gas`/`gasCost` are hex strings. `memSize`
+/// and `refund` are plain decimal integers. The function writes directly to `w`
+/// without intermediate allocation beyond the memory reassembly hex string.
+pub fn write_streaming_step<W: std::io::Write>(
+    w: &mut W,
+    step: &OpcodeStep,
+    opts: &StreamingOpts,
+) -> std::io::Result<()> {
+    write!(w, "{{\"pc\":{},\"op\":{}", step.pc, step.op)?;
+    write!(w, ",\"gas\":\"0x{:x}\"", step.gas)?;
+    write!(w, ",\"gasCost\":\"0x{:x}\"", step.gas_cost)?;
+
+    // memory — single contiguous hex blob reassembled from chunks
+    let emit_memory =
+        !opts.disable_memory && step.memory.as_ref().map(|m| !m.is_empty()).unwrap_or(false);
+    if emit_memory && let Some(chunks) = &step.memory {
+        write!(w, ",\"memory\":\"0x")?;
+        for chunk in chunks {
+            write!(w, "{}", hex::encode(chunk.0))?;
+        }
+        write!(w, "\"")?;
+    }
+
+    write!(w, ",\"memSize\":{}", step.mem_size)?;
+
+    // stack — array of hex strings, bottom-first; omit when disabled or absent
+    if !opts.disable_stack
+        && let Some(stack) = &step.stack
+    {
+        write!(w, ",\"stack\":[")?;
+        for (i, v) in stack.iter().enumerate() {
+            if i > 0 {
+                write!(w, ",")?;
+            }
+            write!(w, "\"{}\"", geth_uint256_hex(v))?;
+        }
+        write!(w, "]")?;
+    }
+
+    // returnData — omit when disabled or empty
+    if !opts.disable_return_data && !step.return_data.is_empty() {
+        write!(
+            w,
+            ",\"returnData\":\"0x{}\"",
+            hex::encode(&step.return_data)
+        )?;
+    }
+
+    write!(w, ",\"depth\":{}", step.depth)?;
+    write!(w, ",\"refund\":{}", step.refund)?;
+
+    // opName
+    let op_name = match opcode_name(step.op) {
+        Some(name) => name.to_string(),
+        None => format!("opcode 0x{:02x} not defined", step.op),
+    };
+    // Use serde_json to produce a correctly escaped JSON string value
+    let op_name_json =
+        serde_json::to_string(&op_name).map_err(|e| std::io::Error::other(e.to_string()))?;
+    write!(w, ",\"opName\":{}", op_name_json)?;
+
+    // error — omit when None; use serde_json for correct escaping
+    if let Some(err) = &step.error {
+        let err_json =
+            serde_json::to_string(err).map_err(|e| std::io::Error::other(e.to_string()))?;
+        write!(w, ",\"error\":{}", err_json)?;
+    }
+
+    writeln!(w, "}}")
+}
+
+/// Emits the final summary JSON line to `w`, terminated with `\n`.
+///
+/// Field order: `output`, `gasUsed`, `error`?
+///
+/// `output` is lowercase hex without a `0x` prefix (empty bytes → `""`).
+/// `gasUsed` is a hex string (`"0x{:x}"`). `error` is omitted when `None`.
+pub fn write_streaming_summary<W: std::io::Write>(
+    w: &mut W,
+    output: &[u8],
+    gas_used: u64,
+    error: Option<&str>,
+) -> std::io::Result<()> {
+    write!(
+        w,
+        "{{\"output\":\"{}\",\"gasUsed\":\"0x{:x}\"",
+        hex::encode(output),
+        gas_used
+    )?;
+    if let Some(err) = error {
+        let err_json =
+            serde_json::to_string(err).map_err(|e| std::io::Error::other(e.to_string()))?;
+        write!(w, ",\"error\":{}", err_json)?;
+    }
+    writeln!(w, "}}")
+}
+
+/// Emits a `stateRoot` JSON line to `w`, terminated with `\n`.
+///
+/// The space after the colon is intentional — tooling that byte-parses this
+/// line expects the literal string `"stateRoot": "` (with the space).
+pub fn write_streaming_state_root<W: std::io::Write>(
+    w: &mut W,
+    state_root: ethereum_types::H256,
+) -> std::io::Result<()> {
+    writeln!(
+        w,
+        "{{\"stateRoot\": \"0x{}\"}}",
+        hex::encode(state_root.as_bytes())
+    )
+}
+
 impl serde::Serialize for OpcodeTraceResult {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
