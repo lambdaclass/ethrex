@@ -88,6 +88,17 @@ pub trait StorageWriteBatch: Send {
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
 
+    /// Removes every key in `[start_key, end_key)` from the specified table.
+    /// The range is half-open: `start_key` is inclusive, `end_key` is exclusive.
+    /// Backends that natively support range deletion (e.g. RocksDB) SHOULD use it
+    /// so the operation participates in the surrounding atomic transaction.
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Result<(), StoreError>;
+
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
 }

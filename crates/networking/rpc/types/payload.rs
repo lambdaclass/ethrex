@@ -260,6 +260,20 @@ impl PayloadStatus {
             validation_error: None,
         }
     }
+
+    /// Creates a PayloadStatus with `ACCEPTED` status. Used when the EL has
+    /// the payload and its parent block is known, but the parent's state is
+    /// not currently materialized in memory and the EL declines to
+    /// speculatively rebuild it. Geth uses this for the same case
+    /// (`eth/catalyst/api.go:863-867`); a follow-up FCU pointing at this
+    /// block (or a descendant) will trigger the deep-reorg apply path.
+    pub fn accepted() -> Self {
+        PayloadStatus {
+            status: PayloadValidationStatus::Accepted,
+            latest_valid_hash: None,
+            validation_error: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
