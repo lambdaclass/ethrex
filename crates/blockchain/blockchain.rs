@@ -3007,17 +3007,21 @@ impl Blockchain {
         // prevents a flood of gapped-nonce spam txs from pinning pool budget
         // that productive txs could use. Replacements (same nonce as a tx
         // already in the pool) bypass this rule since they are not gapped.
+        //
+        // Read occupancy once and reuse it for both the gate check and the
+        // error message — calling `is_heavily_occupied` + `occupancy_pct`
+        // takes the read lock twice, allowing TOCTOU drift where the reported
+        // occupancy differs from the value the gate fired on.
         let threshold = self.options.gap_admit_occupancy_threshold;
-        if tx_to_replace_hash.is_none()
-            && nonce != sender_acc_nonce
-            && self.mempool.is_heavily_occupied(threshold)?
-        {
-            let occupancy_pct = (self.mempool.occupancy_ratio()? * 100.0).round() as u8;
-            let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
-            return Err(MempoolError::GapAdmissionDeniedUnderPressure {
-                occupancy_pct,
-                nonce_gap,
-            });
+        if tx_to_replace_hash.is_none() && nonce != sender_acc_nonce && threshold < 100 {
+            let occupancy_pct = self.mempool.occupancy_pct()?;
+            if occupancy_pct >= threshold {
+                let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
+                return Err(MempoolError::GapAdmissionDeniedUnderPressure {
+                    occupancy_pct,
+                    nonce_gap,
+                });
+            }
         }
 
         Ok(tx_to_replace_hash)
