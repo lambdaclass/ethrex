@@ -10,7 +10,7 @@ use crate::{
         RequestStorageTrieNodesError,
         constants::{
             HEALING_QUEUE_SOFT_LIMIT, MAX_IN_FLIGHT_REQUESTS, MAX_RESPONSE_BYTES,
-            SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE,
+            PEER_REPLY_TIMEOUT, SHOW_PROGRESS_INTERVAL_DURATION, STORAGE_BATCH_SIZE,
         },
         request_storage_trienodes,
     },
@@ -280,16 +280,13 @@ pub async fn heal_storage_trie(
         }
 
         if is_done {
-            // Await in-flight request tasks so `make_request`'s inc/dec
-            // stays balanced. Dropping the JoinSet aborts them mid-await
-            // and leaks peer reservation slots.
-            requests_task_joinset.join_all().await;
+            drain_joinset_with_timeout(&mut requests_task_joinset, "storage healing (done)").await;
             db_joinset.join_all().await;
             return Ok(true);
         }
 
         if is_stale {
-            requests_task_joinset.join_all().await;
+            drain_joinset_with_timeout(&mut requests_task_joinset, "storage healing (stale)").await;
             db_joinset.join_all().await;
             state.healing_queue = HashMap::new();
             return Ok(false);
@@ -802,6 +799,27 @@ fn commit_node(
     } else {
         healing_queue.insert(parent_key, parent_entry);
         Ok(())
+    }
+}
+
+/// Drain a JoinSet with a timeout. If tasks don't complete within
+/// `PEER_REPLY_TIMEOUT + 5s`, abort them. Permits drop on abort,
+/// so peer slots are never leaked.
+async fn drain_joinset_with_timeout<T: Send + 'static>(set: &mut JoinSet<T>, context: &str) {
+    let deadline =
+        tokio::time::Instant::now() + PEER_REPLY_TIMEOUT + std::time::Duration::from_secs(5);
+    while !set.is_empty() {
+        if tokio::time::timeout_at(deadline, set.join_next())
+            .await
+            .is_err()
+        {
+            warn!(
+                remaining = set.len(),
+                context, "timed out draining in-flight tasks, aborting"
+            );
+            set.abort_all();
+            break;
+        }
     }
 }
 
