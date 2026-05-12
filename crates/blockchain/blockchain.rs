@@ -2479,14 +2479,22 @@ impl Blockchain {
                         );
                         continue;
                     };
+                    // Clone the bundle so we can re-insert it into limbo if
+                    // admission fails for a transient reason (pool full,
+                    // replacement rules, etc.). Otherwise the sidecar would
+                    // be lost permanently and the blob tx could never be
+                    // re-injected on a later attempt.
+                    let bundle_backup = blobs_bundle.clone();
                     match self.add_blob_transaction_to_pool(inner, blobs_bundle).await {
                         Ok(_) => reinjected += 1,
                         Err(error) => {
                             debug!(
                                 tx_hash = %tx_hash,
                                 %error,
-                                "Failed to re-inject orphaned EIP-4844 transaction",
+                                "Failed to re-inject orphaned EIP-4844 transaction; restoring sidecar to limbo",
                             );
+                            self.mempool
+                                .insert_blob_limbo_entry(tx_hash, bundle_backup)?;
                         }
                     }
                 }
