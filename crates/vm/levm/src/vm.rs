@@ -1198,13 +1198,13 @@ impl<'a> VM<'a> {
     /// Returns `None` when:
     /// - `cfg.disable_storage` is set, or
     /// - `opcode` is not SLOAD (0x54) or SSTORE (0x55), or
-    /// - the stack is empty (guard against underflow before the handler runs).
+    /// - the stack is empty (guard against underflow before the handler runs), or
+    /// - the storage read fails for any reason (including `AccountNotFound` —
+    ///   the trace omits the entry rather than emitting an ambiguous zero).
     ///
     /// For SLOAD: key = `stack.top`; value = the *current* stored value read from the DB.
-    ///   If the account is not yet in cache (`AccountNotFound`), falls back to `H256::zero()`.
-    ///
     /// For SSTORE: key = `stack.top`, value = `stack[top-1]` (the new value being written).
-    pub fn read_storage_for_trace(&mut self, opcode: u8) -> Option<(Address, H256, H256)> {
+    pub fn read_storage_for_trace(&mut self, opcode: u8) -> Option<(H256, H256)> {
         const SLOAD: u8 = 0x54;
         const SSTORE: u8 = 0x55;
 
@@ -1231,15 +1231,11 @@ impl<'a> VM<'a> {
         let key = BigEndianHash::from_uint(&key_u256);
 
         if opcode == SLOAD {
-            let value = match self.get_storage_value(addr, key) {
-                Ok(v) => BigEndianHash::from_uint(&v),
-                // Account not yet cached — graceful fallback per R16.
-                Err(InternalError::AccountNotFound) => H256::zero(),
-                // Any other DB/internal failure: omit the storage entry for this step
-                // rather than lying with a zero value.
-                Err(_) => return None,
-            };
-            Some((addr, key, value))
+            // Omit the entry on any read failure (incl. account not yet cached);
+            // a zero value would be indistinguishable from a legitimate never-written slot.
+            let v = self.get_storage_value(addr, key).ok()?;
+            let value = BigEndianHash::from_uint(&v);
+            Some((key, value))
         } else {
             // SSTORE: need two stack elements.
             let next_offset = offset.checked_add(1)?;
@@ -1249,7 +1245,7 @@ impl<'a> VM<'a> {
             // values[offset+1] is the new value being written (second from top = stack[top-1]).
             let value_u256 = *self.current_call_frame.stack.values.get(next_offset)?;
             let value = BigEndianHash::from_uint(&value_u256);
-            Some((addr, key, value))
+            Some((key, value))
         }
     }
 }

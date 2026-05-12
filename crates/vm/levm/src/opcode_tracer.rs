@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H256, U256,
+    H256, U256,
     tracing::{MemoryChunk, OpcodeStep, OpcodeTraceResult},
 };
 use serde::{Deserialize, Serialize};
@@ -108,7 +108,7 @@ impl LevmOpcodeTracer {
         memory_view: &[u8],
         mem_size: u64,
         return_data: &Bytes,
-        storage_kv: Option<(Address, H256, H256)>,
+        storage_kv: Option<(H256, H256)>,
     ) {
         // Enforce limit: stop appending once the cap is reached. The flag prevents
         // `finalize_step` from clobbering the last retained step on later opcodes.
@@ -148,13 +148,11 @@ impl LevmOpcodeTracer {
         };
 
         // Storage: single-entry map for this step only (no accumulation).
-        let storage = if let Some((_addr, key, value)) = storage_kv {
+        let storage = storage_kv.map(|(key, value)| {
             let mut m = BTreeMap::new();
             m.insert(key, value);
-            Some(m)
-        } else {
-            None
-        };
+            m
+        });
 
         // returnData: actual bytes when enabled; empty Bytes otherwise.
         let return_data_field = if self.cfg.enable_return_data {
