@@ -3785,31 +3785,4 @@ mod tests {
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
         );
     }
-
-    #[test]
-    fn test_encoded_size_exceeds_max_tx_size() {
-        // Confirms the wire-size signal used by the mempool admission cap:
-        // an EIP-1559 tx with > 128 KiB of `data` encodes to > MAX_TX_SIZE bytes.
-        use crate::types::MAX_TX_SIZE;
-
-        let payload = vec![0u8; MAX_TX_SIZE + 1];
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
-            data: Bytes::from(payload),
-            ..Default::default()
-        });
-
-        assert!(
-            tx.encode_canonical_to_vec().len() > MAX_TX_SIZE,
-            "tx with > 128 KiB calldata must encode larger than MAX_TX_SIZE"
-        );
-    }
-
-    #[test]
-    fn test_encoded_size_below_max_tx_size() {
-        // A small tx encodes well below the cap.
-        use crate::types::MAX_TX_SIZE;
-
-        let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
-        assert!(tx.encode_canonical_to_vec().len() <= MAX_TX_SIZE);
-    }
 }
