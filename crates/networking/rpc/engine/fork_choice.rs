@@ -330,7 +330,16 @@ async fn handle_forkchoice(
             // orphaned txs would otherwise add ~1+ second of ECDSA recovery + KZG
             // re-verification to the engine API response (well under the 8s spec
             // timeout but tight enough to destabilize CL timing budgets).
-            if !previous_head_hash.is_zero() && previous_head_hash != head.hash() {
+            //
+            // Fast-path: in the normal slot-advance case the new head's parent
+            // IS the previous head, i.e. no reorg. Skip the spawn (and its 3
+            // header-by-hash DB reads) to keep typical FCUs lean. Genuine
+            // reorgs — where the new head's parent differs from the previous
+            // head — still fall through to the spawned re-injection.
+            if !previous_head_hash.is_zero()
+                && previous_head_hash != head.hash()
+                && head.parent_hash != previous_head_hash
+            {
                 let blockchain = context.blockchain.clone();
                 let new_head_hash = head.hash();
                 tokio::spawn(async move {
