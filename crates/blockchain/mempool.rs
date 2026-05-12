@@ -141,14 +141,33 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Add transaction to the pool without doing validity checks
+    /// Add transaction to the pool without doing validity checks.
+    ///
+    /// Enforces the per-sender pending-tx cap atomically: the count is
+    /// re-checked under the same write lock that performs the insertion.
+    /// Replacement candidates (same `(sender, nonce)`) must have already
+    /// been removed via `remove_transaction` so this counter reflects the
+    /// post-replacement state. Returns
+    /// [`MempoolError::MaxPendingTxsPerAccountExceeded`] if the cap would
+    /// be exceeded.
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
+        max_pending_txs_per_account: usize,
+    ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
+        let count = inner
+            .txs_by_sender_nonce
+            .range((sender, 0)..=(sender, u64::MAX))
+            .count();
+        if count >= max_pending_txs_per_account {
+            return Err(MempoolError::MaxPendingTxsPerAccountExceeded {
+                count,
+                limit: max_pending_txs_per_account,
+            });
+        }
         // Prune the order queue if it has grown too much
         if inner.txs_order.len() > inner.mempool_prune_threshold {
             // NOTE: we do this to avoid borrow checker errors
@@ -602,7 +621,7 @@ mod tests {
         let tx = build_tx(nonce);
         let mtx = MempoolTransaction::new(tx, sender);
         let hash = mtx.hash();
-        pool.add_transaction(hash, sender, mtx).unwrap();
+        pool.add_transaction(hash, sender, mtx, usize::MAX).unwrap();
         hash
     }
 

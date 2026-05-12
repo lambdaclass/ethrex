@@ -2346,8 +2346,12 @@ impl Blockchain {
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            self.options.max_pending_txs_per_account,
+        )?;
         Ok(hash)
     }
 
@@ -2371,8 +2375,12 @@ impl Blockchain {
         }
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            self.options.max_pending_txs_per_account,
+        )?;
 
         Ok(hash)
     }
@@ -2522,20 +2530,13 @@ impl Blockchain {
             return Err(MempoolError::InvalidChainId(config.chain_id));
         }
 
-        // Per-account pending-tx cap. Replacement candidates (same
-        // `(sender, nonce)`) bypass the cap — they don't grow the
-        // sender's pool footprint. Placed after the chain-id check so a
-        // wrong-chain submission from a sender at the cap surfaces the
-        // more specific `InvalidChainId` error.
-        if tx_to_replace_hash.is_none() {
-            let count = self.mempool.count_for_sender(sender)?;
-            if count >= self.options.max_pending_txs_per_account {
-                return Err(MempoolError::MaxPendingTxsPerAccountExceeded {
-                    count,
-                    limit: self.options.max_pending_txs_per_account,
-                });
-            }
-        }
+        // The per-account pending-tx cap is enforced atomically inside
+        // `Mempool::add_transaction` (under the same write lock as the
+        // insertion) so concurrent submissions can't both pass a stale
+        // count check and race past the limit. Replacement candidates
+        // bypass it implicitly: the caller removes the old tx before
+        // `add_transaction` runs, so the post-removal count is one
+        // below the cap and the new insertion stays within it.
 
         Ok(tx_to_replace_hash)
     }
