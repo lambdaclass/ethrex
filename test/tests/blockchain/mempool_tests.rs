@@ -7,12 +7,14 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
+use ethrex_blockchain::{BlockchainOptions, BlockchainType};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    MempoolTransaction, Transaction, TxKind, kzg_commitment_to_versioned_hash,
+    EIP7702_DELEGATION_PREFIX, Genesis, GenesisAccount, MempoolTransaction, Transaction, TxKind,
+    kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -465,5 +467,208 @@ fn blobs_bundle_insert_and_remove() {
             .get_blobs_data_by_versioned_hashes(&[versioned_hash])
             .expect("should return empty"),
         vec![None]
+    );
+}
+
+// ===========================================================================
+// EIP-7702 delegated-sender cap
+//
+// Senders whose code is an EIP-7702 delegation designation (`0xef0100 ||
+// address`) can be invoked by their delegate to act on behalf of multiple
+// identities. To bound the spam surface of a single signer, ethrex caps the
+// number of pending transactions from a delegated EOA at
+// `BlockchainOptions::delegated_sender_cap` (default 1). RBF replacements
+// bypass the cap because they swap a pool slot rather than consume a new one.
+// ===========================================================================
+
+const TEST_CHAIN_ID: u64 = 1337;
+
+/// Bytecode for an EIP-7702 delegation designation pointing at a fixed
+/// (arbitrary) 20-byte address. The exact delegate is irrelevant for
+/// mempool admission — only the prefix and length matter.
+fn delegation_code() -> Bytes {
+    let mut code = EIP7702_DELEGATION_PREFIX.to_vec();
+    code.extend_from_slice(&[0x42u8; 20]);
+    Bytes::from(code)
+}
+
+/// Build a post-Cancun genesis with `sender` pre-funded and (optionally)
+/// pre-installed with EIP-7702 delegation code. `chain_id` is wired to
+/// match transactions signed against `TEST_CHAIN_ID`.
+fn delegated_sender_genesis(sender: Address, install_delegation: bool) -> Genesis {
+    let mut alloc = std::collections::BTreeMap::new();
+    alloc.insert(
+        sender,
+        GenesisAccount {
+            balance: U256::from(10u64).pow(U256::from(20u64)),
+            code: if install_delegation {
+                delegation_code()
+            } else {
+                Bytes::new()
+            },
+            storage: Default::default(),
+            nonce: 0,
+        },
+    );
+
+    Genesis {
+        config: ChainConfig {
+            chain_id: TEST_CHAIN_ID,
+            // Activate enough forks for EIP-1559 (London) gas semantics.
+            homestead_block: Some(0),
+            eip150_block: Some(0),
+            eip155_block: Some(0),
+            eip158_block: Some(0),
+            byzantium_block: Some(0),
+            constantinople_block: Some(0),
+            petersburg_block: Some(0),
+            istanbul_block: Some(0),
+            berlin_block: Some(0),
+            london_block: Some(0),
+            merge_netsplit_block: Some(0),
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            terminal_total_difficulty: Some(0),
+            ..Default::default()
+        },
+        alloc,
+        gas_limit: 30_000_000,
+        timestamp: 0,
+        ..Default::default()
+    }
+}
+
+async fn setup_blockchain_with_sender(
+    sender: Address,
+    install_delegation: bool,
+    delegated_sender_cap: u64,
+) -> Blockchain {
+    let mut store =
+        Store::new("test_delegated", EngineType::InMemory).expect("storage for delegated cap test");
+    let genesis = delegated_sender_genesis(sender, install_delegation);
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+
+    Blockchain::new(
+        store,
+        BlockchainOptions {
+            r#type: BlockchainType::L1,
+            delegated_sender_cap,
+            ..Default::default()
+        },
+    )
+}
+
+fn delegated_sender_tx(sender_nonce: u64) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: TEST_CHAIN_ID,
+        nonce: sender_nonce,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    })
+}
+
+/// Insert an unsigned transaction into the mempool under a fabricated sender,
+/// bypassing the sender-recovery path. The tests below only care about the
+/// admission decision (`validate_transaction`), which takes `sender` as an
+/// explicit argument — they don't exercise signature recovery.
+fn seed_pending_tx(blockchain: &Blockchain, sender: Address, tx: Transaction) {
+    let hash = tx.hash();
+    blockchain
+        .mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("seed mempool with unsigned tx");
+}
+
+#[tokio::test]
+async fn delegated_sender_second_tx_rejected_by_default_cap() {
+    let sender = Address::from_low_u64_be(0xD1);
+    let blockchain = setup_blockchain_with_sender(sender, true, 1).await;
+
+    seed_pending_tx(&blockchain, sender, delegated_sender_tx(0));
+
+    let tx1 = delegated_sender_tx(1);
+    let err = blockchain
+        .validate_transaction(&tx1, sender)
+        .await
+        .expect_err("second delegated tx should be rejected");
+    assert!(
+        matches!(err, MempoolError::MaxDelegatedPendingTxsExceeded(1)),
+        "unexpected error: {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn delegated_sender_replacement_bypasses_cap() {
+    let sender = Address::from_low_u64_be(0xD2);
+    let blockchain = setup_blockchain_with_sender(sender, true, 1).await;
+
+    seed_pending_tx(&blockchain, sender, delegated_sender_tx(0));
+
+    // RBF: same nonce, strictly higher fees → must be admitted even though the
+    // delegated sender already has 1 pending tx (the cap).
+    let replacement = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: TEST_CHAIN_ID,
+        nonce: 0,
+        max_priority_fee_per_gas: 2,
+        max_fee_per_gas: 2_000_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+    let tx_to_replace = blockchain
+        .validate_transaction(&replacement, sender)
+        .await
+        .expect("RBF replacement bypasses the delegated cap");
+    assert!(
+        tx_to_replace.is_some(),
+        "validate_transaction should report the slot being replaced"
+    );
+}
+
+#[tokio::test]
+async fn non_delegated_sender_second_tx_admitted() {
+    let sender = Address::from_low_u64_be(0xD3);
+    // Cap delegated senders at 1, but `sender` here is NOT delegated, so the
+    // cap must not apply.
+    let blockchain = setup_blockchain_with_sender(sender, false, 1).await;
+
+    seed_pending_tx(&blockchain, sender, delegated_sender_tx(0));
+
+    let tx1 = delegated_sender_tx(1);
+    blockchain
+        .validate_transaction(&tx1, sender)
+        .await
+        .expect("non-delegated sender is not subject to the delegated cap");
+}
+
+#[tokio::test]
+async fn delegated_sender_cap_override_admits_more_txs() {
+    let sender = Address::from_low_u64_be(0xD4);
+    // Custom override: allow 2 pending txs from delegated senders.
+    let blockchain = setup_blockchain_with_sender(sender, true, 2).await;
+
+    seed_pending_tx(&blockchain, sender, delegated_sender_tx(0));
+    seed_pending_tx(&blockchain, sender, delegated_sender_tx(1));
+
+    let tx2 = delegated_sender_tx(2);
+    let err = blockchain
+        .validate_transaction(&tx2, sender)
+        .await
+        .expect_err("third delegated tx should hit the override cap");
+    assert!(
+        matches!(err, MempoolError::MaxDelegatedPendingTxsExceeded(2)),
+        "unexpected error: {err:?}"
     );
 }
