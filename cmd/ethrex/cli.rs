@@ -11,6 +11,7 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, L2Config,
+    constants::{DEFAULT_DORMANCY, DEFAULT_MAX_NONCE_GAP, DEFAULT_MEMPOOL_LIFETIME},
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -63,6 +64,18 @@ pub struct CLI {
     pub opts: Options,
     #[command(subcommand)]
     pub command: Option<Subcommand>,
+}
+
+/// Format the default mempool lifetime as a clap-compatible string,
+/// reusing the [`DEFAULT_MEMPOOL_LIFETIME`] constant so it stays in sync.
+fn default_mempool_lifetime_str() -> clap::builder::OsStr {
+    format!("{}s", DEFAULT_MEMPOOL_LIFETIME.as_secs()).into()
+}
+
+/// Format the default mempool dormancy as a clap-compatible string,
+/// reusing the [`DEFAULT_DORMANCY`] constant so it stays in sync.
+fn default_mempool_dormancy_str() -> clap::builder::OsStr {
+    format!("{}s", DEFAULT_DORMANCY.as_secs()).into()
 }
 
 #[derive(ClapParser, Debug, Clone)]
@@ -183,6 +196,35 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Maximum age of a mempool transaction before it is evicted by the periodic sweep. Accepts values like 3h, 30m, 45s.",
+        long = "mempool.lifetime",
+        default_value = default_mempool_lifetime_str(),
+        value_parser = utils::parse_duration,
+        value_name = "DURATION",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_LIFETIME"
+    )]
+    pub mempool_lifetime: Duration,
+    #[arg(
+        help = "Maximum allowed gap between a sender's highest pending nonce and their on-chain nonce before the dormancy sweep is eligible to evict their pool entries.",
+        long = "mempool.max-nonce-gap",
+        default_value_t = DEFAULT_MAX_NONCE_GAP,
+        value_name = "GAP",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_MAX_NONCE_GAP"
+    )]
+    pub mempool_max_nonce_gap: u64,
+    #[arg(
+        help = "Dormancy window for the nonce-gap mempool sweep. A sender is only evicted when all their pool entries are older than this and the nonce gap exceeds --mempool.max-nonce-gap. Accepts values like 3h, 30m, 45s.",
+        long = "mempool.dormancy",
+        default_value = default_mempool_dormancy_str(),
+        value_parser = utils::parse_duration,
+        value_name = "DURATION",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_DORMANCY"
+    )]
+    pub mempool_dormancy: Duration,
     #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
@@ -392,6 +434,9 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_lifetime: DEFAULT_MEMPOOL_LIFETIME,
+            mempool_max_nonce_gap: DEFAULT_MAX_NONCE_GAP,
+            mempool_dormancy: DEFAULT_DORMANCY,
             ..Default::default()
         }
     }
@@ -414,6 +459,9 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_lifetime: DEFAULT_MEMPOOL_LIFETIME,
+            mempool_max_nonce_gap: DEFAULT_MAX_NONCE_GAP,
+            mempool_dormancy: DEFAULT_DORMANCY,
             ..Default::default()
         }
     }
@@ -450,6 +498,9 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_lifetime: DEFAULT_MEMPOOL_LIFETIME,
+            mempool_max_nonce_gap: DEFAULT_MAX_NONCE_GAP,
+            mempool_dormancy: DEFAULT_DORMANCY,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -626,6 +677,9 @@ impl Subcommand {
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
                         r#type: blockchain_type,
+                        mempool_lifetime: opts.mempool_lifetime,
+                        max_nonce_gap: opts.mempool_max_nonce_gap,
+                        dormancy: opts.mempool_dormancy,
                         ..Default::default()
                     },
                 )

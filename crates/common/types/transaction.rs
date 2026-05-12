@@ -3043,6 +3043,19 @@ mod mempool {
                 inner: Arc::new(tx),
             }
         }
+
+        /// Construct a [`MempoolTransaction`] with an explicit insertion timestamp.
+        ///
+        /// Intended for tests that need to inject a synthetic insertion time
+        /// (e.g. simulating txs older than the configured TTL/dormancy).
+        pub fn new_with_timestamp(tx: Transaction, sender: Address, timestamp: u128) -> Self {
+            Self {
+                timestamp,
+                sender,
+                inner: Arc::new(tx),
+            }
+        }
+
         pub fn time(&self) -> u128 {
             self.timestamp
         }

@@ -224,9 +224,14 @@ pub async fn init_l2(
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        mempool_lifetime: opts.node_opts.mempool_lifetime,
+        max_nonce_gap: opts.node_opts.mempool_max_nonce_gap,
+        dormancy: opts.node_opts.mempool_dormancy,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
+
+    blockchain.spawn_mempool_sweep();
 
     regenerate_state(&store, &rollup_store, &blockchain, None).await?;
 

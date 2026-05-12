@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, VecDeque, hash_map::Entry},
     sync::RwLock,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -20,7 +21,7 @@ use ethrex_common::{
         kzg_commitment_to_versioned_hash,
     },
 };
-use ethrex_storage::error::StoreError;
+use ethrex_storage::{Store, error::StoreError};
 use tracing::warn;
 
 #[derive(Debug, Default)]
@@ -496,6 +497,146 @@ impl Mempool {
 
         Ok(Some(tx_in_pool.hash()))
     }
+
+    /// Evict any pool entry older than `ttl`.
+    ///
+    /// Walks the entire transaction pool and removes every entry whose
+    /// insertion timestamp is older than `now - ttl`. Returns the number of
+    /// transactions actually removed.
+    ///
+    /// Used by the periodic mempool sweep task to bound how long an admitted
+    /// transaction can linger before being dropped, regardless of pool
+    /// occupancy.
+    pub fn evict_stale(&self, ttl: Duration) -> Result<usize, MempoolError> {
+        let now_micros = current_unix_micros();
+        let ttl_micros = ttl.as_micros();
+        let cutoff = now_micros.saturating_sub(ttl_micros);
+
+        let mut inner = self.write()?;
+
+        // Collect target hashes first to avoid mutating the map while iterating.
+        let stale_hashes: Vec<H256> = inner
+            .transaction_pool
+            .iter()
+            .filter_map(|(hash, tx)| {
+                if tx.time() < cutoff {
+                    Some(*hash)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut evicted = 0usize;
+        for hash in &stale_hashes {
+            inner.remove_transaction_with_lock(hash)?;
+            evicted += 1;
+        }
+        Ok(evicted)
+    }
+
+    /// Evict all pool entries from senders that have stalled the mempool.
+    ///
+    /// A sender is considered stalled when both:
+    ///   - their highest pool nonce exceeds the on-chain nonce by more than
+    ///     `max_nonce_gap` (likely a permanent gap that no future tx can fill),
+    ///     AND
+    ///   - every pool entry for that sender is older than `dormancy`
+    ///     (the sender has not advanced their on-chain nonce while occupying
+    ///     pool slots).
+    ///
+    /// When both hold, every pool entry for that sender is dropped. Returns
+    /// the total number of transactions removed.
+    pub async fn evict_dormant(
+        &self,
+        store: &Store,
+        max_nonce_gap: u64,
+        dormancy: Duration,
+    ) -> Result<usize, MempoolError> {
+        let now_micros = current_unix_micros();
+        let dormancy_micros = dormancy.as_micros();
+        let cutoff = now_micros.saturating_sub(dormancy_micros);
+
+        // Snapshot per-sender (top_nonce, oldest_timestamp) under the read
+        // lock so we can do async storage lookups without holding it.
+        struct SenderStats {
+            top_nonce: u64,
+            newest_timestamp: u128,
+        }
+
+        let snapshot: FxHashMap<Address, SenderStats> = {
+            let inner = self.read()?;
+            let mut acc: FxHashMap<Address, SenderStats> =
+                FxHashMap::with_capacity_and_hasher(128, Default::default());
+            for tx in inner.transaction_pool.values() {
+                let entry = acc.entry(tx.sender()).or_insert(SenderStats {
+                    top_nonce: tx.nonce(),
+                    newest_timestamp: tx.time(),
+                });
+                if tx.nonce() > entry.top_nonce {
+                    entry.top_nonce = tx.nonce();
+                }
+                if tx.time() > entry.newest_timestamp {
+                    entry.newest_timestamp = tx.time();
+                }
+            }
+            acc
+        };
+
+        let latest_block_number = store.get_latest_block_number().await?;
+
+        let mut dormant_senders: Vec<Address> = Vec::new();
+        for (sender, stats) in &snapshot {
+            // Newest entry must itself be older than the dormancy window,
+            // which is equivalent to "all entries are older than dormancy".
+            if stats.newest_timestamp >= cutoff {
+                continue;
+            }
+
+            let on_chain_nonce = store
+                .get_account_info(latest_block_number, *sender)
+                .await?
+                .map(|info| info.nonce)
+                .unwrap_or(0);
+
+            let gap = stats.top_nonce.saturating_sub(on_chain_nonce);
+            if gap > max_nonce_gap {
+                dormant_senders.push(*sender);
+            }
+        }
+
+        if dormant_senders.is_empty() {
+            return Ok(0);
+        }
+
+        let mut inner = self.write()?;
+        let mut evicted = 0usize;
+        for sender in dormant_senders {
+            let hashes: Vec<H256> = inner
+                .transaction_pool
+                .iter()
+                .filter_map(|(hash, tx)| {
+                    if tx.sender() == sender {
+                        Some(*hash)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            for hash in &hashes {
+                inner.remove_transaction_with_lock(hash)?;
+                evicted += 1;
+            }
+        }
+        Ok(evicted)
+    }
+}
+
+fn current_unix_micros() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros())
+        .unwrap_or(0)
 }
 
 /// Filter applied by the payload builder when querying pending transactions
@@ -573,4 +714,137 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::{
+        Address, U256,
+        types::{Genesis, LegacyTransaction, MempoolTransaction, Transaction, TxKind},
+    };
+    use ethrex_storage::{EngineType, Store};
+    use std::time::Duration;
+
+    /// Build a minimal legacy transaction for tests. Nonce and gas_price are
+    /// the only fields exercised by the eviction logic.
+    fn make_tx(nonce: u64) -> Transaction {
+        Transaction::LegacyTransaction(LegacyTransaction {
+            nonce,
+            gas_price: U256::one(),
+            gas: 21_000,
+            to: TxKind::Create,
+            value: U256::zero(),
+            data: Default::default(),
+            v: U256::from(0x1b),
+            r: U256::one(),
+            s: U256::one(),
+            ..Default::default()
+        })
+    }
+
+    fn micros_ago(seconds_ago: u64) -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_micros()
+            .saturating_sub(Duration::from_secs(seconds_ago).as_micros())
+    }
+
+    /// Insert a transaction with a synthetic insertion timestamp.
+    fn insert_with_age(mempool: &Mempool, sender: Address, nonce: u64, age_secs: u64) -> H256 {
+        let tx = make_tx(nonce);
+        let hash = tx.hash();
+        let mtx = MempoolTransaction::new_with_timestamp(tx, sender, micros_ago(age_secs));
+        mempool
+            .add_transaction(hash, sender, mtx)
+            .expect("add_transaction");
+        hash
+    }
+
+    async fn empty_store() -> Store {
+        let mut store = Store::new("", EngineType::InMemory).expect("create in-memory store");
+        let genesis =
+            serde_json::from_str::<Genesis>(include_str!("../../fixtures/genesis/l1.json"))
+                .expect("parse genesis");
+        store
+            .add_initial_state(genesis)
+            .await
+            .expect("add initial state");
+        store
+    }
+
+    #[test]
+    fn evict_stale_drops_old_keeps_fresh() {
+        let mempool = Mempool::new(16);
+        let sender = Address::from_low_u64_be(1);
+        let old_hash = insert_with_age(&mempool, sender, 0, 3_600 * 4); // 4h old
+        let fresh_hash = insert_with_age(&mempool, sender, 1, 60); // 1m old
+
+        let evicted = mempool
+            .evict_stale(Duration::from_secs(3 * 3_600))
+            .expect("evict_stale");
+        assert_eq!(evicted, 1);
+        assert!(!mempool.contains_tx(old_hash).expect("contains_tx"));
+        assert!(mempool.contains_tx(fresh_hash).expect("contains_tx"));
+    }
+
+    #[tokio::test]
+    async fn evict_dormant_removes_sender_with_gap_and_old_txs() {
+        let store = empty_store().await;
+        let mempool = Mempool::new(16);
+        let sender = Address::from_low_u64_be(2);
+
+        // Sender's on-chain nonce is 0; top pool nonce is 100 -> gap = 100 > 64.
+        // All entries are 4h old, beyond the 3h dormancy window.
+        let h1 = insert_with_age(&mempool, sender, 50, 3_600 * 4);
+        let h2 = insert_with_age(&mempool, sender, 100, 3_600 * 4);
+
+        let evicted = mempool
+            .evict_dormant(&store, 64, Duration::from_secs(3 * 3_600))
+            .await
+            .expect("evict_dormant");
+        assert_eq!(evicted, 2);
+        assert!(!mempool.contains_tx(h1).expect("contains_tx"));
+        assert!(!mempool.contains_tx(h2).expect("contains_tx"));
+    }
+
+    #[tokio::test]
+    async fn evict_dormant_keeps_recent_sender_despite_gap() {
+        let store = empty_store().await;
+        let mempool = Mempool::new(16);
+        let sender = Address::from_low_u64_be(3);
+
+        // Big gap, but the newest entry is fresh -> sender is still active.
+        let old_hash = insert_with_age(&mempool, sender, 50, 3_600 * 4);
+        let fresh_hash = insert_with_age(&mempool, sender, 100, 60);
+
+        let evicted = mempool
+            .evict_dormant(&store, 64, Duration::from_secs(3 * 3_600))
+            .await
+            .expect("evict_dormant");
+        assert_eq!(evicted, 0);
+        assert!(mempool.contains_tx(old_hash).expect("contains_tx"));
+        assert!(mempool.contains_tx(fresh_hash).expect("contains_tx"));
+    }
+
+    #[tokio::test]
+    async fn evict_dormant_keeps_small_gap_sender_even_when_old() {
+        let store = empty_store().await;
+        let mempool = Mempool::new(16);
+        let sender = Address::from_low_u64_be(4);
+
+        // Gap of 10 (top nonce 10, on-chain 0) is well below max_nonce_gap=64,
+        // so this sender should be left alone regardless of age.
+        let h1 = insert_with_age(&mempool, sender, 0, 3_600 * 4);
+        let h2 = insert_with_age(&mempool, sender, 10, 3_600 * 4);
+
+        let evicted = mempool
+            .evict_dormant(&store, 64, Duration::from_secs(3 * 3_600))
+            .await
+            .expect("evict_dormant");
+        assert_eq!(evicted, 0);
+        assert!(mempool.contains_tx(h1).expect("contains_tx"));
+        assert!(mempool.contains_tx(h2).expect("contains_tx"));
+    }
 }
