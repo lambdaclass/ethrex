@@ -185,9 +185,10 @@ pub struct Options {
     pub mempool_max_size: usize,
     #[arg(
         long = "http.addr",
-        default_value = "0.0.0.0",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
+        long_help = "Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_ADDR"
     )]
@@ -201,6 +202,18 @@ pub struct Options {
         env = "ETHREX_HTTP_PORT"
     )]
     pub http_port: String,
+    #[arg(
+        long = "http.api",
+        default_value = "eth,net,web3",
+        value_name = "NAMESPACES",
+        value_delimiter = ',',
+        value_parser = utils::parse_http_namespace,
+        help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_API"
+    )]
+    pub http_api: Vec<ethrex_rpc::RpcNamespace>,
     #[arg(
         long = "ws.enabled",
         default_value = "false",
@@ -381,7 +394,7 @@ impl Options {
             network: Some(Network::LocalDevnet),
             datadir: DB_ETHREX_DEV_L1.into(),
             dev: true,
-            http_addr: "0.0.0.0".to_string(),
+            http_addr: "127.0.0.1".to_string(),
             http_port: "8545".to_string(),
             authrpc_port: "8551".to_string(),
             metrics_port: "9090".to_string(),
@@ -404,7 +417,7 @@ impl Options {
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
-            http_addr: "0.0.0.0".into(),
+            http_addr: "127.0.0.1".into(),
             http_port: "1729".into(),
             authrpc_addr: "localhost".into(),
             authrpc_port: "8551".into(),
@@ -424,6 +437,7 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
+            http_api: ethrex_rpc::DEFAULT_HTTP_API.to_vec(),
             ws_enabled: false,
             ws_addr: Default::default(),
             ws_port: Default::default(),
@@ -1108,4 +1122,51 @@ pub async fn export_blocks(
         path = %path,
         "Exported blocks to file"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use ethrex_rpc::RpcNamespace;
+
+    /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
+    /// host is not exposed to the open internet.
+    #[test]
+    fn http_addr_defaults_to_loopback() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.http_addr, "127.0.0.1");
+    }
+
+    /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
+    /// explicitly to expose `admin`, `debug` or `txpool`.
+    #[test]
+    fn http_api_defaults_to_safe_namespaces() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Net, RpcNamespace::Web3]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_comma_separated_values() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,debug,admin"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_rejects_engine_namespace() {
+        let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,engine"]);
+        assert!(result.is_err(), "engine must not be allowed on --http.api");
+    }
+
+    #[test]
+    fn http_api_rejects_unknown_namespace() {
+        let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
+        assert!(result.is_err());
+    }
 }

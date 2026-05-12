@@ -233,6 +233,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        opts.http_api.iter().copied().collect(),
     );
 
     tracker.spawn(rpc_api);
