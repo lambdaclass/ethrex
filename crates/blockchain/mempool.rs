@@ -625,6 +625,35 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
+    /// Returns the saturating sum of `cost_without_base_fee()` for every
+    /// pending transaction from `sender` currently in the pool.
+    ///
+    /// Used at mempool admission to gate a sender's cumulative pending cost
+    /// against their on-chain balance: without this check, a sender at the
+    /// per-sender slot cap can have most of their pending txs be
+    /// guaranteed-fail at execution time and waste pool space.
+    ///
+    /// Any tx whose `cost_without_base_fee()` returns `None` (malformed gas
+    /// fields) is treated as `U256::MAX`, which forces the caller's cumulative
+    /// check to fail closed. This is conservative and intentional: such a tx
+    /// should never have been admitted, and biasing toward rejection here is
+    /// safer than silently undercounting.
+    pub fn sum_cost_for_sender(&self, sender: Address) -> Result<U256, MempoolError> {
+        let inner = self.read()?;
+        let mut total = U256::zero();
+        for (_key, hash) in inner
+            .txs_by_sender_nonce
+            .range((sender, 0)..=(sender, u64::MAX))
+        {
+            let Some(tx) = inner.transaction_pool.get(hash) else {
+                continue;
+            };
+            let cost = tx.cost_without_base_fee().unwrap_or(U256::MAX);
+            total = total.saturating_add(cost);
+        }
+        Ok(total)
+    }
+
     pub fn get_mempool_size(&self) -> Result<(u64, u64), MempoolError> {
         let txs_size = {
             let pool_lock = &self.read()?.transaction_pool;
@@ -808,4 +837,98 @@ pub fn transaction_intrinsic_gas(
         0
     };
     Ok(intrinsic.max(calldata_floor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, TxKind};
+
+    const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
+
+    fn build_tx(nonce: u64, max_fee_per_gas: u64, gas_limit: u64, value: U256) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas,
+            gas_limit,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value,
+            ..Default::default()
+        })
+    }
+
+    fn insert_tx(mempool: &Mempool, sender: Address, tx: Transaction) -> H256 {
+        let hash = H256::random();
+        mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .expect("add_transaction");
+        hash
+    }
+
+    #[test]
+    fn sum_cost_for_sender_empty_pool_is_zero() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let total = mempool.sum_cost_for_sender(sender).expect("sum");
+        assert_eq!(total, U256::zero());
+    }
+
+    #[test]
+    fn sum_cost_for_sender_sums_multiple_nonces() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let tx0 = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx1 = build_tx(1, 20, 21_000, U256::from(200u64));
+        let tx2 = build_tx(2, 30, 21_000, U256::from(300u64));
+
+        let expected = tx0.cost_without_base_fee().unwrap()
+            + tx1.cost_without_base_fee().unwrap()
+            + tx2.cost_without_base_fee().unwrap();
+
+        insert_tx(&mempool, sender, tx0);
+        insert_tx(&mempool, sender, tx1);
+        insert_tx(&mempool, sender, tx2);
+
+        let total = mempool.sum_cost_for_sender(sender).expect("sum");
+        assert_eq!(total, expected);
+    }
+
+    #[test]
+    fn sum_cost_for_sender_ignores_other_senders() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender_a = Address::random();
+        let sender_b = Address::random();
+
+        let tx_a = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx_b = build_tx(0, 50, 21_000, U256::from(999u64));
+
+        let expected_a = tx_a.cost_without_base_fee().unwrap();
+
+        insert_tx(&mempool, sender_a, tx_a);
+        insert_tx(&mempool, sender_b, tx_b);
+
+        let total_a = mempool.sum_cost_for_sender(sender_a).expect("sum a");
+        assert_eq!(total_a, expected_a);
+    }
+
+    #[test]
+    fn sum_cost_for_sender_after_remove_drops_that_tx() {
+        let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+        let sender = Address::random();
+
+        let tx0 = build_tx(0, 10, 21_000, U256::from(100u64));
+        let tx1 = build_tx(1, 10, 21_000, U256::from(200u64));
+        let expected_after = tx1.cost_without_base_fee().unwrap();
+
+        let hash0 = insert_tx(&mempool, sender, tx0);
+        insert_tx(&mempool, sender, tx1);
+
+        mempool.remove_transaction(&hash0).expect("remove");
+
+        let total = mempool.sum_cost_for_sender(sender).expect("sum");
+        assert_eq!(total, expected_after);
+    }
 }

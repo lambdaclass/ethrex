@@ -2977,7 +2977,7 @@ impl Blockchain {
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
+        let sender_balance = if let Some(sender_acc_info) = maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
@@ -3028,14 +3028,40 @@ impl Blockchain {
             if tx_cost > sender_acc_info.balance {
                 return Err(MempoolError::NotEnoughBalance);
             }
+
+            sender_acc_info.balance
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
-        }
+        };
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
         let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+
+        // Cumulative balance check across this sender's pending transactions.
+        // Without this, a sender at the per-sender slot cap can have only one
+        // of their N pending txs be fundable, with the other N-1 being
+        // guaranteed-fail spam wasting pool space. For replacements at the same
+        // (sender, nonce), the old tx's cost is subtracted from the running
+        // total so we don't double-count it.
+        let mut existing_cost = self.mempool.sum_cost_for_sender(sender)?;
+        if let Some(replace_hash) = tx_to_replace_hash
+            && let Some(old_tx) = self.mempool.get_transaction_by_hash(replace_hash)?
+        {
+            let old_cost = old_tx.cost_without_base_fee().unwrap_or(U256::MAX);
+            existing_cost = existing_cost.saturating_sub(old_cost);
+        }
+        let new_cost = tx
+            .cost_without_base_fee()
+            .ok_or(MempoolError::InvalidTxGasvalues)?;
+        let total = existing_cost.saturating_add(new_cost);
+        if total > sender_balance {
+            return Err(MempoolError::InsufficientCumulativeBalance {
+                required: total,
+                available: sender_balance,
+            });
+        }
 
         if tx
             .chain_id()

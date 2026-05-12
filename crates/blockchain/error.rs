@@ -1,5 +1,5 @@
 use ethrex_common::{
-    H256,
+    H256, U256,
     types::{BlobsBundleError, BlockHash},
 };
 use ethrex_rlp::error::RLPDecodeError;
@@ -111,6 +111,8 @@ pub enum MempoolError {
     InvalidChainId(u64),
     #[error("Account does not have enough balance to cover the tx cost")]
     NotEnoughBalance,
+    #[error("Sender's cumulative pending-tx cost ({required}) exceeds balance ({available})")]
+    InsufficientCumulativeBalance { required: U256, available: U256 },
     #[error("Transaction gas fields are invalid")]
     InvalidTxGasvalues,
     #[error("Invalid pooled TxType, expected: {0}")]
