@@ -3205,6 +3205,11 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
 /// once the last strong reference is dropped (no explicit shutdown signal).
 async fn run_mempool_sweep(blockchain: Weak<Blockchain>) {
     let mut interval = tokio::time::interval(MEMPOOL_SWEEP_INTERVAL);
+    // `Skip` so a sweep iteration that takes longer than the configured
+    // interval doesn't trigger a burst of back-to-back ticks afterward
+    // (default `Burst` behavior). Under load we'd rather skip a sweep cycle
+    // than queue them up.
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Drop the first immediate tick — let the node finish initialising before
     // doing any work.
     interval.tick().await;
