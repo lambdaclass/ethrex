@@ -105,6 +105,28 @@ pub struct CodeMetadata {
     pub length: u64,
 }
 
+/// EIP-7702 delegation designation prefix bytes (`0xef 0x01 0x00`).
+///
+/// An EOA whose code is exactly `EIP7702_DELEGATION_PREFIX || address` (23 bytes)
+/// is an EIP-7702 delegated account: calls into it execute the code at the
+/// delegate address.
+pub const EIP7702_DELEGATION_PREFIX: [u8; 3] = [0xef, 0x01, 0x00];
+
+/// Total length of an EIP-7702 delegation designation:
+/// 3-byte prefix + 20-byte delegate address.
+pub const EIP7702_DELEGATION_CODE_LEN: usize = EIP7702_DELEGATION_PREFIX.len() + 20;
+
+/// Returns `true` when `code` is exactly an EIP-7702 delegation designation
+/// (`0xef0100 || address`).
+///
+/// Callers that have access to [`CodeMetadata`] should length-pre-check
+/// (`length == EIP7702_DELEGATION_CODE_LEN as u64`) before fetching and
+/// passing the bytecode to this helper, to avoid pulling code from disk for
+/// accounts that can't possibly be delegated.
+pub fn is_eip7702_delegation(code: &[u8]) -> bool {
+    code.len() == EIP7702_DELEGATION_CODE_LEN && code.starts_with(&EIP7702_DELEGATION_PREFIX)
+}
+
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Account {
     pub info: AccountInfo,
@@ -395,5 +417,40 @@ mod test {
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")
                 .unwrap()
         )
+    }
+
+    #[test]
+    fn is_eip7702_delegation_recognizes_designation() {
+        let mut code = EIP7702_DELEGATION_PREFIX.to_vec();
+        code.extend_from_slice(&[0x42; 20]);
+        assert_eq!(code.len(), EIP7702_DELEGATION_CODE_LEN);
+        assert!(is_eip7702_delegation(&code));
+    }
+
+    #[test]
+    fn is_eip7702_delegation_rejects_wrong_length() {
+        // Too short: only the prefix.
+        assert!(!is_eip7702_delegation(&EIP7702_DELEGATION_PREFIX));
+
+        // Too long: prefix + 20 bytes + 1 trailing byte.
+        let mut too_long = EIP7702_DELEGATION_PREFIX.to_vec();
+        too_long.extend_from_slice(&[0x00; 21]);
+        assert!(!is_eip7702_delegation(&too_long));
+
+        // Empty code.
+        assert!(!is_eip7702_delegation(&[]));
+    }
+
+    #[test]
+    fn is_eip7702_delegation_rejects_wrong_prefix() {
+        // Right length, wrong prefix bytes.
+        let mut code = vec![0xef, 0x01, 0x01]; // last byte differs.
+        code.extend_from_slice(&[0x42; 20]);
+        assert_eq!(code.len(), EIP7702_DELEGATION_CODE_LEN);
+        assert!(!is_eip7702_delegation(&code));
+
+        let mut code = vec![0xee, 0x01, 0x00]; // first byte differs.
+        code.extend_from_slice(&[0x42; 20]);
+        assert!(!is_eip7702_delegation(&code));
     }
 }
