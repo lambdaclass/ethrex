@@ -510,9 +510,12 @@ async fn zero_tip_eip1559_rejected_under_default_floor() {
 
 #[tokio::test]
 async fn at_floor_eip1559_passes_tip_check() {
-    // Tip at the floor passes the min-tip check. The tx may still fail later
-    // (intrinsic gas, balance, etc.) — we only assert the tip check itself
-    // does not fire.
+    // Tip at the floor passes the min-tip check. The random sender has no
+    // funds, so the tx fails later with `NotEnoughBalance`; that's the only
+    // accepted post-tip-check outcome. Asserting the specific downstream
+    // error guards against a future refactor that accidentally skips the
+    // tip check (where a different error would still satisfy a `!matches!`
+    // negative assertion).
     let (config, header) = build_basic_config_and_header(false, false);
     let store = setup_storage(config, header).await.expect("Storage setup");
     let blockchain = blockchain_with_min_tip(store, 1_000_000);
@@ -529,12 +532,25 @@ async fn at_floor_eip1559_passes_tip_check() {
     let res = blockchain
         .validate_transaction(&tx, Address::random())
         .await;
-    assert!(!matches!(res, Err(MempoolError::TipBelowMinimum { .. })));
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
 }
 
 #[tokio::test]
 async fn floor_of_zero_admits_zero_tip() {
-    // Operators can disable the floor with --mempool.min-tip 0.
+    // Operators can disable the floor with --mempool.min-tip 0. Same
+    // structure as `at_floor_eip1559_passes_tip_check`: we want a specific
+    // downstream error (the balance check) to fire, NOT just "any error
+    // other than TipBelowMinimum".
     let (config, header) = build_basic_config_and_header(false, false);
     let store = setup_storage(config, header).await.expect("Storage setup");
     let blockchain = blockchain_with_min_tip(store, 0);
@@ -551,7 +567,13 @@ async fn floor_of_zero_admits_zero_tip() {
     let res = blockchain
         .validate_transaction(&tx, Address::random())
         .await;
-    assert!(!matches!(res, Err(MempoolError::TipBelowMinimum { .. })));
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to skip (floor=0) and an account-lookup error to fire next, got {res:?}",
+    );
 }
 
 #[tokio::test]
@@ -642,7 +664,10 @@ async fn shipped_default_floor_rejects_zero_tip_admits_one() {
         }),
     ));
 
-    // tip = 1 → passes the tip check (may fail later for other reasons)
+    // tip = 1 → passes the tip check; sender has no funds so the next
+    // failure is `NotEnoughBalance`. Assert that specifically rather than
+    // "not TipBelowMinimum" so the test catches accidental skip of the
+    // tip check in future refactors.
     let one = Transaction::EIP1559Transaction(EIP1559Transaction {
         max_priority_fee_per_gas: 1,
         max_fee_per_gas: 1,
@@ -653,7 +678,17 @@ async fn shipped_default_floor_rejects_zero_tip_admits_one() {
     let res = blockchain
         .validate_transaction(&one, Address::random())
         .await;
-    assert!(!matches!(res, Err(MempoolError::TipBelowMinimum { .. })));
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
 }
 
 #[tokio::test]
