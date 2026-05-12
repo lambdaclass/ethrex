@@ -464,23 +464,32 @@ impl Mempool {
         // Reject EIP-4844 replacements that carry fewer blobs than the in-pool tx.
         // A smaller sidecar costs the network less to gossip, so allowing a shrink
         // would let an attacker cycle "replace N-blob tx with 1-blob tx" cheaply
-        // even when the fee bump is satisfied.
+        // even when the fee bump is satisfied. A non-blob tx replacing a blob tx
+        // is a degenerate shrink (0 blobs vs the in-pool N) and is rejected the
+        // same way.
         //
-        // TODO: When PR #6601 lands (type-discriminant check for RBF), this guard
-        // can be simplified — the discriminant check there already guarantees both
-        // sides are EIP-4844 before reaching this point, so the explicit match
-        // becomes redundant.
-        if let (Transaction::EIP4844Transaction(old_tx), Transaction::EIP4844Transaction(new_tx)) =
-            (tx_in_pool.transaction(), tx)
-        {
-            let old_count = old_tx.blob_versioned_hashes.len();
-            let new_count = new_tx.blob_versioned_hashes.len();
-            if new_count < old_count {
+        // TODO: When PR #6601 lands (type-discriminant check for RBF), the
+        // cross-type case becomes unreachable here — keep the same-type shrink
+        // check and drop the cross-type arm.
+        match (tx_in_pool.transaction(), tx) {
+            (Transaction::EIP4844Transaction(old_tx), Transaction::EIP4844Transaction(new_tx)) => {
+                let old_count = old_tx.blob_versioned_hashes.len();
+                let new_count = new_tx.blob_versioned_hashes.len();
+                if new_count < old_count {
+                    return Err(MempoolError::ReplacementShrinksBlobs {
+                        old_count,
+                        new_count,
+                    });
+                }
+            }
+            (Transaction::EIP4844Transaction(old_tx), _) => {
+                // Non-blob trying to replace a blob tx: a degenerate shrink to 0.
                 return Err(MempoolError::ReplacementShrinksBlobs {
-                    old_count,
-                    new_count,
+                    old_count: old_tx.blob_versioned_hashes.len(),
+                    new_count: 0,
                 });
             }
+            _ => {}
         }
 
         let is_a_replacement_tx = {
@@ -725,5 +734,39 @@ mod tests {
             .find_tx_to_replace(sender, nonce, &new)
             .expect("growing-blob replacement with doubled fees should be accepted");
         assert_eq!(result, Some(old_hash));
+    }
+
+    #[test]
+    fn rejects_non_blob_replacement_of_blob_tx() {
+        // Cross-type: a non-blob tx (EIP-1559) trying to replace an EIP-4844 tx
+        // at the same (sender, nonce). Treated as a degenerate shrink to 0
+        // blobs and rejected. Belt-and-suspenders for the cross-type case
+        // until PR #6601's type-discriminant check lands.
+        use ethrex_common::types::EIP1559Transaction;
+
+        let mempool = Mempool::new(TEST_MEMPOOL_CAPACITY);
+        let sender = Address::from_low_u64_be(4);
+        let nonce = 0u64;
+
+        let old = make_blob_tx(nonce, 1, 10, U256::from(5u64), 3);
+        insert_tx(&mempool, sender, old);
+
+        let new = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 1_000_000,
+            max_fee_per_gas: 1_000_000,
+            ..Default::default()
+        });
+
+        let err = mempool
+            .find_tx_to_replace(sender, nonce, &new)
+            .expect_err("non-blob replacement of blob tx must be rejected");
+        assert!(matches!(
+            err,
+            MempoolError::ReplacementShrinksBlobs {
+                old_count: 3,
+                new_count: 0
+            }
+        ));
     }
 }
