@@ -538,10 +538,10 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
     assert!(broadcast_after.is_empty());
 }
 
-/// Private-mempool leak guard (per @iovoid PR #6576 review): a tx admitted
-/// via `add_transaction_no_broadcast` MUST be flagged via `is_private()` so
-/// the P2P paths (new-peer pooled-hashes dump in
-/// `send_all_pooled_tx_hashes`, and `GetPooledTransactions` responses via
+/// Private-mempool leak guard: a tx admitted via
+/// `add_transaction_no_broadcast` MUST be flagged via `is_private()` so the
+/// P2P paths (new-peer pooled-hashes dump in `send_all_pooled_tx_hashes`,
+/// and `GetPooledTransactions` responses via
 /// `Blockchain::get_p2p_transaction_by_hash`) can refuse to disclose it.
 #[test]
 fn add_transaction_no_broadcast_marks_tx_as_private_for_p2p_filters() {
