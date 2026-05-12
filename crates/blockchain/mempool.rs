@@ -538,15 +538,25 @@ impl Mempool {
     /// Evict all pool entries from senders that have stalled the mempool.
     ///
     /// A sender is considered stalled when both:
-    ///   - their highest pool nonce exceeds the on-chain nonce by more than
-    ///     `max_nonce_gap` (likely a permanent gap that no future tx can fill),
+    ///   - their LOWEST pool nonce exceeds the on-chain nonce by more than
+    ///     `max_nonce_gap` (i.e. there's a permanent gap separating their
+    ///     queue from current on-chain state — no future tx can bridge it),
     ///     AND
     ///   - every pool entry for that sender is older than `dormancy`
     ///     (the sender has not advanced their on-chain nonce while occupying
     ///     pool slots).
     ///
-    /// When both hold, every pool entry for that sender is dropped. Returns
-    /// the total number of transactions removed.
+    /// Comparing against `lowest` (not `top`) avoids false positives for a
+    /// sender with a long but contiguous queue (e.g. on-chain=0, pool=1..=65):
+    /// the queue is executable end-to-end, so the sender isn't dormant.
+    ///
+    /// To close the TOCTOU window between the read-lock snapshot and the
+    /// write-lock removal, the function records the exact `(hash, timestamp)`
+    /// pairs observed in the snapshot and only removes those hashes — txs
+    /// that arrived after the snapshot retain their fresh state and are not
+    /// evicted.
+    ///
+    /// Returns the total number of transactions removed.
     pub async fn evict_dormant(
         &self,
         store: &Store,
@@ -557,75 +567,81 @@ impl Mempool {
         let dormancy_micros = dormancy.as_micros();
         let cutoff = now_micros.saturating_sub(dormancy_micros);
 
-        // Snapshot per-sender (top_nonce, oldest_timestamp) under the read
-        // lock so we can do async storage lookups without holding it.
+        // Snapshot per-sender state under the read lock so the async storage
+        // lookups below can run without holding it. We retain the exact list
+        // of (hash, timestamp) pairs so the write phase can avoid evicting
+        // any tx that arrived after the snapshot.
         struct SenderStats {
-            top_nonce: u64,
+            lowest_nonce: u64,
             newest_timestamp: u128,
+            entries: Vec<(H256, u128)>,
         }
 
         let snapshot: FxHashMap<Address, SenderStats> = {
             let inner = self.read()?;
             let mut acc: FxHashMap<Address, SenderStats> =
                 FxHashMap::with_capacity_and_hasher(128, Default::default());
-            for tx in inner.transaction_pool.values() {
+            for (hash, tx) in inner.transaction_pool.iter() {
                 let entry = acc.entry(tx.sender()).or_insert(SenderStats {
-                    top_nonce: tx.nonce(),
+                    lowest_nonce: tx.nonce(),
                     newest_timestamp: tx.time(),
+                    entries: Vec::new(),
                 });
-                if tx.nonce() > entry.top_nonce {
-                    entry.top_nonce = tx.nonce();
+                if tx.nonce() < entry.lowest_nonce {
+                    entry.lowest_nonce = tx.nonce();
                 }
                 if tx.time() > entry.newest_timestamp {
                     entry.newest_timestamp = tx.time();
                 }
+                entry.entries.push((*hash, tx.time()));
             }
             acc
         };
 
         let latest_block_number = store.get_latest_block_number().await?;
 
-        let mut dormant_senders: Vec<Address> = Vec::new();
-        for (sender, stats) in &snapshot {
-            // Newest entry must itself be older than the dormancy window,
-            // which is equivalent to "all entries are older than dormancy".
+        let mut dormant: Vec<(Address, Vec<(H256, u128)>)> = Vec::new();
+        for (sender, stats) in snapshot {
+            // Every snapshot entry must already be older than the dormancy
+            // window. (Equivalent to "newest_timestamp < cutoff".)
             if stats.newest_timestamp >= cutoff {
                 continue;
             }
 
             let on_chain_nonce = store
-                .get_account_info(latest_block_number, *sender)
+                .get_account_info(latest_block_number, sender)
                 .await?
                 .map(|info| info.nonce)
                 .unwrap_or(0);
 
-            let gap = stats.top_nonce.saturating_sub(on_chain_nonce);
+            // Gap measured at the BOTTOM of the queue: if the lowest pending
+            // nonce is more than `max_nonce_gap` past on-chain, the queue is
+            // permanently unreachable. A contiguous queue (lowest = on_chain
+            // or on_chain+1) is reachable and won't fire this rule.
+            let gap = stats.lowest_nonce.saturating_sub(on_chain_nonce);
             if gap > max_nonce_gap {
-                dormant_senders.push(*sender);
+                dormant.push((sender, stats.entries));
             }
         }
 
-        if dormant_senders.is_empty() {
+        if dormant.is_empty() {
             return Ok(0);
         }
 
         let mut inner = self.write()?;
         let mut evicted = 0usize;
-        for sender in dormant_senders {
-            let hashes: Vec<H256> = inner
-                .transaction_pool
-                .iter()
-                .filter_map(|(hash, tx)| {
-                    if tx.sender() == sender {
-                        Some(*hash)
-                    } else {
-                        None
+        for (_sender, entries) in dormant {
+            for (hash, snapshot_ts) in entries {
+                // Only evict hashes whose pool entry STILL has the
+                // snapshot's timestamp. If a tx with the same hash was
+                // somehow re-inserted with a newer timestamp, leave it.
+                match inner.transaction_pool.get(&hash) {
+                    Some(tx) if tx.time() == snapshot_ts => {
+                        inner.remove_transaction_with_lock(&hash)?;
+                        evicted += 1;
                     }
-                })
-                .collect();
-            for hash in &hashes {
-                inner.remove_transaction_with_lock(hash)?;
-                evicted += 1;
+                    _ => {}
+                }
             }
         }
         Ok(evicted)
@@ -795,10 +811,10 @@ mod tests {
         let mempool = Mempool::new(16);
         let sender = Address::from_low_u64_be(2);
 
-        // Sender's on-chain nonce is 0; top pool nonce is 100 -> gap = 100 > 64.
-        // All entries are 4h old, beyond the 3h dormancy window.
-        let h1 = insert_with_age(&mempool, sender, 50, 3_600 * 4);
-        let h2 = insert_with_age(&mempool, sender, 100, 3_600 * 4);
+        // Sender's on-chain nonce is 0; LOWEST pool nonce is 100 -> gap=100>64.
+        // Every queue entry is 4h old, beyond the 3h dormancy window.
+        let h1 = insert_with_age(&mempool, sender, 100, 3_600 * 4);
+        let h2 = insert_with_age(&mempool, sender, 200, 3_600 * 4);
 
         let evicted = mempool
             .evict_dormant(&store, 64, Duration::from_secs(3 * 3_600))
@@ -815,9 +831,10 @@ mod tests {
         let mempool = Mempool::new(16);
         let sender = Address::from_low_u64_be(3);
 
-        // Big gap, but the newest entry is fresh -> sender is still active.
-        let old_hash = insert_with_age(&mempool, sender, 50, 3_600 * 4);
-        let fresh_hash = insert_with_age(&mempool, sender, 100, 60);
+        // Big gap (lowest=100, on_chain=0, gap=100>64) but the newest entry
+        // is fresh — sender is still active.
+        let old_hash = insert_with_age(&mempool, sender, 100, 3_600 * 4);
+        let fresh_hash = insert_with_age(&mempool, sender, 200, 60);
 
         let evicted = mempool
             .evict_dormant(&store, 64, Duration::from_secs(3 * 3_600))
@@ -826,6 +843,37 @@ mod tests {
         assert_eq!(evicted, 0);
         assert!(mempool.contains_tx(old_hash).expect("contains_tx"));
         assert!(mempool.contains_tx(fresh_hash).expect("contains_tx"));
+    }
+
+    #[tokio::test]
+    async fn evict_dormant_keeps_long_contiguous_queue() {
+        // Regression test for the greptile P1: a sender with a long
+        // CONTIGUOUS queue starting at on-chain+1 must NOT be marked
+        // dormant just because the queue length exceeds max_nonce_gap.
+        // Comparing against the LOWEST pending nonce (rather than the top)
+        // avoids the false positive.
+        let store = empty_store().await;
+        let mempool = Mempool::new(128);
+        let sender = Address::from_low_u64_be(7);
+
+        // 70 contiguous nonces 1..=70, all old. on_chain=0, lowest=1,
+        // so gap = 1 ≤ 64 — the queue is reachable, sender is NOT dormant.
+        let mut hashes = Vec::new();
+        for nonce in 1..=70u64 {
+            hashes.push(insert_with_age(&mempool, sender, nonce, 3_600 * 4));
+        }
+
+        let evicted = mempool
+            .evict_dormant(&store, 64, Duration::from_secs(3 * 3_600))
+            .await
+            .expect("evict_dormant");
+        assert_eq!(
+            evicted, 0,
+            "long contiguous queues must not trigger the dormancy rule",
+        );
+        for h in &hashes {
+            assert!(mempool.contains_tx(*h).expect("contains_tx"));
+        }
     }
 
     #[tokio::test]
