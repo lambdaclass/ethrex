@@ -47,10 +47,13 @@ struct MempoolInner {
     /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
-    /// Min-heap (via `Reverse`) of `(effective tip, hash)` used to pick the
-    /// lowest-tip transaction to evict when the mempool is full. Entries are
-    /// removed lazily — a popped hash that is no longer in `transaction_pool`
-    /// is treated as a tombstone and skipped.
+    /// Min-heap (via `Reverse`) of `(gas_tip_cap, hash)` used to pick the
+    /// lowest-tip-cap transaction to evict when the mempool is full. The
+    /// key is the raw `Transaction::gas_tip_cap()` projected to `u64`, NOT
+    /// the base-fee-adjusted effective tip — admission decisions stay stable
+    /// as base fee oscillates. Entries are removed lazily — a popped hash
+    /// that is no longer in `transaction_pool` is treated as a tombstone
+    /// and skipped.
     txs_by_tip: BinaryHeap<Reverse<(u64, H256)>>,
     max_mempool_size: usize,
     /// Max number of entries to let the eviction heap grow before rebuilding
@@ -140,9 +143,9 @@ impl MempoolInner {
     }
 }
 
-/// Project a transaction's effective tip cap into a `u64` heap key.
-/// Tips above `u64::MAX` saturate so astronomically-large fees still order
-/// to the top of the heap (i.e., they are evicted last).
+/// Project a transaction's raw tip cap (`gas_tip_cap`) into a `u64` heap key.
+/// Tips above `u64::MAX` saturate so astronomically-large fees rank highest
+/// (and are therefore evicted last by the min-heap).
 fn tip_key(tx: &Transaction) -> u64 {
     u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX)
 }
@@ -188,7 +191,8 @@ impl Mempool {
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         // Rebuild the eviction heap if tombstones have accumulated past the
-        // configured threshold (heap-size > MEMPOOL_PRUNE_THRESHOLD_FACTOR * max_mempool_size).
+        // configured threshold (heap-size > max_mempool_size *
+        // MEMPOOL_PRUNE_THRESHOLD_NUM / MEMPOOL_PRUNE_THRESHOLD_DEN).
         if inner.txs_by_tip.len() > inner.mempool_prune_threshold {
             inner.rebuild_tip_heap();
         }
