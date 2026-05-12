@@ -179,7 +179,7 @@ pub struct Options {
         long = "mempool.private",
         default_value_t = false,
         action = ArgAction::SetTrue,
-        help = "Keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected. Mirrors reth's --txpool.no-local-transactions-propagation.",
+        help = "Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.",
         help_heading = "Node options",
         env = "ETHREX_MEMPOOL_PRIVATE"
     )]

@@ -87,7 +87,7 @@ Node options:
           [default: 10000]
 
       --mempool.private
-          Keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected. Mirrors reth's --txpool.no-local-transactions-propagation.
+          Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.
 
           [env: ETHREX_MEMPOOL_PRIVATE=]
 
