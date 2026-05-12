@@ -847,11 +847,11 @@ mod tests {
 
     #[tokio::test]
     async fn evict_dormant_keeps_long_contiguous_queue() {
-        // Regression test for the greptile P1: a sender with a long
-        // CONTIGUOUS queue starting at on-chain+1 must NOT be marked
-        // dormant just because the queue length exceeds max_nonce_gap.
-        // Comparing against the LOWEST pending nonce (rather than the top)
-        // avoids the false positive.
+        // Regression test for the contiguous-queue false positive: a sender
+        // with a long CONTIGUOUS queue starting at on-chain+1 must NOT be
+        // marked dormant just because the queue length exceeds
+        // `max_nonce_gap`. Comparing against the LOWEST pending nonce
+        // (rather than the top) avoids the false positive.
         let store = empty_store().await;
         let mempool = Mempool::new(128);
         let sender = Address::from_low_u64_be(7);
