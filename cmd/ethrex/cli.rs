@@ -10,7 +10,7 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD, L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -237,6 +237,16 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Mempool occupancy percentage (0-100) at or above which incoming transactions with a nonce gap relative to the sender's on-chain nonce are rejected. Setting to 100 disables the check.",
+        long = "mempool.gap-admit-occupancy-threshold",
+        default_value_t = DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
+        value_name = "PERCENTAGE",
+        value_parser = clap::value_parser!(u8).range(0..=100),
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_GAP_ADMIT_OCCUPANCY_THRESHOLD"
+    )]
+    pub mempool_gap_admit_occupancy_threshold: u8,
     #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
@@ -519,6 +529,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

@@ -125,6 +125,8 @@ pub enum MempoolError {
     EmptyAuthorizationList,
     #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
     Eip7702TxPreFork,
+    #[error("Mempool {occupancy_pct}% full; rejecting gapped-nonce tx (nonce gap = {nonce_gap})")]
+    GapAdmissionDeniedUnderPressure { occupancy_pct: u8, nonce_gap: u64 },
 }
 
 #[derive(Debug)]

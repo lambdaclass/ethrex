@@ -122,6 +122,9 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
+/// Default mempool occupancy percentage (0-100) at which gapped-nonce
+/// transaction admission is denied. Set to 100 to disable the check.
+pub const DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD: u8 = 90;
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -258,6 +261,10 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// Mempool occupancy percentage (0-100) at or above which incoming
+    /// transactions with a nonce gap relative to the sender's on-chain nonce
+    /// are rejected. Setting to 100 disables the check.
+    pub gap_admit_occupancy_threshold: u8,
 }
 
 impl Default for BlockchainOptions {
@@ -272,6 +279,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            gap_admit_occupancy_threshold: DEFAULT_GAP_ADMIT_OCCUPANCY_THRESHOLD,
         }
     }
 }
@@ -2965,7 +2973,7 @@ impl Blockchain {
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
+        let sender_acc_nonce = if let Some(sender_acc_info) = &maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
@@ -2977,10 +2985,11 @@ impl Blockchain {
             if tx_cost > sender_acc_info.balance {
                 return Err(MempoolError::NotEnoughBalance);
             }
+            sender_acc_info.nonce
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
-        }
+        };
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
@@ -2991,6 +3000,24 @@ impl Blockchain {
             .is_some_and(|chain_id| chain_id != config.chain_id)
         {
             return Err(MempoolError::InvalidChainId(config.chain_id));
+        }
+
+        // When the mempool is heavily occupied, reject incoming transactions
+        // whose nonce is not contiguous with the sender's on-chain nonce. This
+        // prevents a flood of gapped-nonce spam txs from pinning pool budget
+        // that productive txs could use. Replacements (same nonce as a tx
+        // already in the pool) bypass this rule since they are not gapped.
+        let threshold = self.options.gap_admit_occupancy_threshold;
+        if tx_to_replace_hash.is_none()
+            && nonce != sender_acc_nonce
+            && self.mempool.is_heavily_occupied(threshold)?
+        {
+            let occupancy_pct = (self.mempool.occupancy_ratio()? * 100.0).round() as u8;
+            let nonce_gap = nonce.saturating_sub(sender_acc_nonce);
+            return Err(MempoolError::GapAdmissionDeniedUnderPressure {
+                occupancy_pct,
+                nonce_gap,
+            });
         }
 
         Ok(tx_to_replace_hash)

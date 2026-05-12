@@ -638,6 +638,32 @@ impl Mempool {
         Ok((txs_size as u64, blobs_size as u64))
     }
 
+    /// Returns the current occupancy of the transaction pool as a fraction of
+    /// its configured maximum size, in the range `[0.0, 1.0]`.
+    ///
+    /// Returns `0.0` when the pool has unlimited capacity (`max_mempool_size == 0`)
+    /// to avoid a division by zero and to signal that pressure-gated admission
+    /// rules should treat the pool as empty in that configuration.
+    pub fn occupancy_ratio(&self) -> Result<f64, MempoolError> {
+        let inner = self.read()?;
+        if inner.max_mempool_size == 0 {
+            return Ok(0.0);
+        }
+        let ratio = inner.transaction_pool.len() as f64 / inner.max_mempool_size as f64;
+        Ok(ratio.min(1.0))
+    }
+
+    /// Returns true when the transaction pool occupancy is at or above the
+    /// given threshold percentage (0-100). A threshold of 100 effectively
+    /// disables the check, since occupancy can never exceed 100%.
+    pub fn is_heavily_occupied(&self, threshold_pct: u8) -> Result<bool, MempoolError> {
+        if threshold_pct >= 100 {
+            return Ok(false);
+        }
+        let ratio = self.occupancy_ratio()?;
+        Ok(ratio * 100.0 >= threshold_pct as f64)
+    }
+
     /// Returns all transactions currently in the pool
     pub fn content(&self) -> Result<Vec<Transaction>, MempoolError> {
         let pooled_transactions = &self.read()?.transaction_pool;
@@ -808,4 +834,78 @@ pub fn transaction_intrinsic_gas(
         0
     };
     Ok(intrinsic.max(calldata_floor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, Transaction, TxKind};
+    use ethrex_common::{Address, Bytes};
+
+    fn dummy_mempool_tx(sender: Address, nonce: u64) -> MempoolTransaction {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value: U256::zero(),
+            data: Bytes::default(),
+            access_list: Default::default(),
+            ..Default::default()
+        });
+        MempoolTransaction::new(tx, sender)
+    }
+
+    fn fill_mempool(mempool: &Mempool, count: usize) {
+        for i in 0..count {
+            let sender = Address::from_low_u64_be(i as u64 + 1);
+            let hash = H256::from_low_u64_be(i as u64 + 1);
+            mempool
+                .add_transaction(hash, sender, dummy_mempool_tx(sender, 0))
+                .expect("Failed to add transaction");
+        }
+    }
+
+    #[test]
+    fn occupancy_ratio_empty_pool() {
+        let mempool = Mempool::new(100);
+        assert_eq!(mempool.occupancy_ratio().unwrap(), 0.0);
+    }
+
+    #[test]
+    fn occupancy_ratio_half_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 50);
+        assert!((mempool.occupancy_ratio().unwrap() - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn occupancy_ratio_full_pool() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 100);
+        assert_eq!(mempool.occupancy_ratio().unwrap(), 1.0);
+    }
+
+    #[test]
+    fn is_heavily_occupied_disabled_at_threshold_100() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 100);
+        // Threshold of 100 disables the check.
+        assert!(!mempool.is_heavily_occupied(100).unwrap());
+    }
+
+    #[test]
+    fn is_heavily_occupied_below_threshold() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 50);
+        assert!(!mempool.is_heavily_occupied(90).unwrap());
+    }
+
+    #[test]
+    fn is_heavily_occupied_at_or_above_threshold() {
+        let mempool = Mempool::new(100);
+        fill_mempool(&mempool, 91);
+        assert!(mempool.is_heavily_occupied(90).unwrap());
+    }
 }
