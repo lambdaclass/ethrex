@@ -325,27 +325,31 @@ async fn handle_forkchoice(
             };
 
             // Re-inject any transactions orphaned by a reorg back into the mempool.
-            // This is best-effort: failures during re-injection are logged and ignored.
-            // The reorg detection itself is cheap when there was no reorg (the
-            // common-ancestor walk exits immediately when the previous head is the
-            // parent of the new head).
+            // This is best-effort and is spawned off the FCU response path so the
+            // CL gets its acknowledgment immediately. A near-cap reorg of ~10K
+            // orphaned txs would otherwise add ~1+ second of ECDSA recovery + KZG
+            // re-verification to the engine API response (well under the 8s spec
+            // timeout but tight enough to destabilize CL timing budgets).
             if !previous_head_hash.is_zero() && previous_head_hash != head.hash() {
-                match context
-                    .blockchain
-                    .reinject_orphaned_transactions(previous_head_hash, head.hash())
-                    .await
-                {
-                    Ok(0) => {}
-                    Ok(count) => {
-                        debug!(
-                            reinjected = count,
-                            "Re-injected orphaned transactions into mempool"
-                        );
+                let blockchain = context.blockchain.clone();
+                let new_head_hash = head.hash();
+                tokio::spawn(async move {
+                    match blockchain
+                        .reinject_orphaned_transactions(previous_head_hash, new_head_hash)
+                        .await
+                    {
+                        Ok(0) => {}
+                        Ok(count) => {
+                            debug!(
+                                reinjected = count,
+                                "Re-injected orphaned transactions into mempool"
+                            );
+                        }
+                        Err(error) => {
+                            debug!(%error, "Failed to re-inject orphaned transactions");
+                        }
                     }
-                    Err(error) => {
-                        debug!(%error, "Failed to re-inject orphaned transactions");
-                    }
-                }
+                });
             }
 
             // Purge blob sidecars from the limbo for transactions in newly-finalized
