@@ -423,6 +423,18 @@ impl Mempool {
         Ok(pool_lock.len() as u64)
     }
 
+    /// Returns the number of pending transactions in the pool for `sender`.
+    ///
+    /// Used by per-sender admission caps (see [`Blockchain::validate_transaction`]).
+    pub fn pending_tx_count_for_sender(&self, sender: Address) -> Result<u64, MempoolError> {
+        let inner = self.read()?;
+        let count = inner
+            .txs_by_sender_nonce
+            .range((sender, 0)..=(sender, u64::MAX))
+            .count();
+        Ok(count as u64)
+    }
+
     pub fn contains_sender_nonce(
         &self,
         sender: Address,
@@ -573,4 +585,76 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, TxKind};
+
+    const TEST_MEMPOOL_MAX_SIZE: usize = 64;
+
+    fn mempool_tx(sender: Address, nonce: u64) -> (H256, MempoolTransaction) {
+        let tx = EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            value: U256::zero(),
+            data: Default::default(),
+            access_list: Default::default(),
+            ..Default::default()
+        };
+        let tx = Transaction::EIP1559Transaction(tx);
+        // Fabricate a unique hash per (sender, nonce) — `add_transaction` does
+        // not recompute, it stores by the hash we pass in. We avoid collisions
+        // with random bytes derived from the inputs.
+        let mut bytes = [0u8; 32];
+        bytes[..20].copy_from_slice(sender.as_bytes());
+        bytes[24..].copy_from_slice(&nonce.to_be_bytes());
+        let hash = H256::from(bytes);
+        let mempool_tx = MempoolTransaction::new(tx, sender);
+        (hash, mempool_tx)
+    }
+
+    #[test]
+    fn pending_tx_count_isolates_senders() {
+        let mempool = Mempool::new(TEST_MEMPOOL_MAX_SIZE);
+        let alice = Address::from_low_u64_be(0xA);
+        let bob = Address::from_low_u64_be(0xB);
+
+        for nonce in 0..3 {
+            let (hash, tx) = mempool_tx(alice, nonce);
+            mempool.add_transaction(hash, alice, tx).unwrap();
+        }
+        let (hash, tx) = mempool_tx(bob, 0);
+        mempool.add_transaction(hash, bob, tx).unwrap();
+
+        assert_eq!(mempool.pending_tx_count_for_sender(alice).unwrap(), 3);
+        assert_eq!(mempool.pending_tx_count_for_sender(bob).unwrap(), 1);
+        assert_eq!(
+            mempool
+                .pending_tx_count_for_sender(Address::from_low_u64_be(0xC))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn pending_tx_count_decrements_on_remove() {
+        let mempool = Mempool::new(TEST_MEMPOOL_MAX_SIZE);
+        let sender = Address::from_low_u64_be(0xA);
+
+        let (hash0, tx0) = mempool_tx(sender, 0);
+        let (hash1, tx1) = mempool_tx(sender, 1);
+        mempool.add_transaction(hash0, sender, tx0).unwrap();
+        mempool.add_transaction(hash1, sender, tx1).unwrap();
+        assert_eq!(mempool.pending_tx_count_for_sender(sender).unwrap(), 2);
+
+        mempool.remove_transaction(&hash0).unwrap();
+        assert_eq!(mempool.pending_tx_count_for_sender(sender).unwrap(), 1);
+        mempool.remove_transaction(&hash1).unwrap();
+        assert_eq!(mempool.pending_tx_count_for_sender(sender).unwrap(), 0);
+    }
 }

@@ -52,3 +52,12 @@ pub const MIN_GAS_LIMIT: u64 = 5000;
 // === EIP-7825 constants ===
 // https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
+
+// === Mempool per-sender caps ===
+
+/// Default upper bound on the number of pending transactions an EIP-7702
+/// delegated EOA may keep in the mempool. Delegated EOAs can be invoked by
+/// their delegate to act on behalf of other identities, which amplifies the
+/// spam surface of a single signer, so they are held to a much tighter cap
+/// than regular externally-owned accounts.
+pub const DEFAULT_DELEGATED_SENDER_CAP: u64 = 1;
