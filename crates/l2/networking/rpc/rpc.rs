@@ -232,6 +232,11 @@ async fn handle_http_request(
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match resolve_namespace(&req.method) {
+        // `Eth` is handled here (not delegated to L1) so that L2-specific
+        // overrides in `map_eth_requests` see the full L2 context. Because we
+        // bypass `ethrex_rpc::map_http_requests`, the `--http.api` allowlist
+        // guard must be enforced explicitly here. Any future namespace that
+        // gains a dedicated arm before the `_` fallthrough must do the same.
         Ok(RpcNamespace::L1RpcNamespace(L1RpcNamespace::Eth)) => {
             if !context
                 .l1_ctx

@@ -829,12 +829,20 @@ where
     E: Into<RpcErrorMetadata>,
 {
     match req.method.as_str() {
-        "eth_subscribe" => {
-            let result = handle_eth_subscribe(&req, context, out_tx, subscription_ids).await;
-            rpc_response(req.id, result).ok()
-        }
-        "eth_unsubscribe" => {
-            let result = handle_eth_unsubscribe(&req, context, subscription_ids).await;
+        "eth_subscribe" | "eth_unsubscribe" => {
+            // Subscriptions are part of the `eth` namespace and must obey the
+            // same `--http.api` allowlist as regular `eth_*` requests; otherwise
+            // a node started with e.g. `--http.api web3` would still expose
+            // `eth_subscribe("newHeads")` over WS.
+            if !context.allowed_namespaces.contains(&RpcNamespace::Eth) {
+                let err: Result<Value, RpcErr> = Err(RpcErr::MethodNotFound(req.method.clone()));
+                return rpc_response(req.id, err).ok();
+            }
+            let result = if req.method == "eth_subscribe" {
+                handle_eth_subscribe(&req, context, out_tx, subscription_ids).await
+            } else {
+                handle_eth_unsubscribe(&req, context, subscription_ids).await
+            };
             rpc_response(req.id, result).ok()
         }
         _ => {
@@ -1253,6 +1261,57 @@ mod tests {
                 "default allowlist should route {method}, got {result:?}"
             );
         }
+    }
+
+    /// WebSocket subscriptions live in the `eth` namespace and must obey the
+    /// same `--http.api` allowlist as regular `eth_*` requests. A node started
+    /// without `eth` in the allowlist must not serve `eth_subscribe` over WS.
+    #[tokio::test]
+    async fn ws_subscribe_blocked_when_eth_namespace_disabled() {
+        let body = r#"{"jsonrpc":"2.0","method":"eth_subscribe","params":["newHeads"],"id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let mut context = default_context_with_storage(storage).await;
+        // Allow everything except `eth` so the WS path is the only thing under test.
+        let mut without_eth: HashSet<RpcNamespace> = crate::test_utils::all_namespaces_for_tests();
+        without_eth.remove(&RpcNamespace::Eth);
+        context.allowed_namespaces = Arc::new(without_eth);
+
+        let (out_tx, _out_rx) = tokio::sync::mpsc::channel::<String>(1);
+        let mut subscription_ids: Vec<String> = Vec::new();
+        let route_request = |_req: RpcRequest| async move {
+            panic!(
+                "route_request must not be called for eth_subscribe when the namespace is disabled"
+            );
+            #[allow(unreachable_code)]
+            Ok::<Value, RpcErr>(Value::Null)
+        };
+
+        let response = process_ws_request(
+            request,
+            &context,
+            &out_tx,
+            &mut subscription_ids,
+            &route_request,
+        )
+        .await
+        .expect("process_ws_request should return an error response");
+
+        let err = response.get("error").expect("expected error field");
+        assert_eq!(
+            err.get("code").and_then(|v| v.as_i64()),
+            Some(-32601),
+            "expected MethodNotFound (-32601), got {response}"
+        );
+        assert!(
+            subscription_ids.is_empty(),
+            "no subscription should have been registered"
+        );
     }
 
     /// The Engine namespace must never be served over the public HTTP endpoint,
