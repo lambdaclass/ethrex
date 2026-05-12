@@ -1059,9 +1059,12 @@ pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
 pub fn calculate_staleness_timestamp(timestamp: u64, chain_id: u64) -> u64 {
     // BSC (chain_id 56/97) prunes pruned-mode peers at ~128 blocks of ~0.45s
     // each, so we have ~57s before peers can no longer serve our requested
-    // state_root. Be conservative and refresh at +50s.
+    // state_root. Refresh at +55s — the prior +50s margin left state-heal
+    // cycles unable to make any progress within the window on IO-constrained
+    // nodes; +55s buys a bit more useful work per cycle while keeping a 2s
+    // safety buffer against the peer-prune horizon.
     if chain_id == 56 || chain_id == 97 {
-        return timestamp + 50;
+        return timestamp + 55;
     }
     timestamp + (SNAP_LIMIT as u64 * SECONDS_PER_BLOCK)
 }
