@@ -122,64 +122,20 @@ impl LevmOpcodeTracer {
             return;
         }
 
-        // Stack: Some(vec) when capture enabled; None when disabled (emits JSON null).
-        let stack = if !self.cfg.disable_stack {
-            Some(stack_view.to_vec())
-        } else {
-            None
-        };
-
-        // Memory: chunked 32-byte slices when enabled; field omitted otherwise.
-        // When enabled and memory is empty, emit `Some(vec![])` so the field
-        // stays present (an empty array signals "captured, just empty").
-        let memory = if self.cfg.enable_memory {
-            if memory_view.is_empty() {
-                Some(vec![])
-            } else {
-                let chunks = memory_view
-                    .chunks(32)
-                    .map(|c| {
-                        let mut arr = [0u8; 32];
-                        if let Some(dst) = arr.get_mut(..c.len()) {
-                            dst.copy_from_slice(c);
-                        }
-                        MemoryChunk(arr)
-                    })
-                    .collect();
-                Some(chunks)
-            }
-        } else {
-            None
-        };
-
-        // Storage: single-entry map for this step only (no accumulation).
-        let storage = storage_kv.map(|(key, value)| {
-            let mut m = BTreeMap::new();
-            m.insert(key, value);
-            m
-        });
-
-        // returnData: actual bytes when enabled; empty Bytes otherwise.
-        let return_data_field = if self.cfg.enable_return_data {
-            return_data.clone()
-        } else {
-            Bytes::new()
-        };
-
-        let log = OpcodeStep {
+        let log = build_step(
+            &self.cfg,
             pc,
-            op: opcode,
+            opcode,
             gas,
-            gas_cost: 0, // patched in finalize_step
-            mem_size,
+            /* gas_cost */ 0, // patched in finalize_step
             depth,
-            return_data: return_data_field,
             refund,
-            stack,
-            memory,
-            storage,
-            error: None, // patched in finalize_step
-        };
+            stack_view,
+            memory_view,
+            mem_size,
+            return_data,
+            storage_kv,
+        );
 
         self.last_step_index = Some(self.logs.len());
         self.logs.push(log);
@@ -222,5 +178,88 @@ impl LevmOpcodeTracer {
             output: std::mem::take(&mut self.output),
             steps: std::mem::take(&mut self.logs),
         }
+    }
+}
+
+/// Constructs an [`OpcodeStep`] from raw VM state. Shared between the
+/// dispatch-loop hook (`pre_step_capture`) and synthetic-step builders
+/// (e.g. fused JUMPDEST under JUMP/JUMPI). Callers pass `gas_cost = 0` when
+/// they intend to patch it later in `finalize_step`; synthetic steps pass the
+/// known cost directly.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "all fields are required per-step state captured from VM"
+)]
+pub fn build_step(
+    cfg: &OpcodeTracerConfig,
+    pc: u64,
+    opcode: u8,
+    gas: u64,
+    gas_cost: u64,
+    depth: u32,
+    refund: u64,
+    stack_view: &[U256],
+    memory_view: &[u8],
+    mem_size: u64,
+    return_data: &Bytes,
+    storage_kv: Option<(H256, H256)>,
+) -> OpcodeStep {
+    // Stack: Some(vec) when capture enabled; None when disabled (emits JSON null).
+    let stack = if !cfg.disable_stack {
+        Some(stack_view.to_vec())
+    } else {
+        None
+    };
+
+    // Memory: chunked 32-byte slices when enabled; field omitted otherwise.
+    // When enabled and memory is empty, emit `Some(vec![])` so the field
+    // stays present (an empty array signals "captured, just empty").
+    let memory = if cfg.enable_memory {
+        if memory_view.is_empty() {
+            Some(vec![])
+        } else {
+            let chunks = memory_view
+                .chunks(32)
+                .map(|c| {
+                    let mut arr = [0u8; 32];
+                    if let Some(dst) = arr.get_mut(..c.len()) {
+                        dst.copy_from_slice(c);
+                    }
+                    MemoryChunk(arr)
+                })
+                .collect();
+            Some(chunks)
+        }
+    } else {
+        None
+    };
+
+    // Storage: single-entry map for this step only (no accumulation).
+    let storage = storage_kv.map(|(key, value)| {
+        let mut m = BTreeMap::new();
+        m.insert(key, value);
+        m
+    });
+
+    // returnData: actual bytes when enabled; empty Bytes otherwise.
+    let return_data_field = if cfg.enable_return_data {
+        return_data.clone()
+    } else {
+        Bytes::new()
+    };
+
+    OpcodeStep {
+        pc,
+        op: opcode,
+        gas,
+        gas_cost,
+        mem_size,
+        depth,
+        return_data: return_data_field,
+        refund,
+        stack,
+        memory,
+        storage,
+        error: None,
     }
 }

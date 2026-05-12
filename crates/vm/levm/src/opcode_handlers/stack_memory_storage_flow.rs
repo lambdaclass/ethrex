@@ -476,17 +476,18 @@ fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMEr
     }
 }
 
-/// Builds a synthetic JUMPDEST trace entry. Captures gas/stack/memory/storage
+/// Builds a synthetic JUMPDEST trace entry. Captures gas/stack/memory/return-data
 /// state at the moment of the call (i.e. *before* the JUMPDEST gas has been
-/// charged), mirroring what `pre_step_capture` would have produced if JUMPDEST
-/// were dispatched normally.
+/// charged) and hands them to the shared [`opcode_tracer::build_step`] so the
+/// cfg-driven conditionals (disable_stack, enable_memory, enable_return_data)
+/// live in exactly one place.
 #[expect(
     clippy::as_conversions,
     reason = "pc/depth/mem_size bounded; fit in target types"
 )]
 fn build_jumpdest_step(vm: &VM<'_>, target: usize) -> ethrex_common::tracing::OpcodeStep {
+    use crate::opcode_tracer::build_step;
     use bytes::Bytes;
-    use ethrex_common::tracing::{MemoryChunk, OpcodeStep};
 
     let cfg = &vm.opcode_tracer.cfg;
     let gas = vm.current_call_frame.gas_remaining.max(0) as u64;
@@ -494,52 +495,34 @@ fn build_jumpdest_step(vm: &VM<'_>, target: usize) -> ethrex_common::tracing::Op
     let refund = vm.substate.refunded_gas;
     let mem_size = vm.current_call_frame.memory.len() as u64;
 
-    let stack = if cfg.disable_stack {
-        None
+    let stack_view = if cfg.disable_stack {
+        Vec::new()
     } else {
-        Some(vm.collect_stack_for_trace())
+        vm.collect_stack_for_trace()
     };
-
-    let memory = if cfg.enable_memory {
-        let bytes = vm.collect_memory_for_trace();
-        if bytes.is_empty() {
-            Some(Vec::new())
-        } else {
-            Some(
-                bytes
-                    .chunks(32)
-                    .map(|c| {
-                        let mut arr = [0u8; 32];
-                        if let Some(dst) = arr.get_mut(..c.len()) {
-                            dst.copy_from_slice(c);
-                        }
-                        MemoryChunk(arr)
-                    })
-                    .collect(),
-            )
-        }
+    let mem_view = if cfg.enable_memory {
+        vm.collect_memory_for_trace()
     } else {
-        None
+        Vec::new()
     };
-
     let return_data = if cfg.enable_return_data {
         vm.current_call_frame.sub_return_data.clone()
     } else {
         Bytes::new()
     };
 
-    OpcodeStep {
-        pc: target as u64,
-        op: Opcode::JUMPDEST as u8,
+    build_step(
+        cfg,
+        target as u64,
+        Opcode::JUMPDEST as u8,
         gas,
-        gas_cost: gas_cost::JUMPDEST,
-        mem_size,
+        gas_cost::JUMPDEST,
         depth,
-        return_data,
         refund,
-        stack,
-        memory,
-        storage: None,
-        error: None,
-    }
+        &stack_view,
+        &mem_view,
+        mem_size,
+        &return_data,
+        None,
+    )
 }

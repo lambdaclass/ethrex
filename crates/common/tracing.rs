@@ -188,6 +188,13 @@ pub struct OpcodeTraceResult {
 /// Known opcodes → their uppercase name (`"PUSH1"`, `"ADD"`, `"INVALID"` for
 /// 0xFE). Unassigned bytes → `None`; callers wanting the conventional unknown
 /// string should fall back to `format!("opcode 0x{:02x} not defined", byte)`.
+///
+/// The table is **fork-agnostic by design**, matching geth's
+/// `core/vm/opcodes.go::opCodeToString` (also a flat 256-entry table). Fork
+/// validity is enforced at *dispatch* via the VM's per-fork opcode table:
+/// e.g. byte `0x5F` (PUSH0) halts pre-Shanghai with `InvalidOpcode` before
+/// the tracer ever emits a step for it, so the name lookup never fires for
+/// invalid-for-this-fork bytes in practice.
 pub fn opcode_name(byte: u8) -> Option<&'static str> {
     match byte {
         0x00 => Some("STOP"),
