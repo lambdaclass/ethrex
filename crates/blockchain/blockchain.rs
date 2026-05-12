@@ -66,12 +66,12 @@ use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::is_eip7702_delegation;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
     BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
     synthesize_bal_updates, validate_block_body,
 };
+use ethrex_common::types::{EIP7702_DELEGATED_CODE_LEN, is_eip7702_delegation};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
 use ethrex_common::utils::keccak;
@@ -2960,15 +2960,26 @@ impl Blockchain {
 
             // EIP-3607: reject txs from senders with deployed code, unless
             // the code is an EIP-7702 delegation designation (the account is
-            // still an EOA in spirit, just pointing at delegate code). When
-            // the code hash is set but `get_account_code` returns `None`,
-            // the store is inconsistent or pruned; we conservatively treat
-            // that as non-delegation and reject the tx.
+            // still an EOA in spirit, just pointing at delegate code).
+            //
+            // Length-based fast path: any code whose length isn't exactly
+            // `EIP7702_DELEGATED_CODE_LEN` (23) cannot be a delegation, so
+            // we reject without loading the bytecode. Only when the metadata
+            // length matches do we fetch + verify the prefix. This avoids
+            // pulling potentially large contract bytecode on every contract
+            // sender that hits admission (Copilot / @MegaRedHand review).
             if sender_acc_info.code_hash != *EMPTY_KECCACK_HASH {
-                let is_delegation = self
+                let metadata_len = self
                     .storage
-                    .get_account_code(sender_acc_info.code_hash)?
-                    .is_some_and(|code| is_eip7702_delegation(code.bytecode.as_ref()));
+                    .get_code_metadata(sender_acc_info.code_hash)?
+                    .map(|m| m.length);
+                let is_delegation = if metadata_len == Some(EIP7702_DELEGATED_CODE_LEN as u64) {
+                    self.storage
+                        .get_account_code(sender_acc_info.code_hash)?
+                        .is_some_and(|code| is_eip7702_delegation(code.bytecode.as_ref()))
+                } else {
+                    false
+                };
                 if !is_delegation {
                     return Err(MempoolError::SenderIsContract);
                 }
