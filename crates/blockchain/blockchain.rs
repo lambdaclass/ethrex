@@ -2974,9 +2974,22 @@ impl Blockchain {
                     .get_code_metadata(sender_acc_info.code_hash)?
                     .map(|m| m.length);
                 let is_delegation = if metadata_len == Some(EIP7702_DELEGATED_CODE_LEN as u64) {
-                    self.storage
+                    // Metadata says the code is delegation-shaped; if the
+                    // bytecode is then missing from the store, the DB is
+                    // inconsistent — surface that as `StoreError` instead of
+                    // silently treating the sender as a contract (which would
+                    // wrongly reject a valid 7702-delegated EOA per
+                    // Copilot/@codex review).
+                    let code = self
+                        .storage
                         .get_account_code(sender_acc_info.code_hash)?
-                        .is_some_and(|code| is_eip7702_delegation(code.bytecode.as_ref()))
+                        .ok_or_else(|| {
+                            StoreError::Custom(format!(
+                                "code missing for hash {:?} despite present metadata",
+                                sender_acc_info.code_hash
+                            ))
+                        })?;
+                    is_eip7702_delegation(code.bytecode.as_ref())
                 } else {
                     false
                 };
