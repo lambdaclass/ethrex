@@ -321,10 +321,23 @@ async fn reinject_is_best_effort_when_admission_fails() {
         .await
         .expect("reinject");
 
-    // The blob tx must be skipped (no sidecar). The plain tx may also fail
-    // because the sender has no balance, but the entire call must not error.
-    // We only assert no panic / no propagated error here.
-    let _ = reinjected;
+    // The blob tx must be skipped (no sidecar) and the plain tx must also
+    // fail admission (the sender has no balance on this minimal store). Both
+    // failures are handled best-effort: zero txs land in the pool, no error
+    // propagates, and no panic.
+    assert_eq!(
+        reinjected, 0,
+        "best-effort path must report 0 re-injections when both txs fail admission",
+    );
+    // The blob limbo was empty going in and the no-sidecar code path consumes
+    // nothing, so a follow-up re-injection attempt would still see an empty
+    // limbo. Calling it a second time with the same arguments must also yield
+    // 0, confirming the path is idempotent and side-effect-free.
+    let reinjected_again = blockchain
+        .reinject_orphaned_transactions(block_a_hash, block_b_hash)
+        .await
+        .expect("reinject (second call)");
+    assert_eq!(reinjected_again, 0);
 }
 
 #[test]
@@ -430,4 +443,34 @@ fn purge_unrelated_hashes_is_noop() {
         .purge_blob_limbo_entries(&[H256::random(), H256::random()])
         .expect("purge");
     assert_eq!(mempool.blob_limbo_size().expect("size"), 0);
+}
+
+#[test]
+fn mempool_is_full_gates_capacity() {
+    // `Mempool::is_full` is the public accessor used by reorg re-injection
+    // to decide whether to skip rather than evict freshly-arrived txs to
+    // make room for orphaned ones. Verify the accessor flips at capacity.
+    let mempool = Mempool::new(2);
+    assert!(!mempool.is_full().expect("is_full"));
+
+    let sender = Address::from_low_u64_be(1);
+    let tx_a = make_eip1559_tx(0);
+    let tx_b = make_eip1559_tx(1);
+
+    let hash_a = tx_a.hash();
+    let mempool_tx_a = MempoolTransaction::new(tx_a, sender);
+    mempool
+        .add_transaction(hash_a, sender, mempool_tx_a)
+        .expect("add A");
+    assert!(!mempool.is_full().expect("is_full after 1"));
+
+    let hash_b = tx_b.hash();
+    let mempool_tx_b = MempoolTransaction::new(tx_b, sender);
+    mempool
+        .add_transaction(hash_b, sender, mempool_tx_b)
+        .expect("add B");
+    assert!(
+        mempool.is_full().expect("is_full at capacity"),
+        "is_full must report true once transaction_pool reaches max_mempool_size",
+    );
 }

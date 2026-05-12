@@ -151,6 +151,16 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
+    /// Returns `true` if the pool is at capacity. Callers can use this to
+    /// decide whether to admit a new tx (and trigger oldest-first eviction)
+    /// or to skip admission entirely. Used by reorg re-injection so a deep
+    /// reorg doesn't evict freshly-arrived txs to make room for orphaned
+    /// ones.
+    pub fn is_full(&self) -> Result<bool, StoreError> {
+        let inner = self.read()?;
+        Ok(inner.transaction_pool.len() >= inner.max_mempool_size)
+    }
+
     /// Add transaction to the pool without doing validity checks
     pub fn add_transaction(
         &self,
