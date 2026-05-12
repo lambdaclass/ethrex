@@ -297,9 +297,14 @@ async fn add_blocks_in_batch(
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
     let chain_config = store.get_chain_config();
     let bals: Vec<Option<BlockAccessList>> = {
-        let any_amsterdam = blocks
-            .iter()
-            .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
+        // Only the final batch goes through `run_blocks_pipeline`, which is the
+        // path that actually consumes BALs. Non-final batches use
+        // `blockchain.add_blocks_in_batch()` which doesn't accept BALs, so
+        // fetching them for those batches just wastes a network round-trip.
+        let any_amsterdam = final_batch
+            && blocks
+                .iter()
+                .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
         if any_amsterdam {
             match peers.request_block_access_lists(&blocks_hashes).await {
                 Ok(Some(bals)) if bals.len() == blocks.len() => bals,
