@@ -316,6 +316,32 @@ async fn test_ip_voting_no_update_if_same_ip() {
 }
 
 #[tokio::test]
+async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
+    let mut server = test_server(None).await;
+    let original_ip = server.local_node.ip;
+    let original_seq = server.local_node_record.seq;
+
+    let recipient_addr = SocketAddr::new(original_ip, 30303);
+    let make_pong = || PongMessage {
+        req_id: Bytes::from_static(b""),
+        enr_seq: 0,
+        recipient_addr,
+    };
+
+    for i in 1..=3u64 {
+        server
+            .discv5_handle_pong(make_pong(), H256::from_low_u64_be(i))
+            .await
+            .unwrap();
+    }
+
+    // Voting round reached threshold with the local IP as winner; the guard at
+    // discv5_handle_pong must skip update_local_ip and leave the ENR sequence intact.
+    assert_eq!(server.local_node.ip, original_ip);
+    assert_eq!(server.local_node_record.seq, original_seq);
+}
+
+#[tokio::test]
 async fn test_ip_voting_split_votes_no_update() {
     let mut server = test_server(None).await;
     let original_ip = server.local_node.ip;
