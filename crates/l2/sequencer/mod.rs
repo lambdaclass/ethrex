@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_monitor::{EthrexMonitor, MonitorConfig as ExternalMonitorConfig};
+use ethrex_rpc::SubscriptionManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -53,6 +54,7 @@ pub async fn start_l2(
     genesis: Genesis,
     checkpoints_dir: PathBuf,
     l2_gas_limit: u64,
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 ) -> Result<
     (
         Option<ActorRef<L1Committer>>,
@@ -160,6 +162,7 @@ pub async fn start_l2(
         shared_state.clone(),
         cfg.l1_watcher.router_address,
         l2_gas_limit,
+        subscription_manager,
     )
     .await
     .inspect_err(|err| {

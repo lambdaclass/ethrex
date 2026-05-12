@@ -1,7 +1,10 @@
 use std::time::Duration;
 
 use ethrex_common::H256;
-use ethrex_common::{serde_utils, tracing::CallTraceFrame};
+use ethrex_common::{
+    serde_utils,
+    tracing::{CallTraceFrame, PrestateResult},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -41,6 +44,7 @@ struct TraceConfig {
 enum TracerType {
     #[default]
     CallTracer,
+    PrestateTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -50,6 +54,26 @@ struct CallTracerConfig {
     only_top_call: bool,
     #[serde(default)]
     with_log: bool,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct PrestateTracerConfig {
+    #[serde(default)]
+    diff_mode: bool,
+    #[serde(default)]
+    include_empty: bool,
+}
+
+impl PrestateTracerConfig {
+    fn validate(&self) -> Result<(), RpcErr> {
+        if self.diff_mode && self.include_empty {
+            return Err(RpcErr::BadParams(
+                "cannot use diffMode with includeEmpty".to_string(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 type BlockTrace<TxTrace> = Vec<BlockTraceComponent<TxTrace>>;
@@ -96,7 +120,6 @@ impl RpcHandler for TraceTransactionRequest {
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
         let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        // This match will make more sense once we support other tracers
         match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
@@ -123,6 +146,30 @@ impl RpcHandler for TraceTransactionRequest {
                     .next()
                     .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
                 Ok(serde_json::to_value(top_frame)?)
+            }
+            TracerType::PrestateTracer => {
+                let config: PrestateTracerConfig =
+                    if let Some(value) = &self.trace_config.tracer_config {
+                        serde_json::from_value(value.clone())?
+                    } else {
+                        PrestateTracerConfig::default()
+                    };
+                config.validate()?;
+                let result = context
+                    .blockchain
+                    .trace_transaction_prestate(
+                        self.tx_hash,
+                        reexec,
+                        timeout,
+                        config.diff_mode,
+                        config.include_empty,
+                    )
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                match result {
+                    PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
+                    PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+                }
             }
         }
     }
@@ -166,7 +213,6 @@ impl RpcHandler for TraceBlockByNumberRequest {
             .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
         let reexec = self.trace_config.reexec.unwrap_or(DEFAULT_REEXEC);
         let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
-        // This match will make more sense once we support other tracers
         match self.trace_config.tracer {
             TracerType::CallTracer => {
                 // Parse tracer config now that we know the type
@@ -198,6 +244,42 @@ impl RpcHandler for TraceBlockByNumberRequest {
                         Ok((hash, frame).into())
                     })
                     .collect::<Result<_, RpcErr>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
+            TracerType::PrestateTracer => {
+                let config: PrestateTracerConfig =
+                    if let Some(value) = &self.trace_config.tracer_config {
+                        serde_json::from_value(value.clone())?
+                    } else {
+                        PrestateTracerConfig::default()
+                    };
+                config.validate()?;
+                let prestate_traces = context
+                    .blockchain
+                    .trace_block_prestate(
+                        block,
+                        reexec,
+                        timeout,
+                        config.diff_mode,
+                        config.include_empty,
+                    )
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                // Each trace result is already the correct variant (Prestate or Diff)
+                // based on the diff_mode flag, so we serialize directly.
+                let block_trace: Vec<serde_json::Value> = prestate_traces
+                    .into_iter()
+                    .map(|(hash, result)| {
+                        let trace_value = match result {
+                            PrestateResult::Prestate(trace) => serde_json::to_value(trace)?,
+                            PrestateResult::Diff(diff) => serde_json::to_value(diff)?,
+                        };
+                        serde_json::to_value(BlockTraceComponent {
+                            tx_hash: hash,
+                            result: trace_value,
+                        })
+                    })
+                    .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
         }
