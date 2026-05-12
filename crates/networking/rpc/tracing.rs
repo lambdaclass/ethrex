@@ -55,8 +55,9 @@ enum TracerType {
     #[default]
     CallTracer,
     PrestateTracer,
-    /// Per-opcode tracer producing strict EIP-3155 output. Selected via
-    /// `"tracer": "opcodeTracer"`.
+    /// Per-opcode tracer emitting EIP-3155 step content under the de-facto
+    /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
+    /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
 }
 

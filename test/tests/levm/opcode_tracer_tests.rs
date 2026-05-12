@@ -3,7 +3,10 @@
 //! Each test deploys a small bytecode through the full RPC pipeline
 //! (`LEVM::trace_tx_opcodes` -> `serde_json::to_value`) and asserts on the
 //! resulting JSON shape. Behaviour is verified at the wire-format boundary,
-//! not on internal Rust types.
+//! not on internal Rust types. Per-step content is EIP-3155 (`pc`, `op`,
+//! `gas`, `gasCost`, `stack`, `depth`, `memory`, `storage`, `refund`,
+//! `memSize`, `returnData`), emitted under the de-facto cross-client
+//! `structLogger` wrapper.
 
 use super::test_db::TestDatabase;
 use bytes::Bytes;
@@ -95,47 +98,41 @@ fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
 
 /// `PUSH1 0x01 PUSH1 0x02 ADD STOP`
 ///
-/// Pins the EIP-3155 wrapper (`pass`/`gasUsed`/`output`/`steps`) and the
-/// required per-step fields with their encodings: numeric `op` byte, `opName`
-/// string, hex `gas`/`gasCost`/`refund`, decimal `pc`/`memSize`/`depth`,
-/// bottom-first `stack`, always-present `returnData`.
+/// Pins the wrapper (`failed`/`gas`/`returnValue`/`structLogs`) and per-step
+/// fields: `op` string mnemonic, numeric `gas`/`gasCost`/`refund`, decimal
+/// `pc`/`memSize`/`depth`, bottom-first `stack`, always-present `returnData`.
 #[test]
 fn opcode_tracer_basic_execution() {
     let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00];
     let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
 
-    assert_eq!(j["pass"], Value::Bool(true));
-    let gas_used = j["gasUsed"].as_str().expect("gasUsed is string");
-    assert!(gas_used.starts_with("0x"), "gasUsed is hex");
-    assert_eq!(j["output"], Value::String("0x".to_string()));
+    assert_eq!(j["failed"], Value::Bool(false));
+    assert!(j["gas"].is_number(), "gas is a number");
+    assert_eq!(j["returnValue"], Value::String("0x".to_string()));
 
-    let steps = j["steps"].as_array().expect("steps is array");
+    let steps = j["structLogs"].as_array().expect("structLogs is array");
     assert_eq!(steps.len(), 4, "PUSH1 PUSH1 ADD STOP");
 
     // PUSH1 0x01 — first step, empty stack pre-execution.
     assert_eq!(steps[0]["pc"], Value::Number(0.into()));
-    assert_eq!(steps[0]["op"].as_u64(), Some(0x60), "op is numeric byte");
-    assert_eq!(steps[0]["opName"].as_str(), Some("PUSH1"));
-    assert!(
-        steps[0]["gas"]
-            .as_str()
-            .is_some_and(|s| s.starts_with("0x"))
-    );
-    assert_eq!(steps[0]["gasCost"].as_str(), Some("0x3"));
+    assert_eq!(steps[0]["op"].as_str(), Some("PUSH1"));
+    assert!(steps[0]["gas"].is_number(), "gas is a number");
+    assert_eq!(steps[0]["gasCost"].as_u64(), Some(3));
     assert_eq!(steps[0]["depth"].as_u64(), Some(1));
-    assert_eq!(steps[0]["refund"].as_str(), Some("0x0"));
+    assert_eq!(steps[0]["refund"].as_u64(), Some(0));
     assert_eq!(steps[0]["returnData"].as_str(), Some("0x"));
     assert_eq!(steps[0]["memSize"].as_u64(), Some(0));
     assert_eq!(steps[0]["stack"], Value::Array(vec![]));
+    assert!(steps[0].get("opName").is_none(), "opName field is removed");
 
     // ADD — third step, stack bottom-first [0x1, 0x2] pre-execution.
-    assert_eq!(steps[2]["opName"].as_str(), Some("ADD"));
+    assert_eq!(steps[2]["op"].as_str(), Some("ADD"));
     let add_stack = steps[2]["stack"].as_array().expect("stack array");
     assert_eq!(add_stack[0], Value::String("0x1".to_string()));
     assert_eq!(add_stack[1], Value::String("0x2".to_string()));
 
     // STOP — final step, stack collapsed to [0x3].
-    assert_eq!(steps[3]["opName"].as_str(), Some("STOP"));
+    assert_eq!(steps[3]["op"].as_str(), Some("STOP"));
     let stop_stack = steps[3]["stack"].as_array().expect("stack array");
     assert_eq!(stop_stack, &vec![Value::String("0x3".to_string())]);
 }
@@ -149,7 +146,7 @@ fn opcode_tracer_basic_execution() {
 fn opcode_tracer_sstore_single_entry_storage() {
     let bytecode = vec![0x60, 0x2a, 0x60, 0x01, 0x55, 0x00];
     let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
-    let steps = j["steps"].as_array().expect("steps");
+    let steps = j["structLogs"].as_array().expect("structLogs");
     assert_eq!(steps.len(), 4);
 
     // PUSH1 / PUSH1 — no storage field.
@@ -158,7 +155,7 @@ fn opcode_tracer_sstore_single_entry_storage() {
 
     // SSTORE — exactly one entry, key=0x01, value=0x2a.
     let sstore = &steps[2];
-    assert_eq!(sstore["opName"].as_str(), Some("SSTORE"));
+    assert_eq!(sstore["op"].as_str(), Some("SSTORE"));
     let storage = sstore["storage"].as_object().expect("storage object");
     assert_eq!(storage.len(), 1, "single entry, no accumulation");
     let key = format!("0x{:0>64}", "1");
@@ -184,10 +181,10 @@ fn opcode_tracer_memory_capture_when_enabled() {
         ..Default::default()
     };
     let j = trace_to_json(bytecode, cfg);
-    let steps = j["steps"].as_array().expect("steps");
+    let steps = j["structLogs"].as_array().expect("structLogs");
 
     let stop = steps.last().expect("at least one step");
-    assert_eq!(stop["opName"].as_str(), Some("STOP"));
+    assert_eq!(stop["op"].as_str(), Some("STOP"));
     assert_eq!(stop["memSize"].as_u64(), Some(32));
     let mem = stop["memory"].as_array().expect("memory array");
     assert_eq!(mem.len(), 1);
@@ -214,17 +211,17 @@ fn opcode_tracer_return_data_capture_when_enabled() {
         ..Default::default()
     };
     let j = trace_to_json(bytecode, cfg);
-    let steps = j["steps"].as_array().expect("steps");
+    let steps = j["structLogs"].as_array().expect("structLogs");
 
     let stop = steps.last().expect("at least one step");
-    assert_eq!(stop["opName"].as_str(), Some("STOP"));
+    assert_eq!(stop["op"].as_str(), Some("STOP"));
     assert_eq!(stop["returnData"].as_str(), Some("0x01"));
 }
 
 /// `PUSH1 0x01 PUSH1 0x02 ADD STOP` with `disableStack=true`
 ///
-/// EIP-3155 strict: when stack capture is off, the field is JSON `null` —
-/// neither omitted nor an empty array. Required field, value signals "disabled".
+/// When stack capture is off, the field is JSON `null` — neither omitted nor an
+/// empty array. The field is always present; its value signals "disabled".
 #[test]
 fn opcode_tracer_stack_disabled_is_null() {
     let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00];
@@ -233,7 +230,7 @@ fn opcode_tracer_stack_disabled_is_null() {
         ..Default::default()
     };
     let j = trace_to_json(bytecode, cfg);
-    let steps = j["steps"].as_array().expect("steps");
+    let steps = j["structLogs"].as_array().expect("structLogs");
 
     for step in steps {
         assert_eq!(
@@ -242,4 +239,47 @@ fn opcode_tracer_stack_disabled_is_null() {
             "stack must serialize as JSON null when disabled"
         );
     }
+}
+
+/// `PUSH1 0x04 JUMP JUMPDEST STOP`
+///
+/// Verifies the fused JUMP + JUMPDEST optimization synthesizes a JUMPDEST trace
+/// entry: the JUMP step's `gasCost` is exactly 8 (not 9, which would include
+/// the absorbed JUMPDEST charge), and a JUMPDEST step follows it with
+/// `gasCost = 1`.
+#[test]
+fn opcode_tracer_jumpdest_synthesized_after_jump() {
+    // pc=0: PUSH1 0x04
+    // pc=2: JUMP
+    // pc=3: INVALID (padding, never executed)
+    // pc=4: JUMPDEST
+    // pc=5: STOP
+    let bytecode = vec![0x60, 0x04, 0x56, 0xfe, 0x5b, 0x00];
+    let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    assert_eq!(steps.len(), 4, "PUSH1 / JUMP / JUMPDEST / STOP");
+
+    assert_eq!(steps[0]["op"].as_str(), Some("PUSH1"));
+
+    assert_eq!(steps[1]["op"].as_str(), Some("JUMP"));
+    assert_eq!(
+        steps[1]["gasCost"].as_u64(),
+        Some(8),
+        "JUMP gasCost must not absorb the JUMPDEST charge"
+    );
+
+    assert_eq!(steps[2]["op"].as_str(), Some("JUMPDEST"));
+    assert_eq!(steps[2]["pc"].as_u64(), Some(4));
+    assert_eq!(steps[2]["gasCost"].as_u64(), Some(1));
+    assert_eq!(steps[2]["depth"].as_u64(), Some(1));
+    // Gas remaining at JUMPDEST = gas at JUMP minus JUMP's 8.
+    let jump_gas = steps[1]["gas"].as_u64().expect("JUMP gas");
+    let jumpdest_gas = steps[2]["gas"].as_u64().expect("JUMPDEST gas");
+    assert_eq!(jumpdest_gas, jump_gas - 8);
+
+    assert_eq!(steps[3]["op"].as_str(), Some("STOP"));
+    // STOP gas reflects the JUMPDEST charge having been consumed.
+    let stop_gas = steps[3]["gas"].as_u64().expect("STOP gas");
+    assert_eq!(stop_gas, jumpdest_gas - 1);
 }
