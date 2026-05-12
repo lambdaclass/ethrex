@@ -62,7 +62,7 @@ services:
       --http --http-address 0.0.0.0
       --execution-endpoint http://ethrex-hoodi:8551
       --execution-jwt /secrets/jwt.hex
-      --checkpoint-sync-url https://hoodi-checkpoint-sync.stakely.io/
+      --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
       --checkpoint-sync-url-timeout 600
       --purge-db
     depends_on:
@@ -209,7 +209,7 @@ services:
       --http --http-address 0.0.0.0
       --execution-endpoint http://ethrex-hoodi-2:8551
       --execution-jwt /secrets/jwt.hex
-      --checkpoint-sync-url https://hoodi-checkpoint-sync.stakely.io/
+      --checkpoint-sync-url https://checkpoint-sync.hoodi.ethpandaops.io
       --checkpoint-sync-url-timeout 600
       --purge-db
     depends_on:
