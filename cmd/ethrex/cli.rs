@@ -11,6 +11,7 @@ use std::{
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
     BlockchainOptions, BlockchainType, L2Config,
+    constants::DEFAULT_DELEGATED_SENDER_CAP,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -183,6 +184,15 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Maximum number of pending transactions in the mempool from a single EIP-7702 delegated EOA. Delegated senders are held to a tighter cap than regular accounts because their delegate contract can act on behalf of multiple identities.",
+        long = "mempool.delegated-sender-cap",
+        default_value_t = DEFAULT_DELEGATED_SENDER_CAP,
+        value_name = "MEMPOOL_DELEGATED_SENDER_CAP",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_DELEGATED_SENDER_CAP"
+    )]
+    pub mempool_delegated_sender_cap: u64,
     #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
@@ -392,6 +402,7 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_delegated_sender_cap: DEFAULT_DELEGATED_SENDER_CAP,
             ..Default::default()
         }
     }
@@ -414,6 +425,7 @@ impl Options {
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
+            mempool_delegated_sender_cap: DEFAULT_DELEGATED_SENDER_CAP,
             ..Default::default()
         }
     }
@@ -450,6 +462,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_delegated_sender_cap: DEFAULT_DELEGATED_SENDER_CAP,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),
@@ -625,6 +638,7 @@ impl Subcommand {
                     genesis,
                     BlockchainOptions {
                         max_mempool_size: opts.mempool_max_size,
+                        delegated_sender_cap: opts.mempool_delegated_sender_cap,
                         r#type: blockchain_type,
                         ..Default::default()
                     },
