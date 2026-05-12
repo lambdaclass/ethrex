@@ -2479,15 +2479,16 @@ impl Blockchain {
         &self,
         tx: &Transaction,
         sender: Address,
-        origin: TxOrigin,
+        _origin: TxOrigin,
     ) -> Result<Option<H256>, MempoolError> {
         // TODO(#6604): when the min-tip floor lands (PR #6604 adds
         // `BlockchainOptions::min_tip_wei` and a `gas_tip_cap < min_tip_wei`
-        // rejection), wrap the floor check with
-        // `if origin != TxOrigin::Local { ... }` so `TxOrigin::Local`
-        // transactions bypass the floor. The opt-out operator flag (e.g.
-        // `--mempool.nolocals`) should land in the same PR that wires the
-        // exemption — adding it now would expose a no-op operator knob.
+        // rejection), drop the underscore from `_origin` and wrap the floor
+        // check with `if origin != TxOrigin::Local { ... }` so
+        // `TxOrigin::Local` transactions bypass the floor. The opt-out
+        // operator flag (e.g. `--mempool.nolocals`) should land in the same
+        // PR that wires the exemption — adding it now would expose a no-op
+        // operator knob.
 
         let nonce = tx.nonce();
 
