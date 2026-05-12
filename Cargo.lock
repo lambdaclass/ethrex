@@ -3974,6 +3974,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ethrex-evm"
+version = "11.0.0"
+dependencies = [
+ "bytes",
+ "ethrex-blockchain",
+ "ethrex-common",
+ "ethrex-crypto",
+ "ethrex-levm",
+ "ethrex-storage",
+ "ethrex-vm",
+ "eyre",
+ "hex",
+ "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "ethrex-guest-program"
 version = "11.0.0"
 dependencies = [
