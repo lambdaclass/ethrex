@@ -12,10 +12,16 @@ use serde::{Deserialize, Serialize};
 use crate::types::TxType;
 pub type Index = u64;
 
+/// Frame receipt status codes (EIP-8141).
+/// `0x3` is reserved for frames skipped due to a failed atomic batch.
+pub const FRAME_RECEIPT_STATUS_FAILURE: u8 = 0;
+pub const FRAME_RECEIPT_STATUS_SUCCESS: u8 = 1;
+pub const FRAME_RECEIPT_STATUS_SKIPPED: u8 = 3;
+
 /// Per-frame execution result within a frame transaction (EIP-8141)
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct FrameReceipt {
-    pub status: bool,
+    pub status: u8,
     pub gas_used: u64,
     pub logs: Vec<Log>,
 }
@@ -166,8 +172,11 @@ impl RLPDecode for Receipt {
             } else {
                 Some(payer)
             };
-            // Derive succeeded from frame receipts: true if all SENDER frames succeeded
-            let succeeded = frame_receipts.iter().all(|fr| fr.status);
+            // Derive succeeded from frame receipts: true iff every frame's status is SUCCESS.
+            // Any FAILURE or SKIPPED frame disqualifies the transaction from `succeeded`.
+            let succeeded = frame_receipts
+                .iter()
+                .all(|fr| fr.status == FRAME_RECEIPT_STATUS_SUCCESS);
             Ok((
                 Receipt {
                     tx_type,
@@ -559,7 +568,7 @@ mod test {
     #[test]
     fn test_frame_receipt_rlp_roundtrip() {
         let fr = FrameReceipt {
-            status: true,
+            status: FRAME_RECEIPT_STATUS_SUCCESS,
             gas_used: 21000,
             logs: vec![Log {
                 address: Address::random(),
@@ -570,6 +579,20 @@ mod test {
         let encoded = fr.encode_to_vec();
         let decoded = FrameReceipt::decode(&encoded).unwrap();
         assert_eq!(fr, decoded);
+    }
+
+    #[test]
+    fn test_frame_receipt_skipped_status_rlp_roundtrip() {
+        // Spec line 137: status code 0x3 marks frames skipped by a failed atomic batch.
+        let fr = FrameReceipt {
+            status: FRAME_RECEIPT_STATUS_SKIPPED,
+            gas_used: 0,
+            logs: vec![],
+        };
+        let encoded = fr.encode_to_vec();
+        let decoded = FrameReceipt::decode(&encoded).unwrap();
+        assert_eq!(fr, decoded);
+        assert_eq!(decoded.status, FRAME_RECEIPT_STATUS_SKIPPED);
     }
 
     #[test]
@@ -585,12 +608,12 @@ mod test {
             payer: Some(Address::from_low_u64_be(0x1234)),
             frame_receipts: Some(vec![
                 FrameReceipt {
-                    status: true,
+                    status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 100000,
                     logs: vec![],
                 },
                 FrameReceipt {
-                    status: true,
+                    status: FRAME_RECEIPT_STATUS_SUCCESS,
                     gas_used: 200000,
                     logs: vec![Log {
                         address: Address::from_low_u64_be(0xbeef),
@@ -619,12 +642,32 @@ mod test {
             logs: vec![],
             payer: Some(Address::from_low_u64_be(0x1)),
             frame_receipts: Some(vec![
-                FrameReceipt { status: true, gas_used: 50000, logs: vec![] },
-                FrameReceipt { status: false, gas_used: 50000, logs: vec![] },
+                FrameReceipt { status: FRAME_RECEIPT_STATUS_SUCCESS, gas_used: 50000, logs: vec![] },
+                FrameReceipt { status: FRAME_RECEIPT_STATUS_FAILURE, gas_used: 50000, logs: vec![] },
             ]),
         };
         let encoded = receipt.encode_to_vec();
         let decoded = Receipt::decode(&encoded).unwrap();
         assert!(!decoded.succeeded); // one frame failed
+    }
+
+    #[test]
+    fn test_frame_receipt_skipped_disqualifies_succeeded() {
+        // A SKIPPED frame must not count as success: spec implies the tx outcome
+        // is not fully successful when any atomic batch failed.
+        let receipt = Receipt {
+            tx_type: TxType::Frame,
+            succeeded: false,
+            cumulative_gas_used: 100000,
+            logs: vec![],
+            payer: Some(Address::from_low_u64_be(0x1)),
+            frame_receipts: Some(vec![
+                FrameReceipt { status: FRAME_RECEIPT_STATUS_SUCCESS, gas_used: 50000, logs: vec![] },
+                FrameReceipt { status: FRAME_RECEIPT_STATUS_SKIPPED, gas_used: 0, logs: vec![] },
+            ]),
+        };
+        let encoded = receipt.encode_to_vec();
+        let decoded = Receipt::decode(&encoded).unwrap();
+        assert!(!decoded.succeeded);
     }
 }

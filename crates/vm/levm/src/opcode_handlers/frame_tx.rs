@@ -63,9 +63,12 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
 
     match scope {
         0x1 => {
-            // APPROVE_PAYMENT: increment nonce, deduct max cost, set payer_approved
+            // APPROVE_PAYMENT: increment nonce, deduct max cost, record payer.
+            // Per spec, the single transaction-scoped variable `payer` is
+            // set on success; `payer.is_some()` is the source of truth for
+            // "payment has been approved".
             let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
-            if ctx.payer_approved {
+            if ctx.payer_address.is_some() {
                 return Err(halt_err.clone());
             }
             if !ctx.sender_approved {
@@ -85,7 +88,6 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             }
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
-            ctx.payer_approved = true;
             ctx.payer_address = Some(frame_target);
         }
         0x2 => {
@@ -101,9 +103,9 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             ctx.sender_approved = true;
         }
         0x3 => {
-            // APPROVE_PAYMENT_AND_EXECUTION: both
+            // APPROVE_EXECUTION_AND_PAYMENT: both, in one atomic step.
             let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
-            if ctx.sender_approved || ctx.payer_approved {
+            if ctx.sender_approved || ctx.payer_address.is_some() {
                 return Err(halt_err.clone());
             }
             if frame_target != ctx.tx.sender {
@@ -122,7 +124,6 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
 
             let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
-            ctx.payer_approved = true;
             ctx.payer_address = Some(frame_target);
         }
         _ => {
@@ -387,15 +388,17 @@ impl OpcodeHandler for OpFrameParamHandler {
                 }
             }
             0x05 => {
-                // status -- exceptional halt if current/future frame
+                // status -- exceptional halt if current/future frame.
+                // Returns the EIP-8141 status code: 0 = failure, 1 = success,
+                // 3 = skipped (atomic-batch failure).
                 if idx >= ctx.current_frame_index {
                     return Err(ExceptionalHalt::InvalidOpcode.into());
                 }
-                let (success, _, _) = ctx
+                let (status, _, _) = ctx
                     .frame_results
                     .get(idx)
                     .ok_or(ExceptionalHalt::InvalidOpcode)?;
-                if *success { U256::one() } else { U256::zero() }
+                U256::from(*status)
             }
             0x06 => {
                 // allowed_scope (flags & 0x03)

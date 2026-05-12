@@ -439,16 +439,20 @@ pub(crate) fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U25
 /// APPROVE, TXPARAM, FRAMEDATALOAD, and FRAMEDATACOPY opcodes.
 #[derive(Debug, Clone)]
 pub struct FrameTxContext {
-    /// Whether the sender has approved (APPROVE scope 0 or 2)
+    /// Whether the sender has approved (APPROVE scope `APPROVE_EXECUTION` or
+    /// `APPROVE_EXECUTION_AND_PAYMENT`).
     pub sender_approved: bool,
-    /// Whether a payer has approved (APPROVE scope 1 or 2)
-    pub payer_approved: bool,
-    /// The address that approved payment
+    /// The address that approved payment, set by `APPROVE_PAYMENT` or
+    /// `APPROVE_EXECUTION_AND_PAYMENT`. Per the latest EIP-8141 spec this is the
+    /// single source of truth for whether payment has been approved: when this
+    /// is `Some(_)`, the transaction has a `payer`; when `None`, it does not.
     pub payer_address: Option<Address>,
     /// The frames in this transaction
     pub frames: Vec<ethrex_common::types::Frame>,
-    /// Per-frame execution results (status, gas_used, logs)
-    pub frame_results: Vec<(bool, u64, Vec<Log>)>,
+    /// Per-frame execution results (status, gas_used, logs).
+    /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
+    /// 3 = skipped due to failed atomic batch).
+    pub frame_results: Vec<(u8, u64, Vec<Log>)>,
     /// Index of the currently executing frame
     pub current_frame_index: usize,
     /// The sig_hash of the frame transaction
@@ -665,7 +669,6 @@ impl<'a> VM<'a> {
         let sig_hash = frame_tx.compute_sig_hash();
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
-            payer_approved: false,
             payer_address: None,
             frames: frame_tx.frames.clone(),
             frame_results: Vec::new(),
@@ -694,17 +697,21 @@ impl<'a> VM<'a> {
         // Execute frames sequentially
         for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
             // If we're skipping frames due to an atomic batch revert, record
-            // the frame as failed and charge its full gas_limit.
+            // the frame with status SKIPPED. Per EIP-8141 (spec line 185), the
+            // gas allotted to skipped frames is refunded at the end of the
+            // transaction, so we record `gas_used = 0` and do NOT add the
+            // frame's `gas_limit` to `total_gas_used`.
             if let Some(end_idx) = skip_until_batch_end {
                 if frame_idx <= end_idx {
                     let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
                         InternalError::Custom("missing frame tx context".to_string()),
                     ))?;
                     ctx.current_frame_index = frame_idx;
-                    ctx.frame_results.push((false, frame.gas_limit, Vec::new()));
-                    total_gas_used = total_gas_used
-                        .checked_add(frame.gas_limit)
-                        .ok_or(VMError::Internal(InternalError::Overflow))?;
+                    ctx.frame_results.push((
+                        ethrex_common::types::FRAME_RECEIPT_STATUS_SKIPPED,
+                        0,
+                        Vec::new(),
+                    ));
                     if frame_idx == end_idx {
                         skip_until_batch_end = None;
                         in_atomic_batch = false;
@@ -938,8 +945,13 @@ impl<'a> VM<'a> {
                     .ok_or(VMError::Internal(InternalError::Custom(
                         "missing frame tx context".to_string(),
                     )))?;
+            let status_code = if frame_success {
+                ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
+            } else {
+                ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE
+            };
             ctx.frame_results
-                .push((frame_success, frame_gas_used, frame_logs));
+                .push((status_code, frame_gas_used, frame_logs));
 
             // Atomic batch: if a frame in the batch reverted, revert the
             // batch-level snapshot and skip remaining frames in the batch.
@@ -956,7 +968,11 @@ impl<'a> VM<'a> {
                     if let Some(result) = ctx.frame_results.get_mut(i) {
                         let charged_gas = frame_tx.frames[i].gas_limit;
                         total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
-                        *result = (false, charged_gas, Vec::new());
+                        *result = (
+                            ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+                            charged_gas,
+                            Vec::new(),
+                        );
                     }
                 }
                 // Remove only logs from the batch, preserving pre-batch logs
@@ -995,14 +1011,16 @@ impl<'a> VM<'a> {
             self.substate.clear_transient_storage();
         }
 
-        // Post-execution: check payer_approved
+        // Post-execution: spec line 189 — "verify that `payer` has been set
+        // (i.e. `payer != None`). If `payer` is set, refund any unpaid gas to
+        // the payer. If it is not, the whole transaction is invalid."
         let ctx =
             self.frame_tx_context
                 .as_ref()
                 .ok_or(VMError::Internal(InternalError::Custom(
                     "missing frame tx context".to_string(),
                 )))?;
-        if !ctx.payer_approved {
+        if ctx.payer_address.is_none() {
             tx_invalid = true;
         }
 
@@ -1041,14 +1059,18 @@ impl<'a> VM<'a> {
         self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
 
         // Derive top-level status from SENDER frames: if any SENDER frame
-        // reverted, the transaction's execution failed (analogous to status 0
-        // in standard transactions). VERIFY frames are authentication, not
-        // execution — their failure makes the TX invalid (handled above).
+        // reverted OR was skipped (failed atomic batch), the transaction's
+        // execution failed (analogous to status 0 in standard transactions).
+        // VERIFY frames are authentication, not execution — their failure
+        // makes the TX invalid (handled above).
         let any_sender_reverted = frame_tx
             .frames
             .iter()
             .zip(ctx.frame_results.iter())
-            .any(|(frame, (success, _, _))| frame.execution_mode() == FrameMode::Sender && !success);
+            .any(|(frame, (status, _, _))| {
+                frame.execution_mode() == FrameMode::Sender
+                    && *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
+            });
 
         let result = if any_sender_reverted {
             TxResult::Revert(VMError::RevertOpcode.into())

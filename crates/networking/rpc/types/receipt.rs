@@ -32,8 +32,10 @@ pub struct RpcReceipt {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RpcFrameReceipt {
-    #[serde(with = "serde_utils::bool")]
-    pub status: bool,
+    /// EIP-8141 frame status code: 0 = failure, 1 = success, 3 = skipped
+    /// (atomic-batch failure). Serialized as a hex-encoded byte.
+    #[serde(with = "serde_utils::u8::hex_str")]
+    pub status: u8,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub gas_used: u64,
     pub logs: Vec<RpcLogInfo>,
