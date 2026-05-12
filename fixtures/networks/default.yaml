@@ -27,6 +27,12 @@ participants:
     cl_image: sigp/lighthouse:v8.0.0-rc.1
     validator_count: 32
     # snooper_enabled: true
+    # Preserve the previous devnet-only RPC behavior after the default RPC
+    # hardening: bind on all interfaces inside the kurtosis network and expose
+    # admin/debug/txpool so test tooling can hit them.
+    el_extra_params:
+      - "--http.addr=0.0.0.0"
+      - "--http.api=eth,net,web3,debug,admin,txpool"
 
 ethereum_metrics_exporter_enabled: true
 

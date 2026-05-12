@@ -39,7 +39,15 @@ Default ports used by ethrex:
 
 You can change ports with the corresponding flags: `--http.port`, `--authrpc.port`, `--p2p.port`, `--discovery.port`, `--metrics.port`.
 
-All services listen on `0.0.0.0` by default, except for the auth RPC, which listens on `127.0.0.1`. This can also be changed with flags (e.g., `--http.addr`).
+The HTTP JSON-RPC and Auth RPC servers listen on `127.0.0.1` by default so a fresh install on a public host is not exposed to the open internet. P2P networking and metrics listen on `0.0.0.0`. Use the corresponding `--http.addr`, `--authrpc.addr`, `--metrics.addr` flags to override.
+
+The HTTP RPC also restricts which JSON-RPC namespaces it serves. By default only `eth`, `net`, and `web3` are reachable; enable `admin`, `debug`, or `txpool` explicitly with `--http.api`, for example:
+
+```sh
+ethrex --http.addr 0.0.0.0 --http.api eth,net,web3,debug
+```
+
+Only bind the HTTP RPC on a public interface when the node sits behind a trusted firewall or reverse proxy; the `admin_*`, `debug_*`, and `txpool_*` namespaces are unauthenticated.
 
 ## Log Levels
 

@@ -74,7 +74,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     future::IntoFuture,
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -213,6 +213,12 @@ pub struct RpcApiContext {
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
     /// WebSocket configuration. `None` when the WS server is disabled.
     pub ws: Option<WebSocketConfig>,
+    /// Set of RPC namespaces that are allowed over the public HTTP/WS endpoints.
+    ///
+    /// Methods belonging to namespaces not in this set return `MethodNotFound`.
+    /// The `engine` namespace is always served via the authenticated RPC port
+    /// and is not gated here.
+    pub allowed_namespaces: Arc<HashSet<RpcNamespace>>,
 }
 
 /// Configuration for the WebSocket RPC server.
@@ -504,6 +510,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
     extra_data: String,
+    allowed_namespaces: HashSet<RpcNamespace>,
 ) -> Result<(), RpcErr> {
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
@@ -527,6 +534,7 @@ pub async fn start_api(
         gas_ceil,
         block_worker_channel,
         ws: ws.clone(),
+        allowed_namespaces: Arc::new(allowed_namespaces),
     };
 
     // Periodically clean up the active filters for the filters endpoints.
@@ -939,17 +947,24 @@ pub async fn handle_eth_unsubscribe(
 
 /// Handle requests that can come from either clients or other users
 pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
-    match req.namespace() {
-        Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
-        Ok(RpcNamespace::Admin) => map_admin_requests(req, context).await,
-        Ok(RpcNamespace::Debug) => map_debug_requests(req, context).await,
-        Ok(RpcNamespace::Web3) => map_web3_requests(req, context),
-        Ok(RpcNamespace::Net) => map_net_requests(req, context).await,
-        Ok(RpcNamespace::Mempool) => map_mempool_requests(req, context),
-        Ok(RpcNamespace::Engine) => Err(RpcErr::Internal(
-            "Engine namespace not allowed in map_http_requests".to_owned(),
-        )),
-        Err(rpc_err) => Err(rpc_err),
+    let namespace = match req.namespace() {
+        Ok(ns) => ns,
+        Err(rpc_err) => return Err(rpc_err),
+    };
+    // Engine is served on the authenticated port only; treat as not found here.
+    if matches!(namespace, RpcNamespace::Engine) || !context.allowed_namespaces.contains(&namespace)
+    {
+        return Err(RpcErr::MethodNotFound(req.method.clone()));
+    }
+    match namespace {
+        RpcNamespace::Eth => map_eth_requests(req, context).await,
+        RpcNamespace::Admin => map_admin_requests(req, context).await,
+        RpcNamespace::Debug => map_debug_requests(req, context).await,
+        RpcNamespace::Web3 => map_web3_requests(req, context),
+        RpcNamespace::Net => map_net_requests(req, context).await,
+        RpcNamespace::Mempool => map_mempool_requests(req, context),
+        // Engine is rejected by the guard above.
+        RpcNamespace::Engine => unreachable!(),
     }
 }
 
@@ -1191,6 +1206,77 @@ mod tests {
     use std::io::BufReader;
     use std::str::FromStr;
     use std::{fs::File, path::Path};
+
+    /// With the default `--http.api` allowlist (`eth,net,web3`), requests for
+    /// disabled namespaces like `debug_*` must return MethodNotFound and never
+    /// reach the handler.
+    #[tokio::test]
+    async fn http_api_allowlist_blocks_debug_namespace_by_default() {
+        let body = r#"{"jsonrpc":"2.0","method":"debug_traceTransaction","params":["0x0"],"id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let mut context = default_context_with_storage(storage).await;
+        context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
+
+        let result = map_http_requests(&request, context).await;
+        match result {
+            Err(RpcErr::MethodNotFound(method)) => {
+                assert_eq!(method, "debug_traceTransaction");
+            }
+            other => panic!("expected MethodNotFound, got {other:?}"),
+        }
+    }
+
+    /// The default allowlist must keep `eth_*`, `net_*`, and `web3_*` reachable.
+    #[tokio::test]
+    async fn http_api_allowlist_default_routes_standard_namespaces() {
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let mut context = default_context_with_storage(storage).await;
+        context.allowed_namespaces = Arc::new(crate::DEFAULT_HTTP_API.iter().copied().collect());
+
+        for method in ["eth_chainId", "net_version", "web3_clientVersion"] {
+            let body = format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":[],"id":1}}"#);
+            let request: RpcRequest = serde_json::from_str(&body).unwrap();
+            let result = map_http_requests(&request, context.clone()).await;
+            assert!(
+                !matches!(result, Err(RpcErr::MethodNotFound(_))),
+                "default allowlist should route {method}, got {result:?}"
+            );
+        }
+    }
+
+    /// The Engine namespace must never be served over the public HTTP endpoint,
+    /// even if an operator passes `engine` to `--http.api` (the CLI rejects it,
+    /// but defense-in-depth: the dispatcher still refuses).
+    #[tokio::test]
+    async fn engine_namespace_rejected_on_http() {
+        let body = r#"{"jsonrpc":"2.0","method":"engine_forkchoiceUpdatedV3","params":[],"id":1}"#;
+        let request: RpcRequest = serde_json::from_str(body).unwrap();
+        let mut storage =
+            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+        storage
+            .set_chain_config(&example_chain_config())
+            .await
+            .unwrap();
+        let mut context = default_context_with_storage(storage).await;
+        let mut all_with_engine: HashSet<RpcNamespace> =
+            crate::test_utils::all_namespaces_for_tests();
+        all_with_engine.insert(RpcNamespace::Engine);
+        context.allowed_namespaces = Arc::new(all_with_engine);
+
+        let result = map_http_requests(&request, context).await;
+        assert!(matches!(result, Err(RpcErr::MethodNotFound(_))));
+    }
 
     // Maps string rpc response to RpcSuccessResponse as serde Value
     // This is used to avoid failures due to field order and allow easier string comparisons for responses

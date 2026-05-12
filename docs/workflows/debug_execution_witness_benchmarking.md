@@ -65,11 +65,13 @@ lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --e
 ### Ethrex (Execution Client)
 
 ```bash
-cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network <NETWORK> --authrpc.jwtsecret ~/secrets/jwt.hex --precompute-witnesses
+cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --http.api eth,net,web3,debug --network <NETWORK> --authrpc.jwtsecret ~/secrets/jwt.hex --precompute-witnesses
 ```
 
 **Critical flags:**
 - `--precompute-witnesses` - **REQUIRED** for this benchmark. Generates and stores execution witnesses during payload execution.
+- `--http.api eth,net,web3,debug` - **REQUIRED** for this benchmark. The default allowlist (`eth,net,web3`) does not expose `debug_executionWitness`; add `debug` so the benchmark can call it.
+- `--http.addr 0.0.0.0` - only needed if the load generator runs on a different host. The default binds on `127.0.0.1`.
 
 **Notes:**
 - Run in release mode for performance

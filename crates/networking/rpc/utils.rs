@@ -218,6 +218,7 @@ impl From<ethrex_crypto::CryptoError> for RpcErr {
 ///
 /// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
 /// Different namespaces may have different authentication requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RpcNamespace {
     /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
@@ -233,6 +234,35 @@ pub enum RpcNamespace {
     Net,
     /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
+}
+
+impl RpcNamespace {
+    /// Returns the lowercase prefix used in method names (e.g., "eth", "txpool").
+    pub fn as_prefix(&self) -> &'static str {
+        match self {
+            RpcNamespace::Engine => "engine",
+            RpcNamespace::Eth => "eth",
+            RpcNamespace::Admin => "admin",
+            RpcNamespace::Debug => "debug",
+            RpcNamespace::Web3 => "web3",
+            RpcNamespace::Net => "net",
+            RpcNamespace::Mempool => "txpool",
+        }
+    }
+
+    /// Parses a namespace name from its CLI/method-prefix form.
+    pub fn from_prefix(s: &str) -> Option<Self> {
+        match s {
+            "engine" => Some(RpcNamespace::Engine),
+            "eth" => Some(RpcNamespace::Eth),
+            "admin" => Some(RpcNamespace::Admin),
+            "debug" => Some(RpcNamespace::Debug),
+            "web3" => Some(RpcNamespace::Web3),
+            "net" => Some(RpcNamespace::Net),
+            "txpool" => Some(RpcNamespace::Mempool),
+            _ => None,
+        }
+    }
 }
 
 /// JSON-RPC request identifier.
