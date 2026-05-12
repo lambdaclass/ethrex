@@ -398,6 +398,19 @@ def build_docker_image(profile: str, image_tag: str, ethrex_dir: str) -> bool:
             check=True
         )
         print("✅ Docker image built successfully")
+        # Prune build cache to prevent unbounded disk growth across runs
+        try:
+            result = subprocess.run(
+                ["docker", "builder", "prune", "-f"],
+                capture_output=True, text=True, timeout=120
+            )
+            if result.returncode == 0:
+                reclaimed = result.stdout.strip().split("\n")[-1] if result.stdout.strip() else ""
+                print(f"🧹 Build cache pruned. {reclaimed}")
+            else:
+                print(f"⚠️ Build cache prune failed: {result.stderr.strip()}")
+        except Exception as e:
+            print(f"⚠️ Build cache prune error: {e}")
         return True
     except subprocess.CalledProcessError as e:
         print(f"❌ Failed to build Docker image: {e}")
@@ -662,14 +675,14 @@ def save_container_logs(container: str, run_id: str, suffix: str = ""):
 def save_all_logs(instances: list[Instance], run_id: str, compose_file: str):
     """Save logs for all containers (ethrex + consensus)."""
     print(f"\n📁 Saving logs for run {run_id}...")
-    
+
     for inst in instances:
         # Save ethrex logs
         save_container_logs(inst.container, run_id)
         # Save consensus logs (convention: consensus-{network})
         consensus_container = inst.container.replace("ethrex-", "consensus-")
         save_container_logs(consensus_container, run_id)
-    
+
     print(f"📁 Logs saved to {LOGS_DIR}/run_{run_id}/\n")
 
 
@@ -737,13 +750,19 @@ def log_run_result(run_id: str, run_count: int, instances: list[Instance], hostn
 
     lines.append("")
     # Append to log file
-    with open(RUN_LOG_FILE, "a") as f:
-        f.write("\n".join(lines) + "\n")
-    print(f"📝 Run logged to {RUN_LOG_FILE}")
-    # Also write summary to the run folder
-    summary_file = LOGS_DIR / f"run_{run_id}" / "summary.txt"
-    summary_file.parent.mkdir(parents=True, exist_ok=True)
-    summary_file.write_text("\n".join(lines))
+    text = "\n".join(lines) + "\n"
+    try:
+        with open(RUN_LOG_FILE, "a") as f:
+            f.write(text)
+        print(f"📝 Run logged to {RUN_LOG_FILE}")
+        # Also write summary to the run folder
+        summary_file = LOGS_DIR / f"run_{run_id}" / "summary.txt"
+        summary_file.parent.mkdir(parents=True, exist_ok=True)
+        summary_file.write_text(text)
+    except OSError as e:
+        print(f"⚠️ Failed to write run log (disk full?): {e}", flush=True)
+        # Print to stdout so the result isn't lost entirely
+        print(text, flush=True)
 
 
 def generate_run_id() -> str:

@@ -805,7 +805,14 @@ impl PeerHandler {
                         .unwrap_or_default();
 
                 task_tx
-                    .send((start_offset, bodies, peer_id, connection, chunk_headers, permit))
+                    .send((
+                        start_offset,
+                        bodies,
+                        peer_id,
+                        connection,
+                        chunk_headers,
+                        permit,
+                    ))
                     .await
                     .inspect_err(|err| {
                         error!("Failed to send body result through channel. Error: {err}")

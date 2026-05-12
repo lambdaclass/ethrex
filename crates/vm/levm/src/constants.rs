@@ -73,7 +73,7 @@ pub const MAX_BLOB_COUNT_ELECTRA: u32 = 9;
 // Max blob count per tx (introduced by Osaka fork)
 pub const MAX_BLOB_COUNT_TX: usize = 6;
 
-pub const VALID_BLOB_PREFIXES: [u8; 2] = [0x01, 0x02];
+pub const VALID_BLOB_PREFIXES: [u8; 1] = [VERSIONED_HASH_VERSION_KZG];
 
 // Block constants
 pub const LAST_AVAILABLE_BLOCK_LIMIT: u64 = 256;

@@ -241,7 +241,7 @@ pub enum RpcNamespace {
 ///
 /// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
 /// The same ID must be returned in the response.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
     /// Numeric request ID.
@@ -262,7 +262,7 @@ pub enum RpcRequestId {
 ///     "params": ["0x...", "latest"]
 /// }
 /// ```
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
     /// Request identifier, echoed back in the response.
     pub id: RpcRequestId,
