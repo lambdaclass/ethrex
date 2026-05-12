@@ -625,31 +625,46 @@ impl Mempool {
             .map(|((_address, nonce), _hash)| nonce + 1))
     }
 
-    /// Returns the saturating sum of `cost_without_base_fee()` for every
-    /// pending transaction from `sender` currently in the pool.
+    /// Returns the sum of `cost_without_base_fee()` for every pending
+    /// transaction from `sender` currently in the pool, optionally excluding
+    /// `exclude` (used by the cumulative-balance admission gate to drop the
+    /// cost of a tx that's about to be replaced at the same nonce).
     ///
     /// Used at mempool admission to gate a sender's cumulative pending cost
     /// against their on-chain balance: without this check, a sender at the
     /// per-sender slot cap can have most of their pending txs be
     /// guaranteed-fail at execution time and waste pool space.
     ///
-    /// Any tx whose `cost_without_base_fee()` returns `None` (malformed gas
-    /// fields) is treated as `U256::MAX`, which forces the caller's cumulative
-    /// check to fail closed. This is conservative and intentional: such a tx
-    /// should never have been admitted, and biasing toward rejection here is
-    /// safer than silently undercounting.
-    pub fn sum_cost_for_sender(&self, sender: Address) -> Result<U256, MempoolError> {
+    /// Fails closed on any inconsistency: if `txs_by_sender_nonce` references
+    /// a hash missing from `transaction_pool`, or if any included tx's cost
+    /// can't be computed, the function returns an error rather than silently
+    /// undercounting (which would let a malformed or invariant-violating tx
+    /// bypass the cumulative check).
+    pub fn sum_cost_for_sender(
+        &self,
+        sender: Address,
+        exclude: Option<H256>,
+    ) -> Result<U256, MempoolError> {
         let inner = self.read()?;
         let mut total = U256::zero();
         for (_key, hash) in inner
             .txs_by_sender_nonce
             .range((sender, 0)..=(sender, u64::MAX))
         {
-            let Some(tx) = inner.transaction_pool.get(hash) else {
+            if Some(*hash) == exclude {
                 continue;
-            };
-            let cost = tx.cost_without_base_fee().unwrap_or(U256::MAX);
-            total = total.saturating_add(cost);
+            }
+            let tx = inner.transaction_pool.get(hash).ok_or_else(|| {
+                MempoolError::StoreError(StoreError::Custom(format!(
+                    "mempool index/pool inconsistency: hash {hash:?} in sender-nonce index but missing from transaction_pool",
+                )))
+            })?;
+            let cost = tx
+                .cost_without_base_fee()
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
+            total = total
+                .checked_add(cost)
+                .ok_or(MempoolError::InvalidTxGasvalues)?;
         }
         Ok(total)
     }
@@ -871,7 +886,7 @@ mod tests {
         let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
         let sender = Address::random();
 
-        let total = mempool.sum_cost_for_sender(sender).expect("sum");
+        let total = mempool.sum_cost_for_sender(sender, None).expect("sum");
         assert_eq!(total, U256::zero());
     }
 
@@ -892,7 +907,7 @@ mod tests {
         insert_tx(&mempool, sender, tx1);
         insert_tx(&mempool, sender, tx2);
 
-        let total = mempool.sum_cost_for_sender(sender).expect("sum");
+        let total = mempool.sum_cost_for_sender(sender, None).expect("sum");
         assert_eq!(total, expected);
     }
 
@@ -910,7 +925,7 @@ mod tests {
         insert_tx(&mempool, sender_a, tx_a);
         insert_tx(&mempool, sender_b, tx_b);
 
-        let total_a = mempool.sum_cost_for_sender(sender_a).expect("sum a");
+        let total_a = mempool.sum_cost_for_sender(sender_a, None).expect("sum a");
         assert_eq!(total_a, expected_a);
     }
 
@@ -928,7 +943,7 @@ mod tests {
 
         mempool.remove_transaction(&hash0).expect("remove");
 
-        let total = mempool.sum_cost_for_sender(sender).expect("sum");
+        let total = mempool.sum_cost_for_sender(sender, None).expect("sum");
         assert_eq!(total, expected_after);
     }
 }
