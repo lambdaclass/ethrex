@@ -213,6 +213,10 @@ pub struct Blockchain {
     merkle_pool: rayon::ThreadPool,
 }
 
+/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
+/// Effectively just rejects zero-tip transactions at admission.
+pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
+
 /// Configuration options for the blockchain.
 #[derive(Debug, Clone)]
 pub struct BlockchainOptions {
@@ -250,10 +254,6 @@ impl Default for BlockchainOptions {
         }
     }
 }
-
-/// Default min-tip floor (wei). Matches geth's mempool `PriceLimit = 1 wei`.
-/// Effectively just rejects zero-tip transactions at admission.
-pub const DEFAULT_MIN_TIP_WEI: u64 = 1;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
