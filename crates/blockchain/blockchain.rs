@@ -2459,7 +2459,15 @@ impl Blockchain {
         );
 
         let mut reinjected = 0usize;
+        let mut skipped_full = 0usize;
         for tx in txs {
+            // Don't evict freshly-arrived (post-reorg) txs to make room for
+            // orphaned ones. If the pool is already at capacity, stop
+            // re-injecting and log how many were skipped.
+            if self.mempool.is_full()? {
+                skipped_full += 1;
+                continue;
+            }
             let tx_hash = tx.hash();
             match tx {
                 #[cfg(feature = "c-kzg")]
@@ -2501,6 +2509,13 @@ impl Blockchain {
                 },
             }
         }
+        if skipped_full > 0 {
+            warn!(
+                skipped = skipped_full,
+                reinjected,
+                "Mempool reached capacity during reorg re-injection; remaining orphaned txs dropped to preserve freshly-arrived ones",
+            );
+        }
         Ok(reinjected)
     }
 
@@ -2510,8 +2525,14 @@ impl Blockchain {
     ///
     /// Once a block is finalized it cannot be reorged, so we no longer need to
     /// hold on to its blob sidecars. `previous_finalized_hash` may be zero on
-    /// the very first finalization advance, in which case purging walks back
-    /// until genesis (or as far as block bodies are available).
+    /// the very first finalization advance, in which case purging walks every
+    /// canonical block from genesis up to the new finalized height.
+    ///
+    /// The walk is by canonical block number, not by parent_hash chasing,
+    /// because the input is a CL-supplied finalized hash (already part of the
+    /// canonical chain). This removes the previous `reorg_depth` cap, which
+    /// would leak sidecars whenever a finalization gap exceeded the cap
+    /// (fresh-node first finalization, CL downtime catch-up, etc.).
     pub async fn purge_finalized_blob_limbo(
         &self,
         previous_finalized_hash: H256,
@@ -2521,36 +2542,34 @@ impl Blockchain {
             return Ok(());
         }
 
-        // Walk from new_finalized back to previous_finalized, collecting tx
-        // hashes for every block we pass through. We bound the walk by the
-        // configured reorg depth so a misconfigured / malicious previous_hash
-        // cannot cause unbounded work.
-        let max_walk = self.options.reorg_depth;
-        let mut current_hash = new_finalized_hash;
-        let mut steps = 0u64;
-        let mut hashes_to_purge: Vec<H256> = Vec::new();
-        while current_hash != previous_finalized_hash && !current_hash.is_zero() {
-            if steps > max_walk {
-                debug!(
-                    steps,
-                    cap = max_walk,
-                    "Blob limbo purge walked past the reorg-depth cap; stopping",
-                );
-                break;
+        let Some(new_header) = self.storage.get_block_header_by_hash(new_finalized_hash)? else {
+            return Ok(());
+        };
+        let start_number = if previous_finalized_hash.is_zero() {
+            0
+        } else {
+            match self
+                .storage
+                .get_block_header_by_hash(previous_finalized_hash)?
+            {
+                Some(header) => header.number.saturating_add(1),
+                // Previous finalized hash isn't known to this store (sync gap?).
+                // Fall back to a full walk from genesis so we still drain stale
+                // limbo entries.
+                None => 0,
             }
-            let Some(header) = self.storage.get_block_header_by_hash(current_hash)? else {
-                break;
+        };
+
+        let mut hashes_to_purge: Vec<H256> = Vec::new();
+        for number in start_number..=new_header.number {
+            let Some(block_hash) = self.storage.get_canonical_block_hash(number).await? else {
+                continue;
             };
-            if let Some(body) = self.storage.get_block_body_by_hash(current_hash).await? {
+            if let Some(body) = self.storage.get_block_body_by_hash(block_hash).await? {
                 for tx in body.transactions {
                     hashes_to_purge.push(tx.hash());
                 }
             }
-            if header.number == 0 {
-                break;
-            }
-            current_hash = header.parent_hash;
-            steps += 1;
         }
         if !hashes_to_purge.is_empty() {
             self.mempool.purge_blob_limbo_entries(&hashes_to_purge)?;
