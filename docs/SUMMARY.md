@@ -130,7 +130,7 @@
 
 # Roadmap
 
-- [Roadmap](../ROADMAP.md)
+- [Roadmap](./roadmap.md)
 
 # Why ethrex
 
@@ -141,5 +141,7 @@
 
 # Other resources
 
+- [Audits](./audits/README.md)
+  - [Least Authority Initial Audit (v9.0.0)](./audits/least-authority-initial-audit.md)
 - [Contributing to the Documentation](./CONTRIBUTING_DOCS.md)
 - [Recommended lectures](./lectures.md)

@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    subscription_manager::SubscriptionManagerProtocol,
     types::{
         fork_choice::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
@@ -302,6 +303,11 @@ async fn handle_forkchoice(
                     ));
                 }
             };
+
+            // Notify all eth_subscribe("newHeads") subscribers.
+            if let Some(ws) = &context.ws {
+                let _ = ws.subscription_manager.new_head(head.clone());
+            }
 
             Ok((
                 Some(head),
