@@ -48,5 +48,19 @@ pub fn commands() -> Vec<CommandDef> {
             params: ENODE,
             description: "Adds a peer by enode URL",
         },
+        CommandDef {
+            namespace: "admin",
+            name: "peerScores",
+            rpc_method: "admin_peerScores",
+            params: NO_PARAMS,
+            description: "Returns peer diagnostics: scores, inflight requests, eligibility",
+        },
+        CommandDef {
+            namespace: "admin",
+            name: "syncStatus",
+            rpc_method: "admin_syncStatus",
+            params: NO_PARAMS,
+            description: "Returns sync diagnostics: phase, pivot, staleness, recent events",
+        },
     ]
 }

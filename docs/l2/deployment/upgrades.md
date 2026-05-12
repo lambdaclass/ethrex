@@ -83,11 +83,11 @@ ALTER TABLE balance_diffs
 ADD COLUMN value_per_token BLOB;
 ```
 
-## From v10 to v11
+## From v9 to v10
 
 ### CommonBridge: L2 gas limit stored on-chain
 
-From v11 onwards, the L2 block gas limit is stored in the `CommonBridge` contract as `l2GasLimit`. The sequencer fetches this value on startup instead of using a CLI flag.
+From v10 onwards, the L2 block gas limit is stored in the `CommonBridge` contract as `l2GasLimit`. The sequencer fetches this value on startup instead of using a CLI flag.
 
 #### Upgrade requirement
 
