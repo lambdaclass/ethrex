@@ -372,10 +372,10 @@ fn test_filter_mempool_transactions() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
-        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone())
+        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), u64::MAX)
         .unwrap();
     mempool
-        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
+        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, u64::MAX)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
     assert_eq!(
@@ -442,7 +442,7 @@ fn blobs_bundle_insert_and_remove() {
             .unwrap();
 
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), u64::MAX)
             .expect("Failed to add blob transaction");
     }
 
@@ -584,7 +584,7 @@ fn seed_pending_tx(blockchain: &Blockchain, sender: Address, tx: Transaction) {
     let hash = tx.hash();
     blockchain
         .mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), u64::MAX)
         .expect("seed mempool with unsigned tx");
 }
 

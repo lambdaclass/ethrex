@@ -2343,12 +2343,17 @@ impl Blockchain {
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
+        let effective_cap = self.effective_per_sender_cap(sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            effective_cap,
+        )?;
         Ok(hash)
     }
 
@@ -2370,10 +2375,15 @@ impl Blockchain {
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
+        let effective_cap = self.effective_per_sender_cap(sender).await?;
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            effective_cap,
+        )?;
 
         Ok(hash)
     }
@@ -2544,6 +2554,25 @@ impl Blockchain {
         }
 
         Ok(tx_to_replace_hash)
+    }
+
+    /// Computes the effective per-sender pending-tx cap for `sender`. Returns
+    /// `options.delegated_sender_cap` when the sender is an EIP-7702 delegated
+    /// EOA, otherwise `u64::MAX` (no cap). Used by the mempool entry points
+    /// to enforce the cap atomically inside [`Mempool::add_transaction`] under
+    /// the write lock — closing the TOCTOU window between
+    /// [`Self::validate_transaction`]'s read-lock check and the eventual
+    /// insertion.
+    pub async fn effective_per_sender_cap(&self, sender: Address) -> Result<u64, MempoolError> {
+        let header_no = self.storage.get_latest_block_number().await?;
+        let Some(sender_info) = self.storage.get_account_info(header_no, sender).await? else {
+            return Ok(u64::MAX);
+        };
+        if self.is_sender_delegated(sender_info.code_hash)? {
+            Ok(self.options.delegated_sender_cap)
+        } else {
+            Ok(u64::MAX)
+        }
     }
 
     /// Returns `true` when the account identified by `code_hash` is an

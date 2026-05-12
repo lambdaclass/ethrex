@@ -141,14 +141,35 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Add transaction to the pool without doing validity checks
+    /// Add transaction to the pool without doing validity checks.
+    ///
+    /// `max_pending_txs_per_account` is the effective per-sender slot cap
+    /// the caller wants enforced (computed in
+    /// [`crate::Blockchain::validate_transaction`] so it can take EIP-7702
+    /// delegation into account). Pass `u64::MAX` to disable the cap.
+    ///
+    /// The cap check runs under the same write lock as the insertion so
+    /// concurrent submissions from the same sender can't both pass a stale
+    /// count check and race past the limit.
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
+        max_pending_txs_per_account: u64,
+    ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
+        if max_pending_txs_per_account != u64::MAX {
+            let pending = inner
+                .txs_by_sender_nonce
+                .range((sender, 0)..=(sender, u64::MAX))
+                .count() as u64;
+            if pending >= max_pending_txs_per_account {
+                return Err(MempoolError::MaxDelegatedPendingTxsExceeded(
+                    max_pending_txs_per_account,
+                ));
+            }
+        }
         // Prune the order queue if it has grown too much
         if inner.txs_order.len() > inner.mempool_prune_threshold {
             // NOTE: we do this to avoid borrow checker errors
@@ -425,7 +446,8 @@ impl Mempool {
 
     /// Returns the number of pending transactions in the pool for `sender`.
     ///
-    /// Used by per-sender admission caps (see [`Blockchain::validate_transaction`]).
+    /// Used by per-sender admission caps (see
+    /// [`crate::Blockchain::validate_transaction`]).
     pub fn pending_tx_count_for_sender(&self, sender: Address) -> Result<u64, MempoolError> {
         let inner = self.read()?;
         let count = inner
@@ -626,10 +648,10 @@ mod tests {
 
         for nonce in 0..3 {
             let (hash, tx) = mempool_tx(alice, nonce);
-            mempool.add_transaction(hash, alice, tx).unwrap();
+            mempool.add_transaction(hash, alice, tx, u64::MAX).unwrap();
         }
         let (hash, tx) = mempool_tx(bob, 0);
-        mempool.add_transaction(hash, bob, tx).unwrap();
+        mempool.add_transaction(hash, bob, tx, u64::MAX).unwrap();
 
         assert_eq!(mempool.pending_tx_count_for_sender(alice).unwrap(), 3);
         assert_eq!(mempool.pending_tx_count_for_sender(bob).unwrap(), 1);
@@ -648,8 +670,12 @@ mod tests {
 
         let (hash0, tx0) = mempool_tx(sender, 0);
         let (hash1, tx1) = mempool_tx(sender, 1);
-        mempool.add_transaction(hash0, sender, tx0).unwrap();
-        mempool.add_transaction(hash1, sender, tx1).unwrap();
+        mempool
+            .add_transaction(hash0, sender, tx0, u64::MAX)
+            .unwrap();
+        mempool
+            .add_transaction(hash1, sender, tx1, u64::MAX)
+            .unwrap();
         assert_eq!(mempool.pending_tx_count_for_sender(sender).unwrap(), 2);
 
         mempool.remove_transaction(&hash0).unwrap();
