@@ -20,7 +20,7 @@ This will launch the node in full sync mode, in order to test out snap sync you 
 cargo run --release --bin ethrex -- --network holesky --authrpc.jwtsecret ~/secrets/jwt.hex
 ```
 
-The HTTP JSON-RPC server binds to `127.0.0.1` by default and only serves the `eth,net,web3` namespaces. If you need to query state from another host or use `debug_*` methods during sync, pass `--http.addr 0.0.0.0 --http.api eth,net,web3,debug`.
+The HTTP JSON-RPC server binds to `127.0.0.1` by default and only serves the `eth,net,web3` namespaces. To call `debug_*` methods during sync from the same machine, pass `--http.api eth,net,web3,debug`. To reach the RPC port from another host, pass `--http.addr 0.0.0.0`.
 
 ### Step 3: Set up a Consensus Node
 

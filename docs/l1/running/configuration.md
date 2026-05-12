@@ -44,10 +44,10 @@ The HTTP JSON-RPC and Auth RPC servers listen on `127.0.0.1` by default so a fre
 The HTTP RPC also restricts which JSON-RPC namespaces it serves. By default only `eth`, `net`, and `web3` are reachable; enable `admin`, `debug`, or `txpool` explicitly with `--http.api`, for example:
 
 ```sh
-ethrex --http.addr 0.0.0.0 --http.api eth,net,web3,debug
+ethrex --http.api eth,net,web3,debug
 ```
 
-Only bind the HTTP RPC on a public interface when the node sits behind a trusted firewall or reverse proxy; the `admin_*`, `debug_*`, and `txpool_*` namespaces are unauthenticated.
+`--http.api` is independent of `--http.addr`: it controls which methods are served on the port, not who can reach it. If you also need remote callers to reach the RPC port, pass `--http.addr 0.0.0.0` — only do so when the node sits behind a trusted firewall or reverse proxy, since the `admin_*`, `debug_*`, and `txpool_*` namespaces are unauthenticated.
 
 ## Log Levels
 
