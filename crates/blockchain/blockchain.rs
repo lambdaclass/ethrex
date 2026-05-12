@@ -2327,8 +2327,7 @@ impl Blockchain {
         // and the bundle in separate structs, so sum the two encoded sizes
         // (the ±few bytes of outer list framing are rounding error at this
         // scale).
-        let wrapper_len =
-            transaction.encode_canonical_to_vec().len() + blobs_bundle.encode_to_vec().len();
+        let wrapper_len = transaction.encode_canonical_len() + blobs_bundle.length();
         if wrapper_len > MAX_BLOB_TX_SIZE {
             return Err(MempoolError::TxSizeExceeded {
                 actual: wrapper_len,
@@ -2452,7 +2451,7 @@ impl Blockchain {
         // which sums the core tx and the sidecar to match geth/nethermind/erigon
         // scope.
         if !matches!(tx, Transaction::EIP4844Transaction(_)) {
-            let encoded_len = tx.encode_canonical_to_vec().len();
+            let encoded_len = tx.encode_canonical_len();
             if encoded_len > MAX_TX_SIZE {
                 return Err(MempoolError::TxSizeExceeded {
                     actual: encoded_len,
