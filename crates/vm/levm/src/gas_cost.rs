@@ -164,6 +164,7 @@ pub const CREATE_BASE_COST: u64 = 32000;
 // EIP-8037: Multidimensional gas for state creation (Amsterdam only)
 pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 120;
 pub const STATE_BYTES_PER_STORAGE_SET: u64 = 64;
+pub const STATE_BYTES_PER_AUTH_BASE: u64 = 23; // 23-byte delegation indicator slot
 pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 143; // 120 account + 23 auth-specific
 
 /// EIP-8037 cost_per_state_byte. Pinned to the bal-devnet-7 fixed value 1530

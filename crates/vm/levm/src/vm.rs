@@ -9,8 +9,8 @@ use crate::{
         VMError,
     },
     gas_cost::{
-        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, STATE_BYTES_PER_STORAGE_SET,
-        cost_per_state_byte as compute_cost_per_state_byte,
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
+        STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte as compute_cost_per_state_byte,
     },
     hooks::{
         backup_hook::BackupHook,
@@ -481,6 +481,11 @@ pub struct VM<'a> {
     pub state_gas_storage_set: u64,
     /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
     pub state_gas_auth_total: u64,
+    /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
+    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
+    /// `set_delegation` when the authority's code slot already holds a
+    /// delegation indicator (EELS PR #2836).
+    pub state_gas_auth_base: u64,
     /// EIP-8037 clamp-and-spill: state gas refund amount that has been clamped by child frames but
     /// not yet absorbed by an ancestor frame. Flushed into the current frame on successful sub-call
     /// return, and restored from snapshot on revert.
@@ -528,18 +533,24 @@ impl<'a> VM<'a> {
             clippy::arithmetic_side_effects,
             reason = "byte-count constants are small (<200) and cpsb is bounded by block_gas_limit/year formula"
         )]
-        let (cpsb, state_gas_new_account, state_gas_storage_set, state_gas_auth_total) =
-            if fork >= Fork::Amsterdam {
-                let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
-                (
-                    cpsb,
-                    STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
-                    STATE_BYTES_PER_STORAGE_SET * cpsb,
-                    STATE_BYTES_PER_AUTH_TOTAL * cpsb,
-                )
-            } else {
-                (0, 0, 0, 0)
-            };
+        let (
+            cpsb,
+            state_gas_new_account,
+            state_gas_storage_set,
+            state_gas_auth_total,
+            state_gas_auth_base,
+        ) = if fork >= Fork::Amsterdam {
+            let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
+            (
+                cpsb,
+                STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
+                STATE_BYTES_PER_STORAGE_SET * cpsb,
+                STATE_BYTES_PER_AUTH_TOTAL * cpsb,
+                STATE_BYTES_PER_AUTH_BASE * cpsb,
+            )
+        } else {
+            (0, 0, 0, 0, 0)
+        };
 
         let mut vm = Self {
             call_frames: Vec::new(),
@@ -562,6 +573,7 @@ impl<'a> VM<'a> {
             state_gas_new_account,
             state_gas_storage_set,
             state_gas_auth_total,
+            state_gas_auth_base,
             state_gas_refund_pending: 0,
             state_gas_refund_absorbed: 0,
             intrinsic_state_gas_charged: 0,

@@ -315,8 +315,9 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let empty_or_delegated = authority_code.bytecode.is_empty()
-                || code_has_delegation(&authority_code.bytecode)?;
+            let authority_code_is_empty = authority_code.bytecode.is_empty();
+            let empty_or_delegated =
+                authority_code_is_empty || code_has_delegation(&authority_code.bytecode)?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -371,6 +372,25 @@ impl<'a> VM<'a> {
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
                         .ok_or(InternalError::Overflow)?;
                 }
+            }
+
+            // EELS PR #2836 (bal-devnet-7): if the authority's code slot already
+            // holds a delegation indicator (overwrite or clear), refill the
+            // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas.
+            // Keys off the pre-state code slot, not what we're writing, so the
+            // refund applies whether `auth.address` is a new target or
+            // `Address::zero()` (clear). Step 5 already restricts non-empty
+            // pre-state code to a valid delegation indicator.
+            if self.env.config.fork >= Fork::Amsterdam && !authority_code_is_empty {
+                let refund = self.state_gas_auth_base;
+                self.state_gas_reservoir = self
+                    .state_gas_reservoir
+                    .checked_add(refund)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_refund = self
+                    .state_refund
+                    .checked_add(refund)
+                    .ok_or(InternalError::Overflow)?;
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
