@@ -1,6 +1,7 @@
 # ethereum-package's el_admin_node_info.star bootstrap calls admin_nodeInfo
 # to discover the enode; the new ethrex defaults only serve eth/net/web3, so
 # every ethrex participant opts admin/debug/txpool back in for this devnet.
+# --http.addr is already set by ethereum-package's ethrex launcher.
 participants:
   - el_type: ethrex
     el_image: ethrex:ci
@@ -9,7 +10,6 @@ participants:
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
     el_extra_params:
-      - "--http.addr=0.0.0.0"
       - "--http.api=eth,net,web3,debug,admin,txpool"
   - el_type: ethrex
     el_image: ethrex:ci
@@ -18,7 +18,6 @@ participants:
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
     el_extra_params:
-      - "--http.addr=0.0.0.0"
       - "--http.api=eth,net,web3,debug,admin,txpool"
   - el_type: ethrex
     el_image: ethrex:ci
@@ -27,7 +26,6 @@ participants:
     validator_count: 32
     ethereum_metrics_exporter_enabled: true
     el_extra_params:
-      - "--http.addr=0.0.0.0"
       - "--http.api=eth,net,web3,debug,admin,txpool"
 
 network_params:
