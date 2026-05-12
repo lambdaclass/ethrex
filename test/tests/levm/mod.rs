@@ -11,6 +11,7 @@ mod l2_gas_reservation_tests;
 mod l2_hook_tests;
 mod l2_privileged_tx_tests;
 mod memory_tests;
+mod opcode_tracer_streaming_tests;
 mod opcode_tracer_tests;
 mod precompile_tests;
 mod prestate_tracer_tests;
