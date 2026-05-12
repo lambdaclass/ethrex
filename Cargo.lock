@@ -3978,6 +3978,7 @@ name = "ethrex-evm"
 version = "11.0.0"
 dependencies = [
  "bytes",
+ "clap",
  "ethrex-blockchain",
  "ethrex-common",
  "ethrex-crypto",
@@ -3986,10 +3987,13 @@ dependencies = [
  "ethrex-vm",
  "eyre",
  "hex",
+ "regex",
  "rustc-hash 2.1.2",
+ "secp256k1",
  "serde",
  "serde_json",
  "tokio",
+ "walkdir",
 ]
 
 [[package]]

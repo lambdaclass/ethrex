@@ -6,6 +6,10 @@ authors.workspace = true
 documentation.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "ethrex-evm"
+path = "src/main.rs"
+
 [dependencies]
 ethrex-blockchain = { workspace = true }
 ethrex-common = { workspace = true }
@@ -15,15 +19,21 @@ ethrex-vm = { workspace = true }
 ethrex-levm = { workspace = true }
 
 bytes.workspace = true
+clap = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
 hex.workspace = true
 eyre.workspace = true
 rustc-hash.workspace = true
+regex.workspace = true
+walkdir.workspace = true
+secp256k1 = { workspace = true }
 # add_initial_state is async, so we need a tokio runtime
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 
 [dev-dependencies]
 ethrex-common = { workspace = true }
+ethrex-levm = { workspace = true }
 ethrex-storage = { workspace = true }
 hex.workspace = true
+serde_json.workspace = true
