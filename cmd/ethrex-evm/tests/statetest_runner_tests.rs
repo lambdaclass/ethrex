@@ -76,7 +76,7 @@ fn test_5a_positional_path_trace() {
 
     // Pinned state root matches the fixture's `post.Prague[0].hash`.
     const EXPECTED_ROOT: &str =
-        "0x3c74867c259dda33ccb2d00da964c05a2f69b9b3abfded95cbade0ecb4820b4d";
+        "0xeb9c2278f9394e0be19c9472783c810ca5fab74cbaedc09c321e2aca4ad2bbcf";
 
     let out = Command::new(&bin)
         .args([
@@ -112,10 +112,7 @@ fn test_5a_positional_path_trace() {
 
     // Happy path: at least one opcode line (the implicit STOP) must stream
     // before the summary, and the summary must NOT carry an error field.
-    let opcode_lines: Vec<&&str> = lines
-        .iter()
-        .filter(|l| l.contains("\"opName\""))
-        .collect();
+    let opcode_lines: Vec<&&str> = lines.iter().filter(|l| l.contains("\"opName\"")).collect();
     assert!(
         !opcode_lines.is_empty(),
         "expected at least one opcode line in stderr; got: {stderr}"
@@ -140,7 +137,7 @@ fn test_5b_stdin_batch_mode() {
     let fixture = fixture_path();
 
     const EXPECTED_ROOT: &str =
-        "0x3c74867c259dda33ccb2d00da964c05a2f69b9b3abfded95cbade0ecb4820b4d";
+        "0xeb9c2278f9394e0be19c9472783c810ca5fab74cbaedc09c321e2aca4ad2bbcf";
 
     let fixture_str = fixture.to_str().expect("fixture path to str").to_owned();
 

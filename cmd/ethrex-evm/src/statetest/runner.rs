@@ -12,8 +12,8 @@ use std::{
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        Account, AccountInfo, Code, EIP1559Transaction, Fork, Genesis, GenesisAccount,
-        LegacyTransaction, Transaction, TxKind, tx_fields::AccessList,
+        Account, AccountInfo, Code, EIP1559Transaction, Fork, Genesis, GenesisAccount, Transaction,
+        TxKind, tx_fields::AccessList,
     },
 };
 use ethrex_crypto::NativeCrypto;
@@ -32,7 +32,7 @@ use walkdir::WalkDir;
 use crate::statetest::{
     StatetestArgs,
     error_map::vm_error_to_geth_string,
-    state_root::{build_generalized_db, compute_post_state_root, minimal_chain_config},
+    state_root::{build_generalized_db, compute_post_state_root},
     types::{StateTestAccount, StateTestFile},
 };
 
@@ -205,41 +205,19 @@ fn run_subtest(
     let base_blob_fee_per_gas =
         get_base_fee_per_blob_gas(None, &config).map_err(|e| eyre::eyre!("base blob fee: {e}"))?;
 
-    // Pick the transaction envelope based on which fee fields the template
-    // populated. EF tests use a legacy (type-0) envelope when only `gasPrice`
-    // is set, EIP-1559 (type-2) when `maxFeePerGas` / `maxPriorityFeePerGas`
-    // are set. Forcing every tx into a 1559 envelope produces wrong fee math
-    // for legacy vectors.
-    let tx = if max_fee_per_gas_u256.is_some() || max_priority_fee_per_gas_u256.is_some() {
-        Transaction::EIP1559Transaction(EIP1559Transaction {
-            to,
-            value,
-            data,
-            access_list,
-            gas_limit,
-            nonce: tx_template.nonce,
-            max_priority_fee_per_gas: max_priority_fee_per_gas_u256
-                .unwrap_or_default()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            max_fee_per_gas: max_fee_per_gas_u256
-                .unwrap_or_default()
-                .try_into()
-                .unwrap_or(u64::MAX),
-            chain_id: 1,
-            ..Default::default()
-        })
-    } else {
-        Transaction::LegacyTransaction(LegacyTransaction {
-            to,
-            value,
-            data,
-            gas: gas_limit,
-            nonce: tx_template.nonce,
-            gas_price: gas_price_u256,
-            ..Default::default()
-        })
-    };
+    // Mirror tooling/ef_tests/state/runner/levm_runner.rs::prepare_vm_for_tx:
+    // always wrap in EIP1559Transaction with default fee fields. LEVM's
+    // execution layer reads the effective price from `Environment` (gas_price
+    // / tx_max_fee_per_gas) rather than the envelope, so legacy vectors work
+    // through this branch without any fee-math drift.
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        to,
+        value,
+        data,
+        access_list,
+        gas_limit,
+        ..Default::default()
+    });
 
     let levm_env = Environment {
         origin: sender,
@@ -424,10 +402,19 @@ fn build_genesis_from_pre(
         })
         .collect();
 
+    // Use the default ChainConfig (all forks inactive in the genesis header);
+    // LEVM's `EVMConfig` is what drives fork-specific behavior at exec time.
+    // Mirroring tooling/ef_tests/state's `Genesis::from(&EFTest)`.
     Genesis {
-        config: minimal_chain_config(),
         alloc,
         gas_limit: env.current_gas_limit,
+        coinbase: env.current_coinbase,
+        difficulty: env.current_difficulty,
+        mix_hash: env.current_random.unwrap_or_default(),
+        timestamp: env.current_timestamp,
+        base_fee_per_gas: env
+            .current_base_fee
+            .map(|v| v.try_into().unwrap_or(u64::MAX)),
         ..Default::default()
     }
 }

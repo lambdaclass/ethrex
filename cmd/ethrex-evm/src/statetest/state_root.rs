@@ -66,8 +66,12 @@ fn build_genesis(pre_state: &FxHashMap<Address, Account>) -> Genesis {
         })
         .collect();
 
+    // Mirror tooling/ef_tests/state/types.rs `Genesis::from(&EFTest)`: leave
+    // the chain config at its `Default` (all-forks-inactive). LEVM's
+    // execution-time `EVMConfig` is what drives fork-specific behavior; a
+    // bespoke chain config here can leak Amsterdam/Prague checks into a
+    // Shanghai run (observed: +32 gas overhead on a 21000-gas transfer).
     Genesis {
-        config: minimal_chain_config(),
         alloc,
         gas_limit: 30_000_000,
         ..Default::default()

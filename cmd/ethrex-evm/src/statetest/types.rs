@@ -80,6 +80,11 @@ pub struct TestEnv {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TestTransaction {
+    /// Per-subtest calldata bodies, each a hex-encoded byte string. Without
+    /// the custom deserializer, the default `Vec<Bytes>` parse would treat
+    /// `"0x"` as the literal ASCII bytes `'0','x'` (intrinsic-gas accounting
+    /// would then over-charge 32 gas for what should be empty calldata).
+    #[serde(deserialize_with = "deser_vec_hex_bytes")]
     pub data: Vec<Bytes>,
     #[serde(deserialize_with = "deser_vec_u64_hex_dec")]
     pub gas_limit: Vec<u64>,
@@ -95,6 +100,21 @@ pub struct TestTransaction {
     // deserializer once the statetest CLI starts constructing real txs.
     #[serde(default)]
     pub access_lists: Vec<serde_json::Value>,
+}
+
+/// Deserializes a JSON array of hex strings (`["0x", "0xdeadbeef"]`) into a
+/// `Vec<Bytes>`. `"0x"` decodes to an empty `Bytes`.
+fn deser_vec_hex_bytes<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<Bytes>, D::Error> {
+    use serde::de::Error;
+    let raw: Vec<String> = Vec::deserialize(d)?;
+    raw.into_iter()
+        .map(|s| {
+            let stripped = s.strip_prefix("0x").unwrap_or(&s);
+            hex::decode(stripped)
+                .map(Bytes::from)
+                .map_err(D::Error::custom)
+        })
+        .collect()
 }
 
 /// Deserializes a JSON array of hex-or-decimal strings (`["0x5208", "21000"]`)
