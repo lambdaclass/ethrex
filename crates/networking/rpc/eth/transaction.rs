@@ -606,10 +606,13 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // RPC-submitted transactions are tagged as `TxOrigin::Local` so they may
+        // bypass admission gates (such as the min-tip floor) intended to protect
+        // against P2P spam. See `Blockchain::add_local_transaction_to_pool`.
         let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
             context
                 .blockchain
-                .add_blob_transaction_to_pool(
+                .add_local_blob_transaction_to_pool(
                     wrapped_blob_tx.tx.clone(),
                     wrapped_blob_tx.blobs_bundle.clone(),
                 )
@@ -617,7 +620,7 @@ impl RpcHandler for SendRawTransactionRequest {
         } else {
             context
                 .blockchain
-                .add_transaction_to_pool(self.to_transaction())
+                .add_local_transaction_to_pool(self.to_transaction())
                 .await
         }?;
         serde_json::to_value(format!("{hash:#x}"))

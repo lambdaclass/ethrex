@@ -184,6 +184,16 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        help = "Disable admission exemptions for locally-submitted transactions. \
+                When set, RPC-submitted txs are subject to the same admission gates \
+                (e.g. min-tip floor) as P2P-received ones.",
+        long = "mempool.nolocals",
+        default_value_t = false,
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_NOLOCALS"
+    )]
+    pub mempool_nolocals: bool,
+    #[arg(
         long = "http.addr",
         default_value = "0.0.0.0",
         value_name = "ADDRESS",
@@ -450,6 +460,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_nolocals: Default::default(),
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

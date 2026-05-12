@@ -23,6 +23,20 @@ use ethrex_common::{
 use ethrex_storage::error::StoreError;
 use tracing::warn;
 
+/// Provenance of a transaction entering the mempool.
+///
+/// Used by admission validation to apply origin-specific policies (e.g. the
+/// min-tip floor only applies to `External` txs unless `--mempool.nolocals` is
+/// set). Orthogonal to propagation policy: a `Local` tx is still gossiped to
+/// peers unless a separate non-propagation flag is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TxOrigin {
+    /// Submitted by an operator-controlled RPC client (e.g. `eth_sendRawTransaction`).
+    Local,
+    /// Received from a P2P peer.
+    External,
+}
+
 #[derive(Debug, Default)]
 struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
