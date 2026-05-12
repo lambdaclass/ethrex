@@ -1,5 +1,0 @@
-{"pc":0,"op":96,"gas":"0x2540be400","gasCost":"0x3","memSize":0,"stack":[],"depth":1,"refund":0,"opName":"PUSH1"}
-{"pc":2,"op":96,"gas":"0x2540be3fd","gasCost":"0x3","memSize":0,"stack":["0x1"],"depth":1,"refund":0,"opName":"PUSH1"}
-{"pc":4,"op":1,"gas":"0x2540be3fa","gasCost":"0x3","memSize":0,"stack":["0x1","0x1"],"depth":1,"refund":0,"opName":"ADD"}
-{"pc":5,"op":0,"gas":"0x2540be3f7","gasCost":"0x0","memSize":0,"stack":["0x2"],"depth":1,"refund":0,"opName":"STOP"}
-{"output":"","gasUsed":"0x9"}
