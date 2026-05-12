@@ -91,11 +91,6 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
-      --mempool.nolocals
-          Disable admission exemptions for locally-submitted transactions. When set, RPC-submitted txs are subject to the same admission gates (e.g. min-tip floor) as P2P-received ones.
-
-          [env: ETHREX_MEMPOOL_NOLOCALS=]
-
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 
@@ -321,11 +316,6 @@ Node options:
 
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
-
-      --mempool.nolocals
-          Disable admission exemptions for locally-submitted transactions. When set, RPC-submitted txs are subject to the same admission gates (e.g. min-tip floor) as P2P-received ones.
-
-          [env: ETHREX_MEMPOOL_NOLOCALS=]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...

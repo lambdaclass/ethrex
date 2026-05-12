@@ -231,11 +231,6 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
-    /// If true, locally-submitted transactions are subject to the same admission
-    /// policies as P2P-received ones (no exemptions). Defaults to `false`, meaning
-    /// `TxOrigin::Local` transactions bypass operator-friendly gates such as the
-    /// min-tip floor.
-    pub nolocals: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -247,7 +242,6 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
-            nolocals: false,
         }
     }
 }
@@ -2330,7 +2324,7 @@ impl Blockchain {
 
     /// Add a locally-submitted blob transaction (e.g. via `eth_sendRawTransaction`)
     /// to the mempool. The transaction is validated as `TxOrigin::Local`, so it may
-    /// bypass operator-friendly admission gates unless `--mempool.nolocals` is set.
+    /// bypass operator-friendly admission gates.
     #[cfg(feature = "c-kzg")]
     pub async fn add_local_blob_transaction_to_pool(
         &self,
@@ -2393,7 +2387,7 @@ impl Blockchain {
 
     /// Add a locally-submitted transaction (e.g. via `eth_sendRawTransaction`) to
     /// the mempool. The transaction is validated as `TxOrigin::Local`, so it may
-    /// bypass operator-friendly admission gates unless `--mempool.nolocals` is set.
+    /// bypass operator-friendly admission gates.
     pub async fn add_local_transaction_to_pool(
         &self,
         transaction: Transaction,
@@ -2478,24 +2472,22 @@ impl Blockchain {
     /// Returns the hash of the transaction to replace in case the nonce already exists.
     ///
     /// `origin` records whether the transaction came in via RPC (`TxOrigin::Local`)
-    /// or P2P (`TxOrigin::External`). Some admission gates are skipped for local
-    /// transactions unless the operator opts out via `--mempool.nolocals`
-    /// (see `BlockchainOptions::nolocals`).
+    /// or P2P (`TxOrigin::External`). The plumbing exists so future admission
+    /// gates can apply origin-aware exemptions (e.g. PR #6604's min-tip floor
+    /// will skip local txs by default).
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
         origin: TxOrigin,
     ) -> Result<Option<H256>, MempoolError> {
-        // `locals_exempt` gates origin-aware exemptions. When the operator sets
-        // `--mempool.nolocals`, locally-submitted txs are treated like external
-        // ones for admission purposes.
-        let _locals_exempt = !self.options.nolocals && origin == TxOrigin::Local;
-
         // TODO(#6604): when the min-tip floor lands (PR #6604 adds
         // `BlockchainOptions::min_tip_wei` and a `gas_tip_cap < min_tip_wei`
-        // rejection), wrap the floor check with `if !_locals_exempt { ... }` so
-        // that `TxOrigin::Local` transactions bypass the floor by default.
+        // rejection), wrap the floor check with
+        // `if origin != TxOrigin::Local { ... }` so `TxOrigin::Local`
+        // transactions bypass the floor. The opt-out operator flag (e.g.
+        // `--mempool.nolocals`) should land in the same PR that wires the
+        // exemption — adding it now would expose a no-op operator knob.
 
         let nonce = tx.nonce();
 
