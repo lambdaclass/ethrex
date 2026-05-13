@@ -374,14 +374,21 @@ impl<'a> VM<'a> {
                 }
             }
 
-            // EELS PR #2836 (bal-devnet-7): if the authority's code slot already
-            // holds a delegation indicator (overwrite or clear), refill the
-            // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas.
-            // Keys off the pre-state code slot, not what we're writing, so the
-            // refund applies whether `auth.address` is a new target or
-            // `Address::zero()` (clear). Step 5 already restricts non-empty
-            // pre-state code to a valid delegation indicator.
-            if self.env.config.fork >= Fork::Amsterdam && !authority_code_is_empty {
+            // EELS PR #2836 + #2848 (bal-devnet-7, tests-bal@v7.1.1): refill the
+            // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas
+            // when no new delegation indicator bytes are written. That covers
+            // two cases:
+            //   1. Authority's code slot already holds a delegation indicator
+            //      (overwrite or clear in place — PR #2836).
+            //   2. The auth is a clear (`auth.address == 0x00`) against an
+            //      authority with no prior code — also writes zero bytes
+            //      (PR #2848).
+            // Step 5 already restricts non-empty pre-state code to a valid
+            // delegation indicator, so checking `!authority_code_is_empty` is
+            // equivalent to EELS's `code_hash != EMPTY_CODE_HASH`.
+            let writes_no_new_indicator =
+                !authority_code_is_empty || auth_tuple.address == Address::zero();
+            if self.env.config.fork >= Fork::Amsterdam && writes_no_new_indicator {
                 let refund = self.state_gas_auth_base;
                 self.state_gas_reservoir = self
                     .state_gas_reservoir
