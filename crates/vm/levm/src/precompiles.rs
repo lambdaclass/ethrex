@@ -5,9 +5,11 @@ use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
 use ethrex_crypto::{Crypto, CryptoError};
-use rustc_hash::FxHashMap;
+use lru::LruCache;
+use rustc_hash::FxBuildHasher;
 use std::borrow::Cow;
-use std::sync::RwLock;
+use std::num::NonZeroUsize;
+use std::sync::Mutex;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
@@ -259,15 +261,28 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
-/// Per-block cache for precompile results shared between warmer and executor.
+/// Cross-block cache for precompile results shared between warmer and executor.
+/// Bounded LRU prevents unbounded growth across blocks. Cap chosen generously
+/// above mainnet observed working sets (reth telemetry: ECMUL saturates at 10K
+/// over a single block — cross-block scope is roughly an order of magnitude
+/// larger across all precompiles combined).
+const PRECOMPILE_CACHE_CAP: NonZeroUsize = match NonZeroUsize::new(100_000) {
+    Some(n) => n,
+    None => panic!("cap > 0"),
+};
+
+type PrecompileCacheMap = LruCache<(Address, Bytes), (Bytes, u64), FxBuildHasher>;
+
 pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+    // `LruCache::get` promotes recency, so it needs `&mut self`. `Mutex` is
+    // simpler than `RwLock` here and the critical section is one hash lookup.
+    cache: Mutex<PrecompileCacheMap>,
 }
 
 impl Default for PrecompileCache {
     fn default() -> Self {
         Self {
-            cache: RwLock::new(FxHashMap::default()),
+            cache: Mutex::new(LruCache::with_hasher(PRECOMPILE_CACHE_CAP, FxBuildHasher)),
         }
     }
 }
@@ -282,7 +297,7 @@ impl PrecompileCache {
         // holding it), skip the cache rather than propagating the panic. The cache
         // is a pure optimization — missing it only costs a recomputation.
         self.cache
-            .read()
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .get(&(*address, calldata.clone()))
             .cloned()
@@ -290,9 +305,9 @@ impl PrecompileCache {
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
         self.cache
-            .write()
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+            .put((address, calldata), (output, gas_cost));
     }
 }
 
