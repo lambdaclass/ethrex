@@ -1181,25 +1181,13 @@ pub async fn request_storage_ranges(
         ));
     }
 
-    // Drain remaining in-flight tasks with a timeout. Workers hold a
-    // `RequestPermit` that releases the peer slot on drop — aborting a
-    // task still drops the permit, so slots are never leaked. Without
-    // the timeout, a single hung request would block the entire sync
-    // cycle forever.
-    let drain_deadline =
-        tokio::time::Instant::now() + PEER_REPLY_TIMEOUT + std::time::Duration::from_secs(5);
+    // Drain any remaining in-flight tasks so that every spawned worker
+    // runs to completion (and drops its `RequestPermit`, which calls
+    // `dec_requests` automatically). Without this, exiting the loop on
+    // staleness would drop the receiver, causing workers' `tx.send` to
+    // fail and leaving their permits un-dropped.
     while !request_set.is_empty() {
-        if tokio::time::timeout_at(drain_deadline, request_set.join_next())
-            .await
-            .is_err()
-        {
-            tracing::warn!(
-                remaining = request_set.len(),
-                "storage ranges: timed out draining in-flight tasks, aborting"
-            );
-            request_set.abort_all();
-            break;
-        }
+        let _ = request_set.join_next().await;
     }
 
     {
