@@ -30,6 +30,7 @@ impl ExecBackend {
         {
             use ethrex_common::types::ELASTICITY_MULTIPLIER;
             use ethrex_vm::Evm;
+            let chain_id = input.execution_witness.chain_config.chain_id;
             let _ = ethrex_guest_program::common::execute_blocks(
                 &input.blocks,
                 input.execution_witness,
@@ -44,6 +45,7 @@ impl ExecBackend {
             Ok(ProgramOutput {
                 new_payload_request_root: [0u8; 32],
                 valid: true,
+                chain_id,
             })
         }
         #[cfg(not(feature = "eip-8025"))]
