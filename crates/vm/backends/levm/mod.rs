@@ -644,31 +644,9 @@ impl LEVM {
                 continue;
             }
 
-            // Load pre-state for unchanged fields (cache hit after prefetch)
-            let prestate = store
-                .get_account_state(addr)
-                .map_err(|e| EvmError::Custom(format!("bal_to_account_updates: {e}")))?;
-
-            // Final balance: last entry (highest index) or prestate
-            let balance = acct_changes
-                .balance_changes
-                .last()
-                .map(|c| c.post_balance)
-                .unwrap_or(prestate.balance);
-
-            // Final nonce: last entry or prestate
-            let nonce = acct_changes
-                .nonce_changes
-                .last()
-                .map(|c| c.post_nonce)
-                .unwrap_or(prestate.nonce);
-
-            // Final code: last entry or prestate
-            let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
-                Self::code_from_bal(&c.new_code)
-            } else {
-                (prestate.code_hash, None)
-            };
+            let last_balance = acct_changes.balance_changes.last().map(|c| c.post_balance);
+            let last_nonce = acct_changes.nonce_changes.last().map(|c| c.post_nonce);
+            let last_code_change = acct_changes.code_changes.last();
 
             // Storage: per slot, last entry (highest index)
             let mut added_storage = FxHashMap::with_capacity_and_hasher(
@@ -682,6 +660,72 @@ impl LEVM {
                 }
             }
 
+            let has_info_changes =
+                last_balance.is_some() || last_nonce.is_some() || last_code_change.is_some();
+
+            // Fast path 1: storage-only update. No info changes, can't be a removal
+            // (BAL only records actual modifications, so prestate fields are unchanged →
+            // post non-empty unless prestate was already empty, in which case removed=false
+            // by definition). Skip prestate fetch entirely.
+            if !has_info_changes {
+                updates.push(AccountUpdate {
+                    address: addr,
+                    removed: false,
+                    info: None,
+                    code: None,
+                    added_storage,
+                    removed_storage: false,
+                });
+                continue;
+            }
+
+            // Compute would-be post-state info for the fast-path test.
+            let post_balance_zero = last_balance.is_some_and(|b| b.is_zero());
+            let post_nonce_zero = last_nonce.is_some_and(|n| n == 0);
+            let post_code_empty = last_code_change.is_some_and(|c| c.new_code.is_empty());
+            let post_could_be_empty = post_balance_zero && post_nonce_zero && post_code_empty;
+            let has_full_info_coverage =
+                last_balance.is_some() && last_nonce.is_some() && last_code_change.is_some();
+
+            // Fast path 2: BAL fully specifies post-state info AND post is non-empty.
+            // No prestate needed: removal is impossible (post non-empty), and post-state
+            // info comes entirely from BAL.
+            if has_full_info_coverage && !post_could_be_empty {
+                let (code_hash, code) = Self::code_from_bal(
+                    &last_code_change
+                        .expect("checked by has_full_info_coverage")
+                        .new_code,
+                );
+                let info = AccountInfo {
+                    code_hash,
+                    balance: last_balance.expect("checked by has_full_info_coverage"),
+                    nonce: last_nonce.expect("checked by has_full_info_coverage"),
+                };
+                updates.push(AccountUpdate {
+                    address: addr,
+                    removed: false,
+                    info: Some(info),
+                    code,
+                    added_storage,
+                    removed_storage: false,
+                });
+                continue;
+            }
+
+            // Slow path: partial info coverage OR post-state may be empty (removal check).
+            // Load pre-state for unchanged fields / removal detection (cache hit after prefetch).
+            let prestate = store
+                .get_account_state(addr)
+                .map_err(|e| EvmError::Custom(format!("bal_to_account_updates: {e}")))?;
+
+            let balance = last_balance.unwrap_or(prestate.balance);
+            let nonce = last_nonce.unwrap_or(prestate.nonce);
+            let (code_hash, code) = if let Some(c) = last_code_change {
+                Self::code_from_bal(&c.new_code)
+            } else {
+                (prestate.code_hash, None)
+            };
+
             // Detect account removal (EIP-161): post-state empty but pre-state existed
             let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCACK_HASH;
             let pre_empty = prestate.balance.is_zero()
@@ -689,15 +733,9 @@ impl LEVM {
                 && prestate.code_hash == *EMPTY_KECCACK_HASH;
             let removed = post_empty && !pre_empty;
 
-            let balance_changed = acct_changes
-                .balance_changes
-                .last()
-                .is_some_and(|c| c.post_balance != prestate.balance);
-            let nonce_changed = acct_changes
-                .nonce_changes
-                .last()
-                .is_some_and(|c| c.post_nonce != prestate.nonce);
-            let code_changed = acct_changes.code_changes.last().is_some();
+            let balance_changed = last_balance.is_some_and(|b| b != prestate.balance);
+            let nonce_changed = last_nonce.is_some_and(|n| n != prestate.nonce);
+            let code_changed = last_code_change.is_some();
             let acc_info_updated = balance_changed || nonce_changed || code_changed;
 
             if !removed && !acc_info_updated && added_storage.is_empty() {
@@ -714,7 +752,7 @@ impl LEVM {
                 None
             };
 
-            let update = AccountUpdate {
+            updates.push(AccountUpdate {
                 address: addr,
                 removed,
                 info,
@@ -727,8 +765,7 @@ impl LEVM {
                 // so `added_storage` already contains those zeroed entries and
                 // the trie update is correct without setting removed_storage.
                 removed_storage: false,
-            };
-            updates.push(update);
+            });
         }
 
         Ok(updates)
@@ -938,9 +975,6 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Pre-compute capacity hint for per-tx DBs from BAL account count.
-        let bal_account_count = bal.accounts().len();
-
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
         //    BAL validation is deferred to after the gas limit check (step 3) so that
         //    blocks exceeding gas limit produce GAS_USED_OVERFLOW before BAL mismatch.
@@ -953,6 +987,12 @@ impl LEVM {
             FxHashSet<Address>, // accessed_accounts tracker
         );
 
+        // Per-tx db capacity hint. The previous `bal.accounts().len()` sizing
+        // (often 100s on stress blocks) far exceeded the p50 of <10 accounts
+        // actually touched per tx, wasting allocator capacity across rayon
+        // workers. 32 leaves headroom for tail-heavy txs without over-reserving.
+        const PER_TX_DB_CAPACITY: usize = 32;
+
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
@@ -960,7 +1000,7 @@ impl LEVM {
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
-                    bal_account_count,
+                    PER_TX_DB_CAPACITY,
                 );
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
