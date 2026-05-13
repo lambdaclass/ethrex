@@ -183,16 +183,22 @@ P2P options:
 
 RPC options:
       --http.addr <ADDRESS>
-          Listening address for the http rpc server.
+          Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: 0.0.0.0]
+          [default: 127.0.0.1]
 
       --http.port <PORT>
           Listening port for the http rpc server.
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --http.api <NAMESPACES>
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+
+          [env: ETHREX_HTTP_API=]
+          [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
@@ -234,7 +240,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 11.0.0"]
+          [default: "ethrex 12.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -405,16 +411,22 @@ P2P options:
 
 RPC options:
       --http.addr <ADDRESS>
-          Listening address for the http rpc server.
+          Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: 0.0.0.0]
+          [default: 127.0.0.1]
 
       --http.port <PORT>
           Listening port for the http rpc server.
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --http.api <NAMESPACES>
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+
+          [env: ETHREX_HTTP_API=]
+          [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
@@ -456,7 +468,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 11.0.0"]
+          [default: "ethrex 12.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -708,6 +720,18 @@ L2 options:
 
           [env: SPONSOR_PRIVATE_KEY=]
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
+
+      --sponsored-gas-limit <GAS_LIMIT>
+          Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.
+
+          [env: ETHREX_SPONSORED_GAS_LIMIT=]
+          [default: 500000]
+
+      --http.api.ethrex <BOOLEAN>
+          Expose L2-specific ethrex_* RPC methods over HTTP/WS. Enabled by default for L2 nodes.
+
+          [env: ETHREX_HTTP_API_ETHREX=]
+          [default: true]
 
 Monitor options:
       --no-monitor

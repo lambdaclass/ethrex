@@ -80,6 +80,23 @@ pub fn parse_duration(s: &str) -> eyre::Result<std::time::Duration> {
         .ok_or_else(|| eyre::eyre!("invalid duration {s:?}"))
 }
 
+pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(eyre::eyre!("empty namespace in --http.api"));
+    }
+    if trimmed.eq_ignore_ascii_case("engine") {
+        return Err(eyre::eyre!(
+            "`engine` cannot be enabled on --http.api; it is served on the authenticated RPC port"
+        ));
+    }
+    ethrex_rpc::RpcNamespace::from_prefix(&trimmed.to_ascii_lowercase()).ok_or_else(|| {
+        eyre::eyre!(
+            "unknown RPC namespace {trimmed:?}; expected one of eth, net, web3, debug, admin, txpool"
+        )
+    })
+}
+
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
     match s {
         "full" => Ok(SyncMode::Full),

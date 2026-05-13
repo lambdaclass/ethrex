@@ -1706,6 +1706,27 @@ mod canonic_encoding {
             self.encode_canonical(&mut buf);
             buf
         }
+
+        /// Canonical-encoded length without allocating a buffer. Counts the
+        /// 1-byte type prefix for typed txs (EIP-2718) plus the inner RLP
+        /// payload length. Use this when only the size is needed (e.g.
+        /// admission-time size caps) to avoid `encode_canonical_to_vec().len()`.
+        pub fn encode_canonical_len(&self) -> usize {
+            let prefix_len = match self {
+                Transaction::LegacyTransaction(_) => 0,
+                _ => 1,
+            };
+            let inner_len = match self {
+                Transaction::LegacyTransaction(t) => t.length(),
+                Transaction::EIP2930Transaction(t) => t.length(),
+                Transaction::EIP1559Transaction(t) => t.length(),
+                Transaction::EIP4844Transaction(t) => t.length(),
+                Transaction::EIP7702Transaction(t) => t.length(),
+                Transaction::FeeTokenTransaction(t) => t.length(),
+                Transaction::PrivilegedL2Transaction(t) => t.length(),
+            };
+            prefix_len + inner_len
+        }
     }
 
     impl P2PTransaction {
