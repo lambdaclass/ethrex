@@ -97,6 +97,57 @@ fn create_transaction_intrinsic_gas() {
     assert_eq!(intrinsic_gas, expected_gas_cost);
 }
 
+/// EIP-8037 / bal-devnet-4: Amsterdam CREATE tx intrinsic must match the VM
+/// charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular portion
+/// drops to `TX_GAS_COST + REGULAR_GAS_CREATE = 30000` and a state portion
+/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`) is folded in. Mempool admission
+/// must return the total so txs whose `gas_limit` is below the VM intrinsic
+/// are rejected before they enter the pool, and txs above it aren't
+/// spuriously rejected.
+#[test]
+fn amsterdam_create_intrinsic_matches_vm_dimensions() {
+    use ethrex_levm::gas_cost::{
+        REGULAR_GAS_CREATE, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
+    };
+
+    let (mut config, header) = build_basic_config_and_header(true, true);
+    // Activate Amsterdam at genesis. Intermediate forks must also be active
+    // so `config.fork(timestamp)` returns Amsterdam, not an earlier variant.
+    config.cancun_time = Some(0);
+    config.prague_time = Some(0);
+    config.osaka_time = Some(0);
+    config.bpo1_time = Some(0);
+    config.bpo2_time = Some(0);
+    config.amsterdam_time = Some(0);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let cpsb = cost_per_state_byte(header.gas_limit);
+    let expected = TX_GAS_COST + REGULAR_GAS_CREATE + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    assert_eq!(
+        intrinsic_gas, expected,
+        "Amsterdam CREATE intrinsic must be TX_BASE + REGULAR_GAS_CREATE + \
+         STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+    );
+    // Guard against regression to the legacy 53000 constant.
+    assert_ne!(
+        intrinsic_gas, TX_CREATE_GAS_COST,
+        "Amsterdam CREATE must NOT use legacy TX_CREATE_GAS_COST"
+    );
+}
+
 #[test]
 fn transaction_intrinsic_data_gas_pre_istanbul() {
     let (config, header) = build_basic_config_and_header(false, false);
@@ -355,6 +406,36 @@ async fn transaction_with_blob_base_fee_below_min_should_fail() {
         validation.await,
         Err(MempoolError::TxBlobBaseFeeTooLowError)
     ));
+}
+
+#[tokio::test]
+async fn validate_transaction_rejects_oversize_non_blob() {
+    // EIP-1559 tx with serialized RLP > MAX_TX_SIZE must be rejected at
+    // admission with `TxSizeExceeded`. The size cap is the first
+    // size-themed check; it runs before init-code, intrinsic gas, and
+    // balance lookups, so an unsigned tx with no sender state is enough.
+    use ethrex_common::types::MAX_TX_SIZE;
+
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Pad calldata above MAX_TX_SIZE so the *encoded* tx is also oversized.
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(vec![0u8; MAX_TX_SIZE + 1]),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    match res {
+        Err(MempoolError::TxSizeExceeded { actual, limit }) => {
+            assert!(actual > limit);
+            assert_eq!(limit, MAX_TX_SIZE);
+        }
+        other => panic!("expected TxSizeExceeded, got {:?}", other),
+    }
 }
 
 #[test]

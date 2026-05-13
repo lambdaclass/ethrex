@@ -9,6 +9,7 @@
 *.pdb
 
 tooling/ef_tests/blockchain/vectors
+tooling/ef_tests/blockchain/vectors_zkevm
 
 tooling/ef_tests/state/vectors
 
