@@ -323,6 +323,7 @@ async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
 
     let recipient_addr = SocketAddr::new(original_ip, 30303);
     let make_pong = || PongMessage {
+        // No matching PING set up in peer_table; record_pong_received silently ignores it.
         req_id: Bytes::from_static(b""),
         enr_seq: 0,
         recipient_addr,
