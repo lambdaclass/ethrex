@@ -8,6 +8,7 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
+    utils::RpcNamespace,
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -32,7 +33,7 @@ use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::ActorRef;
-use std::{net::SocketAddr, str::FromStr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 // Base price for each test transaction.
@@ -224,7 +225,6 @@ pub fn example_local_node_record() -> NodeRecord {
 // ```
 pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     let http_addr: SocketAddr = "127.0.0.1:8500".parse().unwrap();
-    let ws_addr: SocketAddr = "127.0.0.1:8546".parse().unwrap();
     let authrpc_addr: SocketAddr = "127.0.0.1:8501".parse().unwrap();
     let mut storage =
         Store::new("", EngineType::InMemory).expect("Failed to create in-memory storage");
@@ -239,7 +239,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         start_api(
             http_addr,
-            Some(ws_addr),
+            None,
             authrpc_addr,
             storage.clone(),
             blockchain.clone(),
@@ -259,10 +259,23 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
+            all_namespaces_for_tests(),
         )
         .await
         .unwrap()
     })
+}
+
+/// All known namespaces, used in tests so handlers from any namespace can be exercised.
+pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
+    HashSet::from([
+        RpcNamespace::Eth,
+        RpcNamespace::Net,
+        RpcNamespace::Web3,
+        RpcNamespace::Debug,
+        RpcNamespace::Admin,
+        RpcNamespace::Mempool,
+    ])
 }
 
 pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
@@ -293,6 +306,8 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         log_filter_handler: None,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
+        ws: None,
+        allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     }
 }
 
@@ -316,7 +331,7 @@ pub async fn dummy_sync_manager() -> SyncManager {
 /// Creates a dummy PeerHandler for tests where interacting with peers is not needed
 /// This should only be used in tests as it won't be able to interact with the node's connected peers
 pub async fn dummy_peer_handler(store: Store) -> PeerHandler {
-    let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, store);
+    let peer_table = PeerTableServer::spawn(TARGET_PEERS, store);
     PeerHandler::new(peer_table.clone(), dummy_actor(peer_table).await)
 }
 

@@ -29,7 +29,7 @@ use std::sync::{
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 // Re-export types used by submodules
 pub use snap_sync::{
@@ -53,6 +53,56 @@ pub enum SyncMode {
     Snap,
 }
 
+/// Diagnostic snapshot of the sync state, used by admin RPC endpoints.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct SyncDiagnostics {
+    pub sync_mode: String,
+    pub current_phase: String,
+    pub pivot_block_number: Option<u64>,
+    pub pivot_timestamp: Option<u64>,
+    pub pivot_age_seconds: Option<u64>,
+    pub staleness_threshold_seconds: u64,
+    pub phase_progress: std::collections::HashMap<String, u64>,
+    pub recent_pivot_changes: std::collections::VecDeque<PivotChangeEvent>,
+    pub recent_errors: std::collections::VecDeque<SyncErrorEvent>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PivotChangeEvent {
+    pub timestamp: u64,
+    pub old_pivot_number: u64,
+    pub new_pivot_number: u64,
+    pub outcome: String,
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncErrorEvent {
+    pub timestamp: u64,
+    pub error_type: String,
+    pub error_message: String,
+    pub recoverable: bool,
+}
+
+impl SyncDiagnostics {
+    const MAX_PIVOT_CHANGES: usize = 10;
+    const MAX_ERRORS: usize = 20;
+
+    pub fn push_pivot_change(&mut self, event: PivotChangeEvent) {
+        if self.recent_pivot_changes.len() >= Self::MAX_PIVOT_CHANGES {
+            self.recent_pivot_changes.pop_front();
+        }
+        self.recent_pivot_changes.push_back(event);
+    }
+
+    pub fn push_error(&mut self, event: SyncErrorEvent) {
+        if self.recent_errors.len() >= Self::MAX_ERRORS {
+            self.recent_errors.pop_front();
+        }
+        self.recent_errors.push_back(event);
+    }
+}
+
 /// Manager in charge the sync process
 #[derive(Debug)]
 pub struct Syncer {
@@ -66,6 +116,7 @@ pub struct Syncer {
     /// This string indicates a folder where the snap algorithm will store temporary files that are
     /// used during the syncing process
     datadir: PathBuf,
+    diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 }
 
 impl Syncer {
@@ -75,6 +126,7 @@ impl Syncer {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         datadir: PathBuf,
+        diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
     ) -> Self {
         Self {
             snap_enabled,
@@ -82,6 +134,7 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
+            diagnostics,
         }
     }
 
@@ -97,6 +150,7 @@ impl Syncer {
         let start_time = Instant::now();
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
+                self.diagnostics.write().await.current_phase = "idle".to_string();
                 info!(
                     time_elapsed_s = start_time.elapsed().as_secs(),
                     %sync_head,
@@ -106,7 +160,24 @@ impl Syncer {
 
             // If the error is irrecoverable, we exit ethrex
             Err(error) => {
-                match error.is_recoverable() {
+                let recoverable = error.is_recoverable();
+                self.diagnostics.write().await.current_phase = "idle".to_string();
+                debug!(
+                    error_type = %error,
+                    recoverable = recoverable,
+                    action = if recoverable { "retry" } else { "exit" },
+                    "Sync cycle error classification"
+                );
+                self.diagnostics.write().await.push_error(SyncErrorEvent {
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    error_type: format!("{:?}", std::mem::discriminant(&error)),
+                    error_message: error.to_string(),
+                    recoverable,
+                });
+                match recoverable {
                     false => {
                         // We exit the node, as we can't recover this error
                         error!(
@@ -144,6 +215,7 @@ impl Syncer {
                 sync_head,
                 store,
                 &self.datadir,
+                &self.diagnostics,
             )
             .await;
             METRICS.disable().await;
@@ -245,6 +317,12 @@ pub enum SyncError {
 
 impl SyncError {
     pub fn is_recoverable(&self) -> bool {
+        // PeerHandler delegates to its own classification so that transient
+        // peer/network errors retry while structural errors (dead actor,
+        // local storage full) still exit.
+        if let SyncError::PeerHandler(e) = self {
+            return e.is_recoverable();
+        }
         match self {
             SyncError::SnapshotReadError(_, _)
             | SyncError::SnapshotDecodeError(_)
@@ -255,8 +333,6 @@ impl SyncError {
             | SyncError::AccountStoragesSnapshotsDirNotFound
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
-            | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_)
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -278,7 +354,10 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
-            | SyncError::NoBlocks => true,
+            | SyncError::NoBlocks
+            | SyncError::NoBlockHeaders => true,
+            // PeerHandler handled above by delegation
+            SyncError::PeerHandler(_) => unreachable!(),
         }
     }
 }
