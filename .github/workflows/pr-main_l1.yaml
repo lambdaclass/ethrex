@@ -27,8 +27,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -64,7 +64,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -109,7 +109,7 @@ jobs:
         runner: [ubuntu-22.04, ubuntu-22.04-arm, macos-15]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -132,7 +132,7 @@ jobs:
     needs: detect-changes
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -149,7 +149,7 @@ jobs:
           variant: l1
           cache_write: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork != true }}
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex_image
           path: /tmp/ethrex_image.tar
@@ -175,10 +175,10 @@ jobs:
           #   ethereum_package_args: "./.github/config/assertoor/network_params_ethrex_multiple_cl.yaml"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download etherex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -201,7 +201,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, docker_build]
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
-    continue-on-error: ${{ matrix.optional || false }}
     env:
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     strategy:
@@ -233,14 +232,12 @@ jobs:
             simulation: ethereum/engine
             limit: "engine-withdrawals"
             artifact_prefix: engine_withdrawals
-          # Not required while Amsterdam fork spec is still evolving.
-          # Remove optional: true once the fork stabilizes.
+          # Amsterdam config is loaded from .github/config/hive/amsterdam.yaml
           - name: "Consume Engine Amsterdam"
             simulation: ethereum/eels/consume-engine
             limit: ".*(8024|7708|7778|7843|7928|7954|8037).*"
-            buildarg: "fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.6.1/fixtures_bal.tar.gz branch=devnets/bal/3"
+            amsterdam: true
             artifact_prefix: consume_engine_amsterdam
-            optional: true
           # Investigate this test
           # - name: "Sync"
           #   simulation: ethereum/sync
@@ -248,10 +245,10 @@ jobs:
           #   artifact_prefix: sync
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download ethrex image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex_image
           path: /tmp
@@ -270,26 +267,41 @@ jobs:
             echo "EOF"
           } >>"$GITHUB_OUTPUT"
 
+      - name: Load Amsterdam config
+        id: amsterdam-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIM_LIMIT: ${{ matrix.limit }}
           SIM_BUILDARG: ${{ matrix.buildarg }}
+          AMSTERDAM: ${{ matrix.amsterdam || 'false' }}
+          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
+          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
         run: |
           FLAGS='--sim.parallelism 4 --sim.loglevel 3'
           if [[ -n "$SIM_LIMIT" ]]; then
             escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
             FLAGS+=" --sim.limit '$escaped_limit'"
           fi
-          for arg in $SIM_BUILDARG; do
-            FLAGS+=" --sim.buildarg $arg"
-          done
+          if [[ "$AMSTERDAM" == "true" ]]; then
+            FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+            FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
+          else
+            for arg in $SIM_BUILDARG; do
+              FLAGS+=" --sim.buildarg $arg"
+            done
+          fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
         if: ${{ env.DOCKERHUB_TOKEN != '' }}
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ env.DOCKERHUB_TOKEN }}
@@ -299,7 +311,7 @@ jobs:
         uses: ethpandaops/hive-github-action@v0.5.0
         with:
           hive_repository: ethereum/hive
-          hive_version: 88786d9744dabb08bdaec8d8b53142cde6e6b79a
+          hive_version: 1c27560a1f8ac09dda26038d7a1394243e99025d
           simulator: ${{ matrix.simulation }}
           client: ethrex
           client_config: ${{ steps.client-config.outputs.config }}
@@ -313,7 +325,7 @@ jobs:
 
       - name: Upload Hive Failure Logs
         if: ${{ failure() && steps.verify-hive-results.conclusion == 'failure' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: hive_failed_logs_${{ matrix.artifact_prefix }}
           path: src/results/failed_logs
@@ -326,7 +338,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [detect-changes, test]
     # Make sure this job runs even if the previous jobs failed or were skipped
-    if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && always() }}
     steps:
       - name: Check if any job failed
         run: |
@@ -342,7 +354,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -380,7 +392,7 @@ jobs:
     if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk

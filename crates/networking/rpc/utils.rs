@@ -218,6 +218,7 @@ impl From<ethrex_crypto::CryptoError> for RpcErr {
 ///
 /// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
 /// Different namespaces may have different authentication requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RpcNamespace {
     /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
@@ -235,11 +236,27 @@ pub enum RpcNamespace {
     Mempool,
 }
 
+impl RpcNamespace {
+    /// Parses a namespace name from its CLI/method-prefix form.
+    pub fn from_prefix(s: &str) -> Option<Self> {
+        match s {
+            "engine" => Some(RpcNamespace::Engine),
+            "eth" => Some(RpcNamespace::Eth),
+            "admin" => Some(RpcNamespace::Admin),
+            "debug" => Some(RpcNamespace::Debug),
+            "web3" => Some(RpcNamespace::Web3),
+            "net" => Some(RpcNamespace::Net),
+            "txpool" => Some(RpcNamespace::Mempool),
+            _ => None,
+        }
+    }
+}
+
 /// JSON-RPC request identifier.
 ///
 /// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
 /// The same ID must be returned in the response.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
     /// Numeric request ID.
@@ -260,7 +277,7 @@ pub enum RpcRequestId {
 ///     "params": ["0x...", "latest"]
 /// }
 /// ```
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
     /// Request identifier, echoed back in the response.
     pub id: RpcRequestId,
@@ -292,17 +309,7 @@ impl RpcRequest {
 }
 
 pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
-    match maybe_namespace {
-        "engine" => Ok(RpcNamespace::Engine),
-        "eth" => Ok(RpcNamespace::Eth),
-        "admin" => Ok(RpcNamespace::Admin),
-        "debug" => Ok(RpcNamespace::Debug),
-        "web3" => Ok(RpcNamespace::Web3),
-        "net" => Ok(RpcNamespace::Net),
-        // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
-        "txpool" => Ok(RpcNamespace::Mempool),
-        _ => Err(RpcErr::MethodNotFound(method)),
-    }
+    RpcNamespace::from_prefix(maybe_namespace).ok_or(RpcErr::MethodNotFound(method))
 }
 
 impl Default for RpcRequest {
