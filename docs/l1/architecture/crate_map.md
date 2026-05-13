@@ -141,15 +141,12 @@ impl VM {
 **Purpose:** JSON-RPC API server.
 
 **Supported Namespaces:**
-- `eth_*` - Standard Ethereum methods (HTTP, default-enabled)
-- `net_*` - Network information (HTTP, default-enabled)
-- `web3_*` - Web3 utilities (HTTP, default-enabled)
-- `debug_*` - Debugging and tracing (HTTP, opt-in via `--http.api`)
-- `admin_*` - Node administration (HTTP, opt-in via `--http.api`)
-- `txpool_*` - Mempool inspection (HTTP, opt-in via `--http.api`)
-- `engine_*` - Consensus client communication (auth-rpc port only, JWT-authenticated)
-
-Namespaces not in the `--http.api` allowlist return `MethodNotFound` over HTTP/WS. The `engine` namespace is served exclusively on the authenticated RPC port and cannot be exposed via `--http.api`.
+- `eth_*` - Standard Ethereum methods
+- `debug_*` - Debugging and tracing
+- `txpool_*` - Mempool inspection
+- `admin_*` - Node administration
+- `engine_*` - Consensus client communication
+- `web3_*` - Web3 utilities
 
 **Architecture:**
 ```rust

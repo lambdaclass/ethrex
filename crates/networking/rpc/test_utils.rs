@@ -8,7 +8,6 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
-    utils::RpcNamespace,
 };
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
@@ -33,7 +32,7 @@ use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
 use secp256k1::SecretKey;
 use spawned_concurrency::tasks::ActorRef;
-use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 // Base price for each test transaction.
@@ -259,23 +258,10 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             None,
             DEFAULT_BUILDER_GAS_CEIL,
             String::new(),
-            all_namespaces_for_tests(),
         )
         .await
         .unwrap()
     })
-}
-
-/// All known namespaces, used in tests so handlers from any namespace can be exercised.
-pub fn all_namespaces_for_tests() -> HashSet<RpcNamespace> {
-    HashSet::from([
-        RpcNamespace::Eth,
-        RpcNamespace::Net,
-        RpcNamespace::Web3,
-        RpcNamespace::Debug,
-        RpcNamespace::Admin,
-        RpcNamespace::Mempool,
-    ])
 }
 
 pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
@@ -307,7 +293,6 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
         block_worker_channel,
         ws: None,
-        allowed_namespaces: Arc::new(all_namespaces_for_tests()),
     }
 }
 

@@ -64,16 +64,12 @@ lighthouse bn --network <NETWORK> --execution-endpoint http://localhost:8551 --e
 
 ### Ethrex (Execution Client)
 
-> **Note on RPC defaults:** As of the HTTP JSON-RPC hardening change, ethrex binds the HTTP RPC to `127.0.0.1` and only serves `eth,net,web3` by default. The `debug_*` namespace (which `debug_executionWitness` belongs to) is **not** in the default allowlist, so this benchmark will fail with `MethodNotFound` unless you opt in with `--http.api`. The example below already enables it.
-
 ```bash
-cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --http.api eth,net,web3,debug --network <NETWORK> --authrpc.jwtsecret ~/secrets/jwt.hex --precompute-witnesses
+cargo run --release --bin ethrex -- --http.addr 0.0.0.0 --network <NETWORK> --authrpc.jwtsecret ~/secrets/jwt.hex --precompute-witnesses
 ```
 
 **Critical flags:**
 - `--precompute-witnesses` - **REQUIRED** for this benchmark. Generates and stores execution witnesses during payload execution.
-- `--http.api eth,net,web3,debug` - **REQUIRED** for this benchmark. The default allowlist (`eth,net,web3`) does not expose `debug_executionWitness`; add `debug` so the benchmark can call it.
-- `--http.addr 0.0.0.0` - only needed if the load generator runs on a different host. The default binds on `127.0.0.1`.
 
 **Notes:**
 - Run in release mode for performance

@@ -9,12 +9,6 @@ participants:
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v8.0.0-rc.1
     validator_count: 32
-    # ethereum-package's el_admin_node_info.star bootstrap calls admin_nodeInfo
-    # to discover the enode; the new ethrex defaults only serve eth/net/web3,
-    # so opt admin/debug/txpool back in for this devnet. --http.addr is
-    # already set by ethereum-package's ethrex launcher.
-    el_extra_params:
-      - "--http.api=eth,net,web3,debug,admin,txpool"
 
 additional_services:
   - assertoor

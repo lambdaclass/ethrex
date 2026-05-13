@@ -53,16 +53,6 @@ pub struct Options {
         help_heading = "L2 options"
     )]
     pub sponsored_gas_limit: u64,
-    #[arg(
-        long = "http.api.ethrex",
-        default_value_t = true,
-        action = clap::ArgAction::Set,
-        value_name = "BOOLEAN",
-        env = "ETHREX_HTTP_API_ETHREX",
-        help = "Expose L2-specific ethrex_* RPC methods over HTTP/WS. Enabled by default for L2 nodes.",
-        help_heading = "L2 options"
-    )]
-    pub http_api_ethrex: bool,
 }
 
 impl Default for Options {
@@ -76,7 +66,6 @@ impl Default for Options {
             )
             .unwrap(),
             sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
-            http_api_ethrex: true,
         }
     }
 }
