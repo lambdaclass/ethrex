@@ -185,6 +185,7 @@ fn fee_token_lock_reverted_on_validation_failure() {
         is_privileged: false,
         fee_token: Some(fee_token),
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
