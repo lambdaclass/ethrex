@@ -1102,6 +1102,8 @@ impl<'a> VM<'a> {
         } = executed_call_frame;
 
         old_callframe_memory.clean_from_base();
+        #[cfg(feature = "eip-8025")]
+        old_callframe_memory.truncate_to_base();
 
         let parent_call_frame = &mut self.current_call_frame;
 
@@ -1181,6 +1183,8 @@ impl<'a> VM<'a> {
         } = executed_call_frame;
 
         old_callframe_memory.clean_from_base();
+        #[cfg(feature = "eip-8025")]
+        old_callframe_memory.truncate_to_base();
 
         let parent_call_frame = &mut self.current_call_frame;
 
