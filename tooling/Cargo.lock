@@ -3800,6 +3800,7 @@ dependencies = [
  "ethrex-rlp 12.0.0",
  "ethrex-trie 12.0.0",
  "fastbloom",
+ "libc",
  "lru 0.16.3",
  "rayon",
  "rocksdb",
@@ -3809,6 +3810,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
+ "tracing-subscriber 0.3.23",
 ]
 
 [[package]]
