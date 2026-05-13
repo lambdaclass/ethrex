@@ -109,7 +109,7 @@ fn synthetic_receipt_value() -> Vec<u8> {
 
     let succeeded = vec![0x01]; // RLP single byte
     let cumgas = vec![0x82, 0x52, 0x08]; // RLP string: 2 bytes, 0x5208
-    // bloom: 256 zero bytes -> string header 0xb9 0x01 0x00 + 256 zeros
+                                         // bloom: 256 zero bytes -> string header 0xb9 0x01 0x00 + 256 zeros
     let mut bloom = Vec::with_capacity(259);
     bloom.push(0xb9);
     bloom.push(0x01);
@@ -224,10 +224,7 @@ fn main() {
         .expect("receipts column family not found");
 
     let receipt_value = synthetic_receipt_value();
-    println!(
-        "Synthetic receipt value: {} bytes",
-        receipt_value.len()
-    );
+    println!("Synthetic receipt value: {} bytes", receipt_value.len());
 
     const TOTAL: u64 = 150_000_000;
     const BATCH_SIZE: u64 = 50_000;
@@ -283,5 +280,7 @@ fn main() {
     );
     println!("Now reset metadata.json to {{\"schema_version\": 1}} and start ethrex.");
     println!("Migration will copy entries from 'receipts' to 'receipts_v2' (two-CF approach).");
-    println!("The old 'receipts' CF will be dropped automatically on the next startup after migration.");
+    println!(
+        "The old 'receipts' CF will be dropped automatically on the next startup after migration."
+    );
 }
