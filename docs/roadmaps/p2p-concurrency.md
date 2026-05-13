@@ -1,6 +1,6 @@
 # P2P & Concurrency Roadmap for ethrex
 
-> **Last updated:** 2026-04-15
+> **Last updated:** 2026-05-13
 
 ## Overview
 
@@ -33,7 +33,8 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P0 | ~~Bound whoareyou_rate_limit map with LRU cache + global rate limit~~ | [#6125](https://github.com/lambdaclass/ethrex/issues/6125), [#6383](https://github.com/lambdaclass/ethrex/pull/6383) | **Merged** (Apr 1) |
 | P0 | ~~Merge dual discovery protocol support (discv4+discv5)~~ | [#5962](https://github.com/lambdaclass/ethrex/pull/5962) | **Merged** (Feb 25) |
 | P0 | ~~Remove experimental-discv5 feature flag~~ | [#6015](https://github.com/lambdaclass/ethrex/pull/6015), [#5971](https://github.com/lambdaclass/ethrex/issues/5971) | **Merged** (Mar 4) |
-| P1 | Unify discovery Actors into single DiscoveryServer | [#5990](https://github.com/lambdaclass/ethrex/issues/5990), [#6449](https://github.com/lambdaclass/ethrex/pull/6449) | Open PR (in review) |
+| P1 | ~~Unify discovery Actors into single DiscoveryServer~~ | [#5990](https://github.com/lambdaclass/ethrex/issues/5990), [#6449](https://github.com/lambdaclass/ethrex/pull/6449) | **Merged** (May 12) |
+| P1 | Follow-up: cover IP-voting guard + restore stale-entry cleanup trace | [#6633](https://github.com/lambdaclass/ethrex/pull/6633) | Open PR |
 | P1 | Track unrecognized discovery packets | [#6400](https://github.com/lambdaclass/ethrex/issues/6400), [#6408](https://github.com/lambdaclass/ethrex/pull/6408) | Open PR |
 | P1 | ~~Explicitly filter discv4/discv5 packets in multiplexer~~ | [#6398](https://github.com/lambdaclass/ethrex/pull/6398) | **Merged** (Apr 14) |
 | P2 | ~~Move p2p inline tests to test crate~~ | [#5992](https://github.com/lambdaclass/ethrex/issues/5992), [#6354](https://github.com/lambdaclass/ethrex/pull/6354) | **Merged** (Mar 16) |
@@ -84,16 +85,17 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Priority | Task | Issue/PR | Status |
 |----------|------|----------|--------|
-| P0 | Reintroduce proper Kademlia table implementation | [#4245](https://github.com/lambdaclass/ethrex/issues/4245), [#6458](https://github.com/lambdaclass/ethrex/pull/6458) | Open PR (in review) |
+| P0 | Reintroduce proper Kademlia table implementation | [#4245](https://github.com/lambdaclass/ethrex/issues/4245) | **Reopened** — #6458 was merged Apr 15 then reverted by [#6505](https://github.com/lambdaclass/ethrex/pull/6505) on Apr 20; work needs to be redone |
 | P1 | ~~Add peer table timing metrics (Kademlia baseline)~~ | [#6459](https://github.com/lambdaclass/ethrex/pull/6459) | **Merged** (Apr 13) |
 | P1 | Improve peer scoring and load balancing | [#4861](https://github.com/lambdaclass/ethrex/issues/4861) | Open issue |
 | P1 | Add peer scoring by latency and bandwidth | [#6429](https://github.com/lambdaclass/ethrex/pull/6429) | Open PR |
-| P1 | Weighted peer selection and better tolerance in header downloads | [#6428](https://github.com/lambdaclass/ethrex/pull/6428) | Open PR |
+| P1 | ~~Weighted peer selection and better tolerance in header downloads~~ | [#6428](https://github.com/lambdaclass/ethrex/pull/6428) | **Merged** (Apr 21) |
 | P1 | ~~Allow min-score peers to handle 1 concurrent request~~ | [#6272](https://github.com/lambdaclass/ethrex/pull/6272) | **Merged** (Feb 27) |
 | P1 | Detect performance degradation with large contact tables | [#5972](https://github.com/lambdaclass/ethrex/issues/5972) | Open issue |
 | P1 | Fix running out of peers mid-syncing | [#3050](https://github.com/lambdaclass/ethrex/issues/3050) | Open issue |
 | P1 | ~~Leech detection and rate limiting~~ | [#5522](https://github.com/lambdaclass/ethrex/issues/5522), [#6415](https://github.com/lambdaclass/ethrex/pull/6415) | **Merged** (Apr 14) |
-| P1 | Fix snap sync pivot update peer selection bugs | [#6474](https://github.com/lambdaclass/ethrex/issues/6474), [#6475](https://github.com/lambdaclass/ethrex/pull/6475) | Open PR |
+| P1 | ~~Fix snap sync pivot update peer selection bugs~~ | [#6474](https://github.com/lambdaclass/ethrex/issues/6474), [#6475](https://github.com/lambdaclass/ethrex/pull/6475) | **Merged** (Apr 20) |
+| P1 | ~~Use permits for p2p requests~~ | [#6523](https://github.com/lambdaclass/ethrex/pull/6523) | **Merged** (Apr 28) |
 | P2 | ~~Avoid collect in peer table get_contact functions~~ | [#5641](https://github.com/lambdaclass/ethrex/pull/5641) | **Closed** |
 | P2 | ~~Avoid iterating whole table on FINDNODE~~ | [#5644](https://github.com/lambdaclass/ethrex/pull/5644) | **Closed** |
 
@@ -153,7 +155,9 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 |----------|------|----------|--------|
 | P0 | ~~Merge snap sync code reorganization~~ | [#5975](https://github.com/lambdaclass/ethrex/pull/5975) | **Merged** (Feb 6) |
 | P0 | Replace sync disk I/O with async operations | [#6113](https://github.com/lambdaclass/ethrex/pull/6113) | Approved |
-| P1 | Snap sync observability endpoints and tooling | [#6470](https://github.com/lambdaclass/ethrex/pull/6470) | Open PR (**NEW** Apr 13) |
+| P1 | ~~Snap sync observability endpoints and tooling~~ | [#6470](https://github.com/lambdaclass/ethrex/pull/6470) | **Merged** (Apr 20) |
+| P1 | ~~Bound memory usage of healing~~ | [#6545](https://github.com/lambdaclass/ethrex/pull/6545) | **Merged** (May 7) |
+| P1 | ~~Move SST files into temp DB during snap sync ingest~~ | [#6532](https://github.com/lambdaclass/ethrex/pull/6532) | **Merged** (May 7) |
 | P1 | Snapsync rewrite with spawned | [#4240](https://github.com/lambdaclass/ethrex/issues/4240) | Open (Milestone: Syncing) |
 | P1 | Extract snapshot dumping helpers | [#6099](https://github.com/lambdaclass/ethrex/pull/6099) | Open |
 
@@ -178,7 +182,8 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 | P1 | ~~Speed up snap sync validation with parallelism and deduplication~~ | [#6191](https://github.com/lambdaclass/ethrex/pull/6191) | **Merged** (Feb 25) |
 | P1 | Parallelize header download with state download | [#6059](https://github.com/lambdaclass/ethrex/pull/6059) | Open |
 | P1 | Parallelize merkelization of storage slots | [#5482](https://github.com/lambdaclass/ethrex/issues/5482) | Open issue |
-| P1 | Parallel body download from multiple peers | [#6481](https://github.com/lambdaclass/ethrex/issues/6481) | Open issue (**NEW** Apr 15) |
+| P1 | ~~Pipeline body download with execution~~ | [#6491](https://github.com/lambdaclass/ethrex/pull/6491) | **Merged** (Apr 28) — partial coverage of [#6481](https://github.com/lambdaclass/ethrex/issues/6481) |
+| P1 | Parallel body download from multiple peers | [#6481](https://github.com/lambdaclass/ethrex/issues/6481) | Open issue (partially covered by #6491) |
 | P2 | Reduce receipt validation overhead in full sync | [#6482](https://github.com/lambdaclass/ethrex/issues/6482) | Open issue (**NEW** Apr 15) |
 | P2 | Small-account batching in insert_storages | [#6476](https://github.com/lambdaclass/ethrex/issues/6476) | Open issue (**NEW** Apr 15) |
 | P2 | Reduce allocations in account range verification | [#6072](https://github.com/lambdaclass/ethrex/pull/6072) | Open |
@@ -226,18 +231,16 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 ### Immediate (Merge Ready / In Review)
 1. [#6113](https://github.com/lambdaclass/ethrex/pull/6113) - Async disk I/O (approved)
-2. [#6449](https://github.com/lambdaclass/ethrex/pull/6449) - Unify discovery servers into single DiscoveryServer (1 approval)
-3. [#6458](https://github.com/lambdaclass/ethrex/pull/6458) - Reintroduce Kademlia k-bucket routing table
-4. [#6475](https://github.com/lambdaclass/ethrex/pull/6475) - Fix snap sync pivot update crash
-5. [#6470](https://github.com/lambdaclass/ethrex/pull/6470) - Snap sync observability endpoints and tooling
+2. [#6633](https://github.com/lambdaclass/ethrex/pull/6633) - DiscV5 IP-voting guard test + restored cleanup trace (follow-up to #6449)
+3. [#6429](https://github.com/lambdaclass/ethrex/pull/6429) - Peer scoring by latency and bandwidth
+4. [#6306](https://github.com/lambdaclass/ethrex/pull/6306) - eth/71 Block Access List exchange
 
 ### Short-term (Next 2-4 weeks)
-1. Peer scoring and weighted selection ([#6429](https://github.com/lambdaclass/ethrex/pull/6429), [#6428](https://github.com/lambdaclass/ethrex/pull/6428))
+1. Re-attempt Kademlia k-bucket routing table ([#4245](https://github.com/lambdaclass/ethrex/issues/4245)) — first attempt #6458 reverted in #6505
 2. Complete IPv6/dual-stack support ([#6377](https://github.com/lambdaclass/ethrex/pull/6377), [#6376](https://github.com/lambdaclass/ethrex/pull/6376))
-3. Merge eth/71 BAL exchange ([#6306](https://github.com/lambdaclass/ethrex/pull/6306))
-4. Validate PONG req_id ([#6167](https://github.com/lambdaclass/ethrex/issues/6167)) and prune session_ips ([#6404](https://github.com/lambdaclass/ethrex/issues/6404))
-5. Address transaction flow spam ([#6435](https://github.com/lambdaclass/ethrex/issues/6435))
-6. Parallel body download ([#6481](https://github.com/lambdaclass/ethrex/issues/6481))
+3. Validate PONG req_id ([#6167](https://github.com/lambdaclass/ethrex/issues/6167)) and prune session_ips ([#6404](https://github.com/lambdaclass/ethrex/issues/6404))
+4. Address transaction flow spam ([#6435](https://github.com/lambdaclass/ethrex/issues/6435))
+5. Parallel body download from multiple peers ([#6481](https://github.com/lambdaclass/ethrex/issues/6481)) — pipeline part already merged in #6491
 
 ### Medium-term (1-2 months)
 1. Spawned migration for PeerHandler and sync components
@@ -273,17 +276,17 @@ This roadmap organizes all pending work for P2P networking and concurrency in et
 
 | Category | Open Issues | Open PRs | Merged |
 |----------|-------------|----------|--------|
-| Discovery Protocol | 3 | 2 (#6408, #6449) | 7 (#5909, #5962, #6015, #6354, #6383, #6438, #6398) |
+| Discovery Protocol | 3 | 2 (#6408, #6633) | 8 (#5909, #5962, #6015, #6354, #6383, #6438, #6398, #6449) |
 | Discovery Security | 4 (#6167, #6404, #6030, #5493) | 1 (#6343) | 9 (#6055, #5910, #6172, #6109, #5914, #6200, #6394, #6401, #6438) |
 | Discovery Tests | 2 (#5993, #5994) | 1 (#6343) | 0 |
-| Peer Management | 7 (+#6474 pivot crash) | 4 (#6429, #6428, #6458, #6475) | 3 (#6272, #6459, #6415) |
-| RLPx/Protocol | 6 (-#6444 closed) | 1 (#6306) | 8 (#5531, #5811, #6256, #6253, #6327, #6431, #6437, #6443) |
+| Peer Management | 7 (incl. #4245 reopened de-facto) | 1 (#6429) | 6 (#6272, #6459, #6415, #6428, #6475, #6523) |
+| RLPx/Protocol | 6 | 1 (#6306) | 8 (#5531, #5811, #6256, #6253, #6327, #6431, #6437, #6443) |
 | Network Config | 4 | 3 (#6377, #6376, #6375) | 1 (#6374) |
-| Snap Sync | 2 | 5 (+#6470) | 1 (#5975) |
-| Parallel Operations | 5 (+#6481, #6482, #6476) | 3 | 3 (#6079, #6191, #6344) |
+| Snap Sync | 2 | 3 | 4 (#5975, #6470, #6545, #6532) |
+| Parallel Operations | 5 | 3 | 4 (#6079, #6191, #6344, #6491) |
 | Spawned Migration | 5 | 1 (#5599) | 1 (#6295) |
 | Blocking/Performance | 3 | 1 | 0 |
-| **Total** | **41** | **22** | **33** |
+| **Total** | **41** | **17** | **41** |
 
 ---
 
@@ -370,30 +373,29 @@ Based on review of official Ethereum devp2p specifications (RLPx, DiscV4, DiscV5
 | **snap/1** | 95% | None critical | — |
 | **ENR** | 95% | Full "eth" field validation | LOW |
 
-**Overall Assessment:** ethrex is substantially compliant with current Ethereum P2P specifications. Progress since previous update (Apr 6):
+**Overall Assessment:** ethrex is substantially compliant with current Ethereum P2P specifications. Progress since previous update (Apr 15):
 
-**Merged since Apr 6:**
-- **Transaction flow** — GetPooledTransactions deduplication (#6437, Apr 6) and batching (#6443, Apr 15) both landed; closes #6444
-- **Leech detection and rate limiting** (#6415, Apr 14) — closes #5522
-- **Packet filtering in multiplexer** (#6398, Apr 14) — superseded by unified server in #6449
-- **Decouple bind/external address** (#6374, Apr 9) — closes #5425
-- **Peer table timing metrics** (#6459, Apr 13) — Kademlia baseline before k-bucket reintroduction
-- **Persistent merkleization thread pool** (#6344, Apr 15) — replaces per-block thread spawning
-- **P2P sync stall fixes and discovery hardening** (#6394, Mar 25)
+**Merged since Apr 15:**
+- **Unified DiscoveryServer actor** (#6449, May 12) — replaces multiplexer + dual servers (#5990)
+- **Snap sync pivot crash fix** (#6475, Apr 20) — addresses #6474
+- **Snap sync observability** (#6470, Apr 20)
+- **Weighted peer selection + better tolerance in header downloads** (#6428, Apr 21)
+- **Pipeline body download with execution** (#6491, Apr 28) — partial coverage of #6481
+- **Use permits for p2p requests** (#6523, Apr 28) — concurrency hardening
+- **Bound memory usage of healing** (#6545, May 7)
+- **Move SST files into temp DB during snap sync ingest** (#6532, May 7)
+
+**Reverted:**
+- **Kademlia k-bucket routing table** — #6458 merged Apr 15 then reverted by #6505 on Apr 20. Issue #4245 is functionally back open; a re-attempt is on the immediate list.
 
 **New open work (not in previous roadmap):**
-- **Unified DiscoveryServer actor** (#6449, Apr 7) — implements #5990; 1 approval
-- **Kademlia k-bucket routing table** (#6458, Apr 8) — implements #4245
-- **Snap sync observability** (#6470, Apr 13) — endpoints + tooling for diagnostics
-- **Snap sync pivot crash fix** (#6475, Apr 14) — addresses #6474
-- **New perf issues:** parallel body download (#6481), receipt validation overhead (#6482), small-account insert_storages batching (#6476)
+- **#6633** — follow-up to #6449 covering the discv5 IP-voting guard test and restored stale-entry cleanup trace (edg-l review)
 
 **Remaining priorities:**
-1. **Land in-review PRs** — #6449 (unified discovery), #6458 (Kademlia), #6470 (observability), #6475 (pivot fix), #6113 (async I/O)
-2. **Peer scoring** — Latency/bandwidth scoring (#6429), weighted selection (#6428)
-3. **eth/71 support** — BAL exchange for Amsterdam hard fork (#6306)
-4. **IPv6/dual-stack** — Required by external users (#6371, #6376, #6377)
-5. **Discovery hardening** — PONG validation (#6167), session cleanup (#6404)
-6. **Snap sync perf** — Parallel body download (#6481), receipt validation (#6482), insert_storages batching (#6476)
+1. **Land in-review PRs** — #6113 (async I/O, approved), #6633 (follow-up), #6429 (peer scoring), #6306 (eth/71 BAL)
+2. **Re-attempt Kademlia** — first attempt reverted; needs to be redesigned and resubmitted
+3. **IPv6/dual-stack** — Required by external users (#6371, #6376, #6377)
+4. **Discovery hardening** — PONG validation (#6167), session cleanup (#6404)
+5. **Snap sync perf** — Full parallel body download (#6481), receipt validation (#6482), insert_storages batching (#6476)
 
 **DiscV4 gaps remain deprioritized** due to Glamsterdam hard fork sunset.
