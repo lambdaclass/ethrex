@@ -38,7 +38,7 @@ const SKIPPED_BASE: &[&str] = &[
     "witness_codes_reverted_create_same_hash_then_read",
     "witness_codes_create_then_selfdestruct_same_tx",
     // Additional EIP-8025 optional-proofs fixtures whose expected gas magnitudes
-    // disagree with bal-devnet-7 (bal@v7.0.0) state-gas accounting. Same root
+    // disagree with bal-devnet-7 (bal@v7.1.0) state-gas accounting. Same root
     // cause as the block above: zkevm@v0.3.3 bundle is pinned at an older bal
     // spec (storage_set / new_account / cpsb constants pre-recalibration plus
     // earlier refund-channel semantics) and the broader fork.py changes from
