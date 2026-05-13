@@ -27,6 +27,12 @@ participants:
     cl_image: sigp/lighthouse:v8.0.0-rc.1
     validator_count: 32
     # snooper_enabled: true
+    # Preserve the previous devnet-only RPC behavior after the default RPC
+    # hardening: expose admin/debug/txpool so test tooling can hit them.
+    # --http.addr is already set to 0.0.0.0 by ethereum-package's ethrex
+    # launcher, so we only need to widen the namespace allowlist here.
+    el_extra_params:
+      - "--http.api=eth,net,web3,debug,admin,txpool"
 
 ethereum_metrics_exporter_enabled: true
 

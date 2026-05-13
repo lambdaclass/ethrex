@@ -51,10 +51,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, error, info, instrument, warn};
-use constants::{
-    AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
-    POST_OSAKA_GAS_LIMIT_CAP,
-};
+use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -72,6 +69,7 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
+use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
@@ -2339,6 +2337,20 @@ impl Blockchain {
             return Ok(hash);
         }
 
+        // Wire-wrapper size cap for blob txs. Matches geth `txMaxSize = 1 MiB`
+        // (blobpool) and nethermind `MaxBlobTxSize`, which both bound the
+        // wire-wrapper form including the sidecar. ethrex stores the core tx
+        // and the bundle in separate structs, so sum the two encoded sizes
+        // (the ±few bytes of outer list framing are rounding error at this
+        // scale).
+        let wrapper_len = transaction.encode_canonical_len() + blobs_bundle.length();
+        if wrapper_len > MAX_BLOB_TX_SIZE {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: wrapper_len,
+                limit: MAX_BLOB_TX_SIZE,
+            });
+        }
+
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
             blobs_bundle.validate(transaction, fork)?;
@@ -2367,6 +2379,18 @@ impl Blockchain {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
+        }
+        // Wire size cap: run before sender recovery so oversized txs don't
+        // force secp256k1 work. Matches geth's `txMaxSize` admission order
+        // (size-checked at `ValidateTransaction` entry, well before any
+        // crypto). The same check sits in `validate_transaction` so direct
+        // callers (tests, L2 paths) keep the guarantee.
+        let encoded_len = transaction.encode_canonical_len();
+        if encoded_len > MAX_TX_SIZE {
+            return Err(MempoolError::TxSizeExceeded {
+                actual: encoded_len,
+                limit: MAX_TX_SIZE,
+            });
         }
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
@@ -2448,7 +2472,21 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // NOTE: We could add a tx size limit here, but it's not in the actual spec
+        // Wire size cap for non-blob txs: peer-policy default, not consensus.
+        // Matches geth `txMaxSize` (legacypool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
+        // nethermind `MaxTxSize`. Blob txs are bounded by their own
+        // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
+        // which sums the core tx and the sidecar to match geth/nethermind/erigon
+        // scope.
+        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
+            let encoded_len = tx.encode_canonical_len();
+            if encoded_len > MAX_TX_SIZE {
+                return Err(MempoolError::TxSizeExceeded {
+                    actual: encoded_len,
+                    limit: MAX_TX_SIZE,
+                });
+            }
+        }
 
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit
@@ -2462,10 +2500,6 @@ impl Blockchain {
             && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
-        }
-
-        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE as usize {
-            return Err(MempoolError::TxMaxDataSizeError);
         }
 
         if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
