@@ -102,6 +102,7 @@ Node options:
 
           [env: ETHREX_MEMPOOL_PUNISH_SPAMMER=]
           [default: true]
+          [possible values: true, false]
 
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
