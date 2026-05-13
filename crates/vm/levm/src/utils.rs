@@ -111,17 +111,43 @@ pub fn restore_cache_state(
 }
 
 // ================= Blob hash related functions =====================
+
+// Per-thread memoization of `fake_exponential` for blob base-fee. The result
+// is fully determined by `(block_excess_blob_gas, base_fee_update_fraction)`,
+// both per-block constants. Each thread (sequential executor, rayon BAL
+// worker, RPC handler) gets its own cache; first call per block computes,
+// rest of the txs in that block reuse the cached value.
+thread_local! {
+    static BLOB_BASE_FEE_CACHE: std::cell::Cell<Option<(Option<u64>, u64, U256)>> =
+        const { std::cell::Cell::new(None) };
+}
+
 pub fn get_base_fee_per_blob_gas(
     block_excess_blob_gas: Option<u64>,
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
-    fake_exponential(
+
+    if let Some((cached_excess, cached_frac, cached_value)) = BLOB_BASE_FEE_CACHE.get()
+        && cached_excess == block_excess_blob_gas
+        && cached_frac == base_fee_update_fraction
+    {
+        return Ok(cached_value);
+    }
+
+    let value = fake_exponential(
         MIN_BASE_FEE_PER_BLOB_GAS.into(),
         block_excess_blob_gas.unwrap_or_default().into(),
         base_fee_update_fraction,
     )
-    .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))
+    .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))?;
+
+    BLOB_BASE_FEE_CACHE.set(Some((
+        block_excess_blob_gas,
+        base_fee_update_fraction,
+        value,
+    )));
+    Ok(value)
 }
 
 /// Gets the max blob gas cost for a transaction that a user is
