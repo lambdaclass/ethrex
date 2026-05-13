@@ -109,7 +109,7 @@ fn synthetic_receipt_value() -> Vec<u8> {
 
     let succeeded = vec![0x01]; // RLP single byte
     let cumgas = vec![0x82, 0x52, 0x08]; // RLP string: 2 bytes, 0x5208
-                                         // bloom: 256 zero bytes -> string header 0xb9 0x01 0x00 + 256 zeros
+    // bloom: 256 zero bytes -> string header 0xb9 0x01 0x00 + 256 zeros
     let mut bloom = Vec::with_capacity(259);
     bloom.push(0xb9);
     bloom.push(0x01);
@@ -251,11 +251,11 @@ fn main() {
         batch.put_cf(&cf, &key, &receipt_value);
         count += 1;
 
-        if count % BATCH_SIZE == 0 {
+        if count.is_multiple_of(BATCH_SIZE) {
             db.write(batch).expect("Failed to write batch");
             batch = WriteBatch::default();
 
-            if count % 5_000_000 == 0 {
+            if count.is_multiple_of(5_000_000) {
                 let elapsed = start.elapsed().as_secs_f64();
                 let rate = count as f64 / elapsed;
                 println!(
@@ -269,7 +269,7 @@ fn main() {
     }
 
     // Final batch
-    if count % BATCH_SIZE != 0 {
+    if !count.is_multiple_of(BATCH_SIZE) {
         db.write(batch).expect("Failed to write final batch");
     }
 
