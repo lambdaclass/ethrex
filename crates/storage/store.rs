@@ -189,6 +189,10 @@ pub struct Store {
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
 
+    /// Serializes concurrent `forkchoice_update` callers so that the cache
+    /// update and the DB write transaction remain mutually ordered.
+    fcu_lock: Arc<tokio::sync::Mutex<()>>,
+
     background_threads: Arc<ThreadList>,
 }
 
@@ -1007,7 +1011,12 @@ impl Store {
             .transpose()
     }
 
-    pub async fn forkchoice_update_inner(
+    /// DB mutation step of `forkchoice_update`.
+    ///
+    /// Callers MUST hold `fcu_lock` (only `forkchoice_update` should invoke this).
+    /// The read of `LatestBlockNumber` below happens outside the write
+    /// transaction and would be a TOCTOU window without that serialization.
+    async fn forkchoice_update_inner(
         &self,
         new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
@@ -1026,6 +1035,12 @@ impl Store {
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
+            // Delete canonical entries above the new head by enumerating each key.
+            // `delete_range` is not safe here: keys are `u64::to_le_bytes()`, and
+            // RocksDB's lexicographic comparator does not match LE numeric order
+            // (e.g. block 256 = [0x00, 0x01, ..] sorts before block 11 = [0x0B, ..]),
+            // so a range-delete would silently miss blocks whose LE first byte is
+            // smaller than `head+1`'s first byte.
             for number in (head_number + 1)..=(latest) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
@@ -1545,6 +1560,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -2280,19 +2296,35 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        // Serialize concurrent forkchoice updates. Without this, two callers
+        // could interleave their `latest_block_header` cache updates with each
+        // other's DB writes, leaving the cache inconsistent with the DB or
+        // letting a later caller's write reorder relative to the cache update
+        // order (see the TOCTOU discussion around canonical/latest drift).
+        let _guard = self.fcu_lock.lock().await;
+
         // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        // Snapshot the previous header so we can roll the cache back if the DB
+        // write fails — otherwise the cache would point at a block the DB does
+        // not consider canonical.
+        let previous_head = self.latest_block_header.get();
         let new_head = self
             .load_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
-        self.forkchoice_update_inner(
-            new_canonical_blocks,
-            head_number,
-            head_hash,
-            safe,
-            finalized,
-        )
-        .await?;
+        if let Err(err) = self
+            .forkchoice_update_inner(
+                new_canonical_blocks,
+                head_number,
+                head_hash,
+                safe,
+                finalized,
+            )
+            .await
+        {
+            self.latest_block_header.update((*previous_head).clone());
+            return Err(err);
+        }
 
         Ok(())
     }

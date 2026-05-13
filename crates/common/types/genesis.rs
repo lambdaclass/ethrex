@@ -719,7 +719,11 @@ impl Genesis {
                 self.block_access_list_hash
                     .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
             );
-        let slot_number = self.slot_number;
+
+        let slot_number = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(self.slot_number.unwrap_or(0));
 
         BlockHeader {
             parent_hash: H256::zero(),

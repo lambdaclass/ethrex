@@ -148,8 +148,8 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.6.1/fixtures_bal.tar.gz
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/3
+AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/blockchain/.fixtures_url_amsterdam)
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/snobal/6
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
@@ -205,10 +205,9 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install --version 0.9.4 mdbook-katex
-	cargo install --version 0.9.1 mdbook-linkcheck2
-	cargo install --version 0.8.0 mdbook-alerts
-	cargo install --version 0.15.0 mdbook-mermaid
+	cargo install --locked --version 0.10.0-alpha mdbook-katex
+	cargo install --locked --version 0.12.0 mdbook-linkcheck2
+	cargo install --locked --version 0.17.0 mdbook-mermaid
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build
