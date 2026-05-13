@@ -1422,8 +1422,9 @@ impl LEVM {
                         Some(a) if a.info.balance == expected => {}
                         Some(a) => {
                             return Err(BalValidationError::Mismatch(format!(
-                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={}",
-                                a.info.balance
+                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={} (diff={})",
+                                a.info.balance,
+                                describe_balance_diff(expected, a.info.balance),
                             )));
                         }
                         None => {
@@ -2851,6 +2852,52 @@ pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
     } else {
         block_gas_limit
     }
+}
+
+/// Format a balance diff (signed wei) and try to identify it as a multiple of
+/// well-known EIP-8037 state-gas constants (NEW_ACCOUNT, STORAGE_SET, AUTH_*),
+/// scaled by a plausible gas_price. Best-effort hint to triage gas-accounting
+/// drifts at a glance.
+fn describe_balance_diff(expected: U256, actual: U256) -> String {
+    let (sign, mag) = if expected >= actual {
+        ("+", expected - actual)
+    } else {
+        ("-", actual - expected)
+    };
+    let Ok(mag_u128) = u128::try_from(mag) else {
+        return format!("{sign}{mag}");
+    };
+    if mag_u128 == 0 {
+        return "0".to_string();
+    }
+    let cpsb: u128 = 1530;
+    // EIP-8037 state-byte constants
+    let consts = [
+        ("NEW_ACCOUNT", 120u128),
+        ("STORAGE_SET", 64),
+        ("AUTH_BASE", 23),
+        ("AUTH_TOTAL", 143),
+    ];
+    // Try common test gas_prices first, then 1 wei/gas as fallback.
+    for &gp in &[10u128, 1, 7, 100, 1000, 1_000_000_000] {
+        if mag_u128 % gp != 0 {
+            continue;
+        }
+        let gas = mag_u128 / gp;
+        if gas % cpsb != 0 {
+            continue;
+        }
+        let bytes = gas / cpsb;
+        for (name, c) in consts {
+            if bytes % c == 0 {
+                let n = bytes / c;
+                return format!(
+                    "{sign}{mag_u128} wei (= {gas} gas at {gp} wei/gas = {n}× {name}_state_gas)"
+                );
+            }
+        }
+    }
+    format!("{sign}{mag_u128} wei")
 }
 
 #[cfg(test)]
