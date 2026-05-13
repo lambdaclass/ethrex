@@ -80,6 +80,7 @@ services:
       - ethrex-hoodi:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network hoodi
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
@@ -129,6 +130,7 @@ services:
       - ethrex-sepolia:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network sepolia
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
@@ -178,6 +180,7 @@ services:
       - ethrex-mainnet:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network mainnet
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex
@@ -226,6 +229,7 @@ services:
       - ethrex-hoodi-2:/data
     command: >
       --http.addr 0.0.0.0
+      --http.api eth,net,web3,admin
       --network hoodi
       --authrpc.addr 0.0.0.0
       --authrpc.jwtsecret /secrets/jwt.hex

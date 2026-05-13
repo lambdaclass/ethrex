@@ -281,4 +281,10 @@ impl ContextResult {
             ))
         )
     }
+
+    /// True if the failure was caused by the REVERT opcode (intentional revert).
+    /// PR #2689 reclassification only applies to ExceptionalHalt, not REVERT.
+    pub fn is_revert_opcode(&self) -> bool {
+        matches!(self.result, TxResult::Revert(VMError::RevertOpcode))
+    }
 }
