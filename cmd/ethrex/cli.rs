@@ -57,7 +57,7 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client", args_override_self = true)]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -1168,5 +1168,73 @@ mod tests {
     fn http_api_rejects_unknown_namespace() {
         let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
         assert!(result.is_err());
+    }
+
+    /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker
+    /// compose, etc.) must be overridable from `el_extra_params`. Without
+    /// `overrides_with`, clap errors on a duplicate scalar flag and the node
+    /// fails to start.
+    #[test]
+    fn scalar_launch_flags_allow_last_wins_override() {
+        let cli = CLI::parse_from([
+            "ethrex",
+            "--syncmode=full",
+            "--syncmode=snap",
+            "--log.level=debug",
+            "--log.level=trace",
+            "--http.addr=0.0.0.0",
+            "--http.addr=127.0.0.2",
+            "--http.port=8545",
+            "--http.port=9000",
+            "--authrpc.addr=0.0.0.0",
+            "--authrpc.addr=127.0.0.3",
+            "--authrpc.port=8551",
+            "--authrpc.port=9551",
+            "--authrpc.jwtsecret=a.hex",
+            "--authrpc.jwtsecret=b.hex",
+            "--p2p.port=30303",
+            "--p2p.port=30304",
+            "--discovery.port=30303",
+            "--discovery.port=30305",
+            "--metrics.addr=0.0.0.0",
+            "--metrics.addr=127.0.0.4",
+            "--metrics.port=9090",
+            "--metrics.port=9091",
+            "--builder.gas-limit=30000000",
+            "--builder.gas-limit=45000000",
+        ]);
+        assert!(matches!(cli.opts.syncmode, SyncMode::Snap));
+        assert_eq!(cli.opts.log_level, Level::TRACE);
+        assert_eq!(cli.opts.http_addr, "127.0.0.2");
+        assert_eq!(cli.opts.http_port, "9000");
+        assert_eq!(cli.opts.authrpc_addr, "127.0.0.3");
+        assert_eq!(cli.opts.authrpc_port, "9551");
+        assert_eq!(cli.opts.authrpc_jwtsecret, "b.hex");
+        assert_eq!(cli.opts.p2p_port, "30304");
+        assert_eq!(cli.opts.discovery_port, "30305");
+        assert_eq!(cli.opts.metrics_addr, "127.0.0.4");
+        assert_eq!(cli.opts.metrics_port, "9091");
+        assert_eq!(cli.opts.gas_limit, 45000000);
+    }
+
+    /// `--http.api` should accumulate across repeated invocations (union) so
+    /// operators can extend whatever a launcher passed without restating it.
+    #[test]
+    fn http_api_repeated_flags_accumulate() {
+        let cli = CLI::parse_from([
+            "ethrex",
+            "--http.api=eth,net,web3",
+            "--http.api=debug,admin",
+        ]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![
+                RpcNamespace::Eth,
+                RpcNamespace::Net,
+                RpcNamespace::Web3,
+                RpcNamespace::Debug,
+                RpcNamespace::Admin,
+            ]
+        );
     }
 }
