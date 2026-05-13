@@ -24,7 +24,9 @@ use ethrex_p2p::{
     types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
+use ethrex_storage::{
+    EngineType, HistoryPruner, Store, error::StoreError, has_valid_db, read_chain_id_from_db,
+};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -544,6 +546,12 @@ pub async fn init_l1(
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
+
+    // History pruner — only when --history.retention is set.
+    if let Some(retention) = opts.history_retention {
+        let pruner = HistoryPruner::new(store.clone(), retention);
+        tracker.spawn(pruner.run());
+    }
 
     let cancel_token = tokio_util::sync::CancellationToken::new();
 

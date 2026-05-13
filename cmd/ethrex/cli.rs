@@ -373,6 +373,15 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "history.retention",
+        value_name = "DURATION",
+        value_parser = parse_history_retention,
+        help = "Enable history pruning. Bodies/receipts/tx-locations older than this wall-clock duration are deleted (canonical headers preserved). Example: --history.retention=30d",
+        help_heading = "Node options",
+        env = "ETHREX_HISTORY_RETENTION"
+    )]
+    pub history_retention: Option<std::time::Duration>,
 }
 
 impl Options {
@@ -459,6 +468,7 @@ impl Default for Options {
             precompute_witnesses: false,
             no_migrate: false,
             no_precompile_cache: false,
+            history_retention: None,
         }
     }
 }
@@ -1109,4 +1119,39 @@ pub async fn export_blocks(
         path = %path,
         "Exported blocks to file"
     );
+}
+
+fn parse_history_retention(s: &str) -> Result<std::time::Duration, String> {
+    humantime::parse_duration(s).map_err(|e| format!("invalid duration `{s}`: {e}"))
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+    use clap::Parser;
+    use std::time::Duration;
+
+    #[test]
+    fn parses_history_retention_days() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "30d"]).unwrap();
+        assert_eq!(
+            cli.opts.history_retention,
+            Some(Duration::from_secs(30 * 86400))
+        );
+    }
+
+    #[test]
+    fn parses_history_retention_hours() {
+        let cli = CLI::try_parse_from(["ethrex", "--history.retention", "12h"]).unwrap();
+        assert_eq!(
+            cli.opts.history_retention,
+            Some(Duration::from_secs(12 * 3600))
+        );
+    }
+
+    #[test]
+    fn history_retention_default_is_none() {
+        let cli = CLI::try_parse_from(["ethrex"]).unwrap();
+        assert_eq!(cli.opts.history_retention, None);
+    }
 }

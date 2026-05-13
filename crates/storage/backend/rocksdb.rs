@@ -317,6 +317,30 @@ impl StorageReadView for RocksDBReadTx {
         });
         Ok(Box::new(iter))
     }
+
+    fn full_scan(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        // Use `iterator_cf(IteratorMode::Start)` rather than
+        // `prefix_iterator_cf(_, &[])`: the latter is subject to prefix-search
+        // semantics (prefix_same_as_start, prefix-bloom early-termination)
+        // when a prefix extractor is configured, which would silently truncate
+        // a "full scan". This unconditional scan is the same primitive used
+        // by `clear_table`.
+        let iter = self
+            .db
+            .iterator_cf(&cf, rocksdb::IteratorMode::Start)
+            .map(|result| {
+                result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            });
+        Ok(Box::new(iter))
+    }
 }
 
 /// Write batch for RocksDB
@@ -362,6 +386,21 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.batch.delete_cf(&cf, key);
+        Ok(())
+    }
+
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        self.batch.delete_range_cf(&cf, start, end);
         Ok(())
     }
 

@@ -16,6 +16,24 @@ use ethrex_common::types::{
 };
 use ethrex_storage::Store;
 
+/// Build a header-only `RpcBlock` JSON value for a block whose body has been
+/// pruned. Used by `eth_getBlockByNumber` and `eth_getBlockByHash` to return
+/// the header with an empty transactions list (rather than `null`) when the
+/// block is below `EarliestBlockNumber`.
+///
+/// The `size` field is recomputed from the synthetic empty body; the
+/// original encoded size is unrecoverable after pruning.
+fn build_pruned_block_response(header: BlockHeader, hydrated: bool) -> Result<Value, RpcErr> {
+    let empty_body = BlockBody {
+        transactions: vec![],
+        ommers: vec![],
+        withdrawals: Some(vec![]),
+    };
+    let hash = header.hash();
+    let block = RpcBlock::build(header, empty_body, hash, hydrated)?;
+    serde_json::to_value(&block).map_err(|error| RpcErr::Internal(error.to_string()))
+}
+
 pub struct GetBlockByNumberRequest {
     pub block: BlockIdentifier,
     pub hydrated: bool,
@@ -70,12 +88,19 @@ impl RpcHandler for GetBlockByNumberRequest {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            // Block not found
-            _ => return Ok(Value::Null),
+        let header = match storage.get_block_header(block_number)? {
+            Some(header) => header,
+            None => return Ok(Value::Null),
+        };
+        let body = match storage.get_block_body(block_number).await? {
+            Some(body) => body,
+            None => {
+                let earliest = storage.get_earliest_block_number().await?;
+                if block_number < earliest {
+                    return build_pruned_block_response(header, self.hydrated);
+                }
+                return Ok(Value::Null);
+            }
         };
         let hash = header.hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated)?;
@@ -104,12 +129,19 @@ impl RpcHandler for GetBlockByHashRequest {
             Some(number) => number,
             _ => return Ok(Value::Null),
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            // Block not found
-            _ => return Ok(Value::Null),
+        let header = match storage.get_block_header(block_number)? {
+            Some(header) => header,
+            None => return Ok(Value::Null),
+        };
+        let body = match storage.get_block_body(block_number).await? {
+            Some(body) => body,
+            None => {
+                let earliest = storage.get_earliest_block_number().await?;
+                if block_number < earliest {
+                    return build_pruned_block_response(header, self.hydrated);
+                }
+                return Ok(Value::Null);
+            }
         };
         let hash = header.hash();
         let block = RpcBlock::build(header, body, hash, self.hydrated)?;
@@ -404,4 +436,167 @@ pub async fn get_all_block_receipts(
         receipts.push(receipt);
     }
     Ok(receipts)
+}
+
+#[cfg(test)]
+mod pruning_rpc_tests {
+    use super::*;
+    use crate::{
+        test_utils::{default_context_with_storage, setup_store},
+        types::block_identifier::BlockIdentifier,
+    };
+
+    // Helper: add a block with an empty body, make it canonical, then prune its body.
+    // This simulates exactly the pruning scenario: canonical header exists, body is gone.
+    async fn add_pruned_block(storage: &Store, block_number: BlockNumber) -> BlockHash {
+        let header = BlockHeader {
+            number: block_number,
+            ..Default::default()
+        };
+        let block = Block::new(
+            header,
+            BlockBody {
+                transactions: vec![],
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+        );
+        let hash = block.hash();
+        storage.add_block(block).await.unwrap();
+        storage
+            .forkchoice_update(vec![], block_number, hash, None, None)
+            .await
+            .unwrap();
+        storage.prune_block_height(block_number).await.unwrap();
+        hash
+    }
+
+    /// When a block body has been pruned (header exists, body is None) and the block
+    /// number is below `earliest_block_number`, the RPC handler must return the block
+    /// header with an empty `transactions` array rather than null or an error.
+    #[tokio::test]
+    async fn get_block_by_number_returns_header_only_when_body_pruned() {
+        let storage = setup_store().await;
+        add_pruned_block(&storage, 5).await;
+
+        // Set earliest = 6, so block 5 is "below the pruning horizon".
+        storage.update_earliest_block_number(6).await.unwrap();
+
+        // --- include_full_tx = true ---
+        // BlockIdentifier::Number(5) resolves directly without DB canonical lookup.
+        let req_full = GetBlockByNumberRequest {
+            block: BlockIdentifier::Number(5),
+            hydrated: true,
+        };
+        let context = default_context_with_storage(storage.clone()).await;
+        let result = req_full.handle(context).await.unwrap();
+        let obj = result.as_object().expect("expected JSON object");
+        assert_eq!(
+            obj.get("number").and_then(|v| v.as_str()),
+            Some("0x5"),
+            "block number mismatch"
+        );
+        let txs = obj
+            .get("transactions")
+            .and_then(|v| v.as_array())
+            .expect("transactions must be an array");
+        assert!(
+            txs.is_empty(),
+            "expected empty transactions for pruned block, got {:?}",
+            txs
+        );
+
+        // --- include_full_tx = false (hashes only) ---
+        let req_hashes = GetBlockByNumberRequest {
+            block: BlockIdentifier::Number(5),
+            hydrated: false,
+        };
+        let context2 = default_context_with_storage(storage).await;
+        let result_hashes = req_hashes.handle(context2).await.unwrap();
+        let obj2 = result_hashes.as_object().expect("expected JSON object");
+        let txs2 = obj2
+            .get("transactions")
+            .and_then(|v| v.as_array())
+            .expect("transactions must be an array");
+        assert!(
+            txs2.is_empty(),
+            "expected empty transactions for pruned block (hash mode), got {:?}",
+            txs2
+        );
+    }
+
+    /// A block at or above `earliest_block_number` with a missing body returns null
+    /// (it's genuinely absent, not pruned — canonical header doesn't exist either).
+    #[tokio::test]
+    async fn get_block_by_number_returns_null_when_block_absent_above_earliest() {
+        let storage = setup_store().await;
+
+        // earliest = 6; block 10 has no header or body at all.
+        storage.update_earliest_block_number(6).await.unwrap();
+
+        let context = default_context_with_storage(storage).await;
+        let req = GetBlockByNumberRequest {
+            block: BlockIdentifier::Number(10),
+            hydrated: true,
+        };
+        let result = req.handle(context).await.unwrap();
+        assert_eq!(
+            result,
+            Value::Null,
+            "expected null for non-pruned missing body"
+        );
+    }
+
+    /// Same pruning behaviour for getBlockByHash.
+    #[tokio::test]
+    async fn get_block_by_hash_returns_header_only_when_body_pruned() {
+        let storage = setup_store().await;
+        let hash = add_pruned_block(&storage, 7).await;
+
+        // Set earliest = 8, so block 7 is below the pruning horizon.
+        storage.update_earliest_block_number(8).await.unwrap();
+
+        let context = default_context_with_storage(storage).await;
+
+        let req = GetBlockByHashRequest {
+            block: hash,
+            hydrated: true,
+        };
+        let result = req.handle(context).await.unwrap();
+        let obj = result.as_object().expect("expected JSON object");
+        let txs = obj
+            .get("transactions")
+            .and_then(|v| v.as_array())
+            .expect("transactions must be an array");
+        assert!(
+            txs.is_empty(),
+            "expected empty transactions for pruned block (by hash), got {:?}",
+            txs
+        );
+    }
+
+    /// After pruning a block, `eth_getBlockReceipts` must return null because the
+    /// block body (needed to enumerate transactions and receipts) is gone.
+    #[tokio::test]
+    async fn get_block_receipts_returns_null_for_pruned_height() {
+        use crate::types::block_identifier::BlockIdentifierOrHash;
+
+        let storage = setup_store().await;
+        let hash = add_pruned_block(&storage, 9).await;
+        let _ = hash; // body is pruned; canonical header still exists
+
+        // earliest = 9, so block 9 is at the pruning horizon (body missing).
+        storage.update_earliest_block_number(9).await.unwrap();
+
+        let req = GetBlockReceiptsRequest {
+            block: BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(9)),
+        };
+        let context = default_context_with_storage(storage).await;
+        let result = req.handle(context).await.unwrap();
+        assert_eq!(
+            result,
+            serde_json::Value::Null,
+            "expected null for receipts of pruned block"
+        );
+    }
 }

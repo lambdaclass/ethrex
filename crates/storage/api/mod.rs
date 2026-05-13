@@ -65,6 +65,18 @@ pub trait StorageReadView: Send + Sync {
         table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns an iterator over every key-value pair in the table, in
+    /// lexicographic key order.
+    ///
+    /// Unlike [`prefix_iterator`](Self::prefix_iterator), this is guaranteed
+    /// to traverse the entire CF regardless of any prefix-extractor / bloom
+    /// configuration on the backend. May be slow on large tables — intended
+    /// for migrations and similar maintenance tasks rather than hot paths.
+    fn full_scan(
+        &self,
+        table: &'static str,
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 }
 
 /// Write transaction interface.
@@ -87,6 +99,16 @@ pub trait StorageWriteBatch: Send {
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
+
+    /// Removes every key in `[start, end)` from the specified table. On
+    /// RocksDB this is a single range tombstone, dramatically cheaper than
+    /// issuing N point deletes for a large contiguous range.
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError>;
 
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;

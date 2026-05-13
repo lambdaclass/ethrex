@@ -102,7 +102,16 @@ pub const MISC_VALUES: &str = "misc_values";
 /// - [`Vec<u8>`] = `serde_json::to_vec(&witness)`
 pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 
-pub const TABLES: [&str; 19] = [
+/// Block hashes indexed by number column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `block_number.to_be_bytes() ++ block_hash.as_bytes()` (40 bytes)
+/// - [`Vec<u8>`] = empty
+///
+/// Used by the history pruner to enumerate every known hash at a given
+/// block number — canonical and non-canonical. BE encoding so
+/// lexicographic prefix iteration matches numeric block order.
+pub const BLOCK_HASHES_BY_NUMBER: &str = "block_hashes_by_number";
+
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -122,4 +131,18 @@ pub const TABLES: [&str; 19] = [
     STORAGE_FLATKEYVALUE,
     MISC_VALUES,
     EXECUTION_WITNESSES,
+    BLOCK_HASHES_BY_NUMBER,
 ];
+
+#[cfg(test)]
+mod tables_tests {
+    use super::*;
+
+    #[test]
+    fn block_hashes_by_number_in_tables() {
+        assert!(
+            TABLES.contains(&BLOCK_HASHES_BY_NUMBER),
+            "BLOCK_HASHES_BY_NUMBER must be listed in TABLES"
+        );
+    }
+}

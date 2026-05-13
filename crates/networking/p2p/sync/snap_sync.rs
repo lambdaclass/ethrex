@@ -260,7 +260,20 @@ pub async fn sync_cycle_snap(
 
     snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
 
+    // Set EarliestBlockNumber BEFORE clearing the snap-sync state. If we
+    // crashed between these two steps with the opposite order, the next
+    // startup would see "snap sync complete" (state cleared) but
+    // EarliestBlockNumber=0, permanently lying about pre-pivot data.
+    //
+    // Source the pivot from persisted chain metadata rather than
+    // `block_sync_state.block_hashes` — the latter can be empty when the
+    // header fetch loop returned a single-header batch and never invoked
+    // `process_incoming_headers`.
+    let pivot_number = store.get_latest_block_number().await?;
+    store.update_earliest_block_number(pivot_number).await?;
+
     store.clear_snap_state().await?;
+
     snap_enabled.store(false, Ordering::Relaxed);
 
     Ok(())

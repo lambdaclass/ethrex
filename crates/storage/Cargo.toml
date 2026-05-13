@@ -13,6 +13,7 @@ ethrex-rlp.workspace = true
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-trie.workspace = true
+ethrex-metrics = { workspace = true, features = ["metrics"], optional = true }
 
 anyhow = "1.0.86"
 bytes.workspace = true
@@ -22,7 +23,7 @@ serde.workspace = true
 serde_json = "1.0.117"
 rocksdb = { workspace = true, optional = true }
 rustc-hash.workspace = true
-tokio = { workspace = true, features = ["rt", "sync"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru.workspace = true
@@ -30,6 +31,7 @@ lru.workspace = true
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+metrics = ["dep:ethrex-metrics"]
 
 [dev-dependencies]
 tempfile.workspace = true
