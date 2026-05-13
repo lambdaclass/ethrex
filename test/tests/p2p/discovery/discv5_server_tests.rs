@@ -335,6 +335,9 @@ async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
             .unwrap();
     }
 
+    // Round must have actually completed; otherwise the guard at discv5_handle_pong
+    // is never evaluated and the assertions below would trivially pass.
+    assert!(discv5(&mut server).first_ip_vote_round_completed);
     // Voting round reached threshold with the local IP as winner; the guard at
     // discv5_handle_pong must skip update_local_ip and leave the ENR sequence intact.
     assert_eq!(server.local_node.ip, original_ip);
