@@ -226,8 +226,8 @@ impl Evm {
         self.db.enable_bal_recording();
     }
 
-    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
-    pub fn set_bal_index(&mut self, index: u16) {
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint32).
+    pub fn set_bal_index(&mut self, index: u32) {
         self.db.set_bal_index(index);
     }
 

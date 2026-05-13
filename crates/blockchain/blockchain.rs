@@ -236,6 +236,10 @@ pub struct BlockchainOptions {
     pub max_blobs_per_block: Option<u32>,
     /// If true, computes execution witnesses upon receiving newPayload messages and stores them in local storage
     pub precompute_witnesses: bool,
+    /// If true (default), per-block execution caches precompile results between the
+    /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
+    /// disable the cache for benchmarking purposes.
+    pub precompile_cache_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -246,6 +250,7 @@ impl Default for BlockchainOptions {
             r#type: BlockchainType::default(),
             max_blobs_per_block: None,
             precompute_witnesses: false,
+            precompile_cache_enabled: true,
         }
     }
 }
@@ -338,6 +343,7 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let cross_block_cache = CrossBlockCache::empty(blockchain_opts.precompile_cache_enabled);
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
@@ -345,20 +351,22 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
-            cross_block_cache: CrossBlockCache::empty(),
+            cross_block_cache,
             pipeline_lock: StdMutex::new(()),
         }
     }
 
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions::default();
+        let cross_block_cache = CrossBlockCache::empty(options.precompile_cache_enabled);
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
-            cross_block_cache: CrossBlockCache::empty(),
+            cross_block_cache,
             pipeline_lock: StdMutex::new(()),
         }
     }

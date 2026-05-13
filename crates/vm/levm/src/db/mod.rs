@@ -63,7 +63,8 @@ pub struct CachingDatabase {
     storage: RwLock<StorageCache>,
     code: RwLock<CodeCache>,
     /// Shared precompile result cache (warmer populates, executor reuses).
-    precompile_cache: PrecompileCache,
+    /// `None` when the cache is disabled via `BlockchainOptions::precompile_cache_enabled = false`.
+    precompile_cache: Option<PrecompileCache>,
     chain_config: OnceLock<ChainConfig>,
 }
 
@@ -73,14 +74,14 @@ impl core::fmt::Debug for CachingDatabase {
     }
 }
 
-impl Default for CachingDatabase {
-    fn default() -> Self {
+impl CachingDatabase {
+    pub fn new(precompile_cache_enabled: bool) -> Self {
         Self {
             inner: RwLock::new(None),
             accounts: RwLock::new(LruCache::with_hasher(ACCOUNT_CACHE_CAP, FxBuildHasher)),
             storage: RwLock::new(LruCache::with_hasher(STORAGE_CACHE_CAP, FxBuildHasher)),
             code: RwLock::new(LruCache::with_hasher(CODE_CACHE_CAP, FxBuildHasher)),
-            precompile_cache: PrecompileCache::new(),
+            precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
     }
@@ -106,10 +107,6 @@ impl CachingDatabase {
                         .to_string(),
                 )
             })
-    }
-
-    pub fn precompile_cache(&self) -> &PrecompileCache {
-        &self.precompile_cache
     }
 
     /// Drop all cached state (account / storage / code). `precompile_cache` and
@@ -208,7 +205,7 @@ impl Database for CachingDatabase {
     }
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
-        Some(&self.precompile_cache)
+        self.precompile_cache.as_ref()
     }
 
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
@@ -256,9 +253,9 @@ pub struct CrossBlockCache {
 impl CrossBlockCache {
     /// Empty cache with no inner database. Reads error until
     /// [`Self::set_inner`] is called.
-    pub fn empty() -> Self {
+    pub fn empty(precompile_cache_enabled: bool) -> Self {
         Self {
-            cache: Arc::new(CachingDatabase::default()),
+            cache: Arc::new(CachingDatabase::new(precompile_cache_enabled)),
             last_committed: RwLock::new(None),
         }
     }

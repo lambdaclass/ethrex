@@ -156,6 +156,7 @@ fn make_env(gas_limit: u64) -> Environment {
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        is_system_call: false,
     }
 }
 
