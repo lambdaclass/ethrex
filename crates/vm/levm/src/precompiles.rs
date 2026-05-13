@@ -262,27 +262,95 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 }
 
 /// Cross-block cache for precompile results shared between warmer and executor.
-/// Bounded LRU prevents unbounded growth across blocks. Cap chosen generously
-/// above mainnet observed working sets (reth telemetry: ECMUL saturates at 10K
-/// over a single block — cross-block scope is roughly an order of magnitude
-/// larger across all precompiles combined).
-const PRECOMPILE_CACHE_CAP: NonZeroUsize = match NonZeroUsize::new(100_000) {
-    Some(n) => n,
-    None => panic!("cap > 0"),
-};
+/// Per-precompile slot-array with independent LRUs so heavy users (e.g. BN254
+/// in zk-verifier blocks) keep their working set even when other precompiles
+/// are active. Mirrors the dispatcher's indexing in `execute_precompile`.
+///
+/// Caps are sized above mainnet observed working sets (reth telemetry data
+/// at https://github.com/paradigmxyz/reth/pull/22900) with extra headroom for
+/// cross-block scope. Identity (0x04) bypasses the cache (copy is cheaper
+/// than a hash lookup).
+const ECRECOVER_CAP: usize = 10_000;
+const SHA256_CAP: usize = 1_000;
+const RIPEMD_CAP: usize = 1_000;
+const MODEXP_CAP: usize = 50_000;
+const BN254_ADD_CAP: usize = 100_000;
+const BN254_MUL_CAP: usize = 200_000;
+const BN254_PAIRING_CAP: usize = 10_000;
+const BLAKE2F_CAP: usize = 2_000;
+const KZG_CAP: usize = 4_000;
+const BLS12_CAP: usize = 2_000;
+const P256_CAP: usize = 4_000;
 
-type PrecompileCacheMap = LruCache<(Address, Bytes), (Bytes, u64), FxBuildHasher>;
+const PRECOMPILE_INDEX_SPACE: usize = 512;
+
+type PrecompileCacheMap = LruCache<Bytes, (Bytes, u64), FxBuildHasher>;
 
 pub struct PrecompileCache {
-    // `LruCache::get` promotes recency, so it needs `&mut self`. `Mutex` is
-    // simpler than `RwLock` here and the critical section is one hash lookup.
-    cache: Mutex<PrecompileCacheMap>,
+    // Indexed by `u16::from_be_bytes([address[18], address[19]])`, matching the
+    // dispatcher's PRECOMPILES table. `None` slots mean "don't cache this
+    // precompile" (currently identity, plus any future unallocated address).
+    //
+    // `LruCache::get` promotes recency, so it needs `&mut self`. Per-precompile
+    // `Mutex` means cross-precompile lookups are lock-free; warmer/executor
+    // only contend when they hit the same precompile concurrently.
+    slots: Box<[Option<Mutex<PrecompileCacheMap>>; PRECOMPILE_INDEX_SPACE]>,
+}
+
+fn precompile_slot_index(address: &Address) -> Option<usize> {
+    let bytes = address.as_bytes();
+    if bytes.get(0..18) != Some(&[0u8; 18]) {
+        return None;
+    }
+    let hi = *bytes.get(18)?;
+    let lo = *bytes.get(19)?;
+    Some(usize::from(u16::from_be_bytes([hi, lo])))
+}
+
+fn make_slot(cap: usize) -> Mutex<PrecompileCacheMap> {
+    let cap = match NonZeroUsize::new(cap) {
+        Some(c) => c,
+        // Caps are compile-time constants > 0. If this fires, the cap const is
+        // misconfigured — fall back to a tiny non-zero cap to keep the cache
+        // operational while making the bug surface in logs/profiling.
+        None => match NonZeroUsize::new(1) {
+            Some(c) => c,
+            None => unreachable!(),
+        },
+    };
+    Mutex::new(LruCache::with_hasher(cap, FxBuildHasher))
 }
 
 impl Default for PrecompileCache {
+    #[expect(
+        clippy::as_conversions,
+        clippy::indexing_slicing,
+        reason = "mirrors the dispatcher table in execute_precompile; precompile address bytes are static constants"
+    )]
     fn default() -> Self {
+        let mut slots: [Option<Mutex<PrecompileCacheMap>>; PRECOMPILE_INDEX_SPACE] =
+            std::array::from_fn(|_| None);
+        slots[ECRECOVER.address.0[19] as usize] = Some(make_slot(ECRECOVER_CAP));
+        slots[SHA2_256.address.0[19] as usize] = Some(make_slot(SHA256_CAP));
+        slots[RIPEMD_160.address.0[19] as usize] = Some(make_slot(RIPEMD_CAP));
+        // 0x04 IDENTITY intentionally left None — copy is cheaper than caching.
+        slots[MODEXP.address.0[19] as usize] = Some(make_slot(MODEXP_CAP));
+        slots[ECADD.address.0[19] as usize] = Some(make_slot(BN254_ADD_CAP));
+        slots[ECMUL.address.0[19] as usize] = Some(make_slot(BN254_MUL_CAP));
+        slots[ECPAIRING.address.0[19] as usize] = Some(make_slot(BN254_PAIRING_CAP));
+        slots[BLAKE2F.address.0[19] as usize] = Some(make_slot(BLAKE2F_CAP));
+        slots[POINT_EVALUATION.address.0[19] as usize] = Some(make_slot(KZG_CAP));
+        slots[BLS12_G1ADD.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[BLS12_G1MSM.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[BLS12_G2ADD.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[BLS12_G2MSM.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[BLS12_PAIRING_CHECK.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[BLS12_MAP_FP_TO_G1.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
+        slots[u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
+            Some(make_slot(P256_CAP));
         Self {
-            cache: Mutex::new(LruCache::with_hasher(PRECOMPILE_CACHE_CAP, FxBuildHasher)),
+            slots: Box::new(slots),
         }
     }
 }
@@ -293,21 +361,27 @@ impl PrecompileCache {
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+        let idx = precompile_slot_index(address)?;
+        let slot = self.slots.get(idx)?.as_ref()?;
         // Graceful degradation: if the lock is poisoned (a thread panicked while
         // holding it), skip the cache rather than propagating the panic. The cache
         // is a pure optimization — missing it only costs a recomputation.
-        self.cache
-            .lock()
+        slot.lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(*address, calldata.clone()))
+            .get(calldata.as_ref())
             .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
-            .lock()
+        let Some(idx) = precompile_slot_index(&address) else {
+            return;
+        };
+        let Some(Some(slot)) = self.slots.get(idx) else {
+            return;
+        };
+        slot.lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .put((address, calldata), (output, gas_cost));
+            .put(calldata, (output, gas_cost));
     }
 }
 
