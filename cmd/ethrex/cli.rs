@@ -15,7 +15,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
+    discovery::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -57,7 +57,7 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client", args_override_self = true)]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -194,9 +194,10 @@ pub struct Options {
     pub mempool_max_pending_txs_per_account: usize,
     #[arg(
         long = "http.addr",
-        default_value = "0.0.0.0",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
+        long_help = "Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_ADDR"
     )]
@@ -210,6 +211,18 @@ pub struct Options {
         env = "ETHREX_HTTP_PORT"
     )]
     pub http_port: String,
+    #[arg(
+        long = "http.api",
+        default_value = "eth,net,web3",
+        value_name = "NAMESPACES",
+        value_delimiter = ',',
+        value_parser = utils::parse_http_namespace,
+        help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_API"
+    )]
+    pub http_api: Vec<ethrex_rpc::RpcNamespace>,
     #[arg(
         long = "ws.enabled",
         default_value = "false",
@@ -390,7 +403,7 @@ impl Options {
             network: Some(Network::LocalDevnet),
             datadir: DB_ETHREX_DEV_L1.into(),
             dev: true,
-            http_addr: "0.0.0.0".to_string(),
+            http_addr: "127.0.0.1".to_string(),
             http_port: "8545".to_string(),
             authrpc_port: "8551".to_string(),
             metrics_port: "9090".to_string(),
@@ -413,7 +426,7 @@ impl Options {
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
-            http_addr: "0.0.0.0".into(),
+            http_addr: "127.0.0.1".into(),
             http_port: "1729".into(),
             authrpc_addr: "localhost".into(),
             authrpc_port: "8551".into(),
@@ -433,6 +446,7 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
+            http_api: ethrex_rpc::DEFAULT_HTTP_API.to_vec(),
             ws_enabled: false,
             ws_addr: Default::default(),
             ws_port: Default::default(),
@@ -1119,4 +1133,119 @@ pub async fn export_blocks(
         path = %path,
         "Exported blocks to file"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use ethrex_rpc::RpcNamespace;
+
+    /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
+    /// host is not exposed to the open internet.
+    #[test]
+    fn http_addr_defaults_to_loopback() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.http_addr, "127.0.0.1");
+    }
+
+    /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
+    /// explicitly to expose `admin`, `debug` or `txpool`.
+    #[test]
+    fn http_api_defaults_to_safe_namespaces() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Net, RpcNamespace::Web3]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_comma_separated_values() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,debug,admin"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_rejects_engine_namespace() {
+        let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,engine"]);
+        assert!(result.is_err(), "engine must not be allowed on --http.api");
+    }
+
+    #[test]
+    fn http_api_rejects_unknown_namespace() {
+        let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
+        assert!(result.is_err());
+    }
+
+    /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker
+    /// compose, etc.) must be overridable from `el_extra_params`. Without
+    /// `overrides_with`, clap errors on a duplicate scalar flag and the node
+    /// fails to start.
+    #[test]
+    fn scalar_launch_flags_allow_last_wins_override() {
+        let cli = CLI::parse_from([
+            "ethrex",
+            "--syncmode=full",
+            "--syncmode=snap",
+            "--log.level=debug",
+            "--log.level=trace",
+            "--http.addr=0.0.0.0",
+            "--http.addr=127.0.0.2",
+            "--http.port=8545",
+            "--http.port=9000",
+            "--authrpc.addr=0.0.0.0",
+            "--authrpc.addr=127.0.0.3",
+            "--authrpc.port=8551",
+            "--authrpc.port=9551",
+            "--authrpc.jwtsecret=a.hex",
+            "--authrpc.jwtsecret=b.hex",
+            "--p2p.port=30303",
+            "--p2p.port=30304",
+            "--discovery.port=30303",
+            "--discovery.port=30305",
+            "--metrics.addr=0.0.0.0",
+            "--metrics.addr=127.0.0.4",
+            "--metrics.port=9090",
+            "--metrics.port=9091",
+            "--builder.gas-limit=30000000",
+            "--builder.gas-limit=45000000",
+        ]);
+        assert!(matches!(cli.opts.syncmode, SyncMode::Snap));
+        assert_eq!(cli.opts.log_level, Level::TRACE);
+        assert_eq!(cli.opts.http_addr, "127.0.0.2");
+        assert_eq!(cli.opts.http_port, "9000");
+        assert_eq!(cli.opts.authrpc_addr, "127.0.0.3");
+        assert_eq!(cli.opts.authrpc_port, "9551");
+        assert_eq!(cli.opts.authrpc_jwtsecret, "b.hex");
+        assert_eq!(cli.opts.p2p_port, "30304");
+        assert_eq!(cli.opts.discovery_port, "30305");
+        assert_eq!(cli.opts.metrics_addr, "127.0.0.4");
+        assert_eq!(cli.opts.metrics_port, "9091");
+        assert_eq!(cli.opts.gas_limit, 45000000);
+    }
+
+    /// `--http.api` should accumulate across repeated invocations (union) so
+    /// operators can extend whatever a launcher passed without restating it.
+    #[test]
+    fn http_api_repeated_flags_accumulate() {
+        let cli = CLI::parse_from([
+            "ethrex",
+            "--http.api=eth,net,web3",
+            "--http.api=debug,admin",
+        ]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![
+                RpcNamespace::Eth,
+                RpcNamespace::Net,
+                RpcNamespace::Web3,
+                RpcNamespace::Debug,
+                RpcNamespace::Admin,
+            ]
+        );
+    }
 }
