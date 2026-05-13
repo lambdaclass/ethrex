@@ -238,6 +238,7 @@ fn fee_token_storage_rolled_back_on_validation_failure() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let fee_config = FeeConfig {
@@ -444,6 +445,7 @@ fn fee_token_revert_during_finalize_triggers_rollback() {
         is_privileged: false,
         fee_token: Some(fee_token_addr),
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let fee_config = FeeConfig {
@@ -551,6 +553,7 @@ fn privileged_tx_intrinsic_gas_failure_preserves_sender_balance() {
         is_privileged: true,
         fee_token: None,
         disable_balance_check: false,
+        is_system_call: false,
     };
 
     let tx = Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction {
