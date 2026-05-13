@@ -25,6 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
 use crate::peer_handler::PeerHandler;
+use crate::peer_speed::TransferType;
 use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
@@ -744,7 +745,11 @@ pub async fn update_pivot(
         // One permit per attempt: consumed by `get_block_header` below.
         let Some((peer_id, mut connection, permit)) = peers
             .peer_table
-            .get_best_peer_excluding(SUPPORTED_ETH_CAPABILITIES.to_vec(), excluded_peers.clone())
+            .get_best_peer_excluding(
+                SUPPORTED_ETH_CAPABILITIES.to_vec(),
+                excluded_peers.clone(),
+                Some(TransferType::Headers),
+            )
             .await?
         else {
             // Distinguish "rotation exhausted" from "no peers currently eligible

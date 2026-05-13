@@ -2,6 +2,7 @@
 //!
 //! This module contains all the client-side snap protocol request functions.
 
+use crate::peer_speed::TransferType;
 use crate::rlpx::message::Message as RLPxMessage;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -222,7 +223,10 @@ pub async fn request_account_range(
 
         let Some((peer_id, connection, permit)) = peers
             .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .get_best_peer(
+                SUPPORTED_SNAP_CAPABILITIES.to_vec(),
+                Some(TransferType::AccountRanges),
+            )
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for account range"))
             .unwrap_or(None)
@@ -415,7 +419,10 @@ pub async fn request_bytecodes(
 
         let Some((peer_id, mut connection, permit)) = peers
             .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .get_best_peer(
+                SUPPORTED_SNAP_CAPABILITIES.to_vec(),
+                Some(TransferType::Bytecodes),
+            )
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for bytecodes"))
             .unwrap_or(None)
@@ -942,7 +949,10 @@ pub async fn request_storage_ranges(
 
         let Some((peer_id, connection, permit)) = peers
             .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .get_best_peer(
+                SUPPORTED_SNAP_CAPABILITIES.to_vec(),
+                Some(TransferType::StorageRanges),
+            )
             .await
             .inspect_err(|err| warn!(%err, "Error requesting a peer for storage ranges"))
             .unwrap_or(None)

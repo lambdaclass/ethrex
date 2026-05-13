@@ -1,3 +1,4 @@
+use crate::peer_speed::TransferType;
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
@@ -114,10 +115,11 @@ impl PeerHandler {
     async fn get_random_peer(
         &mut self,
         capabilities: &[Capability],
+        transfer_type: Option<TransferType>,
     ) -> Result<Option<(H256, PeerConnection, RequestPermit)>, PeerHandlerError> {
         Ok(self
             .peer_table
-            .get_random_peer(capabilities.to_vec())
+            .get_random_peer(capabilities.to_vec(), transfer_type)
             .await?)
     }
 
@@ -157,7 +159,11 @@ impl PeerHandler {
             }
             let peers = self
                 .peer_table
-                .get_best_n_peers(SUPPORTED_ETH_CAPABILITIES.to_vec(), MAX_PEERS_TO_ASK)
+                .get_best_n_peers(
+                    SUPPORTED_ETH_CAPABILITIES.to_vec(),
+                    MAX_PEERS_TO_ASK,
+                    Some(TransferType::Headers),
+                )
                 .await?;
 
             let selected_peers: Vec<_> = peers.iter().map(|(id, _, _)| *id).collect();
@@ -295,7 +301,10 @@ impl PeerHandler {
             }
             let Some((peer_id, mut connection, permit)) = self
                 .peer_table
-                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .get_best_peer(
+                    SUPPORTED_ETH_CAPABILITIES.to_vec(),
+                    Some(TransferType::Headers),
+                )
                 .await?
             else {
                 // Log ~ once every 10 seconds
@@ -328,6 +337,7 @@ impl PeerHandler {
                 continue;
             };
             let tx = task_sender.clone();
+            let peer_table_clone = self.peer_table.clone();
             debug!("Downloader {peer_id} is now busy");
 
             tokio::spawn(async move {
@@ -340,6 +350,7 @@ impl PeerHandler {
                     permit,
                     startblock,
                     chunk_limit,
+                    &peer_table_clone,
                 )
                 .await
                 .inspect_err(|err| trace!("Sync Log 6: {peer_id} failed to download chunk: {err}"))
@@ -408,12 +419,17 @@ impl PeerHandler {
             skip: 0,
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+        match self
+            .get_random_peer(&SUPPORTED_ETH_CAPABILITIES, Some(TransferType::Headers))
+            .await?
+        {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
+                let start_time = std::time::Instant::now();
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
+                let elapsed = start_time.elapsed();
                 drop(permit);
                 if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                     id: _,
@@ -429,6 +445,12 @@ impl PeerHandler {
                         return Ok(None);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
+                        let _ = self.peer_table.record_speed(
+                            peer_id,
+                            TransferType::Headers,
+                            block_headers.len(),
+                            elapsed,
+                        );
                         self.peer_table.record_success(peer_id)?;
                         return Ok(Some(block_headers));
                     }
@@ -458,6 +480,7 @@ impl PeerHandler {
         permit: RequestPermit,
         startblock: u64,
         chunk_limit: u64,
+        peer_table: &PeerTable,
     ) -> Result<Vec<BlockHeader>, PeerHandlerError> {
         debug!("Requesting block headers from peer {peer_id}");
         let request_id = rand::random();
@@ -468,9 +491,11 @@ impl PeerHandler {
             skip: 0,
             reverse: false,
         });
+        let start_time = std::time::Instant::now();
         let response = connection
             .outgoing_request(request, PEER_REPLY_TIMEOUT)
             .await;
+        let elapsed = start_time.elapsed();
         drop(permit);
         if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
             id: _,
@@ -478,6 +503,14 @@ impl PeerHandler {
         })) = response
         {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
+                if !block_headers.is_empty() {
+                    let _ = peer_table.record_speed(
+                        peer_id,
+                        TransferType::Headers,
+                        block_headers.len(),
+                        elapsed,
+                    );
+                }
                 Ok(block_headers)
             } else {
                 warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
@@ -502,12 +535,17 @@ impl PeerHandler {
             id: request_id,
             block_hashes: block_hashes.to_vec(),
         });
-        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+        match self
+            .get_random_peer(&SUPPORTED_ETH_CAPABILITIES, Some(TransferType::Bodies))
+            .await?
+        {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
+                let start_time = std::time::Instant::now();
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
+                let elapsed = start_time.elapsed();
                 drop(permit);
                 if let Ok(RLPxMessage::BlockBodies(BlockBodies {
                     id: _,
@@ -516,6 +554,12 @@ impl PeerHandler {
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
+                        let _ = self.peer_table.record_speed(
+                            peer_id,
+                            TransferType::Bodies,
+                            block_bodies.len(),
+                            elapsed,
+                        );
                         self.peer_table.record_success(peer_id)?;
                         return Ok(Some((block_bodies, peer_id)));
                     }

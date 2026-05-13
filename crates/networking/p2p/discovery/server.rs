@@ -127,8 +127,7 @@ impl DiscoveryServer {
                 count = bootnodes.len(),
                 "Adding bootnodes"
             );
-            peer_table
-                .new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
+            peer_table.new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
             Some(Discv4State::new(&signer))
         } else {
             None
@@ -140,8 +139,7 @@ impl DiscoveryServer {
                 count = bootnodes.len(),
                 "Adding bootnodes"
             );
-            peer_table
-                .new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv5)?;
+            peer_table.new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv5)?;
             Some(Discv5State::default())
         } else {
             None

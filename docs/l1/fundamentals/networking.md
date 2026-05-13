@@ -144,3 +144,9 @@ curl -s http://localhost:8546 \
 ```
 
 You could also spawn nodes from other clients and it should work as well.
+
+## Speed-based peer selection
+
+In addition to the reputation score (which tracks whether a peer responds correctly and on time), ethrex tracks per-peer, per-data-type throughput as an exponential moving average (EMA). When the sync layer requests a peer for a specific data type (headers, bodies, account ranges, etc.), the selection weight combines the reputation score with the peer's speed quantile rank among all connected peers that have been measured for that data type. Faster peers receive more requests, while unmeasured peers are treated as middle-of-pack to ensure they get a chance to prove themselves. Slow peers are deprioritized but never disconnected for being slow alone — reputation continues to handle misbehavior and timeouts.
+
+The speed EMA updates only on non-empty, successful responses. Empty responses (which are valid near the chain tip) and timeouts are excluded from the measurement to avoid distorting the average. The EMA resets when a peer reconnects; there is no persistence across sessions. The per-peer speed is exported as a Prometheus gauge (`ethrex_p2p_peer_speed_ips`) for monitoring in Grafana.

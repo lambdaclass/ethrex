@@ -25,6 +25,7 @@ use tracing::{debug, trace};
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::{PeerHandler, RequestMetadata},
+    peer_speed::TransferType,
     peer_table::PeerTableServerProtocol as _,
     rlpx::p2p::SUPPORTED_SNAP_CAPABILITIES,
     snap::{
@@ -278,7 +279,7 @@ async fn heal_state_trie(
                     );
                     let Some((peer_id, connection, permit)) = peers
                         .peer_table
-                        .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+                        .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec(), Some(TransferType::StateNodes))
                         .await
                         .inspect_err(|err| {
                             debug!(err=?err, "Error requesting a peer to perform state healing")

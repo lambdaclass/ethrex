@@ -12,6 +12,7 @@
 use crate::{
     backend,
     metrics::METRICS,
+    peer_speed::{self, SpeedTracker, TransferType},
     rlpx::{connection::server::PeerConnection, p2p::Capability},
     types::{Node, NodeRecord},
     utils::distance,
@@ -302,6 +303,8 @@ pub struct PeerData {
     requests: i64,
     /// Timestamp (seconds since UNIX epoch) of the last successful response from this peer
     pub last_response_time: Option<u64>,
+    /// Per-data-type throughput tracker (EMA items/sec)
+    pub speed: SpeedTracker,
 }
 
 impl PeerData {
@@ -320,6 +323,7 @@ impl PeerData {
             score: Default::default(),
             requests: Default::default(),
             last_response_time: None,
+            speed: SpeedTracker::new(),
         }
     }
 }
@@ -409,6 +413,13 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
+    fn record_speed(
+        &self,
+        node_id: H256,
+        transfer_type: TransferType,
+        item_count: usize,
+        elapsed: Duration,
+    ) -> Result<(), ActorError>;
     fn record_ping_sent(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_pong_received(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_enr_request_sent(&self, node_id: H256, request_hash: H256) -> Result<(), ActorError>;
@@ -443,16 +454,19 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_best_peer(
         &self,
         capabilities: Vec<Capability>,
+        transfer_type: Option<TransferType>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_best_peer_excluding(
         &self,
         capabilities: Vec<Capability>,
         excluded: Vec<H256>,
+        transfer_type: Option<TransferType>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_best_n_peers(
         &self,
         capabilities: Vec<Capability>,
         n: usize,
+        transfer_type: Option<TransferType>,
     ) -> Response<Vec<(H256, PeerConnection, RequestPermit)>>;
     /// Read-only predicate: is there any eligible peer matching `capabilities`?
     /// Does not reserve a slot; use for capacity/rotation probes only.
@@ -469,6 +483,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn get_random_peer(
         &self,
         capabilities: Vec<Capability>,
+        transfer_type: Option<TransferType>,
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
@@ -654,6 +669,28 @@ impl PeerTableServer {
         self.peers
             .entry(msg.node_id)
             .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+    }
+
+    #[send_handler]
+    async fn handle_record_speed(
+        &mut self,
+        msg: peer_table_server_protocol::RecordSpeed,
+        _ctx: &Context<Self>,
+    ) {
+        if let Some(peer_data) = self.peers.get_mut(&msg.node_id) {
+            peer_data
+                .speed
+                .record(msg.transfer_type, msg.item_count, msg.elapsed);
+
+            #[cfg(feature = "metrics")]
+            if let Some(ema) = peer_data.speed.ema(msg.transfer_type) {
+                ethrex_metrics::p2p::METRICS_P2P.set_peer_speed(
+                    &format!("{:?}", msg.node_id),
+                    msg.transfer_type.as_str(),
+                    ema,
+                );
+            }
+        }
     }
 
     #[send_handler]
@@ -855,7 +892,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetBestPeer,
         ctx: &Context<Self>,
     ) -> Option<(H256, PeerConnection, RequestPermit)> {
-        let (peer_id, conn) = self.do_get_best_peer(&msg.capabilities)?;
+        let (peer_id, conn) = self.do_get_best_peer(&msg.capabilities, msg.transfer_type)?;
         self.peers
             .get_mut(&peer_id)
             .expect("peer returned by do_get_best_peer must be present in self.peers")
@@ -869,7 +906,8 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetBestPeerExcluding,
         ctx: &Context<Self>,
     ) -> Option<(H256, PeerConnection, RequestPermit)> {
-        let (peer_id, conn) = self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded)?;
+        let (peer_id, conn) =
+            self.do_get_best_peer_excluding(&msg.capabilities, &msg.excluded, msg.transfer_type)?;
         self.peers
             .get_mut(&peer_id)
             .expect("peer returned by do_get_best_peer_excluding must be present in self.peers")
@@ -883,7 +921,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetBestNPeers,
         ctx: &Context<Self>,
     ) -> Vec<(H256, PeerConnection, RequestPermit)> {
-        let picks = self.do_get_best_n_peers(&msg.capabilities, msg.n);
+        let picks = self.do_get_best_n_peers(&msg.capabilities, msg.n, msg.transfer_type);
         let mut out = Vec::with_capacity(picks.len());
         for (peer_id, conn) in picks {
             self.peers
@@ -1018,7 +1056,7 @@ impl PeerTableServer {
         msg: peer_table_server_protocol::GetRandomPeer,
         ctx: &Context<Self>,
     ) -> Option<(H256, PeerConnection, RequestPermit)> {
-        let (peer_id, conn) = self.do_get_random_peer(msg.capabilities)?;
+        let (peer_id, conn) = self.do_get_random_peer(msg.capabilities, msg.transfer_type)?;
         self.peers
             .get_mut(&peer_id)
             .expect("peer returned by do_get_random_peer must be present in self.peers")
@@ -1165,8 +1203,41 @@ impl PeerTableServer {
 
     // --- Peer selection ---
 
-    fn weight_peer(&self, score: &i64, requests: &i64) -> i64 {
-        score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT
+    fn weight_peer_f64(
+        &self,
+        peer_id: &H256,
+        score: &i64,
+        requests: &i64,
+        transfer_type: Option<TransferType>,
+    ) -> f64 {
+        let base = (score * SCORE_WEIGHT - requests * REQUESTS_WEIGHT) as f64;
+        let speed_factor = match transfer_type {
+            Some(t) => {
+                let quantile = self.speed_quantile(peer_id, t);
+                0.3 + 0.7 * quantile
+            }
+            None => 1.0,
+        };
+        base * speed_factor
+    }
+
+    fn speed_quantile(&self, peer_id: &H256, transfer_type: TransferType) -> f64 {
+        let peer_ema = match self
+            .peers
+            .get(peer_id)
+            .and_then(|p| p.speed.ema(transfer_type))
+        {
+            Some(ema) => ema,
+            None => return 0.5,
+        };
+
+        let all_emas: Vec<f64> = self
+            .peers
+            .values()
+            .filter_map(|p| p.speed.ema(transfer_type))
+            .collect();
+
+        peer_speed::quantile_rank(peer_ema, &all_emas)
     }
 
     fn can_try_more_requests(&self, score: &i64, requests: &i64) -> bool {
@@ -1175,8 +1246,12 @@ impl PeerTableServer {
         (*requests as f64) < max_requests
     }
 
-    fn do_get_best_peer(&self, capabilities: &[Capability]) -> Option<(H256, PeerConnection)> {
-        self.do_get_best_peer_excluding(capabilities, &[])
+    fn do_get_best_peer(
+        &self,
+        capabilities: &[Capability],
+        transfer_type: Option<TransferType>,
+    ) -> Option<(H256, PeerConnection)> {
+        self.do_get_best_peer_excluding(capabilities, &[], transfer_type)
     }
 
     /// Like `do_get_best_peer`, but excludes specific peers from selection.
@@ -1185,6 +1260,7 @@ impl PeerTableServer {
         &self,
         capabilities: &[Capability],
         excluded: &[H256],
+        transfer_type: Option<TransferType>,
     ) -> Option<(H256, PeerConnection)> {
         self.peers
             .iter()
@@ -1201,7 +1277,11 @@ impl PeerTableServer {
                     Some((*id, peer_data.score, peer_data.requests, connection))
                 }
             })
-            .max_by_key(|(_, score, reqs, _)| self.weight_peer(score, reqs))
+            .max_by(|(id_a, score_a, reqs_a, _), (id_b, score_b, reqs_b, _)| {
+                self.weight_peer_f64(id_a, score_a, reqs_a, transfer_type)
+                    .partial_cmp(&self.weight_peer_f64(id_b, score_b, reqs_b, transfer_type))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .map(|(k, _, _, v)| (k, v))
     }
 
@@ -1214,6 +1294,7 @@ impl PeerTableServer {
         &self,
         capabilities: &[Capability],
         n: usize,
+        transfer_type: Option<TransferType>,
     ) -> Vec<(H256, PeerConnection)> {
         let mut candidates: Vec<(H256, i64, i64, PeerConnection)> = self
             .peers
@@ -1232,7 +1313,11 @@ impl PeerTableServer {
             })
             .collect();
 
-        candidates.sort_by_key(|(_, score, reqs, _)| -self.weight_peer(score, reqs));
+        candidates.sort_by(|(id_a, score_a, reqs_a, _), (id_b, score_b, reqs_b, _)| {
+            self.weight_peer_f64(id_b, score_b, reqs_b, transfer_type)
+                .partial_cmp(&self.weight_peer_f64(id_a, score_a, reqs_a, transfer_type))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         candidates
             .into_iter()
             .take(n)
@@ -1525,7 +1610,11 @@ impl PeerTableServer {
             .count()
     }
 
-    fn do_get_random_peer(&self, capabilities: Vec<Capability>) -> Option<(H256, PeerConnection)> {
+    fn do_get_random_peer(
+        &self,
+        capabilities: Vec<Capability>,
+        transfer_type: Option<TransferType>,
+    ) -> Option<(H256, PeerConnection)> {
         let peers: Vec<(H256, &PeerConnection, i64)> = self
             .peers
             .iter()
@@ -1546,9 +1635,19 @@ impl PeerTableServer {
             return None;
         }
         // Weight by score: maps [-150, 50] to [1, 201] so bad peers are unlikely but not excluded
-        let weights: Vec<u64> = peers
+        let weights: Vec<f64> = peers
             .iter()
-            .map(|(_, _, score)| (score.max(&MIN_SCORE_CRITICAL) - MIN_SCORE_CRITICAL + 1) as u64)
+            .map(|(node_id, _, score)| {
+                let base = (score.max(&MIN_SCORE_CRITICAL) - MIN_SCORE_CRITICAL + 1) as f64;
+                let speed_factor = match transfer_type {
+                    Some(t) => {
+                        let quantile = self.speed_quantile(node_id, t);
+                        0.3 + 0.7 * quantile
+                    }
+                    None => 1.0,
+                };
+                (base * speed_factor).max(0.001)
+            })
             .collect();
         let dist = WeightedIndex::new(&weights).ok()?;
         let idx = dist.sample(&mut rand::rngs::OsRng);

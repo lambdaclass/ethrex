@@ -1,6 +1,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
+    peer_speed::TransferType,
     peer_table::PeerTableServerProtocol as _,
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
@@ -395,7 +396,10 @@ async fn ask_peers_for_nodes(
     if (requests.len() as u32) < MAX_IN_FLIGHT_REQUESTS && !download_queue.is_empty() {
         let Some((peer_id, connection, permit)) = peers
             .peer_table
-            .get_best_peer(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .get_best_peer(
+                SUPPORTED_SNAP_CAPABILITIES.to_vec(),
+                Some(TransferType::StateNodes),
+            )
             .await
             .inspect_err(|err| debug!(?err, "Error requesting a peer to perform storage healing"))
             .unwrap_or(None)

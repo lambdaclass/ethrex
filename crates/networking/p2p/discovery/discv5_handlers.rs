@@ -238,8 +238,7 @@ impl DiscoveryServer {
         }
 
         if let Some(record) = &authdata.record {
-            self.peer_table
-                .new_contact_records(vec![record.clone()])?;
+            self.peer_table.new_contact_records(vec![record.clone()])?;
         }
 
         let session = derive_session_keys(
@@ -465,8 +464,7 @@ impl DiscoveryServer {
         &mut self,
         nodes_message: NodesMessage,
     ) -> Result<(), DiscoveryServerError> {
-        self.peer_table
-            .new_contact_records(nodes_message.nodes)?;
+        self.peer_table.new_contact_records(nodes_message.nodes)?;
         Ok(())
     }
 

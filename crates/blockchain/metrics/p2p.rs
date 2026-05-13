@@ -1,6 +1,6 @@
 use prometheus::{
-    Encoder, Histogram, HistogramOpts, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
-    TextEncoder,
+    Encoder, GaugeVec, Histogram, HistogramOpts, IntCounterVec, IntGauge, IntGaugeVec, Opts,
+    Registry, TextEncoder,
 };
 use std::sync::LazyLock;
 
@@ -21,6 +21,7 @@ pub struct MetricsP2P {
     discv5_outgoing_messages: IntCounterVec,
     kademlia_insert_contact_duration: Histogram,
     kademlia_iter_contacts_duration: Histogram,
+    peer_speed_ips: GaugeVec,
 }
 
 impl Default for MetricsP2P {
@@ -115,6 +116,14 @@ impl MetricsP2P {
                 ]),
             )
             .expect("Failed to create kademlia_iter_contacts_duration metric"),
+            peer_speed_ips: GaugeVec::new(
+                Opts::new(
+                    "ethrex_p2p_peer_speed_ips",
+                    "Peer throughput EMA in items per second, by peer and transfer type",
+                ),
+                &["peer_id", "transfer_type"],
+            )
+            .expect("Failed to create peer_speed_ips metric"),
         }
     }
 
@@ -186,6 +195,12 @@ impl MetricsP2P {
         self.kademlia_iter_contacts_duration.observe(duration_secs);
     }
 
+    pub fn set_peer_speed(&self, peer_id: &str, transfer_type: &str, ips: f64) {
+        self.peer_speed_ips
+            .with_label_values(&[peer_id, transfer_type])
+            .set(ips);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         let r = Registry::new();
 
@@ -210,6 +225,8 @@ impl MetricsP2P {
         r.register(Box::new(self.kademlia_insert_contact_duration.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.kademlia_iter_contacts_duration.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.peer_speed_ips.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
