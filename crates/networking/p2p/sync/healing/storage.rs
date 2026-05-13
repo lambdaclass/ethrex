@@ -274,19 +274,29 @@ pub async fn heal_storage_trie(
                     encoded_to_write.push((hashed_account, account_nodes));
                 }
                 // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
-                spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
-                    .expect("db write failed");
+                // Storage healing is resumable and dominates total sync time
+                // (~22m of ~54m on Hoodi) — skip WAL on bulk writes; the
+                // phase-boundary flush below provides durability.
+                spawned_rt::tasks::block_on(
+                    store.write_storage_trie_nodes_batch_no_wal(encoded_to_write),
+                )
+                .expect("db write failed");
             });
         }
 
         if is_done {
             db_joinset.join_all().await;
+            // Phase durability barrier for no-WAL writes above.
+            state.store.flush_backend()?;
             return Ok(true);
         }
 
         if is_stale {
             db_joinset.join_all().await;
             state.healing_queue = HashMap::new();
+            // Even when stale, flush whatever was written so the next pivot
+            // doesn't re-heal nodes that are already on disk.
+            state.store.flush_backend()?;
             return Ok(false);
         }
 

@@ -24,6 +24,10 @@ pub struct BackendTrieDB {
     /// Storage trie address prefix (for storage tries)
     /// None for state tries, Some(address) for storage tries
     address_prefix: Option<H256>,
+    /// When set, `put_batch` commits with WAL disabled. Caller MUST flush the
+    /// backend at the phase boundary. Only safe for resumable bulk workloads
+    /// such as snap-sync state/storage trie building and healing.
+    disable_wal: bool,
 }
 
 impl BackendTrieDB {
@@ -50,7 +54,16 @@ impl BackendTrieDB {
             nodes_table: ACCOUNT_TRIE_NODES,
             fkv_table: ACCOUNT_FLATKEYVALUE,
             address_prefix: None,
+            disable_wal: false,
         })
+    }
+
+    /// Builder-style toggle for snap-sync write paths. When set, commits skip
+    /// the WAL — caller must flush the backend before treating the phase as
+    /// durable.
+    pub fn with_disable_wal(mut self, disable: bool) -> Self {
+        self.disable_wal = disable;
+        self
     }
 
     /// Create a new BackendTrieDB for the storage tries
@@ -76,6 +89,7 @@ impl BackendTrieDB {
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: None,
+            disable_wal: false,
         })
     }
 
@@ -104,6 +118,7 @@ impl BackendTrieDB {
             nodes_table: STORAGE_TRIE_NODES,
             fkv_table: STORAGE_FLATKEYVALUE,
             address_prefix: Some(address_prefix),
+            disable_wal: false,
         })
     }
 
@@ -146,7 +161,12 @@ impl TrieDB for BackendTrieDB {
             tx.put_batch(table, vec![(prefixed_key, value)])
                 .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))?;
         }
-        tx.commit()
+        let commit_result = if self.disable_wal {
+            tx.commit_no_wal()
+        } else {
+            tx.commit()
+        };
+        commit_result
             .map_err(|e| TrieError::DbError(anyhow::anyhow!("Failed to write batch: {}", e)))
     }
 }

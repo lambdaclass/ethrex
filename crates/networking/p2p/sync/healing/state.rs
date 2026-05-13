@@ -355,7 +355,10 @@ async fn heal_state_trie(
                     }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
-                let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+                // Healing writes go to a resumable, idempotent phase — skip
+                // WAL and let the phase-boundary flush below provide
+                // durability.
+                let trie_db = store.open_direct_state_trie_no_wal(*EMPTY_TRIE_HASH)?;
                 let db = trie_db.db();
                 // PERF: use put_batch_no_alloc (note that it needs to remove nodes too)
                 db.put_batch(encoded_to_write.into_iter().collect())?;
@@ -391,6 +394,11 @@ async fn heal_state_trie(
     // Send empty batch to signal that no more batches are incoming
     // bytecode_sender.send(vec![]).await?;
     // bytecode_fetcher_handle.await??;
+
+    // Phase durability barrier: healing wrote with WAL disabled. Force
+    // memtables to SST so a crash after this point can't lose progress.
+    store.flush_backend()?;
+
     Ok(paths.is_empty())
 }
 

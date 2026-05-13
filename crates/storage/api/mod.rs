@@ -51,6 +51,15 @@ pub trait StorageBackend: Debug + Send + Sync {
     // TODO: remove this and provide historic data via diff-layers
     /// Creates a checkpoint of the current database state at the specified path.
     fn create_checkpoint(&self, path: &Path) -> Result<(), StoreError>;
+
+    /// Force in-memory write buffers / memtables to be persisted to durable
+    /// storage. Pair with `commit_no_wal` at phase boundaries so a crash after
+    /// the phase cannot lose already-completed work.
+    ///
+    /// Default impl is a no-op (in-memory backends have nothing to flush).
+    fn flush(&self) -> Result<(), StoreError> {
+        Ok(())
+    }
 }
 
 /// Read-only transaction interface.
@@ -90,6 +99,21 @@ pub trait StorageWriteBatch: Send {
 
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
+
+    /// Commits all changes made in this transaction WITHOUT writing to the
+    /// write-ahead log. Use ONLY for resumable bulk-insert workloads (e.g.,
+    /// snap sync), where crash recovery is handled by re-running the phase
+    /// rather than replaying the WAL.
+    ///
+    /// The caller MUST pair this with `StorageBackend::flush()` at phase
+    /// boundaries to ensure committed data is durably on disk before the
+    /// phase is declared complete.
+    ///
+    /// Default impl falls back to a regular `commit()` so backends that don't
+    /// differentiate (e.g., in-memory) keep working unchanged.
+    fn commit_no_wal(&mut self) -> Result<(), StoreError> {
+        self.commit()
+    }
 }
 
 /// Locked snapshot interface for batch read operations.

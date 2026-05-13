@@ -1195,6 +1195,26 @@ impl Store {
         &self,
         storage_trie_nodes: StorageUpdates,
     ) -> Result<(), StoreError> {
+        self.write_storage_trie_nodes_batch_inner(storage_trie_nodes, false)
+            .await
+    }
+
+    /// Same as `write_storage_trie_nodes_batch` but commits without WAL. ONLY
+    /// safe for snap-sync healing where crash recovery re-runs the phase.
+    /// Caller must `flush_backend()` before treating the phase as durable.
+    pub async fn write_storage_trie_nodes_batch_no_wal(
+        &self,
+        storage_trie_nodes: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        self.write_storage_trie_nodes_batch_inner(storage_trie_nodes, true)
+            .await
+    }
+
+    async fn write_storage_trie_nodes_batch_inner(
+        &self,
+        storage_trie_nodes: StorageUpdates,
+        disable_wal: bool,
+    ) -> Result<(), StoreError> {
         let mut txn = self.backend.begin_write()?;
         tokio::task::spawn_blocking(move || {
             for (address_hash, nodes) in storage_trie_nodes {
@@ -1207,7 +1227,11 @@ impl Store {
                     }
                 }
             }
-            txn.commit()
+            if disable_wal {
+                txn.commit_no_wal()
+            } else {
+                txn.commit()
+            }
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
@@ -2637,6 +2661,19 @@ impl Store {
         ))
     }
 
+    /// Same as `open_direct_state_trie` but the returned trie writes its batches
+    /// without WAL — for snap-sync bulk-insert / healing paths only. The caller
+    /// MUST `flush_backend()` before treating the work as durable.
+    pub fn open_direct_state_trie_no_wal(&self, state_root: H256) -> Result<Trie, StoreError> {
+        Ok(Trie::open(
+            Box::new(
+                BackendTrieDB::new_for_accounts(self.backend.clone(), self.last_written()?)?
+                    .with_disable_wal(true),
+            ),
+            state_root,
+        ))
+    }
+
     /// Obtain a state trie locked for reads from the given state root
     /// Doesn't check if the state root is valid
     /// Used for internal store operations
@@ -2740,6 +2777,34 @@ impl Store {
             )?),
             storage_root,
         ))
+    }
+
+    /// Same as `open_direct_storage_trie` but the returned trie writes its
+    /// batches without WAL — for snap-sync bulk-insert / healing paths only.
+    /// The caller MUST `flush_backend()` before treating the work as durable.
+    pub fn open_direct_storage_trie_no_wal(
+        &self,
+        account_hash: H256,
+        storage_root: H256,
+    ) -> Result<Trie, StoreError> {
+        Ok(Trie::open(
+            Box::new(
+                BackendTrieDB::new_for_account_storage(
+                    self.backend.clone(),
+                    account_hash,
+                    self.last_written()?,
+                )?
+                .with_disable_wal(true),
+            ),
+            storage_root,
+        ))
+    }
+
+    /// Force the underlying storage backend to flush in-memory write buffers
+    /// to durable storage. Pair with the `*_no_wal` open-trie variants at
+    /// snap-sync phase boundaries.
+    pub fn flush_backend(&self) -> Result<(), StoreError> {
+        self.backend.flush()
     }
 
     /// Obtain a read-locked storage trie from the given address and storage_root.

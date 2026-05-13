@@ -283,6 +283,15 @@ impl StorageBackend for RocksDBBackend {
 
         Ok(())
     }
+
+    fn flush(&self) -> Result<(), StoreError> {
+        // Flush all column families' memtables to SST. After a no-WAL write
+        // path completes, this is the durability barrier — any data committed
+        // before this call is guaranteed on disk after it returns.
+        self.db
+            .flush()
+            .map_err(|e| StoreError::Custom(format!("Failed to flush RocksDB: {e}")))
+    }
 }
 
 /// Read-only view for RocksDB
@@ -371,6 +380,15 @@ impl StorageWriteBatch for RocksDBWriteTx {
         self.db
             .write(batch)
             .map_err(|e| StoreError::Custom(format!("Failed to commit batch: {}", e)))
+    }
+
+    fn commit_no_wal(&mut self) -> Result<(), StoreError> {
+        let batch = std::mem::take(&mut self.batch);
+        let mut opts = rocksdb::WriteOptions::default();
+        opts.disable_wal(true);
+        self.db
+            .write_opt(batch, &opts)
+            .map_err(|e| StoreError::Custom(format!("Failed to commit batch (no-wal): {}", e)))
     }
 }
 

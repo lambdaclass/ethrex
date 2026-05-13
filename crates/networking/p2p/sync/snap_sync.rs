@@ -1169,7 +1169,10 @@ async fn insert_accounts(
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
 
-    let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    // Snap-sync state-trie build is a resumable bulk-write workload — open the
+    // trie with WAL disabled so we don't fsync every batch. We flush before
+    // returning so the inserted data is durable when the next phase runs.
+    let trie = store.open_direct_state_trie_no_wal(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
@@ -1228,6 +1231,11 @@ async fn insert_accounts(
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
+
+    // Phase durability barrier: the trie writes above ran with WAL disabled.
+    // Flush memtables to SST before the next phase relies on this data.
+    store.flush_backend()?;
+
     Ok((compute_state_root, accounts_with_storage))
 }
 
@@ -1300,13 +1308,17 @@ async fn insert_storages(
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let snapshot = db.snapshot();
 
+    // Snap-sync storage-trie build is the dominant bulk-write workload (~91%
+    // of post-download CPU/IO per replay profile). Open each storage trie
+    // with WAL disabled so the per-task `put_batch` commits skip the fsync
+    // path — we flush at the phase boundary below.
     let account_with_storage_and_tries = accounts_with_storage
         .into_iter()
         .map(|account_hash| {
             (
                 account_hash,
                 store
-                    .open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)
+                    .open_direct_storage_trie_no_wal(account_hash, *EMPTY_TRIE_HASH)
                     .expect("Should be able to open trie"),
             )
         })
@@ -1372,6 +1384,10 @@ async fn insert_storages(
         .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
     std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
         .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
+
+    // Phase durability barrier: storage-trie writes above ran with WAL
+    // disabled. Force memtables to SST before healing depends on them.
+    store.flush_backend()?;
 
     Ok(())
 }
