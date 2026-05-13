@@ -2880,16 +2880,16 @@ fn describe_balance_diff(expected: U256, actual: U256) -> String {
     ];
     // Try common test gas_prices first, then 1 wei/gas as fallback.
     for &gp in &[10u128, 1, 7, 100, 1000, 1_000_000_000] {
-        if mag_u128 % gp != 0 {
+        if !mag_u128.is_multiple_of(gp) {
             continue;
         }
         let gas = mag_u128 / gp;
-        if gas % cpsb != 0 {
+        if !gas.is_multiple_of(cpsb) {
             continue;
         }
         let bytes = gas / cpsb;
         for (name, c) in consts {
-            if bytes % c == 0 {
+            if bytes.is_multiple_of(c) {
                 let n = bytes / c;
                 return format!(
                     "{sign}{mag_u128} wei (= {gas} gas at {gp} wei/gas = {n}× {name}_state_gas)"
