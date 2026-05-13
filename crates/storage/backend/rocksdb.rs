@@ -302,6 +302,39 @@ impl StorageReadView for RocksDBReadTx {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[Vec<u8>],
+    ) -> Result<Vec<Option<Vec<u8>>>, StoreError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        let results = self
+            .db
+            .batched_multi_get_cf(&cf, keys.iter().map(|k| k.as_slice()), false);
+
+        let mut out = Vec::with_capacity(results.len());
+        for result in results {
+            match result {
+                Ok(Some(dbpinned)) => out.push(Some(dbpinned.as_ref().to_vec())),
+                Ok(None) => out.push(None),
+                Err(e) => {
+                    return Err(StoreError::Custom(format!(
+                        "Failed multi_get from {}: {}",
+                        table, e
+                    )));
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn prefix_iterator(
         &self,
         table: &'static str,

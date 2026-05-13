@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use crate::{
-    eth::block,
     rpc::{RpcApiContext, RpcHandler},
     types::{
         block_identifier::{BlockIdentifier, BlockIdentifierOrHash},
@@ -12,7 +11,9 @@ use crate::{
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
     H256,
-    types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
+    types::{
+        AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, Receipt, TxKind,
+    },
 };
 
 use ethrex_rlp::encode::RLPEncode;
@@ -292,7 +293,7 @@ impl RpcHandler for GetTransactionReceiptRequest {
             "Requested receipt for transaction {:#x}",
             self.transaction_hash,
         );
-        let (block_number, block_hash, index) = match storage
+        let (_block_number, block_hash, index) = match storage
             .get_transaction_location(self.transaction_hash)
             .await?
         {
@@ -303,13 +304,97 @@ impl RpcHandler for GetTransactionReceiptRequest {
             Some(block) => block,
             None => return Ok(Value::Null),
         };
-        let receipts =
-            block::get_all_block_rpc_receipts(block_number, block.header, block.body, storage)
-                .await?;
+        let tx_count = block.body.transactions.len() as u64;
+        let Some(tx) = block.body.transactions.get(index as usize) else {
+            return Ok(Value::Null);
+        };
 
-        serde_json::to_value(receipts.get(index as usize))
-            .map_err(|error| RpcErr::Internal(error.to_string()))
+        // Packed metadata lets us turn "build the Kth receipt" into 2 DB reads
+        // (metadata blob + receipt[k]) instead of fetching every receipt in the
+        // block to derive cumulative gas_used and log_index_offset. Blocks
+        // committed before this CF existed have no entry; we lazy-backfill on
+        // the miss path so every block becomes fast after its first query.
+        let (meta_entry, raw_receipt) = match storage.get_block_receipt_meta(block_hash).await? {
+            Some(meta) => {
+                let Some(&entry) = meta.get(index as usize) else {
+                    return Ok(Value::Null);
+                };
+                let Some(receipt) = storage.get_receipt_by_block_hash(block_hash, index).await?
+                else {
+                    return Ok(Value::Null);
+                };
+                (entry, receipt)
+            }
+            None => {
+                // One batched MultiGet pulls the whole block's receipts in
+                // roughly the cost of a single SST block read.
+                let all = storage
+                    .get_receipts_by_block_hash(block_hash, tx_count)
+                    .await?;
+                let meta = Receipt::build_block_meta(&all);
+                // Backfill the CF so the next request takes the fast path.
+                // Errors here are non-fatal.
+                let _ = storage.put_block_receipt_meta(block_hash, &meta).await;
+                let Some(&entry) = meta.get(index as usize) else {
+                    return Ok(Value::Null);
+                };
+                let Some(receipt) = all.into_iter().nth(index as usize) else {
+                    return Ok(Value::Null);
+                };
+                (entry, receipt)
+            }
+        };
+
+        let rpc_receipt = build_rpc_receipt_single(
+            &block.header,
+            storage,
+            raw_receipt,
+            tx.clone(),
+            index,
+            meta_entry,
+        )?;
+
+        serde_json::to_value(rpc_receipt).map_err(|error| RpcErr::Internal(error.to_string()))
     }
+}
+
+fn build_rpc_receipt_single(
+    header: &BlockHeader,
+    storage: &Store,
+    receipt: ethrex_common::types::Receipt,
+    tx: ethrex_common::types::Transaction,
+    index: u64,
+    meta: ethrex_common::types::ReceiptMeta,
+) -> Result<crate::types::receipt::RpcReceipt, RpcErr> {
+    use crate::types::receipt::{RpcReceipt, RpcReceiptBlockInfo, RpcReceiptTxInfo};
+    use ethrex_common::types::calculate_base_fee_per_blob_gas;
+
+    let config = storage.get_chain_config();
+    let blob_base_fee = calculate_base_fee_per_blob_gas(
+        header.excess_blob_gas.unwrap_or_default(),
+        config
+            .get_fork_blob_schedule(header.timestamp)
+            .map(|schedule| schedule.base_fee_update_fraction)
+            .unwrap_or_default(),
+    );
+    let base_fee_per_gas = header.base_fee_per_gas;
+    let blob_base_fee_u64: u64 = blob_base_fee
+        .try_into()
+        .map_err(|_| RpcErr::Internal("blob_base_fee does not fit in u64".to_owned()))?;
+    let block_info = RpcReceiptBlockInfo::from_block_header(header.clone());
+    let tx_info = RpcReceiptTxInfo::from_transaction(
+        tx,
+        index,
+        meta.gas_used,
+        blob_base_fee_u64,
+        base_fee_per_gas,
+    )?;
+    Ok(RpcReceipt::new(
+        receipt,
+        tx_info,
+        block_info,
+        meta.log_index_offset,
+    ))
 }
 
 impl RpcHandler for CreateAccessListRequest {
