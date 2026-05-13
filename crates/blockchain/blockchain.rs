@@ -51,10 +51,7 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, error, info, instrument, warn};
-use constants::{
-    AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, MAX_TRANSACTION_DATA_SIZE,
-    POST_OSAKA_GAS_LIMIT_CAP,
-};
+use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -68,7 +65,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
+    ChainConfig, Code, MAX_TX_SIZE, Receipt, Transaction, WrappedEIP4844Transaction,
+    validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -2471,8 +2469,19 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if !tx.is_contract_creation() && tx.data().len() >= MAX_TRANSACTION_DATA_SIZE as usize {
-            return Err(MempoolError::TxMaxDataSizeError);
+        // Matches geth `txMaxSize` (legacypool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
+        // nethermind `MaxTxSize`. Blob txs are bounded by their own
+        // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
+        // which sums the core tx and the sidecar to match geth/nethermind/erigon
+        // scope.
+        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
+            let encoded_len = tx.encode_canonical_len();
+            if encoded_len > MAX_TX_SIZE {
+                return Err(MempoolError::TxSizeExceeded {
+                    actual: encoded_len,
+                    limit: MAX_TX_SIZE,
+                });
+            }
         }
 
         if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
