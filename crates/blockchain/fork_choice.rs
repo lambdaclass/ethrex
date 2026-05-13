@@ -11,6 +11,22 @@ use crate::{
     is_canonical,
 };
 
+/// Maximum number of canonical blocks ethrex can revert in a single forkchoice update.
+///
+/// This is an implementation cap, not a spec policy. ethrex's state-history retention
+/// keeps the last ~128 blocks of state diffs, so reorgs deeper than this cannot be
+/// undone regardless of finalization status — the data simply isn't there.
+///
+/// The spec (execution-apis PR 786, "engine: Restrict no-reorg to the prefix of known
+/// finalized") only forbids reorging past the finalized prefix. The finalized check is
+/// applied first; this cap is a secondary guard for the implementation limit.
+///
+/// Reference values across ELs (devnet branches, 2026-04-30):
+/// - besu (main): 90_000 — effectively unlimited
+/// - erigon (glamsterdam-devnet-0): 96, env-configurable via `MAX_REORG_DEPTH`
+/// - geth / nethermind / reth: no engine-API rejection; trust the CL's fork choice
+pub const REORG_DEPTH_LIMIT: u64 = 128;
+
 /// Applies new fork choice data to the current blockchain. It performs validity checks:
 /// - The finalized, safe and head hashes must correspond to already saved blocks.
 /// - The saved blocks should be in the correct order (finalized <= safe <= head).
@@ -57,9 +73,15 @@ pub async fn apply_fork_choice(
     };
 
     let latest = store.get_latest_block_number().await?;
+    let head_is_canonical = is_canonical(store, head.number, head_hash).await?;
 
-    // If the head block is an already present head ancestor, skip the update.
-    if is_canonical(store, head.number, head_hash).await? && head.number < latest {
+    // execution-apis PR 786: the no-reorg skip is only allowed when there is a known
+    // finalized block and the head references a VALID ancestor of it. Skipping for
+    // unfinalized canonical ancestors is no longer permitted - those must trigger a reorg.
+    if let Some(stored_finalized) = store.get_finalized_block_number().await?
+        && head.number <= stored_finalized
+        && head_is_canonical
+    {
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
 
@@ -96,6 +118,35 @@ pub async fn apply_fork_choice(
             error::ForkChoiceElement::Head,
             error::ForkChoiceElement::Safe,
         ));
+    }
+
+    // execution-apis PR 786 point 6: -38006 TooDeepReorg is returned when the reorg
+    // depth exceeds the limitation specific to the client software. ethrex's limit
+    // is its state-history retention: we keep the last REORG_DEPTH_LIMIT blocks of
+    // state diffs, so reorgs deeper than that cannot be unwound. We do not reject
+    // reorgs that would cross the finalized prefix — the spec's only requirement on
+    // finalized is point 2 (skip-when-ancestor-of-finalized, handled above) and
+    // point 5 (-38002 for disconnected safe/finalized). The CL is authoritative on
+    // fork choice and an EL must honor what the CL sends if it physically can.
+    //
+    // The shared canonical ancestor is `head` itself when head is canonical (the
+    // FCU truncates the canonical chain), or one below the lowest sidechain block
+    // in `new_canonical_blocks` otherwise.
+    let canonical_link_height = if head_is_canonical {
+        head.number
+    } else {
+        new_canonical_blocks
+            .last()
+            .map(|(n, _)| *n)
+            .unwrap_or(head.number)
+            .saturating_sub(1)
+    };
+    let reorg_depth = latest.saturating_sub(canonical_link_height);
+    if reorg_depth > REORG_DEPTH_LIMIT {
+        return Err(InvalidForkChoice::TooDeepReorg {
+            reorg_depth,
+            limit: REORG_DEPTH_LIMIT,
+        });
     }
 
     let Some(link_header) = store.get_block_header_by_hash(link_block_hash)? else {
