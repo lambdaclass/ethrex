@@ -63,17 +63,6 @@ pub async fn sync_cycle_full(
     let is_bsc = chain_id == 56 || chain_id == 97;
 
     if is_bsc {
-        // Hotpatch: scan the recent canonical chain (last 256 blocks — the
-        // EIP-2935 BLOCKHASH lookback window) for holes and back-fill them
-        // from peers. Past forkchoice races could delete legitimate canonical
-        // entries when an out-of-order NewBlock arrived with `head_number <
-        // latest`. The race source is fixed in `advance_canonical_head`, but
-        // a datadir that hit it before the fix still has gaps that block
-        // forward sync via BLOCKHASH lookups during execution.
-        if let Err(e) = repair_canonical_holes_bsc(peers, &store).await {
-            warn!("BSC canonical-hole repair failed: {e}");
-        }
-
         // BSC: loop forward sync in batches until caught up or stalled.
         // Each iteration fetches 128 headers, downloads bodies, and executes.
         // This avoids waiting for a new peer sync_head between batches.
@@ -640,83 +629,6 @@ async fn execute_blocks_per_block_fc(
             .advance_canonical_head(number, hash)
             .await
             .map_err(SyncError::Chain)?;
-    }
-    Ok(())
-}
-
-/// Scan the most recent canonical entries for missing mappings and back-fill
-/// them from peers. Targets the EIP-2935 BLOCKHASH lookback window so that
-/// any tx in the next batch that calls `BLOCKHASH(N)` for a recently-stored
-/// block can resolve `N`'s hash without an EVM error.
-///
-/// Side-effects only `CANONICAL_BLOCK_HASHES`; HEADERS/BODIES are
-/// intentionally skipped — `BLOCKHASH(N)` only consults the canonical map,
-/// and re-downloading bodies of stale blocks just to plug a single hash
-/// lookup is wasteful. Historical RPC queries for the back-filled block
-/// numbers will still surface a populated `eth_getBlockByNumber` because we
-/// keep the canonical mapping plus the existing HEADERS/BODIES of intact
-/// blocks; if the actual header is also missing, queries will return
-/// non-null hash but null block — acceptable for a recovery hotpatch.
-async fn repair_canonical_holes_bsc(
-    peers: &mut PeerHandler,
-    store: &Store,
-) -> Result<(), SyncError> {
-    /// EIP-2935 / BLOCKHASH lookback. Anything within this window of the
-    /// current head can be queried by future block executions.
-    const LOOKBACK: u64 = 256;
-    /// Cap how many blocks we'll back-fill per startup pass — a long-running
-    /// node should never have many, and an unbounded fetch loop on startup
-    /// would mask larger corruption issues we should fail loudly on.
-    const MAX_REPAIRS: usize = 16;
-
-    let head = store.get_latest_block_number().await?;
-    if head == 0 {
-        return Ok(());
-    }
-    let scan_start = head.saturating_sub(LOOKBACK);
-
-    let mut repaired = 0usize;
-    for number in scan_start..=head {
-        if store.get_canonical_block_hash_sync(number)?.is_some() {
-            continue;
-        }
-        if repaired >= MAX_REPAIRS {
-            warn!(
-                head,
-                "BSC canonical repair: hit MAX_REPAIRS={MAX_REPAIRS} cap, leaving the rest for later"
-            );
-            break;
-        }
-        warn!(
-            number,
-            "BSC canonical repair: hole detected, fetching from peers"
-        );
-        let Ok(Some(headers)) = peers
-            .request_block_headers_from_number(number, 1, BlockRequestOrder::OldToNew)
-            .await
-        else {
-            warn!(number, "BSC canonical repair: no peer served the header");
-            continue;
-        };
-        let Some(header) = headers.into_iter().next() else {
-            continue;
-        };
-        if header.number != number {
-            warn!(
-                number,
-                got = header.number,
-                "BSC canonical repair: peer returned wrong block number"
-            );
-            continue;
-        }
-        let block_hash = header.hash();
-        store.set_canonical_block_hash(number, block_hash).await?;
-        info!(number, ?block_hash, "BSC canonical repair: filled hole");
-        repaired += 1;
-    }
-
-    if repaired > 0 {
-        info!(repaired, "BSC canonical repair: done");
     }
     Ok(())
 }
