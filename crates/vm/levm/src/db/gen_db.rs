@@ -777,11 +777,16 @@ impl<'a> VM<'a> {
         key: H256,
         current_value: U256,
     ) -> Result<(), InternalError> {
+        // Pre-size the inner map to 8 to avoid the rehash chain on the first
+        // few SSTOREs of every fresh account in a tx. Default `or_default()`
+        // starts at capacity 0 → 4 → 8 → ... triggering multiple
+        // `hashbrown::reserve_rehash` allocations per account (~3% of total
+        // CPU on the BAL parallel path, per flamegraph).
         self.current_call_frame
             .call_frame_backup
             .original_account_storage_slots
             .entry(address)
-            .or_default()
+            .or_insert_with(|| FxHashMap::with_capacity_and_hasher(8, Default::default()))
             .entry(key)
             .or_insert(current_value);
 
