@@ -65,6 +65,7 @@ openvm-build-elf = ["openvm"]
 l2 = []
 eip-8025 = [
     "ethrex-common/eip-8025",
+    "ethrex-vm/eip-8025",
     "dep:libssz",
     "dep:libssz-merkle",
     "dep:libssz-types",
