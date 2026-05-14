@@ -210,14 +210,9 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
-    /// Cross-block state cache. Invalidated on parent mismatch.
+    /// Cross-block state cache. Invalidated on parent mismatch. Owns its own
+    /// pipeline lock; see `CrossBlockCache::begin_block`.
     cross_block_cache: CrossBlockCache,
-    /// Serializes `add_block_pipeline_inner` so the cross-block cache lifecycle
-    /// (`set_inner` → execute → `promote_block`) is atomic per block. Required
-    /// for callers that share `Arc<Blockchain>` across tasks (L2 peer actors).
-    /// `StdMutex` (not `TokioMutex`) because the pipeline is sync and must not
-    /// be held across `.await`.
-    pipeline_lock: StdMutex<()>,
 }
 
 /// Configuration options for the blockchain.
@@ -350,7 +345,6 @@ impl Blockchain {
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache,
-            pipeline_lock: StdMutex::new(()),
         }
     }
 
@@ -365,7 +359,6 @@ impl Blockchain {
             options,
             merkle_pool: Self::build_merkle_pool(),
             cross_block_cache,
-            pipeline_lock: StdMutex::new(()),
         }
     }
 
@@ -447,6 +440,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
+        caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase>,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -462,23 +456,6 @@ impl Blockchain {
         let queue_length = AtomicUsize::new(0);
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
-
-        // Invalidate if the cache no longer extends this parent (reorg or
-        // sibling block); then point its inner at the new parent's state.
-        if !self
-            .cross_block_cache
-            .is_valid_for_parent(parent_header.number, parent_header.hash())
-        {
-            self.cross_block_cache.invalidate();
-        }
-
-        let original_store = vm.db.store.clone();
-        self.cross_block_cache.set_inner(original_store);
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> =
-            self.cross_block_cache.as_database();
-
-        // Replace the VM's store with the caching version
-        vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
 
@@ -1842,12 +1819,6 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
-        // See `pipeline_lock` field doc. Poison recovery is safe: `last_committed`
-        // is only written after `store_block` succeeds, so a mid-pipeline panic
-        // leaves it pointing at the previously committed block — exactly what
-        // the next call's parent-mismatch check expects.
-        let _guard = self.pipeline_lock.lock().unwrap_or_else(|p| p.into_inner());
-
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -1885,6 +1856,18 @@ impl Blockchain {
             (vm, None)
         };
 
+        // Acquire the cross-block pipeline session: takes the lock, invalidates
+        // the cache on parent mismatch, and points its inner at the parent
+        // state. The session must be either `promote`-d on success or dropped
+        // on failure (drop releases the lock without writing post-state).
+        let session = self.cross_block_cache.begin_block(
+            parent_header.number,
+            parent_header.hash(),
+            vm.db.store.clone(),
+        );
+        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = session.as_database();
+        vm.db.store = caching_store.clone();
+
         let (
             res,
             account_updates_list,
@@ -1893,7 +1876,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, caching_store)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1920,11 +1903,10 @@ impl Blockchain {
         let stored = Instant::now();
 
         // Promote the post-state only after store_block succeeded; failure
-        // earlier leaves the cache reflecting the previous block, and the next
-        // block's parent-mismatch check handles invalidation.
+        // earlier drops the session, leaving the cache reflecting the previous
+        // block — the next block's parent-mismatch check handles invalidation.
         if result.is_ok() {
-            self.cross_block_cache
-                .promote_block(block_number, block_hash, &accumulated_updates);
+            session.promote(block_number, block_hash, &accumulated_updates);
         }
 
         let instants = std::array::from_fn(move |i| {
