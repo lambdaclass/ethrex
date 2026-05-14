@@ -133,7 +133,7 @@ pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 10;
 pub const MIN_FULL_BLOCKS: u64 = 10_000;
 
 /// Number of blocks to execute in a single batch during full sync.
-pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
+pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 128;
 
 /// Default average time between blocks for Ethereum mainnet (used for timestamp-based calculations).
 pub const SECONDS_PER_BLOCK: u64 = 12;
