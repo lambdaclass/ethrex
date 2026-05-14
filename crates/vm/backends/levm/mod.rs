@@ -45,9 +45,9 @@ use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
 };
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
-use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
@@ -62,7 +62,7 @@ use ethrex_levm::{
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rustc_hash::{FxHashSet, FxHashMap};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::Arc;
@@ -291,9 +291,9 @@ impl LEVM {
                 })?;
 
         #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
-        // `eip-8025` does not call `execute_block_pipeline` it uses 
-        // `execute_block` instead. Adding dummy let to avoid unused warnings. 
-        let _ = header_bal; 
+        // `eip-8025` does not call `execute_block_pipeline` it uses
+        // `execute_block` instead. Adding dummy let to avoid unused warnings.
+        let _ = header_bal;
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
