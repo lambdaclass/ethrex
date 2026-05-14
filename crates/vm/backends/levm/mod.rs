@@ -1420,10 +1420,14 @@ impl LEVM {
                 }
             }
         }
-        if !unaccessed_pure_accounts.is_empty() {
+        if !unaccessed_pure_accounts.is_empty() && !exec_results.is_empty() {
             // The coinbase is always accessed during fee finalization (geth's
             // readerTracker records it), even when the miner fee is zero and
-            // ethrex skips the load_account call.
+            // ethrex skips the load_account call. Only exempt the coinbase
+            // when at least one tx ran — fee finalization never happens for
+            // 0-tx blocks (empty / withdrawal-only), so a BAL entry for the
+            // coinbase there IS extraneous and must surface as a validation
+            // error (covers EELS `test_bal_invalid_extraneous_coinbase`).
             unaccessed_pure_accounts.remove(&header.coinbase);
             for (_, _, _, tracked_accounts, _, _, _) in &exec_results {
                 for addr in tracked_accounts {
