@@ -5,9 +5,11 @@ use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
 use ethrex_crypto::{Crypto, CryptoError};
-use moka::sync::Cache as MokaCache;
+use lru::LruCache;
 use rustc_hash::FxBuildHasher;
 use std::borrow::Cow;
+use std::num::NonZeroUsize;
+use std::sync::Mutex;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
@@ -268,12 +270,12 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 /// at https://github.com/paradigmxyz/reth/pull/22900) with extra headroom for
 /// cross-block scope. Identity (0x04) bypasses the cache (copy is cheaper
 /// than a hash lookup).
-const ECRECOVER_CAP: u64 = 8_192;
-const SHA256_CAP: u64 = 1_024;
-const MODEXP_CAP: u64 = 8_192;
-const BN254_ADD_CAP: u64 = 8_192;
-const BN254_MUL_CAP: u64 = 8_192;
-const KZG_CAP: u64 = 16;
+const ECRECOVER_CAP: usize = 8_192;
+const SHA256_CAP: usize = 1_024;
+const MODEXP_CAP: usize = 8_192;
+const BN254_ADD_CAP: usize = 8_192;
+const BN254_MUL_CAP: usize = 8_192;
+const KZG_CAP: usize = 16;
 // RIPEMD-160, BLAKE2F, and all BLS12-381 ops are intentionally not cached:
 // they're rare enough on mainnet that the memory cost outweighs the hit rate.
 // BN254_PAIRING and P256VERIFY are also uncached, for a different reason:
@@ -282,16 +284,17 @@ const KZG_CAP: u64 = 16;
 
 const PRECOMPILE_INDEX_SPACE: usize = 512;
 
-type PrecompileCacheMap = MokaCache<Bytes, (Bytes, u64), FxBuildHasher>;
+type PrecompileCacheMap = LruCache<Bytes, (Bytes, u64), FxBuildHasher>;
 
 pub struct PrecompileCache {
     // Indexed by `u16::from_be_bytes([address[18], address[19]])`, matching the
     // dispatcher's PRECOMPILES table. `None` slots mean "don't cache this
     // precompile" (currently identity, plus any future unallocated address).
     //
-    // moka caches are internally Arc'd and lock-free for reads; per-precompile
-    // slots avoid cross-precompile contention even on heavy concurrent access.
-    slots: Box<[Option<PrecompileCacheMap>; PRECOMPILE_INDEX_SPACE]>,
+    // `LruCache::get` promotes recency, so it needs `&mut self`. Per-precompile
+    // `Mutex` means cross-precompile lookups are lock-free; warmer/executor
+    // only contend when they hit the same precompile concurrently.
+    slots: Box<[Option<Mutex<PrecompileCacheMap>>; PRECOMPILE_INDEX_SPACE]>,
 }
 
 fn precompile_slot_index(address: &Address) -> Option<usize> {
@@ -304,10 +307,18 @@ fn precompile_slot_index(address: &Address) -> Option<usize> {
     Some(usize::from(u16::from_be_bytes([hi, lo])))
 }
 
-fn make_slot(cap: u64) -> PrecompileCacheMap {
-    MokaCache::builder()
-        .max_capacity(cap)
-        .build_with_hasher(FxBuildHasher)
+fn make_slot(cap: usize) -> Mutex<PrecompileCacheMap> {
+    let cap = match NonZeroUsize::new(cap) {
+        Some(c) => c,
+        // Caps are compile-time constants > 0. If this fires, the cap const is
+        // misconfigured — fall back to a tiny non-zero cap to keep the cache
+        // operational while making the bug surface in logs/profiling.
+        None => match NonZeroUsize::new(1) {
+            Some(c) => c,
+            None => unreachable!(),
+        },
+    };
+    Mutex::new(LruCache::with_hasher(cap, FxBuildHasher))
 }
 
 impl Default for PrecompileCache {
@@ -317,7 +328,7 @@ impl Default for PrecompileCache {
         reason = "mirrors the dispatcher table in execute_precompile; precompile address bytes are static constants"
     )]
     fn default() -> Self {
-        let mut slots: [Option<PrecompileCacheMap>; PRECOMPILE_INDEX_SPACE] =
+        let mut slots: [Option<Mutex<PrecompileCacheMap>>; PRECOMPILE_INDEX_SPACE] =
             std::array::from_fn(|_| None);
         slots[ECRECOVER.address.0[19] as usize] = Some(make_slot(ECRECOVER_CAP));
         slots[SHA2_256.address.0[19] as usize] = Some(make_slot(SHA256_CAP));
@@ -342,7 +353,13 @@ impl PrecompileCache {
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
         let idx = precompile_slot_index(address)?;
         let slot = self.slots.get(idx)?.as_ref()?;
-        slot.get(calldata)
+        // Graceful degradation: if the lock is poisoned (a thread panicked while
+        // holding it), skip the cache rather than propagating the panic. The cache
+        // is a pure optimization — missing it only costs a recomputation.
+        slot.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(calldata.as_ref())
+            .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
@@ -352,7 +369,9 @@ impl PrecompileCache {
         let Some(Some(slot)) = self.slots.get(idx) else {
             return;
         };
-        slot.insert(calldata, (output, gas_cost));
+        slot.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .put(calldata, (output, gas_cost));
     }
 }
 
