@@ -97,6 +97,13 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_PENDING_TXS_PER_ACCOUNT=]
           [default: 16]
 
+      --mempool.punish-spammer <BOOL>
+          When a sender exceeds the per-account pending-tx cap, also drop the highest-nonce half of their existing pool entries. The breaching tx is still rejected; this only frees pool budget for legitimate senders.
+
+          [env: ETHREX_MEMPOOL_PUNISH_SPAMMER=]
+          [default: true]
+          [possible values: true, false]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 

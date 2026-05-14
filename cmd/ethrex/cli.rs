@@ -193,6 +193,16 @@ pub struct Options {
     )]
     pub mempool_max_pending_txs_per_account: usize,
     #[arg(
+        help = "When a sender exceeds the per-account pending-tx cap, also drop the highest-nonce half of their existing pool entries. The breaching tx is still rejected; this only frees pool budget for legitimate senders.",
+        long = "mempool.punish-spammer",
+        default_value_t = true,
+        value_name = "BOOL",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PUNISH_SPAMMER",
+        action = clap::ArgAction::Set
+    )]
+    pub mempool_punish_spammer: bool,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -474,6 +484,7 @@ impl Default for Options {
             force: false,
             mempool_max_size: Default::default(),
             mempool_max_pending_txs_per_account: DEFAULT_MAX_PENDING_TXS_PER_ACCOUNT,
+            mempool_punish_spammer: true,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

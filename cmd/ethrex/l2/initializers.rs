@@ -229,6 +229,7 @@ pub async fn init_l2(
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
         max_pending_txs_per_account: opts.node_opts.mempool_max_pending_txs_per_account,
+        punish_spammer: opts.node_opts.mempool_punish_spammer,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
