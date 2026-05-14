@@ -427,7 +427,7 @@ async fn validate_transaction_rejects_oversize_non_blob() {
     });
 
     let res = blockchain
-        .validate_transaction(&tx, Address::random())
+        .validate_transaction(&tx, Address::random(), TxOrigin::External)
         .await;
     match res {
         Err(MempoolError::TxSizeExceeded { actual, limit }) => {
