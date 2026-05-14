@@ -357,11 +357,14 @@ impl LEVM {
         ))
     }
 
+    /// `merkleizer` is `Some` on the streaming (non-BAL) path; the BAL validation path
+    /// passes `None` because the caller merkleizes optimistically from the input BAL and
+    /// the EVM-side `bal_to_account_updates` send is then redundant work.
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        merkleizer: Sender<Vec<AccountUpdate>>,
+        merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
@@ -415,7 +418,7 @@ impl LEVM {
                 db,
                 vm_type,
                 bal,
-                &merkleizer,
+                merkleizer.as_ref(),
                 queue_length,
                 system_seed,
                 crypto,
@@ -553,7 +556,10 @@ impl LEVM {
             ));
         }
 
-        // Sequential path (existing code, for block production and non-Amsterdam)
+        // Sequential path (existing code, for block production and non-Amsterdam).
+        // The non-BAL caller always provides a Sender; the BAL path returned above.
+        let merkleizer = merkleizer
+            .expect("sequential execution path requires a merkleizer Sender (non-BAL caller)");
         if is_amsterdam {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
@@ -946,7 +952,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         bal: &BlockAccessList,
-        merkleizer: &Sender<Vec<AccountUpdate>>,
+        merkleizer: Option<&Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
@@ -975,13 +981,16 @@ impl LEVM {
             "execute_block_parallel invoked on non-Amsterdam block"
         );
 
-        // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
-        //    This covers ALL state changes: system calls, txs, withdrawals.
-        let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
-        merkleizer
-            .send(account_updates)
-            .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
-        queue_length.fetch_add(1, Ordering::Relaxed);
+        // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch).
+        // Skipped when the caller merkleizes optimistically from the input BAL; the
+        // conversion is then redundant work (and does pre-state reads we don't need).
+        if let Some(merkleizer) = merkleizer {
+            let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
+            merkleizer
+                .send(account_updates)
+                .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
+            queue_length.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Build a checklist of all BAL storage_reads. Entries are removed as they
         // are actually read during execution phases. Anything left over is extraneous.
