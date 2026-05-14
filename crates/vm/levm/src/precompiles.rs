@@ -270,17 +270,17 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
 /// at https://github.com/paradigmxyz/reth/pull/22900) with extra headroom for
 /// cross-block scope. Identity (0x04) bypasses the cache (copy is cheaper
 /// than a hash lookup).
-const ECRECOVER_CAP: usize = 10_000;
-const SHA256_CAP: usize = 1_000;
-const RIPEMD_CAP: usize = 1_000;
-const MODEXP_CAP: usize = 50_000;
-const BN254_ADD_CAP: usize = 100_000;
-const BN254_MUL_CAP: usize = 200_000;
-const BN254_PAIRING_CAP: usize = 10_000;
-const BLAKE2F_CAP: usize = 2_000;
-const KZG_CAP: usize = 4_000;
-const BLS12_CAP: usize = 2_000;
-const P256_CAP: usize = 4_000;
+const ECRECOVER_CAP: usize = 8_192;
+const SHA256_CAP: usize = 1_024;
+const MODEXP_CAP: usize = 8_192;
+const BN254_ADD_CAP: usize = 8_192;
+const BN254_MUL_CAP: usize = 8_192;
+const KZG_CAP: usize = 16;
+// RIPEMD-160, BLAKE2F, and all BLS12-381 ops are intentionally not cached:
+// they're rare enough on mainnet that the memory cost outweighs the hit rate.
+// BN254_PAIRING and P256VERIFY are also uncached, for a different reason:
+// they aren't rare, but repeats with identical inputs are — so an LRU slot
+// would mostly miss.
 
 const PRECOMPILE_INDEX_SPACE: usize = 512;
 
@@ -332,23 +332,13 @@ impl Default for PrecompileCache {
             std::array::from_fn(|_| None);
         slots[ECRECOVER.address.0[19] as usize] = Some(make_slot(ECRECOVER_CAP));
         slots[SHA2_256.address.0[19] as usize] = Some(make_slot(SHA256_CAP));
-        slots[RIPEMD_160.address.0[19] as usize] = Some(make_slot(RIPEMD_CAP));
-        // 0x04 IDENTITY intentionally left None — copy is cheaper than caching.
+        // 0x03 RIPEMD-160, 0x04 IDENTITY, 0x08 BN254_PAIRING, 0x09 BLAKE2F,
+        // 0x0b–0x11 BLS12-381 ops, and P256VERIFY intentionally left None.
+        // See the CAP comment above for the rationale.
         slots[MODEXP.address.0[19] as usize] = Some(make_slot(MODEXP_CAP));
         slots[ECADD.address.0[19] as usize] = Some(make_slot(BN254_ADD_CAP));
         slots[ECMUL.address.0[19] as usize] = Some(make_slot(BN254_MUL_CAP));
-        slots[ECPAIRING.address.0[19] as usize] = Some(make_slot(BN254_PAIRING_CAP));
-        slots[BLAKE2F.address.0[19] as usize] = Some(make_slot(BLAKE2F_CAP));
         slots[POINT_EVALUATION.address.0[19] as usize] = Some(make_slot(KZG_CAP));
-        slots[BLS12_G1ADD.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[BLS12_G1MSM.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[BLS12_G2ADD.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[BLS12_G2MSM.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[BLS12_PAIRING_CHECK.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[BLS12_MAP_FP_TO_G1.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[BLS12_MAP_FP2_TO_G2.address.0[19] as usize] = Some(make_slot(BLS12_CAP));
-        slots[u16::from_be_bytes([P256VERIFY.address.0[18], P256VERIFY.address.0[19]]) as usize] =
-            Some(make_slot(P256_CAP));
         Self {
             slots: Box::new(slots),
         }
