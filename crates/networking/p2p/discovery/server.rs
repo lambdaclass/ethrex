@@ -39,7 +39,8 @@ const DISCV4_MIN_PACKET_SIZE: usize = 98;
 // Shared constants
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
-const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
+/// Faster tick rate used while an iterative lookup is active to drive convergence.
+const ACTIVE_LOOKUP_TICK: Duration = Duration::from_millis(50);
 
 #[derive(Debug, Error)]
 pub enum DiscoveryServerError {
@@ -73,7 +74,6 @@ pub trait DiscoveryServerProtocol: Send + Sync {
     fn lookup_v4(&self) -> Result<(), ActorError>;
     fn lookup_v5(&self) -> Result<(), ActorError>;
     fn enr_lookup(&self) -> Result<(), ActorError>;
-    fn change_find_node_message(&self) -> Result<(), ActorError>;
     fn prune(&self) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
 }
@@ -129,7 +129,7 @@ impl DiscoveryServer {
             );
             peer_table
                 .new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
-            Some(Discv4State::new(&signer))
+            Some(Discv4State::new())
         } else {
             None
         };
@@ -203,11 +203,6 @@ impl DiscoveryServer {
                 ctx.clone(),
                 discovery_server_protocol::RevalidateV4,
             );
-            send_interval(
-                CHANGE_FIND_NODE_MESSAGE_INTERVAL,
-                ctx.clone(),
-                discovery_server_protocol::ChangeFindNodeMessage,
-            );
             let _ = ctx.send(discovery_server_protocol::LookupV4);
             let _ = ctx.send(discovery_server_protocol::EnrLookup);
         }
@@ -280,7 +275,15 @@ impl DiscoveryServer {
         let _ = self.discv4_lookup().await.inspect_err(
             |e| error!(protocol = "discv4", err=?e, "Error performing Discovery lookup"),
         );
-        let interval = self.get_lookup_interval().await;
+        let interval = if self
+            .discv4
+            .as_ref()
+            .is_some_and(|s| s.current_lookup.is_some())
+        {
+            ACTIVE_LOOKUP_TICK
+        } else {
+            self.get_lookup_interval().await
+        };
         send_after(interval, ctx.clone(), discovery_server_protocol::LookupV4);
     }
 
@@ -294,7 +297,15 @@ impl DiscoveryServer {
         let _ = self.discv5_lookup().await.inspect_err(
             |e| error!(protocol = "discv5", err=?e, "Error performing Discovery lookup"),
         );
-        let interval = self.get_lookup_interval().await;
+        let interval = if self
+            .discv5
+            .as_ref()
+            .is_some_and(|s| s.current_lookup.is_some())
+        {
+            ACTIVE_LOOKUP_TICK
+        } else {
+            self.get_lookup_interval().await
+        };
         send_after(interval, ctx.clone(), discovery_server_protocol::LookupV5);
     }
 
@@ -310,17 +321,6 @@ impl DiscoveryServer {
         );
         let interval = self.get_lookup_interval().await;
         send_after(interval, ctx.clone(), discovery_server_protocol::EnrLookup);
-    }
-
-    #[send_handler]
-    async fn handle_change_find_node_message(
-        &mut self,
-        _msg: discovery_server_protocol::ChangeFindNodeMessage,
-        _ctx: &Context<Self>,
-    ) {
-        if let Some(discv4) = &mut self.discv4 {
-            discv4.find_node_message = Discv4State::random_message(&self.signer);
-        }
     }
 
     #[send_handler]

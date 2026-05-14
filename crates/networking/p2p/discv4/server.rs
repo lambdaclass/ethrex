@@ -1,11 +1,10 @@
 use crate::{
-    discv4::messages::{FindNodeMessage, Message, Packet},
-    utils::{get_msg_expiration_from_seconds, node_id, public_key_from_signing_key},
+    discv4::messages::{Message, Packet},
+    discovery::lookup::IterativeLookup,
+    utils::node_id,
 };
 use bytes::BytesMut;
 use ethrex_common::{H256, H512};
-use rand::rngs::OsRng;
-use secp256k1::SecretKey;
 use std::{collections::HashMap, net::SocketAddr, time::Instant};
 
 pub const EXPIRATION_SECONDS: u64 = 20;
@@ -13,33 +12,22 @@ pub const EXPIRATION_SECONDS: u64 = 20;
 /// Discv4-specific state held within the unified DiscoveryServer.
 #[derive(Debug)]
 pub struct Discv4State {
-    /// The last `FindNode` message sent, cached due to message
-    /// signatures being expensive.
-    pub find_node_message: BytesMut,
     /// Tracks pending FindNode requests by node_id -> sent_at.
     /// Used to reject unsolicited Neighbors responses.
     pub pending_find_node: HashMap<H256, Instant>,
+    /// The currently active iterative lookup, if any.
+    pub current_lookup: Option<IterativeLookup>,
+    /// Cached signed FindNode message for the active lookup target.
+    pub current_lookup_message: Option<BytesMut>,
 }
 
 impl Discv4State {
-    pub fn new(signer: &SecretKey) -> Self {
+    pub fn new() -> Self {
         Self {
-            find_node_message: Self::random_message(signer),
             pending_find_node: HashMap::new(),
+            current_lookup: None,
+            current_lookup_message: None,
         }
-    }
-
-    /// Generate a FindNodeMessage with a random key.
-    /// We send the same message on discovery lookup.
-    /// Changed every CHANGE_FIND_NODE_MESSAGE_INTERVAL.
-    pub fn random_message(signer: &SecretKey) -> BytesMut {
-        let expiration: u64 = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-        let random_priv_key = SecretKey::new(&mut OsRng);
-        let random_pub_key = public_key_from_signing_key(&random_priv_key);
-        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-        let mut buf = BytesMut::new();
-        msg.encode_with_header(&mut buf, signer);
-        buf
     }
 }
 

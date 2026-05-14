@@ -39,8 +39,6 @@ const MAX_SCORE: i64 = 50;
 const MIN_SCORE: i64 = -50;
 /// Score assigned to peers who are acting maliciously (e.g., returning a node with wrong hash)
 const MIN_SCORE_CRITICAL: i64 = MIN_SCORE * 3;
-/// Maximum amount of FindNode messages sent to a single node.
-const MAX_FIND_NODE_PER_PEER: u64 = 20;
 /// Score weight for the load balancing function.
 const SCORE_WEIGHT: i64 = 1;
 /// Weight for amount of requests being handled by the peer for the load balancing function.
@@ -163,7 +161,7 @@ fn bucket_index(local_node_id: &H256, node_id: &H256) -> Option<usize> {
 /// Computes the raw XOR distance between two node IDs.
 /// Used for comparing relative closeness: a is closer to target than b
 /// iff xor_distance(target, a) < xor_distance(target, b).
-fn xor_distance(a: &H256, b: &H256) -> H256 {
+pub(crate) fn xor_distance(a: &H256, b: &H256) -> H256 {
     *a ^ *b
 }
 
@@ -201,7 +199,6 @@ pub struct Contact {
     /// None if no request was sent yet or it was already acknowledged.
     pub enr_request_hash: Option<H256>,
 
-    pub n_find_node_sent: u64,
     /// ENR associated with this contact, if it was provided by the peer.
     pub record: Option<NodeRecord>,
     /// This contact failed to respond our Ping.
@@ -259,7 +256,6 @@ impl Contact {
             validation_timestamp: None,
             ping_id: None,
             enr_request_hash: None,
-            n_find_node_sent: 0,
             record: None,
             disposable: false,
             knows_us: true,
@@ -419,7 +415,6 @@ pub trait PeerTableServerProtocol: Send + Sync {
         record: NodeRecord,
     ) -> Result<(), ActorError>;
     fn set_disposable(&self, node_id: H256) -> Result<(), ActorError>;
-    fn increment_find_node_sent(&self, node_id: H256) -> Result<(), ActorError>;
     fn mark_knows_us(&self, node_id: H256) -> Result<(), ActorError>;
     fn prune_table(&self) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
@@ -431,9 +426,9 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn target_peers_reached(&self) -> Response<bool>;
     fn target_peers_completion(&self) -> Response<f64>;
     fn get_contact_to_initiate(&self) -> Response<Option<Box<Contact>>>;
-    fn get_contact_for_lookup(&self, protocol: DiscoveryProtocol)
-    -> Response<Option<Box<Contact>>>;
     fn get_contact_for_enr_lookup(&self) -> Response<Option<Box<Contact>>>;
+    fn get_closest_from_pool(&self, target: H256, count: usize)
+    -> Response<Vec<(H256, Node)>>;
     fn get_contact(&self, node_id: H256) -> Response<Option<Box<Contact>>>;
     fn get_contact_to_revalidate(
         &self,
@@ -718,17 +713,6 @@ impl PeerTableServer {
     }
 
     #[send_handler]
-    async fn handle_increment_find_node_sent(
-        &mut self,
-        msg: peer_table_server_protocol::IncrementFindNodeSent,
-        _ctx: &Context<Self>,
-    ) {
-        if let Some(contact) = self.get_contact_mut(&msg.node_id) {
-            contact.n_find_node_sent += 1;
-        }
-    }
-
-    #[send_handler]
     async fn handle_mark_knows_us(
         &mut self,
         msg: peer_table_server_protocol::MarkKnowsUs,
@@ -814,12 +798,12 @@ impl PeerTableServer {
     }
 
     #[request_handler]
-    async fn handle_get_contact_for_lookup(
+    async fn handle_get_closest_from_pool(
         &mut self,
-        msg: peer_table_server_protocol::GetContactForLookup,
+        msg: peer_table_server_protocol::GetClosestFromPool,
         _ctx: &Context<Self>,
-    ) -> Option<Box<Contact>> {
-        self.do_get_contact_for_lookup(msg.protocol).map(Box::new)
+    ) -> Vec<(H256, Node)> {
+        self.do_get_closest_from_pool(msg.target, msg.count)
     }
 
     #[request_handler]
@@ -1309,16 +1293,24 @@ impl PeerTableServer {
         None
     }
 
-    fn do_get_contact_for_lookup(&self, protocol: DiscoveryProtocol) -> Option<Contact> {
-        self.iter_contacts()
-            .filter(|(_, c)| {
-                c.supports_protocol(protocol)
-                    && c.n_find_node_sent < MAX_FIND_NODE_PER_PEER
-                    && !c.disposable
-            })
-            .map(|(_, c)| c)
-            .choose(&mut rand::rngs::OsRng)
-            .cloned()
+    /// Get the `count` closest nodes from the connection pool, sorted by XOR distance to `target`.
+    fn do_get_closest_from_pool(&self, target: H256, count: usize) -> Vec<(H256, Node)> {
+        let mut nodes: Vec<(H256, Node, H256)> = Vec::with_capacity(count);
+
+        for (node_id, node) in &self.connection_pool {
+            let dist = xor_distance(&target, node_id);
+            if nodes.len() < count {
+                nodes.push((*node_id, node.clone(), dist));
+            } else if let Some((farthest_idx, _)) =
+                nodes.iter().enumerate().max_by_key(|(_, (_, _, d))| *d)
+                && dist < nodes[farthest_idx].2
+            {
+                nodes[farthest_idx] = (*node_id, node.clone(), dist);
+            }
+        }
+
+        nodes.sort_by(|a, b| a.2.cmp(&b.2));
+        nodes.into_iter().map(|(id, node, _)| (id, node)).collect()
     }
 
     /// Get contact for ENR lookup (discv4 only)
