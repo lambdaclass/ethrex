@@ -35,6 +35,26 @@ impl Evm {
         )
     }
 
+    /// Executes a single tx with tracing disabled (noopTracer).
+    /// Assumes that the received state already contains changes from previous transactions.
+    pub fn trace_tx_noop(&mut self, block: &Block, tx_index: usize) -> Result<(), EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
+        LEVM::trace_tx_noop(
+            &mut self.db,
+            &block.header,
+            tx,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
     /// Executes a single tx and captures the pre/post account state (prestateTracer).
     /// Assumes that the received state already contains changes from previous transactions.
     pub fn trace_tx_prestate(

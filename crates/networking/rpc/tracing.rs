@@ -45,6 +45,7 @@ enum TracerType {
     #[default]
     CallTracer,
     PrestateTracer,
+    NoopTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -171,6 +172,14 @@ impl RpcHandler for TraceTransactionRequest {
                     PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
                 }
             }
+            TracerType::NoopTracer => {
+                context
+                    .blockchain
+                    .trace_transaction_noop(self.tx_hash, reexec, timeout)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                Ok(serde_json::json!({}))
+            }
         }
     }
 }
@@ -280,6 +289,21 @@ impl RpcHandler for TraceBlockByNumberRequest {
                         })
                     })
                     .collect::<Result<_, serde_json::Error>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
+            TracerType::NoopTracer => {
+                let tx_hashes = context
+                    .blockchain
+                    .trace_block_noop(block, reexec, timeout)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let block_trace: BlockTrace<serde_json::Value> = tx_hashes
+                    .into_iter()
+                    .map(|hash| BlockTraceComponent {
+                        tx_hash: hash,
+                        result: serde_json::json!({}),
+                    })
+                    .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
         }

@@ -86,6 +86,62 @@ impl Blockchain {
         Ok(call_traces)
     }
 
+    /// Re-executes the given transaction with tracing disabled (noopTracer).
+    /// Returns once the tx finishes; nothing is recorded. May need to re-execute ancestor
+    /// blocks to rebuild the parent state, up to the amount given by `reexec`.
+    pub async fn trace_transaction_noop(
+        &self,
+        tx_hash: H256,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<(), ChainError> {
+        let Some((_, block_hash, tx_index)) =
+            self.storage.get_transaction_location(tx_hash).await?
+        else {
+            return Err(ChainError::Custom("Transaction not Found".to_string()));
+        };
+        let tx_index = tx_index as usize;
+        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
+            return Err(ChainError::Custom("Block not Found".to_string()));
+        };
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(tx_index))?;
+        timeout_trace_operation(timeout, move || vm.trace_tx_noop(&block, tx_index)).await
+    }
+
+    /// Re-executes every transaction in `block` with tracing disabled (noopTracer).
+    /// Returns the tx hashes in execution order so callers can emit one empty entry per tx.
+    /// May need to re-execute ancestor blocks to rebuild the parent state, up to the amount given by `reexec`.
+    pub async fn trace_block_noop(
+        &self,
+        block: Block,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<Vec<H256>, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(0))?;
+        let vm = Arc::new(Mutex::new(vm));
+        let block = Arc::new(block);
+        let mut tx_hashes = Vec::with_capacity(block.body.transactions.len());
+        for index in 0..block.body.transactions.len() {
+            let block = block.clone();
+            let vm = vm.clone();
+            let tx_hash = block.as_ref().body.transactions[index].hash();
+            timeout_trace_operation(timeout, move || {
+                vm.lock()
+                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
+                    .trace_tx_noop(block.as_ref(), index)
+            })
+            .await?;
+            tx_hashes.push(tx_hash);
+        }
+        Ok(tx_hashes)
+    }
+
     /// Outputs the prestate trace for the given transaction.
     /// If `diff_mode` is true, returns both pre and post state; otherwise returns only pre state.
     /// `include_empty` keeps default-state entries in pre (only valid when `diff_mode` is false).
