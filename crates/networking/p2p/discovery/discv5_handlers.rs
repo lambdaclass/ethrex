@@ -304,9 +304,11 @@ impl DiscoveryServer {
                 .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
                 .await?;
             if seed.is_empty() {
+                trace!(protocol = "discv5", "No seeds for lookup, connection pool empty");
                 return Ok(());
             }
 
+            trace!(protocol = "discv5", seeds = seed.len(), "Starting new iterative lookup");
             let lookup = IterativeLookup::new(target_id, seed);
             let discv5 = self.discv5.as_mut().unwrap();
             discv5.current_lookup = Some(lookup);

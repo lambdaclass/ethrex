@@ -151,9 +151,11 @@ impl DiscoveryServer {
                 .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
                 .await?;
             if seed.is_empty() {
+                trace!(protocol = "discv4", "No seeds for lookup, connection pool empty");
                 return Ok(());
             }
 
+            trace!(protocol = "discv4", seeds = seed.len(), "Starting new iterative lookup");
             let lookup = IterativeLookup::new(target_id, seed);
 
             // Sign one FindNode message for this target
@@ -187,6 +189,9 @@ impl DiscoveryServer {
         };
 
         let to_query = lookup.next_to_query(LOOKUP_ALPHA);
+        if !to_query.is_empty() {
+            trace!(protocol = "discv4", count = to_query.len(), "Advancing lookup, querying nodes");
+        }
 
         for (node_id, node) in to_query {
             if let Err(e) = self.udp_socket.send_to(&message, &node.udp_addr()).await {
