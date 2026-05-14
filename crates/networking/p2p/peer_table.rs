@@ -952,12 +952,12 @@ impl PeerTableServer {
             return false;
         }
         let contact = Contact::new(msg.node, msg.protocol);
-        if self.insert_contact(node_id, contact) {
-            METRICS.record_new_discovery().await;
-            true
-        } else {
-            false
-        }
+        // Return true for any genuinely new node, even if it overflows to the
+        // replacement list.  This ensures the caller sends a reciprocal ping
+        // which establishes the bond needed for FindNode validation.
+        self.insert_contact(node_id, contact);
+        METRICS.record_new_discovery().await;
+        true
     }
 
     #[request_handler]
@@ -1427,9 +1427,8 @@ impl PeerTableServer {
                 }
             } else {
                 let contact = Contact::new(node, protocol);
-                if self.insert_contact(node_id, contact) {
-                    METRICS.record_new_discovery().await;
-                }
+                self.insert_contact(node_id, contact);
+                METRICS.record_new_discovery().await;
             }
 
             #[cfg(feature = "metrics")]
@@ -1487,9 +1486,8 @@ impl PeerTableServer {
                     let mut contact = Contact::new(node, DiscoveryProtocol::Discv5);
                     contact.is_fork_id_valid = is_fork_id_valid;
                     contact.record = Some(node_record);
-                    if self.insert_contact(node_id, contact) {
-                        METRICS.record_new_discovery().await;
-                    }
+                    self.insert_contact(node_id, contact);
+                    METRICS.record_new_discovery().await;
                 }
             }
         }
