@@ -14,13 +14,14 @@ use crate::{
     error::MempoolError,
 };
 use ethrex_common::{
-    Address, H160, H256,
+    Address, H160, H256, U256,
     types::{
         BlobTuple, BlobsBundle, BlockHeader, ChainConfig, MempoolTransaction, Transaction, TxType,
         kzg_commitment_to_versioned_hash,
     },
 };
 use ethrex_storage::error::StoreError;
+use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::warn;
 
 #[derive(Debug, Default)]
@@ -28,6 +29,10 @@ struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
+    /// Transaction hashes that have been requested via GetPooledTransactions
+    /// but whose responses haven't arrived yet. Used to avoid sending duplicate
+    /// requests when multiple peers announce the same transaction.
+    in_flight_txs: FxHashSet<H256>,
     /// Maps blob versioned hashes to transaction hashes that include them and a position inside
     /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
@@ -237,7 +242,7 @@ impl Mempool {
             }
 
             // Filter by tip & base_fee
-            if let Some(min_tip) = filter.min_tip {
+            if let Some(min_tip) = filter.min_tip.map(U256::from) {
                 if tx
                     .effective_gas_tip(filter.base_fee)
                     .is_none_or(|tip| tip < min_tip)
@@ -307,18 +312,35 @@ impl Mempool {
         Ok(txs_by_sender)
     }
 
-    /// Gets hashes from possible_hashes that are not already known in the mempool.
-    pub fn filter_unknown_transactions(
+    /// Filters hashes to those not already in the mempool or in-flight, and
+    /// atomically marks the returned hashes as in-flight under a single write
+    /// lock so that concurrent peer handlers cannot request the same hashes.
+    pub fn reserve_unknown_hashes(
         &self,
         possible_hashes: &[H256],
     ) -> Result<Vec<H256>, StoreError> {
-        let tx_pool = &self.read()?.transaction_pool;
+        let mut inner = self.write()?;
 
-        Ok(possible_hashes
+        let unknown: Vec<H256> = possible_hashes
             .iter()
-            .filter(|hash| !tx_pool.contains_key(hash))
+            .filter(|hash| {
+                !inner.in_flight_txs.contains(hash) && !inner.transaction_pool.contains_key(hash)
+            })
             .copied()
-            .collect())
+            .collect();
+
+        inner.in_flight_txs.extend(unknown.iter().copied());
+        Ok(unknown)
+    }
+
+    /// Removes transaction hashes from the in-flight set, typically called
+    /// when the GetPooledTransactions response arrives (or the connection drops).
+    pub fn clear_in_flight_txs(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in hashes {
+            inner.in_flight_txs.remove(hash);
+        }
+        Ok(())
     }
 
     pub fn get_transaction_by_hash(
@@ -477,8 +499,15 @@ impl Mempool {
     }
 }
 
+/// Filter applied by the payload builder when querying pending transactions
+/// from the pool. NOT a mempool admission gate — all fields here are
+/// query-time filters used to pick block-includable transactions. Admission
+/// rules are enforced in `Blockchain::validate_transaction`.
 #[derive(Debug, Default)]
 pub struct PendingTxFilter {
+    /// Minimum effective priority fee for a transaction to be surfaced to
+    /// the payload builder. This is a block-building filter, not an
+    /// admission check — see `crates/common/types/constants.rs::MIN_GAS_TIP`.
     pub min_tip: Option<u64>,
     pub base_fee: Option<u64>,
     pub blob_fee: Option<u64>,
@@ -491,6 +520,30 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
+    // Amsterdam (EIP-8037): the VM splits intrinsic into (regular, state) and uses
+    // `REGULAR_GAS_CREATE = 9000` + `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for CREATE
+    // instead of the legacy `TX_CREATE_GAS_COST = 53000`. Mempool admission must
+    // match VM charge or we spuriously reject (or admit) transactions.
+    //
+    // The VM enforces `gas_limit >= max(intrinsic_regular + intrinsic_state,
+    // floor)` via two separate checks in `validate_gas_allowance` +
+    // `validate_min_gas_limit`. Apply the same max here so we don't admit
+    // txs whose calldata floor exceeds the weighted intrinsic — those would
+    // pass mempool and then fail at block inclusion, polluting the pool.
+    if config.is_amsterdam_activated(header.timestamp) {
+        let fork = config.fork(header.timestamp);
+        let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
+            .map_err(|_| MempoolError::TxGasOverflowError)?;
+        let intrinsic = regular
+            .checked_add(state)
+            .ok_or(MempoolError::TxGasOverflowError)?;
+        let floor = intrinsic_gas_floor(tx, fork).map_err(|_| MempoolError::TxGasOverflowError)?;
+        // Block-level gas = max(regular_dim, state_dim); regular_dim itself is
+        // `max(tx_regular, calldata_floor)` per EIP-7778. Use the same max so
+        // admission mirrors the VM's effective minimum.
+        return Ok(intrinsic.max(floor));
+    }
+
     let is_contract_creation = tx.is_contract_creation();
 
     let mut gas = if is_contract_creation {

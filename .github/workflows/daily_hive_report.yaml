@@ -106,24 +106,33 @@ jobs:
           large-packages: false
 
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # Set custom args defined in Dockerfile to pin execution-spec-tests versions
       # See: https://github.com/ethereum/hive/blob/c2dab60f898b94afe8eeac505f60dcde59205e77/simulators/ethereum/eest/consume-rlp/Dockerfile#L4-L8
+      - name: Load Amsterdam config
+        id: amsterdam-config
+        shell: bash
+        run: |
+          echo "fixtures=$(yq -r '.fixtures' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+          echo "eels_commit=$(yq -r '.eels_commit' .github/config/hive/amsterdam.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Determine hive flags
         id: hive-flags
         shell: bash
         env:
           SIMULATION: ${{ matrix.test.simulation }}
           SIM_LIMIT: ${{ matrix.test.limit || '' }}
+          AMSTERDAM_FIXTURES: ${{ steps.amsterdam-config.outputs.fixtures }}
+          AMSTERDAM_EELS_COMMIT: ${{ steps.amsterdam-config.outputs.eels_commit }}
         run: |
           FLAGS="--sim.parallelism ${{ matrix.test.parallelism || 4 }} --sim.loglevel 1"
           if [[ "$SIMULATION" == "ethereum/eels/consume-engine" || "$SIMULATION" == "ethereum/eels/consume-rlp" ]]; then
             # Use fork-specific fixtures to ensure comprehensive test coverage
             if [[ "$SIM_LIMIT" == *"fork_Amsterdam"* ]]; then
-              # Amsterdam tests use fixtures_bal which includes BAL-specific tests
-              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz"
-              FLAGS+=" --sim.buildarg branch=devnets/bal/3"
+              # Amsterdam config loaded from .github/config/hive/amsterdam.yaml
+              FLAGS+=" --sim.buildarg fixtures=$AMSTERDAM_FIXTURES"
+              FLAGS+=" --sim.buildarg branch=$AMSTERDAM_EELS_COMMIT"
             else
               # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use fixtures_develop
               # which includes comprehensive test coverage including static tests
@@ -143,7 +152,7 @@ jobs:
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -168,13 +177,13 @@ jobs:
       artifact_name: results_daily.md
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
       - name: Download all results
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: hive/workspace/logs
           pattern: "*_daily-results.zip"
@@ -217,7 +226,7 @@ jobs:
         run: cargo run --manifest-path tooling/Cargo.toml -p hive_report > results.md
 
       - name: Upload daily result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: results_daily.md
           path: |
@@ -236,10 +245,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download hive results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ${{ needs.hive-report.outputs.artifact_name }}
 
@@ -247,11 +256,7 @@ jobs:
         env:
           SLACK_WEBHOOKS: >
             ${{ github.event_name == 'schedule'
-              && format(
-                  '{0} {1}',
-                  secrets.ETHREX_L1_SLACK_WEBHOOK,
-                  secrets.ETHREX_L2_SLACK_WEBHOOK
-                )
+              && secrets.ETHREX_INTERNO_SLACK_WEBHOOK
               || secrets.TEST_CHANNEL_SLACK
             }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

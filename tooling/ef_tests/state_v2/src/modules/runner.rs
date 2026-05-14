@@ -150,6 +150,7 @@ pub fn get_vm_env_for_test(
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        is_system_call: false,
     })
 }
 
@@ -181,8 +182,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
                 .collect(),
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas_limit: test_case.gas,
             ..Default::default()
         })
@@ -190,8 +195,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP4844Transaction(EIP4844Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas: test_case.gas,
             to: match to {
                 TxKind::Call(to) => to,
@@ -208,8 +217,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP1559Transaction(EIP1559Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas_limit: test_case.gas,
             to,
             value,

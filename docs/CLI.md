@@ -75,6 +75,11 @@ Node options:
 
           [env: ETHREX_NO_MIGRATE=]
 
+      --no-precompile-cache
+          Disable the per-block precompile result cache (benchmarking only).
+          
+          [env: ETHREX_NO_PRECOMPILE_CACHE=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
 
@@ -107,9 +112,14 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
+
+      --nat.extip <IP>
+          The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
+
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -155,16 +165,22 @@ P2P options:
 
 RPC options:
       --http.addr <ADDRESS>
-          Listening address for the http rpc server.
+          Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: 0.0.0.0]
+          [default: 127.0.0.1]
 
       --http.port <PORT>
           Listening port for the http rpc server.
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --http.api <NAMESPACES>
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+
+          [env: ETHREX_HTTP_API=]
+          [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
@@ -206,7 +222,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 9.0.0"]
+          [default: "ethrex 12.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -324,9 +340,14 @@ P2P options:
           [env: ETHREX_P2P_DISABLED=]
 
       --p2p.addr <ADDRESS>
-          Listening address for the P2P protocol.
+          The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
+
+      --nat.extip <IP>
+          The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
+
+          [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
@@ -354,16 +375,22 @@ P2P options:
 
 RPC options:
       --http.addr <ADDRESS>
-          Listening address for the http rpc server.
+          Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
 
           [env: ETHREX_HTTP_ADDR=]
-          [default: 0.0.0.0]
+          [default: 127.0.0.1]
 
       --http.port <PORT>
           Listening port for the http rpc server.
 
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
+
+      --http.api <NAMESPACES>
+          Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
+
+          [env: ETHREX_HTTP_API=]
+          [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
@@ -405,7 +432,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 9.0.0"]
+          [default: "ethrex 12.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -490,12 +517,6 @@ Block producer options:
 
       --block-producer.l1-fee-vault-address <ADDRESS>
           [env: ETHREX_BLOCK_PRODUCER_L1_FEE_VAULT_ADDRESS=]
-
-      --block-producer.block-gas-limit <UINT64>
-          Maximum gas limit for the L2 blocks.
-
-          [env: ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT=]
-          [default: 30000000]
 
 Proposer options:
       --elasticity-multiplier <UINT64>
@@ -663,6 +684,18 @@ L2 options:
 
           [env: SPONSOR_PRIVATE_KEY=]
           [default: 0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192]
+
+      --sponsored-gas-limit <GAS_LIMIT>
+          Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.
+
+          [env: ETHREX_SPONSORED_GAS_LIMIT=]
+          [default: 500000]
+
+      --http.api.ethrex <BOOLEAN>
+          Expose L2-specific ethrex_* RPC methods over HTTP/WS. Enabled by default for L2 nodes.
+
+          [env: ETHREX_HTTP_API_ETHREX=]
+          [default: true]
 
 Monitor options:
       --no-monitor

@@ -121,10 +121,11 @@ pub(crate) fn substrate_bn_g1_add(p1: &[u8], p2: &[u8]) -> Result<[u8; 64], Cryp
     let result = g1_a + g1_b;
 
     let mut out = [0u8; 64];
-    #[allow(clippy::indexing_slicing)]
-    {
-        result.x().to_big_endian(&mut out[..32]);
-        result.y().to_big_endian(&mut out[32..]);
+    if let Some(affine) = AffineG1::from_jacobian(result) {
+        #[allow(clippy::indexing_slicing)]
+        affine.x().to_big_endian(&mut out[..32]);
+        #[allow(clippy::indexing_slicing)]
+        affine.y().to_big_endian(&mut out[32..]);
     }
     Ok(out)
 }
@@ -164,10 +165,11 @@ pub(crate) fn substrate_bn_g1_mul(point: &[u8], scalar: &[u8]) -> Result<[u8; 64
     let result = g1 * s;
 
     let mut out = [0u8; 64];
-    #[allow(clippy::indexing_slicing)]
-    {
-        result.x().to_big_endian(&mut out[..32]);
-        result.y().to_big_endian(&mut out[32..]);
+    if let Some(affine) = AffineG1::from_jacobian(result) {
+        #[allow(clippy::indexing_slicing)]
+        affine.x().to_big_endian(&mut out[..32]);
+        #[allow(clippy::indexing_slicing)]
+        affine.y().to_big_endian(&mut out[32..]);
     }
     Ok(out)
 }

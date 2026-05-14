@@ -8,6 +8,7 @@ on:
     paths:
       - "tooling/ef_tests/state/**"
       - "crates/vm/levm/**"
+      - "crates/common/crypto/**"
       - ".github/workflows/pr-main_levm.yaml"
       - "tooling/ef_tests/state"
   workflow_dispatch:
@@ -34,7 +35,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -60,7 +61,7 @@ jobs:
           cat tooling/ef_tests/state/test_result_pr_short.txt
 
       - name: Upload PR branch EF-test results.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pr-ef-test-data
           path: tooling/ef_tests/state/test_result_pr_short.txt
@@ -73,13 +74,26 @@ jobs:
               # exit 1 # uncomment when we expect 100% pass-rate
           fi
 
+  ef-test-nostd-crypto:
+    if: ${{ github.event_name != 'merge_group' }}
+    name: EF Tests (no_std crypto)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run EF state tests with no_std crypto fallbacks
+        run: make -C tooling/ef_tests/state test-levm-nostd-crypto
+
   ef-test-main:
     if: ${{ github.event_name != 'merge_group' }}
     name: EF Tests Check main
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
 
@@ -108,7 +122,7 @@ jobs:
           cat tooling/ef_tests/state/test_result_main_short.txt
 
       - name: Upload main branch EF-test results.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: main-ef-test-data
           path: tooling/ef_tests/state/test_result_main_short.txt
@@ -120,16 +134,16 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download main branch ef tests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: main-ef-test-data
           path: tooling/ef_tests/state/
 
       - name: Download PR branch ef tests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: pr-ef-test-data
           path: tooling/ef_tests/state/
@@ -150,7 +164,7 @@ jobs:
       - name: Find comment
         if: ${{ github.event.pull_request.head.repo.fork != true }}
         continue-on-error: true
-        uses: peter-evans/find-comment@v3
+        uses: peter-evans/find-comment@v4
         id: fc
         with:
           issue-number: ${{ github.event.pull_request.number }}
@@ -161,7 +175,7 @@ jobs:
       # If the condition is met, create or update the comment with the summary.
       - name: Create comment
         if: ${{ steps.branch_diffs.outcome == 'failure' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true }}
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -174,7 +188,7 @@ jobs:
       # If both conditions are met, update the comment saying that all tests pass.
       - name: Update comment
         if: ${{ steps.branch_diffs.outcome != 'failure' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork != true && steps.fc.outputs.comment-id != '' }}
-        uses: peter-evans/create-or-update-comment@v4
+        uses: peter-evans/create-or-update-comment@v5
         with:
           comment-id: ${{ steps.fc.outputs.comment-id }}
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -206,7 +220,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -220,7 +234,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

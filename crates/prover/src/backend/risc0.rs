@@ -1,12 +1,9 @@
 use std::time::{Duration, Instant};
 
+use ethrex_common::types::prover::{ProofBytes, ProofFormat, ProverOutput, ProverType};
 use ethrex_guest_program::{
     input::ProgramInput,
     methods::{ETHREX_GUEST_RISC0_ELF, ETHREX_GUEST_RISC0_ID},
-};
-use ethrex_l2_common::{
-    calldata::Value,
-    prover::{BatchProof, ProofBytes, ProofCalldata, ProofFormat, ProverType},
 };
 use risc0_zkvm::{
     ExecutorEnv, InnerReceipt, ProverOpts, Receipt, default_executor, default_prover,
@@ -31,15 +28,13 @@ impl Risc0Backend {
         }
     }
 
-    fn to_calldata(receipt: &Receipt) -> Result<ProofCalldata, BackendError> {
+    fn to_groth16_proof_bytes(receipt: &Receipt) -> Result<ProverOutput, BackendError> {
         let seal = Self::encode_seal(receipt)?;
 
-        let calldata = vec![Value::Bytes(seal.into())];
-
-        Ok(ProofCalldata {
+        Ok(ProverOutput::Proof(ProofBytes {
             prover_type: ProverType::RISC0,
-            calldata,
-        })
+            proof: seal,
+        }))
     }
 
     // ref: https://github.com/risc0/risc0-ethereum/blob/046bb34ea4605f9d8420c7db89baf8e1064fa6f5/contracts/src/lib.rs#L88
@@ -47,13 +42,15 @@ impl Risc0Backend {
     // which is incompatible with our current version (1.0.3).
     fn encode_seal(receipt: &Receipt) -> Result<Vec<u8>, BackendError> {
         let InnerReceipt::Groth16(groth16_receipt) = receipt.inner.clone() else {
-            return Err(BackendError::batch_proof("can only encode groth16 seals"));
+            return Err(BackendError::proof_conversion(
+                "can only encode groth16 seals",
+            ));
         };
         let selector = groth16_receipt
             .verifier_parameters
             .as_bytes()
             .get(..4)
-            .ok_or_else(|| BackendError::batch_proof("failed to get seal selector"))?;
+            .ok_or_else(|| BackendError::proof_conversion("failed to get seal selector"))?;
         // Create a new vector with the capacity to hold both selector and seal
         let mut selector_seal = Vec::with_capacity(selector.len() + groth16_receipt.seal.len());
         selector_seal.extend_from_slice(selector);
@@ -123,21 +120,24 @@ impl ProverBackend for Risc0Backend {
         Ok(())
     }
 
-    fn to_batch_proof(
+    fn to_proof_bytes(
         &self,
         proof: Self::ProofOutput,
         format: ProofFormat,
-    ) -> Result<BatchProof, BackendError> {
-        let batch_proof = match format {
-            ProofFormat::Compressed => BatchProof::ProofBytes(ProofBytes {
-                prover_type: ProverType::RISC0,
-                proof: bincode::serialize(&proof.inner).map_err(BackendError::batch_proof)?,
+    ) -> Result<ProverOutput, BackendError> {
+        let prover_output = match format {
+            ProofFormat::Compressed => ProverOutput::ProofWithPublicValues {
+                proof_bytes: ProofBytes {
+                    prover_type: ProverType::RISC0,
+                    proof: bincode::serialize(&proof.inner)
+                        .map_err(BackendError::proof_conversion)?,
+                },
                 public_values: proof.journal.bytes,
-            }),
-            ProofFormat::Groth16 => BatchProof::ProofCalldata(Self::to_calldata(&proof)?),
+            },
+            ProofFormat::Groth16 => Self::to_groth16_proof_bytes(&proof)?,
         };
 
-        Ok(batch_proof)
+        Ok(prover_output)
     }
 
     fn execute_timed(&self, input: ProgramInput) -> Result<Duration, BackendError> {

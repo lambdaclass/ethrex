@@ -9,6 +9,11 @@ on:
     paths:
       - ".github/workflows/main_prover.yaml"
   workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag to checkout"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -27,10 +32,17 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
+    # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
+    # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: gpu
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
@@ -45,7 +57,7 @@ jobs:
 
       - name: Set up Docker Buildx
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # This step is needed because of an state bug in the GPU runner.
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
@@ -149,7 +161,7 @@ jobs:
         # if: ${{ always() && github.event_name == 'merge_group' }}
         run: |
           cd crates/l2
-          RUST_LOG=info,ethrex_prover_lib=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
+          RUST_LOG=info,ethrex_l2_prover=debug ../../target/release/ethrex l2 prover --proof-coordinators tcp://127.0.0.1:3900 --backend sp1 &
           docker logs --follow ethrex_l2 | grep -E "INFO|WARN|ERROR" & DOCKER_LOGS_L2_PID=$!
           docker logs --follow ethrex_l1 & DOCKER_LOGS_L1_PID=$!
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1

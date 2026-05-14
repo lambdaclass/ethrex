@@ -11,7 +11,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
 use ethrex_common::{
-    H256, U256,
+    H256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
 
@@ -493,7 +493,7 @@ impl RpcHandler for EstimateGasRequest {
             None => highest_gas_limit,
         };
 
-        if transaction.gas_price != 0 {
+        if !transaction.gas_price.is_zero() {
             highest_gas_limit = recap_with_account_balances(
                 highest_gas_limit,
                 &transaction,
@@ -564,9 +564,10 @@ async fn recap_with_account_balances(
         .await?
         .map(|acc| acc.balance)
         .unwrap_or_default();
-    let account_gas =
-        account_balance.saturating_sub(transaction.value) / U256::from(transaction.gas_price);
-    Ok(highest_gas_limit.min(account_gas.as_u64()))
+    let account_gas = account_balance.saturating_sub(transaction.value) / transaction.gas_price;
+    // If account_gas exceeds u64, the account can afford any gas limit.
+    let account_gas = u64::try_from(account_gas).unwrap_or(highest_gas_limit);
+    Ok(highest_gas_limit.min(account_gas))
 }
 
 fn simulate_tx(

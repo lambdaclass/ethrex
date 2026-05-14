@@ -1,7 +1,12 @@
+mod test_db;
+
 mod bls12_tests;
+mod eip7702_tests;
 mod eip7708_tests;
 mod eip7778_tests;
 mod eip7928_tests;
+mod eip8037_tests;
+mod eip8037_top_level_failure_tests;
 mod l2_fee_token_ratio_tests;
 mod l2_fee_token_tests;
 mod l2_gas_reservation_tests;
@@ -9,4 +14,5 @@ mod l2_hook_tests;
 mod l2_privileged_tx_tests;
 mod memory_tests;
 mod precompile_tests;
+mod prestate_tracer_tests;
 mod stack_tests;

@@ -88,7 +88,8 @@ pub async fn get_batch(
         get_batch_message_hashes_and_balance_diffs(store, batch, chain_id).await?;
 
     Ok(Batch {
-        number: batch_number.as_u64(),
+        number: u64::try_from(batch_number)
+            .map_err(|_| UtilsError::RetrievalError("batch_number overflows u64".to_owned()))?,
         first_block: first_block.header.number,
         last_block: last_block.header.number,
         state_root: new_state_root,

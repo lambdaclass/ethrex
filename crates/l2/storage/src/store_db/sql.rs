@@ -10,7 +10,7 @@ use ethrex_common::{
         batch::Batch, fee_config::FeeConfig,
     },
 };
-use ethrex_l2_common::prover::{BatchProof, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProverInputData, ProverOutput, ProverType};
 
 use libsql::{
     Builder, Connection, Row, Rows, Transaction, Value,
@@ -47,7 +47,7 @@ const DB_SCHEMA: [&str; 22] = [
     "CREATE TABLE IF NOT EXISTS operation_count (_id INT PRIMARY KEY, transactions INT, privileged_transactions INT, messages INT)",
     "INSERT INTO operation_count VALUES (0, 0, 0, 0) ON CONFLICT(_id) DO NOTHING",
     "CREATE TABLE IF NOT EXISTS latest_sent (_id INT PRIMARY KEY, batch INT, verified_at INT DEFAULT 0)",
-    "INSERT INTO latest_sent VALUES (0, 0, 0) ON CONFLICT(_id) DO NOTHING",
+    "INSERT INTO latest_sent (_id, batch) VALUES (0, 0) ON CONFLICT(_id) DO NOTHING",
     "CREATE TABLE IF NOT EXISTS batch_proofs (batch INT, prover_type INT, proof BLOB, PRIMARY KEY (batch, prover_type))",
     "CREATE TABLE IF NOT EXISTS block_signatures (block_hash BLOB PRIMARY KEY, signature BLOB)",
     "CREATE TABLE IF NOT EXISTS batch_signatures (batch INT PRIMARY KEY, signature BLOB)",
@@ -880,7 +880,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_type: ProverType,
-        proof: BatchProof,
+        proof: ProverOutput,
     ) -> Result<(), RollupStoreError> {
         let serialized_proof = bincode::serialize(&proof)?;
         let prover_type: u32 = prover_type.into();
@@ -904,7 +904,7 @@ impl StoreEngineRollup for SQLStore {
         &self,
         batch_number: u64,
         prover_type: ProverType,
-    ) -> Result<Option<BatchProof>, RollupStoreError> {
+    ) -> Result<Option<ProverOutput>, RollupStoreError> {
         let prover_type: u32 = prover_type.into();
         let mut rows = self
             .query(

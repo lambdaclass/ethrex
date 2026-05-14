@@ -192,7 +192,11 @@ pub fn prepare_revm_for_tx<'state>(
         None
     } else {
         Some(BlobExcessGasAndPrice::new(
-            test.env.current_excess_blob_gas.unwrap().as_u64(),
+            test.env
+                .current_excess_blob_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
             if fork >= &Fork::Prague {
                 BLOB_BASE_FEE_UPDATE_FRACTION_PRAGUE
             } else {
@@ -256,7 +260,7 @@ pub fn prepare_revm_for_tx<'state>(
                             address: RevmAddress(auth_t.address.0.into()),
                             nonce: auth_t.nonce,
                         },
-                        auth_t.v.as_u32() as u8,
+                        u8::try_from(u32::try_from(auth_t.v).unwrap()).unwrap(),
                         RevmU256::from_le_bytes(auth_t.r.to_little_endian()),
                         RevmU256::from_le_bytes(auth_t.s.to_little_endian()),
                     ))

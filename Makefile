@@ -1,7 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
-		run-hive-eels-bal-quick
+		run-hive-eels-bal-quick bench-rlp
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -148,8 +148,8 @@ run-hive-eels-rlp: ## Run hive EELS RLP tests
 run-hive-eels-blobs: ## Run hive EELS Blobs tests
 	$(MAKE) run-hive-eels EELS_SIM=ethereum/eels/execute-blobs
 
-AMSTERDAM_FIXTURES_URL ?= https://github.com/ethereum/execution-spec-tests/releases/download/bal@v5.5.1/fixtures_bal.tar.gz
-AMSTERDAM_FIXTURES_BRANCH ?= devnets/bal/3
+AMSTERDAM_FIXTURES_URL ?= $(shell cat tooling/ef_tests/blockchain/.fixtures_url_amsterdam)
+AMSTERDAM_FIXTURES_BRANCH ?= devnets/snobal/6
 run-hive-eels-amsterdam: build-image setup-hive ## 🧪 Run hive EELS Amsterdam Engine tests
 	- cd hive && ./hive --client-file $(HIVE_CLIENT_FILE) --client ethrex --sim ethereum/eels/consume-engine --sim.limit ".*fork_Amsterdam.*" --sim.parallelism $(SIM_PARALLELISM) --sim.loglevel $(SIM_LOG_LEVEL) --sim.buildarg fixtures=$(AMSTERDAM_FIXTURES_URL) --sim.buildarg branch=$(AMSTERDAM_FIXTURES_BRANCH)
 
@@ -194,6 +194,9 @@ fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 sort-genesis-files:
 	cd ./tooling/genesis && cargo run
 
+bench-rlp: ## ⚡ Bench the RLP decoder/encoder
+	cd ./crates/common/rlp && cargo bench
+
 # Using & so make calls this recipe only once per run
 mermaid-init.js mermaid.min.js &:
 	@# Required for mdbook-mermaid to work
@@ -202,10 +205,9 @@ mermaid-init.js mermaid.min.js &:
 		&& exit 1)
 
 docs-deps: ## 📦 Install dependencies for generating the documentation
-	cargo install --version 0.9.4 mdbook-katex
-	cargo install --version 0.9.1 mdbook-linkcheck2
-	cargo install --version 0.8.0 mdbook-alerts
-	cargo install --version 0.15.0 mdbook-mermaid
+	cargo install --locked --version 0.10.0-alpha mdbook-katex
+	cargo install --locked --version 0.12.0 mdbook-linkcheck2
+	cargo install --locked --version 0.17.0 mdbook-mermaid
 
 docs: mermaid-init.js mermaid.min.js ## 📚 Generate the documentation
 	mdbook build

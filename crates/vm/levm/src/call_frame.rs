@@ -88,13 +88,17 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
+        // Store each limb individually so LLVM treats them as 4 independent i64 scalars.
+        // This prevents LLVM from grouping limbs[1..3] into a [24 x i8] alloca that would
+        // then need a memset + memcpy round-trip for values with known-zero upper limbs
+        // (e.g. PUSH1-PUSH31), allowing it to emit direct zero stores instead.
         #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                value.0.as_ptr(),
-                self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                U64_PER_U256,
-            );
+            let slot = self.values.get_unchecked_mut(next_offset);
+            slot.0[0] = value.0[0];
+            slot.0[1] = value.0[1];
+            slot.0[2] = value.0[2];
+            slot.0[3] = value.0[3];
         }
         self.offset = next_offset;
 
@@ -285,6 +289,42 @@ pub struct CallFrame {
     pub should_transfer_value: bool,
     /// EIP-8037: snapshot of VM.state_gas_used at the start of this frame (for revert restoration)
     pub state_gas_used_snapshot: u64,
+    /// EIP-8037 clamp-and-spill: amount of state gas that has been credited back to this frame.
+    /// Used to compute the unrefunded local charge when clamping a refund against this frame.
+    pub state_gas_refund: u64,
+    /// EIP-8037 clamp-and-spill: snapshot of VM.state_gas_refund_pending at the start of this
+    /// frame. Restored on revert so reverted children don't contribute pending refunds.
+    pub state_gas_refund_pending_snapshot: u64,
+    /// EIP-8037 clamp-and-spill: snapshot of VM.state_gas_refund_absorbed at the start of this
+    /// frame. Restored on revert so reverted children don't contribute absorbed refunds.
+    pub state_gas_refund_absorbed_snapshot: u64,
+    /// EIP-8037: snapshot of VM.state_gas_reservoir at the start of this frame. Restored on
+    /// revert so mid-child charges and refund refills are both undone atomically.
+    pub state_gas_reservoir_snapshot: u64,
+    /// EIP-8037: snapshot of VM.state_gas_spill_outstanding at the start of this frame.
+    /// Used both to compute the frame's own outstanding delta (for the revert-side
+    /// reservoir math) and as the baseline for `credit_state_gas_refund`'s
+    /// `applied_to_spill = min(clamped, frame_outstanding_delta)` clamp.
+    pub state_gas_spill_outstanding_snapshot: u64,
+    /// EIP-8037: snapshot of VM.state_gas_credit_against_drain at the start of this frame.
+    /// Restored on revert so reverted children don't leak drain-credits into the
+    /// reservoir math at a grandparent boundary.
+    pub state_gas_credit_against_drain_snapshot: u64,
+    /// EIP-8037 PR #2689: snapshot of VM.state_gas_spill (gross monotonic) at
+    /// frame entry. Used by handle_return_call's halt branch to compute the
+    /// `credit_cancelled_spill` for reclassification. Spill that was credited
+    /// away (via `credit_state_gas_refund`'s `applied_to_spill` decrement of
+    /// `state_gas_spill_outstanding`) was permanently consumed from
+    /// gas_remaining but is no longer in spill_outstanding, so default_hook's
+    /// `regular_gas = raw - state_gas_spill + reclassified` permanently
+    /// excludes it from regular dim. Reclassify it here so block.gasUsed
+    /// matches EELS' tx_output.regular_gas_used.
+    pub state_gas_spill_snapshot: u64,
+    /// EIP-8037 PR #2689: snapshot of VM.regular_gas_reclassified at frame
+    /// entry. Used by handle_return_call's halt branch to avoid double-counting
+    /// credit-cancelled spill that was already reclassified at deeper halt
+    /// boundaries within this subtree.
+    pub regular_gas_reclassified_snapshot: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -321,9 +361,19 @@ impl CallFrameBackup {
         self.bal_checkpoint = None;
     }
 
+    /// Merges `other` into `self`, per-address. For slots present in both,
+    /// `other`'s values win. Callers MUST pass the older/more-original backup
+    /// as `other` so the truly-original value is preserved (matches the
+    /// `or_insert` semantic in `backup_storage_slot`).
     pub fn extend(&mut self, other: CallFrameBackup) {
-        self.original_account_storage_slots
-            .extend(other.original_account_storage_slots);
+        // Per-slot merge: plain HashMap::extend would let `other`'s inner slot map
+        // replace `self`'s, dropping any slots `self` had for the same address.
+        for (address, other_storage) in other.original_account_storage_slots {
+            self.original_account_storage_slots
+                .entry(address)
+                .or_default()
+                .extend(other_storage);
+        }
         self.original_accounts_info
             .extend(other.original_accounts_info);
         // Don't extend bal_checkpoint - it's specific to each call frame
@@ -380,6 +430,14 @@ impl CallFrame {
             pc: 0,
             sub_return_data: Bytes::default(),
             state_gas_used_snapshot: 0,
+            state_gas_refund: 0,
+            state_gas_refund_pending_snapshot: 0,
+            state_gas_refund_absorbed_snapshot: 0,
+            state_gas_reservoir_snapshot: 0,
+            state_gas_spill_outstanding_snapshot: 0,
+            state_gas_credit_against_drain_snapshot: 0,
+            state_gas_spill_snapshot: 0,
+            regular_gas_reclassified_snapshot: 0,
         }
     }
 

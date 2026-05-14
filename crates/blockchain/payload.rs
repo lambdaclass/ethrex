@@ -9,10 +9,13 @@ use rustc_hash::FxHashMap;
 
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
+    constants::{
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
+        TX_MAX_GAS_LIMIT_AMSTERDAM,
+    },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -23,7 +26,7 @@ use ethrex_common::{
 
 use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -458,8 +461,8 @@ impl Blockchain {
             .chain_config()
             .is_amsterdam_activated(context.payload.header.timestamp)
         {
-            #[allow(clippy::cast_possible_truncation)]
-            let post_tx_index = (context.payload.body.transactions.len() + 1) as u16;
+            let post_tx_index =
+                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
             context.vm.set_bal_index(post_tx_index);
             // Record withdrawal recipients as touched addresses per EIP-7928
             if let Some(recorder) = context.vm.db.bal_recorder_mut()
@@ -605,8 +608,15 @@ impl Blockchain {
                 &mut plain_txs
             };
 
-            // Check if we have enough gas to run the transaction
-            if context.remaining_gas < head_tx.tx.gas_limit() {
+            // Check if we have enough gas to run the transaction.
+            // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
+            // remaining_gas tracks regular gas only.
+            let tx_gas_reservation = if context.is_amsterdam {
+                head_tx.tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+            } else {
+                head_tx.tx.gas_limit()
+            };
+            if context.remaining_gas < tx_gas_reservation {
                 debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
@@ -640,61 +650,92 @@ impl Blockchain {
                 continue;
             }
 
-            // Set BAL index for this transaction (1-indexed per EIP-7928)
-            // Index is based on current transaction count + 1
-            // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
-            // filters for the previous (committed) tx, which may insert reads.
-            #[allow(clippy::cast_possible_truncation)]
-            let tx_index = (context.payload.body.transactions.len() + 1) as u16;
-            context.vm.set_bal_index(tx_index);
-
-            // EIP-7928: Lightweight tx-level checkpoint before trying the tx.
-            // If the tx is rejected, restore so only included txs affect the BAL.
-            // Taken after set_bal_index (which flushes previous tx) but before
-            // this tx's touches, so rejected txs leave no trace.
-            let bal_checkpoint = context
-                .vm
-                .db
-                .bal_recorder
-                .as_ref()
-                .map(|r| r.tx_checkpoint());
-
-            // Record tx sender and recipient for BAL
-            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
-                recorder.record_touched_address(head_tx.tx.sender());
-                if let TxKind::Call(to) = head_tx.to() {
-                    recorder.record_touched_address(to);
-                }
+            match self.apply_tx_to_payload(head_tx, context) {
+                Ok(()) => txs.shift()?,
+                Err(_) => txs.pop(),
             }
-
-            // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context) {
-                Ok(receipt) => {
-                    txs.shift()?;
-                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
-                    receipt
-                }
-                // Ignore following txs from sender
-                Err(e) => {
-                    debug!("Failed to execute transaction: {tx_hash:x}, {e}");
-                    metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
-                    // Restore BAL recorder to pre-tx state so rejected txs
-                    // don't pollute the block access list.
-                    if let (Some(recorder), Some(checkpoint)) =
-                        (context.vm.db.bal_recorder_mut(), bal_checkpoint)
-                    {
-                        recorder.tx_restore(checkpoint);
-                    }
-                    txs.pop();
-                    continue;
-                }
-            };
-            // Add transaction to block
-            debug!("Adding transaction: {} to payload", tx_hash);
-            context.payload.body.transactions.push(head_tx.into());
-            // Save receipt for hash calculation
-            context.receipts.push(receipt);
         }
+        Ok(())
+    }
+
+    /// Apply a single transaction to the in-progress payload.
+    ///
+    /// Runs the full per-tx pipeline: EIP-8037 2D inclusion check, EIP-7928
+    /// BAL index/checkpoint setup, sender/recipient recording, dispatch to
+    /// blob/plain execution, and on failure rolls the BAL recorder back so
+    /// rejected txs leave no trace. On success the tx is appended to the
+    /// payload body and the receipt to `context.receipts`.
+    ///
+    /// Caller is responsible for mempool bookkeeping (advancing or dropping
+    /// the sender's queue) — this function only mutates the payload context.
+    pub fn apply_tx_to_payload(
+        &self,
+        head: HeadTransaction,
+        context: &mut PayloadBuildContext,
+    ) -> Result<(), ChainError> {
+        let tx_hash = head.tx.hash();
+
+        // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
+        // running block totals. Run BEFORE we touch the BAL recorder so a
+        // rejected tx doesn't even produce a sender/recipient touch.
+        if context.is_amsterdam
+            && let Err(e) = check_2d_gas_allowance(
+                &head.tx,
+                Fork::Amsterdam,
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                context.payload.header.gas_limit,
+            )
+        {
+            debug!("Skipping tx {tx_hash:x}: fails 2D inclusion check: {e}");
+            return Err(e.into());
+        }
+
+        // Set BAL index for this transaction (1-indexed per EIP-7928).
+        // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
+        // filters for the previous (committed) tx, which may insert reads.
+        let tx_index =
+            u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
+        context.vm.set_bal_index(tx_index);
+
+        // EIP-7928: lightweight tx-level checkpoint before trying the tx.
+        // If the tx is rejected, restore so only included txs affect the BAL.
+        // Taken after set_bal_index (which flushes previous tx) but before
+        // this tx's touches, so rejected txs leave no trace.
+        let bal_checkpoint = context
+            .vm
+            .db
+            .bal_recorder
+            .as_ref()
+            .map(|r| r.tx_checkpoint());
+
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head.tx.sender());
+            if let TxKind::Call(to) = head.to() {
+                recorder.record_touched_address(to);
+            }
+        }
+
+        let receipt = match self.apply_transaction(&head, context) {
+            Ok(receipt) => {
+                metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head.tx_type())));
+                receipt
+            }
+            Err(e) => {
+                debug!("Failed to execute transaction: {tx_hash:x}, {e}");
+                metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
+                return Err(e);
+            }
+        };
+
+        debug!("Adding transaction: {} to payload", tx_hash);
+        context.payload.body.transactions.push(head.into());
+        context.receipts.push(receipt);
         Ok(())
     }
 
@@ -823,10 +864,46 @@ pub fn apply_plain_transaction(
     // EIP-8037 (Amsterdam+): track regular and state gas separately
     let tx_state_gas = report.state_gas_used;
     let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
-    context.block_regular_gas_used = context
+
+    // Compute new totals before committing them
+    let new_regular = context
         .block_regular_gas_used
         .saturating_add(tx_regular_gas);
-    context.block_state_gas_used = context.block_state_gas_used.saturating_add(tx_state_gas);
+    let new_state = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    // EIP-8037 (Amsterdam+): post-execution block gas overflow check
+    // Reject the transaction if adding it would cause max(regular, state) to exceed the gas limit
+    if context.is_amsterdam && new_regular.max(new_state) > context.payload.header.gas_limit {
+        // Rollback transaction state before returning error:
+        // 1. Undo DB mutations (nonce, balance, storage, etc.)
+        // 2. Revert cumulative gas counter inflation
+        // This ensures the next transaction executes against clean state.
+        context.vm.undo_last_tx()?;
+        // `cumulative_gas_spent` was bumped inside `execute_tx` above; revert it
+        // now that the tx is being rejected. Use `saturating_sub` as a defensive
+        // guard — cumulative must always dominate this tx's contribution unless
+        // some upstream bug leaks a stale value, in which case we'd rather clamp
+        // to 0 than underflow the counter.
+        debug_assert!(
+            context.cumulative_gas_spent >= report.gas_spent,
+            "cumulative_gas_spent underflow on tx rollback"
+        );
+        context.cumulative_gas_spent = context
+            .cumulative_gas_spent
+            .saturating_sub(report.gas_spent);
+
+        return Err(EvmError::Custom(format!(
+            "block gas limit exceeded (state gas overflow): \
+             max({new_regular}, {new_state}) = {} > gas_limit {}",
+            new_regular.max(new_state),
+            context.payload.header.gas_limit
+        ))
+        .into());
+    }
+
+    // Commit the new totals
+    context.block_regular_gas_used = new_regular;
+    context.block_state_gas_used = new_state;
 
     if context.is_amsterdam {
         debug!(
@@ -842,15 +919,14 @@ pub fn apply_plain_transaction(
     }
 
     // Update remaining_gas for block gas limit checks.
-    // EIP-8037 (Amsterdam+): block capacity is max(sum_regular, sum_state), so
-    // remaining_gas = gas_limit - max(block_regular, block_state). Using the sum
-    // would be overly conservative and skip transactions that actually fit.
+    // EIP-8037 (Amsterdam+): remaining_gas reflects both regular and state gas dimensions.
+    // For pre-tx heuristic checks, this ensures we reject txs when either dimension is full.
     if context.is_amsterdam {
-        context.remaining_gas = context.payload.header.gas_limit.saturating_sub(
-            context
-                .block_regular_gas_used
-                .max(context.block_state_gas_used),
-        );
+        context.remaining_gas = context
+            .payload
+            .header
+            .gas_limit
+            .saturating_sub(new_regular.max(new_state));
     } else {
         context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
     }
@@ -874,7 +950,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    pub tip: u64,
+    pub tip: U256,
 }
 
 impl std::ops::Deref for HeadTransaction {

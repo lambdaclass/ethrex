@@ -15,7 +15,7 @@ use ethrex_rpc::clients::eth::errors::{CalldataEncodeError, EthClientError};
 use ethrex_storage::error::StoreError;
 use ethrex_storage_rollup::RollupStoreError;
 use ethrex_vm::EvmError;
-use spawned_concurrency::error::GenServerError;
+use spawned_concurrency::error::ActorError;
 use tokio::task::JoinError;
 
 #[derive(Debug, thiserror::Error)]
@@ -71,7 +71,7 @@ pub enum L1WatcherError {
     #[error("{0}")]
     Custom(String),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -137,7 +137,7 @@ pub enum ProofSenderError {
     #[error("Failed to parse OnChainProposer response: {0}")]
     FailedToParseOnChainProposerResponse(String),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
     #[error("Proof Sender failed because of a rollup store error: {0}")]
     RollUpStoreError(#[from] RollupStoreError),
     #[error("Proof Sender failed to get nonce from gateway: {0}")]
@@ -185,6 +185,11 @@ pub enum ProofVerifierError {
         existing_hex: String,
         latest_hex: String,
     },
+    #[error("Missing public values for batch {batch_number} and prover type {prover_type}")]
+    MissingPublicValues {
+        batch_number: u64,
+        prover_type: ProverType,
+    },
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -222,7 +227,7 @@ pub enum BlockProducerError {
     #[error("Failed to get data from: {0}")]
     FailedToGetDataFrom(String),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
     #[error("EthClientError error: {0}")]
     EthClientError(#[from] EthClientError),
     #[error("Failed to encode calldata: {0}")]
@@ -278,7 +283,7 @@ pub enum CommitterError {
     #[error("Metrics error")]
     Metrics(#[from] MetricsError),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
     #[error("Retrieval Error: {0}")]
     RetrievalError(String),
     #[error("Conversion Error: {0}")]
@@ -324,7 +329,7 @@ pub enum MetricsGathererError {
     #[error("MetricsGatherer: {0}")]
     TryInto(String),
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -338,7 +343,7 @@ pub enum ExecutionCacheError {
 #[derive(Debug, thiserror::Error)]
 pub enum ConnectionHandlerError {
     #[error("Internal Error: {0}")]
-    InternalError(#[from] GenServerError),
+    InternalError(#[from] ActorError),
 }
 
 pub use ethrex_monitor::MonitorError;
