@@ -5,6 +5,7 @@
 ### 2026-05-14
 
 - Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
+- Reduce BAL parallel-path overhead: overlap merkleization with execution, memoize per-BAL code derivation, and move per-tx BAL validation inside the exec closure [#6639](https://github.com/lambdaclass/ethrex/pull/6639)
 
 ### 2026-04-27
 
