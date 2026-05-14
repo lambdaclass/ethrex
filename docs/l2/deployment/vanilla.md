@@ -90,7 +90,7 @@ ethrex l2 \
 > - Replace `L1_PROOF_SENDER_PRIVATE_KEY` and `L1_COMMITTER_PRIVATE_KEY` with the private keys for the `L1_PROOF_SENDER_ADDRESS` and `L1_COMMITTER_ADDRESS` from the deployment step.
 > - Replace `L1_RPC_URL` and `PATH_TO_L2_GENESIS_FILE` with the same values used in the deployment step.
 > - Tune throughput with the gas caps:
->   - The L2 block gas limit is stored on-chain in the `CommonBridge` contract (set during deployment via `--l2-gas-limit`, defaults to 30000000). The sequencer fetches this value on startup. See [Upgrades](./upgrades.md#from-v10-to-v11) for how to view and update it.
+>   - The L2 block gas limit is stored on-chain in the `CommonBridge` contract (set during deployment via `--l2-gas-limit`, defaults to 30000000). The sequencer fetches this value on startup. See [Upgrades](./upgrades.md#from-v9-to-v10) for how to view and update it.
 >   - `--committer.batch-gas-limit` (env: `ETHREX_COMMITTER_BATCH_GAS_LIMIT`): Sets the gas limit per batch sent to L1—should be at or above the block gas limit.
 >
 >   You can use either the environment variables or the flags to configure these values.

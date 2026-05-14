@@ -7,12 +7,6 @@ title = "Ethrex"
 [rust]
 edition = "2024"
 
-# To render GitHub style alerts
-# https://github.com/lambdalisue/rs-mdbook-alerts
-[preprocessor.alerts]
-# This is to avoid warnings about incomplete links on each alert
-renderers = ["html", "linkcheck2"]
-
 # To render Mermaid diagrams
 # https://github.com/badboy/mdbook-mermaid
 [preprocessor.mermaid]
@@ -33,6 +27,7 @@ additional-js = ["mermaid.min.js", "mermaid-init.js"]
 
 # keep README links working in mdBook output
 [output.html.redirect]
+"/ROADMAP.html" = "/roadmap.html"
 "/getting-started/README.html" = "/getting-started/index.html"
 "/getting-started/installation/README.html" = "/getting-started/installation/index.html"
 "/l1/running/README.html" = "/l1/running/index.html"

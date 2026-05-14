@@ -32,10 +32,15 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
+    # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
+    # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: gpu
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
       - name: Setup Rust Environment
@@ -52,7 +57,7 @@ jobs:
 
       - name: Set up Docker Buildx
         # if: ${{ always() && github.event_name == 'merge_group' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       # This step is needed because of an state bug in the GPU runner.
       # Issue to fix this: https://github.com/lambdaclass/ethrex/pull/2741.
