@@ -129,14 +129,16 @@ impl IterativeLookup {
         self.queries_in_flight = self.queries_in_flight.saturating_sub(1);
     }
 
-    /// Returns true if the lookup is finished:
-    /// - No queries in flight AND no unqueried entries in the result set, OR
+    /// Returns true if the lookup has converged:
+    /// - All entries in the result set have been queried (don't wait for
+    ///   stragglers — late responses still get processed via handle_neighbors
+    ///   and feed into the connection pool / next lookup), OR
     /// - The lookup has timed out.
     pub fn is_finished(&self) -> bool {
         if self.started_at.elapsed() >= LOOKUP_TIMEOUT {
             return true;
         }
-        self.queries_in_flight == 0 && !self.result.iter().any(|e| !e.queried)
+        !self.result.iter().any(|e| !e.queried)
     }
 }
 
@@ -188,7 +190,7 @@ mod tests {
     }
 
     #[test]
-    fn is_finished_when_all_queried_and_no_inflight() {
+    fn is_finished_when_all_queried() {
         let target = H256::zero();
         let seeds: Vec<_> = (1..=2).map(|i| make_node(i)).collect();
         let mut lookup = IterativeLookup::new(target, seeds);
@@ -196,11 +198,7 @@ mod tests {
         assert!(!lookup.is_finished());
 
         let _ = lookup.next_to_query(10);
-        // Still not finished because queries are in flight
-        assert!(!lookup.is_finished());
-
-        lookup.record_response();
-        lookup.record_response();
+        // Finished once all entries are queried (don't wait for in-flight)
         assert!(lookup.is_finished());
     }
 }

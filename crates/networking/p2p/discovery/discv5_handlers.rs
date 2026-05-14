@@ -284,13 +284,15 @@ impl DiscoveryServer {
             None => return Ok(()),
         };
 
-        // If there's a finished lookup, clear it
+        // If there's a finished lookup, clear it and let the timer
+        // control when the next one starts (easing interval).
         if discv5
             .current_lookup
             .as_ref()
             .is_some_and(|l| l.is_finished())
         {
             discv5.current_lookup = None;
+            return Ok(());
         }
 
         // If no active lookup, start a new one
