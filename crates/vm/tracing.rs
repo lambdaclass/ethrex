@@ -1,6 +1,6 @@
 use crate::backends::levm::LEVM;
 use ethrex_common::tracing::{CallTrace, PrestateResult};
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, BlockHeader, GenericTransaction};
 
 use crate::{Evm, EvmError};
 
@@ -78,6 +78,44 @@ impl Evm {
             stop_index,
             self.vm_type,
             self.crypto.as_ref(),
+        )
+    }
+
+    /// Trace a synthetic call (geth `debug_traceCall`) with the callTracer.
+    pub fn trace_call_from_generic(
+        &mut self,
+        tx: &GenericTransaction,
+        block_header: &BlockHeader,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<CallTrace, EvmError> {
+        LEVM::trace_call_from_generic(
+            tx,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            only_top_call,
+            with_log,
+        )
+    }
+
+    /// Trace a synthetic call (geth `debug_traceCall`) with the prestateTracer.
+    pub fn prestate_call_from_generic(
+        &mut self,
+        tx: &GenericTransaction,
+        block_header: &BlockHeader,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, EvmError> {
+        LEVM::prestate_call_from_generic(
+            tx,
+            block_header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            diff_mode,
+            include_empty,
         )
     }
 }

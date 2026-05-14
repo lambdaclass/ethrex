@@ -2725,7 +2725,7 @@ pub fn calculate_gas_price_for_tx(
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
-fn adjust_disabled_base_fee(env: &mut Environment) {
+pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
     }
@@ -2752,7 +2752,7 @@ fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
     vm_type
 }
 
-fn env_from_generic(
+pub(crate) fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
@@ -2812,14 +2812,11 @@ fn env_from_generic(
     })
 }
 
-fn vm_from_generic<'a>(
-    tx: &GenericTransaction,
-    env: Environment,
-    db: &'a mut GeneralizedDatabase,
-    vm_type: VMType,
-    crypto: &'a dyn Crypto,
-) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
+/// Build a synthetic `Transaction` from a `GenericTransaction` for simulation paths.
+/// Splits out the conversion so callers that want to attach a custom tracer can
+/// reuse it.
+pub(crate) fn synthetic_tx_from_generic(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
@@ -2851,8 +2848,17 @@ fn vm_from_generic<'a>(
                 .collect(),
             ..Default::default()
         }),
-    };
+    })
+}
 
+fn vm_from_generic<'a>(
+    tx: &GenericTransaction,
+    env: Environment,
+    db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &'a dyn Crypto,
+) -> Result<VM<'a>, VMError> {
+    let tx = synthetic_tx_from_generic(tx)?;
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
 }

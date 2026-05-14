@@ -9,11 +9,16 @@ use crate::{
     },
     utils::RpcErr,
 };
-use ethrex_blockchain::{Blockchain, vm::StoreVmDatabase};
+use ethrex_blockchain::{
+    Blockchain,
+    vm::{OverlaidVmDatabase, StoreVmDatabase},
+};
 use ethrex_common::{
     H256,
     types::{AccessListEntry, BlockHash, BlockHeader, BlockNumber, GenericTransaction, TxKind},
 };
+
+use crate::types::{block_override::BlockOverrideSet, state_override::StateOverrideSet};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
@@ -28,9 +33,14 @@ pub const ESTIMATE_ERROR_RATIO: f64 = 0.015;
 pub const CALL_STIPEND: u64 = 2_300; // Free gas given at beginning of call.
 pub const TRANSACTION_GAS: u64 = 21_000; // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
 
+#[derive(Default)]
 pub struct CallRequest {
-    transaction: GenericTransaction,
-    block: Option<BlockIdentifierOrHash>,
+    pub transaction: GenericTransaction,
+    pub block: Option<BlockIdentifierOrHash>,
+    /// Optional 3rd JSON-RPC param: geth State Override Set.
+    pub state_overrides: Option<StateOverrideSet>,
+    /// Optional 4th JSON-RPC param: geth Block Override Set.
+    pub block_overrides: Option<BlockOverrideSet>,
 }
 
 pub struct GetTransactionByBlockNumberAndIndexRequest {
@@ -51,13 +61,22 @@ pub struct GetTransactionReceiptRequest {
     pub transaction_hash: H256,
 }
 
+#[derive(Default)]
 pub struct CreateAccessListRequest {
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
+    /// Optional 3rd JSON-RPC param: geth State Override Set. Geth does not accept
+    /// a Block Override Set on this endpoint; a 4th param is rejected at parse time.
+    pub state_overrides: Option<StateOverrideSet>,
 }
+#[derive(Default)]
 pub struct EstimateGasRequest {
     pub transaction: GenericTransaction,
     pub block: Option<BlockIdentifier>,
+    /// Optional 3rd JSON-RPC param: geth State Override Set.
+    pub state_overrides: Option<StateOverrideSet>,
+    /// Optional 4th JSON-RPC param: geth Block Override Set.
+    pub block_overrides: Option<BlockOverrideSet>,
 }
 
 pub struct GetRawTransaction {
@@ -82,9 +101,9 @@ impl RpcHandler for CallRequest {
         if params.is_empty() {
             return Err(RpcErr::BadParams("No params provided".to_owned()));
         }
-        if params.len() > 2 {
+        if params.len() > 4 {
             return Err(RpcErr::BadParams(format!(
-                "Expected one or two params and {} were provided",
+                "Expected one to four params and {} were provided",
                 params.len()
             )));
         }
@@ -93,9 +112,19 @@ impl RpcHandler for CallRequest {
             Some(value) => Some(BlockIdentifierOrHash::parse(value.clone(), 1)?),
             None => None,
         };
+        let state_overrides = match params.get(2) {
+            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            _ => None,
+        };
+        let block_overrides = match params.get(3) {
+            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            _ => None,
+        };
         Ok(CallRequest {
             transaction: serde_json::from_value(params[0].clone())?,
             block,
+            state_overrides,
+            block_overrides,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -109,12 +138,15 @@ impl RpcHandler for CallRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
-        // Run transaction
-        let result = simulate_tx(
+        let real_head_number = context.storage.get_latest_block_number().await?;
+        let result = simulate_tx_with_overrides(
             &self.transaction,
             &header,
             context.storage,
             context.blockchain,
+            self.state_overrides.clone(),
+            self.block_overrides.clone(),
+            real_head_number,
         )?;
         serde_json::to_value(format!("0x{:#x}", result.output()))
             .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -320,9 +352,9 @@ impl RpcHandler for CreateAccessListRequest {
         if params.is_empty() {
             return Err(RpcErr::BadParams("No params provided".to_owned()));
         }
-        if params.len() > 2 {
+        if params.len() > 3 {
             return Err(RpcErr::BadParams(format!(
-                "Expected one or two params and {} were provided",
+                "Expected one to three params and {} were provided",
                 params.len()
             )));
         }
@@ -331,9 +363,14 @@ impl RpcHandler for CreateAccessListRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
+        let state_overrides = match params.get(2) {
+            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            _ => None,
+        };
         Ok(CreateAccessListRequest {
             transaction: serde_json::from_value(params[0].clone())?,
             block,
+            state_overrides,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -348,12 +385,23 @@ impl RpcHandler for CreateAccessListRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+        let real_head_number = context.storage.get_latest_block_number().await?;
 
-        let vm_db = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
-        let mut vm = context.blockchain.new_evm(vm_db)?;
-
-        // Run transaction and obtain access list
-        let (gas_used, access_list, error) = vm.create_access_list(&self.transaction, &header)?;
+        // Build the Evm with optional override wrapper. createAccessList does not
+        // accept a Block Override Set, so the header is always the real one.
+        let inner = StoreVmDatabase::new(context.storage.clone(), header.clone())?;
+        let (gas_used, access_list, error) = match self.state_overrides.clone() {
+            Some(set) if !set.is_empty() => {
+                let wrapper =
+                    OverlaidVmDatabase::new(inner, set.into_overrides(), real_head_number);
+                let mut vm = context.blockchain.new_evm(wrapper)?;
+                vm.create_access_list(&self.transaction, &header)?
+            }
+            _ => {
+                let mut vm = context.blockchain.new_evm(inner)?;
+                vm.create_access_list(&self.transaction, &header)?
+            }
+        };
         let result = AccessListResult {
             access_list: access_list
                 .into_iter()
@@ -420,9 +468,9 @@ impl RpcHandler for EstimateGasRequest {
         if params.is_empty() {
             return Err(RpcErr::BadParams("No params provided".to_owned()));
         }
-        if params.len() > 2 {
+        if params.len() > 4 {
             return Err(RpcErr::BadParams(format!(
-                "Expected one or two params and {} were provided",
+                "Expected one to four params and {} were provided",
                 params.len()
             )));
         }
@@ -431,9 +479,19 @@ impl RpcHandler for EstimateGasRequest {
             Some(value) => Some(BlockIdentifier::parse(value.clone(), 1)?),
             None => None,
         };
+        let state_overrides = match params.get(2) {
+            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            _ => None,
+        };
+        let block_overrides = match params.get(3) {
+            Some(value) if !value.is_null() => Some(serde_json::from_value(value.clone())?),
+            _ => None,
+        };
         Ok(EstimateGasRequest {
             transaction: serde_json::from_value(params[0].clone())?,
             block,
+            state_overrides,
+            block_overrides,
         })
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
@@ -448,6 +506,7 @@ impl RpcHandler for EstimateGasRequest {
             // Block not found
             _ => return Ok(Value::Null),
         };
+        let real_head_number = storage.get_latest_block_number().await?;
 
         let current_fork = chain_config.fork(block_header.timestamp);
 
@@ -465,7 +524,11 @@ impl RpcHandler for EstimateGasRequest {
         };
 
         // If the transaction is a plain value transfer, short circuit estimation.
-        if let TxKind::Call(address) = transaction.to {
+        // Skip the short-circuit when overrides are present: the override may add
+        // code at the destination, in which case 21000 gas isn't enough.
+        let has_overrides = self.state_overrides.as_ref().is_some_and(|s| !s.is_empty())
+            || self.block_overrides.as_ref().is_some_and(|b| !b.is_empty());
+        if !has_overrides && let TxKind::Call(address) = transaction.to {
             let account_info = storage
                 .get_account_info(block_header.number, address)
                 .await?;
@@ -506,11 +569,14 @@ impl RpcHandler for EstimateGasRequest {
         // Check whether the execution is possible
         let mut transaction = transaction.clone();
         transaction.gas = Some(highest_gas_limit);
-        let result = simulate_tx(
+        let result = simulate_tx_with_overrides(
             &transaction,
             &block_header,
             storage.clone(),
             blockchain.clone(),
+            self.state_overrides.clone(),
+            self.block_overrides.clone(),
+            real_head_number,
         )?;
 
         let gas_used = result.gas_used();
@@ -534,11 +600,14 @@ impl RpcHandler for EstimateGasRequest {
             }
             transaction.gas = Some(middle_gas_limit);
 
-            let result = simulate_tx(
+            let result = simulate_tx_with_overrides(
                 &transaction,
                 &block_header,
                 storage.clone(),
                 blockchain.clone(),
+                self.state_overrides.clone(),
+                self.block_overrides.clone(),
+                real_head_number,
             );
             if let Ok(ExecutionResult::Success { .. }) = result {
                 highest_gas_limit = middle_gas_limit;
@@ -576,10 +645,61 @@ fn simulate_tx(
     storage: Store,
     blockchain: Arc<Blockchain>,
 ) -> Result<ExecutionResult, RpcErr> {
-    let vm_db = StoreVmDatabase::new(storage, block_header.clone())?;
-    let mut vm = blockchain.new_evm(vm_db)?;
+    // No overrides => `real_head_number` is unused inside the wrapper, since
+    // we don't build one. Passing 0 keeps the call sites uniform.
+    simulate_tx_with_overrides(
+        transaction,
+        block_header,
+        storage,
+        blockchain,
+        None,
+        None,
+        0,
+    )
+}
 
-    match vm.simulate_tx_from_generic(transaction, block_header)? {
+/// Override-aware variant of [`simulate_tx`].
+///
+/// `state_overrides` (geth State Override Set) wraps the historical database in
+/// [`OverlaidVmDatabase`] so per-account balance/nonce/code/storage are observed
+/// instead of the real values. `block_overrides` (geth Block Override Set)
+/// synthesizes a header with the requested fields replaced.
+///
+/// `real_head_number` is the height of the real chain tip; the wrapper returns
+/// zero for `BLOCKHASH(n)` when `n > real_head_number`, matching geth's behavior
+/// when the synthetic block sits past the tip.
+pub(crate) fn simulate_tx_with_overrides(
+    transaction: &GenericTransaction,
+    real_header: &BlockHeader,
+    storage: Store,
+    blockchain: Arc<Blockchain>,
+    state_overrides: Option<StateOverrideSet>,
+    block_overrides: Option<BlockOverrideSet>,
+    real_head_number: BlockNumber,
+) -> Result<ExecutionResult, RpcErr> {
+    let chain_config = storage.get_chain_config();
+    let effective_header = match &block_overrides {
+        Some(bo) if !bo.is_empty() => bo.apply_to(real_header.clone(), &chain_config),
+        _ => real_header.clone(),
+    };
+
+    // Build the inner DB from the REAL header so state_root and block-hash
+    // ancestor walks resolve against actual chain state. The EVM env is built
+    // from the SYNTHETIC header so number/timestamp/etc. reflect the override.
+    let inner = StoreVmDatabase::new(storage, real_header.clone())?;
+    let raw_result = match state_overrides {
+        Some(set) if !set.is_empty() => {
+            let wrapper = OverlaidVmDatabase::new(inner, set.into_overrides(), real_head_number);
+            let mut vm = blockchain.new_evm(wrapper)?;
+            vm.simulate_tx_from_generic(transaction, &effective_header)?
+        }
+        _ => {
+            let mut vm = blockchain.new_evm(inner)?;
+            vm.simulate_tx_from_generic(transaction, &effective_header)?
+        }
+    };
+
+    match raw_result {
         ExecutionResult::Revert {
             gas_used: _,
             output,
@@ -641,4 +761,99 @@ fn get_transaction_data(rpc_req_params: &Option<Vec<Value>>) -> Result<Vec<u8>, 
         .strip_prefix("0x")
         .ok_or(RpcErr::BadParams("Params are note 0x prefixed".to_owned()))?;
     hex::decode(str_data).map_err(|error| RpcErr::BadParams(error.to_string()))
+}
+
+#[cfg(test)]
+mod override_parse_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_tx() -> Value {
+        json!({
+            "from": "0x000000000000000000000000000000000000beef",
+            "to": "0x000000000000000000000000000000000000cafe",
+            "data": "0x"
+        })
+    }
+
+    #[test]
+    fn call_request_accepts_state_override_3rd_param() {
+        let params = Some(vec![
+            make_tx(),
+            json!("latest"),
+            json!({
+                "0x000000000000000000000000000000000000beef": {"balance": "0xff"}
+            }),
+        ]);
+        let req = CallRequest::parse(&params).unwrap();
+        assert!(req.state_overrides.is_some());
+        assert!(req.block_overrides.is_none());
+    }
+
+    #[test]
+    fn call_request_accepts_block_override_4th_param() {
+        let params = Some(vec![
+            make_tx(),
+            json!("latest"),
+            json!({}),
+            json!({"number": "0x1234"}),
+        ]);
+        let req = CallRequest::parse(&params).unwrap();
+        assert_eq!(req.block_overrides.as_ref().unwrap().number, Some(0x1234));
+    }
+
+    #[test]
+    fn call_request_rejects_5_params() {
+        let params = Some(vec![
+            make_tx(),
+            json!("latest"),
+            json!({}),
+            json!({}),
+            json!(null),
+        ]);
+        match CallRequest::parse(&params) {
+            Err(e) => assert!(format!("{e}").contains("Expected"), "{e}"),
+            Ok(_) => panic!("expected BadParams"),
+        }
+    }
+
+    #[test]
+    fn estimate_gas_request_accepts_4_params() {
+        let params = Some(vec![
+            make_tx(),
+            json!("latest"),
+            json!({}),
+            json!({"time": "0x65000000"}),
+        ]);
+        let req = EstimateGasRequest::parse(&params).unwrap();
+        assert!(req.block_overrides.is_some());
+    }
+
+    #[test]
+    fn create_access_list_accepts_3_params() {
+        let params = Some(vec![
+            make_tx(),
+            json!("latest"),
+            json!({"0x000000000000000000000000000000000000beef": {"balance": "0x1"}}),
+        ]);
+        let req = CreateAccessListRequest::parse(&params).unwrap();
+        assert!(req.state_overrides.is_some());
+    }
+
+    #[test]
+    fn create_access_list_rejects_4_params() {
+        let params = Some(vec![make_tx(), json!("latest"), json!({}), json!({})]);
+        match CreateAccessListRequest::parse(&params) {
+            Err(e) => assert!(format!("{e}").contains("Expected"), "{e}"),
+            Ok(_) => panic!("expected BadParams"),
+        }
+    }
+
+    #[test]
+    fn null_state_override_param_is_no_op() {
+        let params = Some(vec![make_tx(), json!("latest"), json!(null), json!(null)]);
+        let req = CallRequest::parse(&params).unwrap();
+        assert!(req.state_overrides.is_none());
+        assert!(req.block_overrides.is_none());
+    }
 }

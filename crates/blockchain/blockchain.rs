@@ -90,7 +90,7 @@ use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::Mempool;
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -2622,7 +2622,7 @@ impl Blockchain {
         Ok(result)
     }
 
-    pub fn new_evm(&self, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+    pub fn new_evm<D: VmDatabase + 'static>(&self, vm_db: D) -> Result<Evm, EvmError> {
         new_evm(&self.options.r#type, vm_db)
     }
 
@@ -3108,7 +3108,10 @@ fn handle_subtrie(
     Ok(())
 }
 
-pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Result<Evm, EvmError> {
+pub fn new_evm<D: VmDatabase + 'static>(
+    blockchain_type: &BlockchainType,
+    vm_db: D,
+) -> Result<Evm, EvmError> {
     let evm = match blockchain_type {
         BlockchainType::L1 => Evm::new_for_l1(vm_db, Arc::new(NativeCrypto)),
         BlockchainType::L2(l2_config) => {
