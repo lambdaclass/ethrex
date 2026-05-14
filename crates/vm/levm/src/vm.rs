@@ -581,6 +581,8 @@ impl<'a> VM<'a> {
         self.current_call_frame.call_frame_backup.clear();
 
         // Empty bytecode would only execute STOP; skip the dispatch loop.
+        // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
+        // fail past this point and has no inner calls, so there's nothing to roll back.
         if self.is_simple_transfer_fast_path() {
             #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
             let gas_used = self
@@ -621,7 +623,7 @@ impl<'a> VM<'a> {
     }
 
     /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into
-    /// `bytecode`. Inspired by Nethermind's `IsSimpleTransferFastPathCandidate`.
+    /// `bytecode`.
     #[inline(always)]
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
