@@ -779,7 +779,6 @@ dependencies = [
  "libssz-types",
  "lru",
  "once_cell",
- "rayon",
  "rkyv",
  "rustc-hash",
  "secp256k1",
