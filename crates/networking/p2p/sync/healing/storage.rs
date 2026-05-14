@@ -668,6 +668,15 @@ fn get_initial_downloads(
             if account.storage_root == *EMPTY_TRIE_HASH {
                 return None;
             }
+            // Skip accounts whose current storage_root is already present locally.
+            // `healed_accounts` is append-only across cycles, so without this
+            // filter each cycle would re-fetch every previously-healed root.
+            if store
+                .has_storage_root(*acc_path, account.storage_root)
+                .unwrap_or(false)
+            {
+                return None;
+            }
 
             Some(DepthOrderedRequest(NodeRequest {
                 acc_path: Nibbles::from_bytes(&acc_path.0),
