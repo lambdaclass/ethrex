@@ -53,7 +53,6 @@ use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
-use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::utils::intrinsic_gas_dimensions;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
@@ -2245,7 +2244,7 @@ impl LEVM {
                 .unwrap_or(U256::zero()),
             chain_id: chain_config.chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+            base_blob_fee_per_gas: db.get_base_blob_fee(block_excess_blob_gas, &config)?,
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
@@ -2794,7 +2793,7 @@ fn env_from_generic(
         slot_number,
         chain_id: chain_config.chain_id.into(),
         base_fee_per_gas: header.base_fee_per_gas.unwrap_or_default().into(),
-        base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+        base_blob_fee_per_gas: db.get_base_blob_fee(block_excess_blob_gas, &config)?,
         gas_price,
         block_excess_blob_gas,
         block_blob_gas_used: header.blob_gas_used,

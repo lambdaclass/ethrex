@@ -147,10 +147,14 @@ pub fn get_max_blob_gas_price(
     Ok(max_blob_gas_cost)
 }
 /// Calculate the actual blob gas cost.
+///
+/// `base_fee_per_blob_gas` is the per-block constant; the caller is responsible
+/// for sourcing it (typically via `vm.env.base_blob_fee_per_gas`, which
+/// `setup_env` populates through the memoized `GeneralizedDatabase::get_base_blob_fee`).
+/// This avoids re-running `fake_exponential` per transaction.
 pub fn calculate_blob_gas_cost(
     tx_blob_hashes: &[H256],
-    block_excess_blob_gas: Option<u64>,
-    evm_config: &EVMConfig,
+    base_fee_per_blob_gas: U256,
 ) -> Result<U256, VMError> {
     let blobhash_amount: u64 = tx_blob_hashes
         .len()
@@ -160,8 +164,6 @@ pub fn calculate_blob_gas_cost(
     let blob_gas_used: u64 = blobhash_amount
         .checked_mul(BLOB_GAS_PER_BLOB)
         .unwrap_or_default();
-
-    let base_fee_per_blob_gas = get_base_fee_per_blob_gas(block_excess_blob_gas, evm_config)?;
 
     let blob_gas_used: U256 = blob_gas_used.into();
     let blob_fee: U256 = blob_gas_used

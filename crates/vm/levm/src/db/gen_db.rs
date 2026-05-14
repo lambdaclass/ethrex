@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::sync::Arc;
 
 use ethrex_common::Address;
@@ -7,12 +8,15 @@ use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
 use ethrex_common::types::block_access_list::{BlockAccessList, BlockAccessListRecorder};
+use ethrex_common::types::fake_exponential;
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
+use crate::EVMConfig;
 use crate::account::AccountStatus;
 use crate::account::LevmAccount;
 use crate::call_frame::CallFrameBackup;
+use crate::constants::MIN_BASE_FEE_PER_BLOB_GAS;
 use crate::errors::InternalError;
 use crate::errors::VMError;
 use crate::utils::account_to_levm_account;
@@ -45,6 +49,13 @@ pub struct GeneralizedDatabase {
     /// Optional tracker for BAL validation: records addresses accessed via load_account.
     /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
     pub accessed_accounts: Option<FxHashSet<Address>>,
+    /// Memoized blob base fee for the block currently being executed against this DB.
+    /// Keyed by `(block_excess_blob_gas, base_fee_update_fraction)` — both per-block
+    /// constants — so a stale entry from a prior block can never be served: any change
+    /// in either value forces a recomputation. One `GeneralizedDatabase` typically
+    /// processes all txs in a block (or all txs in a sender group during parallel
+    /// validation), so the cache turns N `fake_exponential` calls per block into 1.
+    blob_base_fee_cache: Cell<Option<(Option<u64>, u64, U256)>>,
 }
 
 impl GeneralizedDatabase {
@@ -60,6 +71,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
+            blob_base_fee_cache: Cell::new(None),
         }
     }
 
@@ -92,7 +104,40 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: true,
             accessed_accounts: None,
+            blob_base_fee_cache: Cell::new(None),
         }
+    }
+
+    /// Returns the blob base fee for the given block, computing it on the first
+    /// call and reusing the result for subsequent calls on the same block.
+    /// Avoids rerunning `fake_exponential` per transaction.
+    pub fn get_base_blob_fee(
+        &self,
+        block_excess_blob_gas: Option<u64>,
+        evm_config: &EVMConfig,
+    ) -> Result<U256, VMError> {
+        let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
+
+        if let Some((cached_excess, cached_frac, cached_value)) = self.blob_base_fee_cache.get()
+            && cached_excess == block_excess_blob_gas
+            && cached_frac == base_fee_update_fraction
+        {
+            return Ok(cached_value);
+        }
+
+        let value = fake_exponential(
+            MIN_BASE_FEE_PER_BLOB_GAS.into(),
+            block_excess_blob_gas.unwrap_or_default().into(),
+            base_fee_update_fraction,
+        )
+        .map_err(|err| VMError::Internal(InternalError::FakeExponentialError(err)))?;
+
+        self.blob_base_fee_cache.set(Some((
+            block_excess_blob_gas,
+            base_fee_update_fraction,
+            value,
+        )));
+        Ok(value)
     }
 
     /// Enables BAL recording for EIP-7928.
@@ -150,6 +195,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
+            blob_base_fee_cache: Cell::new(None),
         }
     }
 
