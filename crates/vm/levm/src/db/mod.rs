@@ -3,25 +3,23 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, AccountUpdate, BlockHash, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
-use lru::LruCache;
+use moka::sync::Cache as MokaCache;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxBuildHasher, FxHashSet};
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 
 pub mod gen_db;
 
 // Bounded so the cache survives cross-block reuse without unbounded growth.
-#[allow(clippy::unwrap_used)]
-const ACCOUNT_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(65_536).unwrap();
-#[allow(clippy::unwrap_used)]
-const STORAGE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(262_144).unwrap();
-#[allow(clippy::unwrap_used)]
-const CODE_CACHE_CAP: NonZeroUsize = NonZeroUsize::new(8_192).unwrap();
+// moka uses TinyLFU admission + LRU eviction; reads are lock-free and update
+// access recency without taking a write lock.
+const ACCOUNT_CACHE_CAP: u64 = 65_536;
+const STORAGE_CACHE_CAP: u64 = 262_144;
+const CODE_CACHE_CAP: u64 = 8_192;
 
-type AccountCache = LruCache<Address, AccountState, FxBuildHasher>;
-type StorageCache = LruCache<(Address, H256), U256, FxBuildHasher>;
-type CodeCache = LruCache<H256, Code, FxBuildHasher>;
+type AccountCache = MokaCache<Address, AccountState, FxBuildHasher>;
+type StorageCache = MokaCache<(Address, H256), U256, FxBuildHasher>;
+type CodeCache = MokaCache<H256, Code, FxBuildHasher>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -59,9 +57,9 @@ pub trait Database: Send + Sync {
 pub struct CachingDatabase {
     /// `None` until `set_inner` is called. Reads error loudly in that state.
     inner: RwLock<Option<Arc<dyn Database>>>,
-    accounts: RwLock<AccountCache>,
-    storage: RwLock<StorageCache>,
-    code: RwLock<CodeCache>,
+    accounts: AccountCache,
+    storage: StorageCache,
+    code: CodeCache,
     /// Shared precompile result cache (warmer populates, executor reuses).
     /// `None` when the cache is disabled via `BlockchainOptions::precompile_cache_enabled = false`.
     precompile_cache: Option<PrecompileCache>,
@@ -74,13 +72,23 @@ impl core::fmt::Debug for CachingDatabase {
     }
 }
 
+fn build_cache<K, V>(cap: u64) -> MokaCache<K, V, FxBuildHasher>
+where
+    K: std::hash::Hash + Eq + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+{
+    MokaCache::builder()
+        .max_capacity(cap)
+        .build_with_hasher(FxBuildHasher)
+}
+
 impl CachingDatabase {
     pub fn new(precompile_cache_enabled: bool) -> Self {
         Self {
             inner: RwLock::new(None),
-            accounts: RwLock::new(LruCache::with_hasher(ACCOUNT_CACHE_CAP, FxBuildHasher)),
-            storage: RwLock::new(LruCache::with_hasher(STORAGE_CACHE_CAP, FxBuildHasher)),
-            code: RwLock::new(LruCache::with_hasher(CODE_CACHE_CAP, FxBuildHasher)),
+            accounts: build_cache(ACCOUNT_CACHE_CAP),
+            storage: build_cache(STORAGE_CACHE_CAP),
+            code: build_cache(CODE_CACHE_CAP),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
@@ -113,55 +121,28 @@ impl CachingDatabase {
     /// `chain_config` are intentionally retained: precompile outputs are
     /// input-deterministic and `ChainConfig` is constant for the process.
     pub fn clear(&self) {
-        self.accounts
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
-        self.storage
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .clear();
-        self.code.write().unwrap_or_else(|p| p.into_inner()).clear();
+        self.accounts.invalidate_all();
+        self.storage.invalidate_all();
+        self.code.invalidate_all();
     }
 }
 
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        // peek (not get) so a read lock is enough; we don't promote on hit.
-        if let Some(state) = self
-            .accounts
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .peek(&address)
-            .copied()
-        {
+        if let Some(state) = self.accounts.get(&address) {
             return Ok(state);
         }
-
         let state = self.current_inner()?.get_account_state(address)?;
-        self.accounts
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .put(address, state);
+        self.accounts.insert(address, state);
         Ok(state)
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        if let Some(value) = self
-            .storage
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .peek(&(address, key))
-            .copied()
-        {
+        if let Some(value) = self.storage.get(&(address, key)) {
             return Ok(value);
         }
-
         let value = self.current_inner()?.get_storage_value(address, key)?;
-        self.storage
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .put((address, key), value);
+        self.storage.insert((address, key), value);
         Ok(value)
     }
 
@@ -181,21 +162,11 @@ impl Database for CachingDatabase {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
-        if let Some(code) = self
-            .code
-            .read()
-            .unwrap_or_else(|p| p.into_inner())
-            .peek(&code_hash)
-            .cloned()
-        {
+        if let Some(code) = self.code.get(&code_hash) {
             return Ok(code);
         }
-
         let code = self.current_inner()?.get_account_code(code_hash)?;
-        self.code
-            .write()
-            .unwrap_or_else(|p| p.into_inner())
-            .put(code_hash, code.clone());
+        self.code.insert(code_hash, code.clone());
         Ok(code)
     }
 
@@ -214,11 +185,8 @@ impl Database for CachingDatabase {
             .par_iter()
             .map(|&addr| inner.get_account_state(addr).map(|s| (addr, s)))
             .collect::<Result<_, _>>()?;
-        let mut cache = self.accounts.write().unwrap_or_else(|p| p.into_inner());
         for (addr, state) in fetched {
-            if !cache.contains(&addr) {
-                cache.put(addr, state);
-            }
+            self.accounts.entry(addr).or_insert(state);
         }
         Ok(())
     }
@@ -229,11 +197,8 @@ impl Database for CachingDatabase {
             .par_iter()
             .map(|&(addr, key)| inner.get_storage_value(addr, key).map(|v| ((addr, key), v)))
             .collect::<Result<_, _>>()?;
-        let mut cache = self.storage.write().unwrap_or_else(|p| p.into_inner());
-        for (key, value) in fetched {
-            if !cache.contains(&key) {
-                cache.put(key, value);
-            }
+        for (k, value) in fetched {
+            self.storage.entry(k).or_insert(value);
         }
         Ok(())
     }
@@ -351,24 +316,16 @@ impl CrossBlockCache {
         block_hash: BlockHash,
         account_updates: &[AccountUpdate],
     ) {
-        let mut accounts = self
-            .cache
-            .accounts
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
-        let mut storage = self
-            .cache
-            .storage
-            .write()
-            .unwrap_or_else(|p| p.into_inner());
-        let mut code = self.cache.code.write().unwrap_or_else(|p| p.into_inner());
+        let accounts = &self.cache.accounts;
+        let storage = &self.cache.storage;
+        let code = &self.cache.code;
 
         // Wipe path is cold on Cancun+ (EIP-6780 prevents cross-tx storage
         // wipes); kept for pre-Cancun replay and L2s on older forks.
         let mut storage_wiped: FxHashSet<Address> = FxHashSet::default();
 
         for update in account_updates {
-            accounts.pop(&update.address);
+            accounts.invalidate(&update.address);
 
             if update.removed || update.removed_storage {
                 storage_wiped.insert(update.address);
@@ -376,22 +333,22 @@ impl CrossBlockCache {
             }
 
             for (slot, value) in &update.added_storage {
-                storage.put((update.address, *slot), *value);
+                storage.insert((update.address, *slot), *value);
             }
 
             if let Some(c) = &update.code {
-                code.put(c.hash, c.clone());
+                code.insert(c.hash, c.clone());
             }
         }
 
         if !storage_wiped.is_empty() {
-            // LruCache lacks `retain`; collect-then-pop is unavoidable.
+            // moka's iter yields `Arc<K>`; deref to copy the tuple key.
             let to_remove: Vec<(Address, H256)> = storage
                 .iter()
                 .filter_map(|(k, _)| storage_wiped.contains(&k.0).then_some(*k))
                 .collect();
             for k in &to_remove {
-                storage.pop(k);
+                storage.invalidate(k);
             }
         }
 
