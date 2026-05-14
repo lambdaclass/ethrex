@@ -127,6 +127,7 @@ impl Simulator {
             format!("--network={}", self.genesis_path.display()),
             format!("--syncmode={:?}", opts.syncmode).to_lowercase(),
             "--force".to_string(),
+            "--mempool.min-tip=0".to_string(),
         ])
         .stdin(Stdio::null())
         .stdout(logs_file.try_clone().unwrap())
