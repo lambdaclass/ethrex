@@ -35,9 +35,6 @@ pub const MAX_INITCODE_SIZE: u32 = 2 * MAX_CODE_SIZE;
 // EIP-7954 (Amsterdam): increased max initcode size
 pub const AMSTERDAM_MAX_INITCODE_SIZE: u32 = 2 * AMSTERDAM_MAX_CODE_SIZE;
 
-// Max non-contract creation bytecode size
-pub const MAX_TRANSACTION_DATA_SIZE: u32 = 4 * 32 * 1024; // 128 Kb
-
 // === EIP-2028 constants ===
 
 // Gas cost for each non zero byte on transaction data
@@ -52,3 +49,10 @@ pub const MIN_GAS_LIMIT: u64 = 5000;
 // === EIP-7825 constants ===
 // https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
+
+// === EIP-7981 / EIP-7976 constants (Amsterdam+) ===
+// access_list_bytes * STANDARD_TOKEN_COST(4) * TOTAL_COST_FLOOR_PER_TOKEN(16) = access_list_bytes * 64
+// Per address entry: 20 bytes * 64 = 1280
+pub const TX_ACCESS_LIST_ADDRESS_DATA_GAS_AMSTERDAM: u64 = 1280;
+// Per storage key entry: 32 bytes * 64 = 2048
+pub const TX_ACCESS_LIST_STORAGE_KEY_DATA_GAS_AMSTERDAM: u64 = 2048;

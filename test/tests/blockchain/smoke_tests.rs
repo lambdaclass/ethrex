@@ -180,51 +180,53 @@ async fn test_reorg_from_long_to_short_chain() {
 }
 
 #[tokio::test]
-async fn new_head_with_canonical_ancestor_should_skip() {
-    // Store and genesis
+async fn new_head_ancestor_of_finalized_should_skip() {
+    // Per execution-apis PR 786, the no-reorg skip optimization only applies when the new
+    // head is a VALID canonical ancestor of the latest known finalized block. Build a chain
+    // of 3 blocks, finalize block 2, then FCU to block 1 (an ancestor of finalized) and
+    // assert that the update is skipped.
     let store = test_store().await;
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
-    let genesis_hash = genesis_header.hash();
-
-    // Create blockchain
     let blockchain = Blockchain::default_with_store(store.clone());
 
-    // Add block at height 1.
     let block_1 = new_block(&store, &genesis_header).await;
     let hash_1 = block_1.hash();
     blockchain
         .add_block(block_1.clone())
-        .expect("Could not add block 1b.");
+        .expect("Could not add block 1.");
 
-    // Add child at height 2.
     let block_2 = new_block(&store, &block_1.header).await;
     let hash_2 = block_2.hash();
     blockchain
         .add_block(block_2.clone())
         .expect("Could not add block 2.");
 
-    assert!(!is_canonical(&store, 1, hash_1).await.unwrap());
-    assert!(!is_canonical(&store, 2, hash_2).await.unwrap());
+    let block_3 = new_block(&store, &block_2.header).await;
+    let hash_3 = block_3.hash();
+    blockchain
+        .add_block(block_3.clone())
+        .expect("Could not add block 3.");
 
-    // Make that chain the canonical one.
-    apply_fork_choice(&store, hash_2, genesis_hash, genesis_hash)
+    // Make the chain canonical and finalize block 2.
+    apply_fork_choice(&store, hash_3, hash_2, hash_2)
         .await
         .unwrap();
 
     assert!(is_canonical(&store, 1, hash_1).await.unwrap());
     assert!(is_canonical(&store, 2, hash_2).await.unwrap());
+    assert!(is_canonical(&store, 3, hash_3).await.unwrap());
 
+    // FCU to block 1 (ancestor of finalized): MUST be skipped.
     let result = apply_fork_choice(&store, hash_1, hash_1, hash_1).await;
-
     assert!(matches!(
         result,
         Err(InvalidForkChoice::NewHeadAlreadyCanonical)
     ));
 
-    // Important blocks should still be the same as before.
-    assert!(store.get_finalized_block_number().await.unwrap() == Some(0));
-    assert!(store.get_safe_block_number().await.unwrap() == Some(0));
-    assert!(store.get_latest_block_number().await.unwrap() == 2);
+    // State must be unchanged after the skip.
+    assert_eq!(store.get_finalized_block_number().await.unwrap(), Some(2));
+    assert_eq!(store.get_safe_block_number().await.unwrap(), Some(2));
+    assert_eq!(store.get_latest_block_number().await.unwrap(), 3);
 }
 
 #[tokio::test]
@@ -282,6 +284,65 @@ async fn latest_block_number_should_always_be_the_canonical_head() {
 
     // The latest block should now be the new head.
     assert_eq!(latest_canonical_block_hash(&store).await.unwrap(), hash_b);
+}
+
+#[tokio::test]
+async fn unfinalized_reorg_deeper_than_32_is_allowed() {
+    // Per execution-apis PR 786 point 6, -38006 TooDeepReorg fires when the reorg
+    // depth exceeds the implementation-specific limit. ethrex defines that limit as
+    // its state-history retention (REORG_DEPTH_LIMIT = 128), matching the stance of
+    // Erigon/Nethermind/Besu/geth — the EL trusts the CL's fork choice and only
+    // rejects when it physically cannot unwind. A 33-block reorg from genesis is
+    // well under the cap and must succeed.
+
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let genesis_hash = genesis_header.hash();
+    let blockchain = Blockchain::default_with_store(store.clone());
+
+    // Build canonical chain A: genesis → A1 → ... → A33.
+    let mut parent = genesis_header.clone();
+    let mut chain_a_hashes = Vec::new();
+    for _ in 0..33 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        chain_a_hashes.push(block.hash());
+        blockchain.add_block(block).unwrap();
+    }
+    let head_a = *chain_a_hashes.last().unwrap();
+    apply_fork_choice(&store, head_a, genesis_hash, genesis_hash)
+        .await
+        .expect("FCU to chain A head should succeed");
+    assert!(is_canonical(&store, 33, head_a).await.unwrap());
+
+    // Build alternate chain B from genesis. `new_block` randomizes fee_recipient and
+    // beacon_root, so each block hash differs from chain A even at the same height.
+    let mut parent = genesis_header.clone();
+    let mut chain_b_hashes = Vec::new();
+    for _ in 0..33 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        chain_b_hashes.push(block.hash());
+        blockchain.add_block(block).unwrap();
+    }
+    let head_b = *chain_b_hashes.last().unwrap();
+    assert_ne!(head_a, head_b);
+
+    // FCU to chain B head: reorg depth = 33, well under REORG_DEPTH_LIMIT (128).
+    apply_fork_choice(&store, head_b, genesis_hash, genesis_hash)
+        .await
+        .expect("33-block unfinalized reorg should be allowed");
+
+    // Chain B is canonical end-to-end; chain A's 33 blocks are no longer canonical.
+    assert!(is_canonical(&store, 33, head_b).await.unwrap());
+    assert!(!is_canonical(&store, 33, head_a).await.unwrap());
+    for (i, hash) in chain_b_hashes.iter().enumerate() {
+        assert!(
+            is_canonical(&store, (i + 1) as u64, *hash).await.unwrap(),
+            "chain B block at height {} should be canonical",
+            i + 1
+        );
+    }
 }
 
 async fn new_block(store: &Store, parent: &BlockHeader) -> Block {

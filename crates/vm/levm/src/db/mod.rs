@@ -3,6 +3,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -179,6 +180,7 @@ impl Database for CachingDatabase {
         self.precompile_cache.as_ref()
     }
 
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
         let fetched: Vec<(Address, AccountState)> = addresses
@@ -192,6 +194,7 @@ impl Database for CachingDatabase {
         Ok(())
     }
 
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
         let fetched: Vec<((Address, H256), U256)> = keys

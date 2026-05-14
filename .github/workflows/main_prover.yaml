@@ -32,6 +32,11 @@ env:
 jobs:
   test:
     name: Integration Test Prover SP1
+    # Self-hosted GPU runner: only fire for non-PR events or in-org PRs.
+    # Fork PRs would otherwise execute attacker-controlled code on the GPU CI machine.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: gpu
     steps:
       - name: Checkout sources

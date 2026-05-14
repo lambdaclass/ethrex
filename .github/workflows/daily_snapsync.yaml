@@ -71,6 +71,11 @@ jobs:
 
   engine-restart:
     name: Restart Kurtosis Engine
+    # Self-hosted runner: only fire for non-PR events or in-org PRs.
+    # Fork PRs would otherwise execute attacker-controlled code on ethrex-sync.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ethrex-sync
     steps:
       - name: Restart engine to match CLI version
@@ -79,6 +84,9 @@ jobs:
   sync-lighthouse:
     needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Lighthouse
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ethrex-sync
     strategy:
       fail-fast: false
@@ -126,6 +134,9 @@ jobs:
   sync-prysm:
     needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Prysm
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ethrex-sync
     strategy:
       fail-fast: false
