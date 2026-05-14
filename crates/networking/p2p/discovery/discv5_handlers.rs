@@ -279,24 +279,31 @@ impl DiscoveryServer {
     }
 
     pub(crate) async fn discv5_lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        let discv5 = match &mut self.discv5 {
-            Some(s) => s,
-            None => return Ok(()),
-        };
+        if self.discv5.is_none() {
+            return Ok(());
+        }
 
-        // If there's a finished lookup, clear it and let the timer
-        // control when the next one starts (easing interval).
-        if discv5
+        // Clear finished lookup so a new one starts immediately in this tick
+        // (geth-style back-to-back chaining for faster convergence).
+        if self
+            .discv5
+            .as_ref()
+            .unwrap()
             .current_lookup
             .as_ref()
             .is_some_and(|l| l.is_finished())
         {
-            discv5.current_lookup = None;
-            return Ok(());
+            self.discv5.as_mut().unwrap().current_lookup = None;
         }
 
         // If no active lookup, start a new one
-        if discv5.current_lookup.is_none() {
+        if self
+            .discv5
+            .as_ref()
+            .unwrap()
+            .current_lookup
+            .is_none()
+        {
             let mut rng = OsRng;
             let target_id: H256 = rng.r#gen();
 

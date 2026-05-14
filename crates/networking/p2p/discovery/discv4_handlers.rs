@@ -123,25 +123,33 @@ impl DiscoveryServer {
     }
 
     pub(crate) async fn discv4_lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        let discv4 = match &mut self.discv4 {
-            Some(s) => s,
-            None => return Ok(()),
-        };
+        if self.discv4.is_none() {
+            return Ok(());
+        }
 
-        // If there's a finished lookup, clear it and let the timer
-        // control when the next one starts (easing interval).
-        if discv4
+        // Clear finished lookup so a new one starts immediately in this tick
+        // (geth-style back-to-back chaining for faster convergence).
+        if self
+            .discv4
+            .as_ref()
+            .unwrap()
             .current_lookup
             .as_ref()
             .is_some_and(|l| l.is_finished())
         {
+            let discv4 = self.discv4.as_mut().unwrap();
             discv4.current_lookup = None;
             discv4.current_lookup_message = None;
-            return Ok(());
         }
 
         // If no active lookup, start a new one
-        if discv4.current_lookup.is_none() {
+        if self
+            .discv4
+            .as_ref()
+            .unwrap()
+            .current_lookup
+            .is_none()
+        {
             // Generate random target
             let random_priv_key = SecretKey::new(&mut OsRng);
             let random_pub_key = public_key_from_signing_key(&random_priv_key);
