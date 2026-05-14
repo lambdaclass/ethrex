@@ -57,7 +57,7 @@ axum.workspace = true
 ethrex-guest-program = { path = "../guest-program", optional = true }
 
 [build-dependencies]
-vergen-git2 = { version = "1.0.7" }
+vergen-git2 = { workspace = true }
 
 [dev-dependencies]
 anyhow = "1.0.86"

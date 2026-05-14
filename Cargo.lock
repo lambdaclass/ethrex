@@ -3835,7 +3835,7 @@ dependencies = [
  "tracing-subscriber 0.3.23",
  "tui-logger",
  "url",
- "vergen-git2 9.1.0",
+ "vergen-git2",
 ]
 
 [[package]]
@@ -4050,7 +4050,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tui-logger",
- "vergen-git2 1.0.7",
+ "vergen-git2",
 ]
 
 [[package]]
@@ -4367,7 +4367,7 @@ dependencies = [
  "ethrex-rpc",
  "ethrex-sdk-contract-utils",
  "hex",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "lazy_static",
  "reqwest 0.12.28",
  "secp256k1",
@@ -14738,22 +14738,7 @@ dependencies = [
  "derive_builder",
  "rustc_version 0.4.1",
  "rustversion",
- "vergen-lib 9.1.0",
-]
-
-[[package]]
-name = "vergen-git2"
-version = "1.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f6ee511ec45098eabade8a0750e76eec671e7fb2d9360c563911336bea9cac1"
-dependencies = [
- "anyhow",
- "derive_builder",
- "git2",
- "rustversion",
- "time",
- "vergen",
- "vergen-lib 0.1.6",
+ "vergen-lib",
 ]
 
 [[package]]
@@ -14768,18 +14753,7 @@ dependencies = [
  "rustversion",
  "time",
  "vergen",
- "vergen-lib 9.1.0",
-]
-
-[[package]]
-name = "vergen-lib"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b07e6010c0f3e59fcb164e0163834597da68d1f864e2b8ca49f74de01e9c166"
-dependencies = [
- "anyhow",
- "derive_builder",
- "rustversion",
+ "vergen-lib",
 ]
 
 [[package]]
