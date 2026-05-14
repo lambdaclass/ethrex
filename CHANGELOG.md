@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-05-14
+
+- Reuse account, storage, code, and precompile caches across blocks [#6581](https://github.com/lambdaclass/ethrex/pull/6581)
+
 ### 2026-04-27
 
 - Reduce peak disk usage during snap sync by moving SST files into the temp DB instead of copying [#6532](https://github.com/lambdaclass/ethrex/pull/6532)
