@@ -71,9 +71,9 @@ pub struct CLI {
 /// `--help` is operator-friendly instead of raw seconds.
 fn duration_default_str(d: Duration) -> clap::builder::OsStr {
     let secs = d.as_secs();
-    let formatted = if secs % 3600 == 0 && secs > 0 {
+    let formatted = if secs > 0 && secs.is_multiple_of(3600) {
         format!("{}h", secs / 3600)
-    } else if secs % 60 == 0 && secs > 0 {
+    } else if secs > 0 && secs.is_multiple_of(60) {
         format!("{}m", secs / 60)
     } else {
         format!("{secs}s")
