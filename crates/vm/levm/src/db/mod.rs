@@ -3,6 +3,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -58,27 +59,23 @@ pub struct CachingDatabase {
     storage: RwLock<StorageCache>,
     /// Cached contract code
     code: RwLock<CodeCache>,
-    /// Shared precompile result cache (warmer populates, executor reuses)
-    precompile_cache: PrecompileCache,
+    /// Shared precompile result cache (warmer populates, executor reuses).
+    /// `None` when the cache is disabled via `BlockchainOptions::precompile_cache_enabled = false`.
+    precompile_cache: Option<PrecompileCache>,
     /// Cached chain config (constant for the lifetime of this database)
     chain_config: OnceLock<ChainConfig>,
 }
 
 impl CachingDatabase {
-    pub fn new(inner: Arc<dyn Database>) -> Self {
+    pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
         Self {
             inner,
             accounts: RwLock::new(FxHashMap::default()),
             storage: RwLock::new(FxHashMap::default()),
             code: RwLock::new(FxHashMap::default()),
-            precompile_cache: PrecompileCache::new(),
+            precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
-    }
-
-    /// Access the shared precompile result cache.
-    pub fn precompile_cache(&self) -> &PrecompileCache {
-        &self.precompile_cache
     }
 
     fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
@@ -180,9 +177,10 @@ impl Database for CachingDatabase {
     }
 
     fn precompile_cache(&self) -> Option<&PrecompileCache> {
-        Some(&self.precompile_cache)
+        self.precompile_cache.as_ref()
     }
 
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
         let fetched: Vec<(Address, AccountState)> = addresses
@@ -196,6 +194,7 @@ impl Database for CachingDatabase {
         Ok(())
     }
 
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
         // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
         let fetched: Vec<((Address, H256), U256)> = keys
