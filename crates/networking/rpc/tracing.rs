@@ -41,6 +41,7 @@ struct TraceConfig {
 
 #[derive(Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(clippy::enum_variant_names)]
 enum TracerType {
     #[default]
     CallTracer,
@@ -292,17 +293,14 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 Ok(serde_json::to_value(block_trace)?)
             }
             TracerType::NoopTracer => {
-                let tx_hashes = context
+                let traces = context
                     .blockchain
                     .trace_block_noop(block, reexec, timeout)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                let block_trace: BlockTrace<serde_json::Value> = tx_hashes
+                let block_trace: BlockTrace<serde_json::Value> = traces
                     .into_iter()
-                    .map(|hash| BlockTraceComponent {
-                        tx_hash: hash,
-                        result: serde_json::json!({}),
-                    })
+                    .map(|(hash, ())| (hash, serde_json::json!({})).into())
                     .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
