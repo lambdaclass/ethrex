@@ -164,6 +164,12 @@ impl DiscoveryServer {
             for bootnode in &bootnodes {
                 server.discv4_send_ping(bootnode).await?;
             }
+            // Record bootnodes as already pinged
+            if let Some(discv4) = &mut server.discv4 {
+                for bootnode in &bootnodes {
+                    discv4.pinged_nodes.insert(bootnode.node_id());
+                }
+            }
         }
 
         server.start();
@@ -278,7 +284,7 @@ impl DiscoveryServer {
         let interval = if self
             .discv4
             .as_ref()
-            .is_some_and(|s| s.current_lookup.is_some())
+            .is_some_and(|s| !s.active_lookups.is_empty())
         {
             ACTIVE_LOOKUP_TICK
         } else {
@@ -300,7 +306,7 @@ impl DiscoveryServer {
         let interval = if self
             .discv5
             .as_ref()
-            .is_some_and(|s| s.current_lookup.is_some())
+            .is_some_and(|s| !s.active_lookups.is_empty())
         {
             ACTIVE_LOOKUP_TICK
         } else {
@@ -400,6 +406,9 @@ impl DiscoveryServer {
             discv4
                 .pending_find_node
                 .retain(|_, sent_at| sent_at.elapsed() < expiration);
+            if discv4.pinged_nodes.len() > 10_000 {
+                discv4.pinged_nodes.clear();
+            }
         }
         let winning_ip = self
             .discv5

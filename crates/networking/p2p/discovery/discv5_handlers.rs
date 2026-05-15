@@ -10,7 +10,7 @@ use crate::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
     },
-    discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
+    discovery::lookup::{BOOTSTRAP_ALPHA, IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     metrics::METRICS,
     peer_table::{ContactValidation, DiscoveryProtocol, PeerTableServerProtocol as _},
     rlpx::utils::compress_pubkey,
@@ -31,6 +31,10 @@ use super::server::{DiscoveryServer, DiscoveryServerError};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 const MAX_ENRS_PER_MESSAGE: usize = 3;
+/// Maximum number of concurrent iterative lookups during bootstrap.
+const MAX_CONCURRENT_LOOKUPS: usize = 3;
+/// Peer count threshold below which we use aggressive bootstrap settings.
+const BOOTSTRAP_THRESHOLD: usize = 30;
 /// Nodes not validated within this interval are candidates for revalidation.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 /// Minimum interval between WHOAREYOU packets to the same IP address.
@@ -283,27 +287,23 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        // Clear finished lookup so a new one starts immediately in this tick
-        // (geth-style back-to-back chaining for faster convergence).
-        if self
-            .discv5
-            .as_ref()
+        // Remove finished lookups (geth-style back-to-back chaining)
+        self.discv5
+            .as_mut()
             .unwrap()
-            .current_lookup
-            .as_ref()
-            .is_some_and(|l| l.is_finished())
-        {
-            self.discv5.as_mut().unwrap().current_lookup = None;
-        }
+            .active_lookups
+            .retain(|l| !l.is_finished());
 
-        // If no active lookup, start a new one
-        if self
-            .discv5
-            .as_ref()
-            .unwrap()
-            .current_lookup
-            .is_none()
-        {
+        // Determine max concurrent lookups based on peer count
+        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
+        let max_lookups = if peer_count < BOOTSTRAP_THRESHOLD {
+            MAX_CONCURRENT_LOOKUPS
+        } else {
+            1
+        };
+
+        // Start new lookups up to the limit
+        while self.discv5.as_ref().unwrap().active_lookups.len() < max_lookups {
             let mut rng = OsRng;
             let target_id: H256 = rng.r#gen();
 
@@ -314,13 +314,13 @@ impl DiscoveryServer {
                 .await?;
             if seed.is_empty() {
                 trace!(protocol = "discv5", "No seeds for lookup, connection pool empty");
-                return Ok(());
+                break;
             }
 
             trace!(protocol = "discv5", seeds = seed.len(), "Starting new iterative lookup");
             let lookup = IterativeLookup::new(target_id, seed);
             let discv5 = self.discv5.as_mut().unwrap();
-            discv5.current_lookup = Some(lookup);
+            discv5.active_lookups.push(lookup);
         }
 
         self.advance_v5_lookup().await
@@ -332,22 +332,35 @@ impl DiscoveryServer {
             None => return Ok(()),
         };
 
-        let lookup = match &mut discv5.current_lookup {
-            Some(l) => l,
-            None => return Ok(()),
+        if discv5.active_lookups.is_empty() {
+            return Ok(());
+        }
+
+        // Adaptive alpha: query aggressively during bootstrap
+        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
+        let alpha = if peer_count < BOOTSTRAP_THRESHOLD {
+            BOOTSTRAP_ALPHA
+        } else {
+            LOOKUP_ALPHA
         };
 
-        let target = lookup.target;
-        let to_query = lookup.next_to_query(LOOKUP_ALPHA);
+        // Collect all queries from all active lookups
+        let mut queries: Vec<(usize, H256, H256, Node)> = Vec::new();
+        for (idx, lookup) in discv5.active_lookups.iter_mut().enumerate() {
+            let target = lookup.target;
+            for (node_id, node) in lookup.next_to_query(alpha) {
+                queries.push((idx, target, node_id, node));
+            }
+        }
 
-        for (node_id, node) in to_query {
+        for (idx, target, node_id, node) in queries {
             let find_node_msg = self.discv5_build_find_node_for_target(target, &node);
             if let Err(e) = self.discv5_send_ordinary(find_node_msg, &node).await {
                 error!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
                 if let Some(discv5) = &mut self.discv5 {
-                    if let Some(lookup) = &mut discv5.current_lookup {
+                    if let Some(lookup) = discv5.active_lookups.get_mut(idx) {
                         lookup.record_timeout();
                     }
                 }
@@ -523,15 +536,18 @@ impl DiscoveryServer {
         self.peer_table
             .new_contact_records(nodes_message.nodes.clone())?;
 
-        // Feed results into the active lookup and advance it
+        // Feed results into ALL active lookups and advance them
         if let Some(discv5) = &mut self.discv5 {
-            if let Some(lookup) = &mut discv5.current_lookup {
-                let entries: Vec<(H256, Node)> = nodes_message
-                    .nodes
-                    .iter()
-                    .filter_map(|r| Node::from_enr(r).ok().map(|n| (n.node_id(), n)))
-                    .collect();
-                lookup.feed_results(entries);
+            let entries: Vec<(H256, Node)> = nodes_message
+                .nodes
+                .iter()
+                .filter_map(|r| Node::from_enr(r).ok().map(|n| (n.node_id(), n)))
+                .collect();
+            for lookup in &mut discv5.active_lookups {
+                lookup.feed_results(entries.clone());
+            }
+            // Record response on first active lookup (we don't track which triggered it)
+            if let Some(lookup) = discv5.active_lookups.first_mut() {
                 lookup.record_response();
             }
         }
