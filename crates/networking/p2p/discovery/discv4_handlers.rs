@@ -1,5 +1,6 @@
 use crate::{
     backend,
+    discovery::lookup::{BOOTSTRAP_ALPHA, IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     discv4::{
         messages::{
             ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
@@ -7,11 +8,12 @@ use crate::{
         },
         server::{Discv4Message, EXPIRATION_SECONDS},
     },
-    discovery::lookup::{BOOTSTRAP_ALPHA, IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     metrics::METRICS,
     peer_table::{Contact, ContactValidation, DiscoveryProtocol, PeerTableServerProtocol as _},
     types::{Endpoint, Node, NodeRecord},
-    utils::{get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key},
+    utils::{
+        get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
+    },
 };
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512, types::ForkId};
@@ -147,7 +149,14 @@ impl DiscoveryServer {
         };
 
         // Start new lookups up to the limit
-        while self.discv4.as_ref().expect("discv4 state must exist").active_lookups.len() < max_lookups {
+        while self
+            .discv4
+            .as_ref()
+            .expect("discv4 state must exist")
+            .active_lookups
+            .len()
+            < max_lookups
+        {
             // Generate random target
             let random_priv_key = SecretKey::new(&mut OsRng);
             let random_pub_key = public_key_from_signing_key(&random_priv_key);
@@ -159,11 +168,18 @@ impl DiscoveryServer {
                 .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
                 .await?;
             if seed.is_empty() {
-                trace!(protocol = "discv4", "No seeds for lookup, connection pool empty");
+                trace!(
+                    protocol = "discv4",
+                    "No seeds for lookup, connection pool empty"
+                );
                 break;
             }
 
-            trace!(protocol = "discv4", seeds = seed.len(), "Starting new iterative lookup");
+            trace!(
+                protocol = "discv4",
+                seeds = seed.len(),
+                "Starting new iterative lookup"
+            );
             let lookup = IterativeLookup::new(target_id, seed);
 
             // Sign one FindNode message for this target
@@ -206,7 +222,11 @@ impl DiscoveryServer {
         }
 
         if !queries.is_empty() {
-            trace!(protocol = "discv4", count = queries.len(), "Advancing lookups, querying nodes");
+            trace!(
+                protocol = "discv4",
+                count = queries.len(),
+                "Advancing lookups, querying nodes"
+            );
         }
 
         for (idx, node_id, node, message) in queries {

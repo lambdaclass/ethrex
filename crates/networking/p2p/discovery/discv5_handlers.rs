@@ -1,4 +1,5 @@
 use crate::{
+    discovery::lookup::{BOOTSTRAP_ALPHA, IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
@@ -10,7 +11,6 @@ use crate::{
             build_challenge_data, create_id_signature, derive_session_keys, verify_id_signature,
         },
     },
-    discovery::lookup::{BOOTSTRAP_ALPHA, IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     metrics::METRICS,
     peer_table::{ContactValidation, DiscoveryProtocol, PeerTableServerProtocol as _},
     rlpx::utils::compress_pubkey,
@@ -243,8 +243,7 @@ impl DiscoveryServer {
         }
 
         if let Some(record) = &authdata.record {
-            self.peer_table
-                .new_contact_records(vec![record.clone()])?;
+            self.peer_table.new_contact_records(vec![record.clone()])?;
         }
 
         let session = derive_session_keys(
@@ -303,7 +302,14 @@ impl DiscoveryServer {
         };
 
         // Start new lookups up to the limit
-        while self.discv5.as_ref().expect("discv5 state must exist").active_lookups.len() < max_lookups {
+        while self
+            .discv5
+            .as_ref()
+            .expect("discv5 state must exist")
+            .active_lookups
+            .len()
+            < max_lookups
+        {
             let mut rng = OsRng;
             let target_id: H256 = rng.r#gen();
 
@@ -313,11 +319,18 @@ impl DiscoveryServer {
                 .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
                 .await?;
             if seed.is_empty() {
-                trace!(protocol = "discv5", "No seeds for lookup, connection pool empty");
+                trace!(
+                    protocol = "discv5",
+                    "No seeds for lookup, connection pool empty"
+                );
                 break;
             }
 
-            trace!(protocol = "discv5", seeds = seed.len(), "Starting new iterative lookup");
+            trace!(
+                protocol = "discv5",
+                seeds = seed.len(),
+                "Starting new iterative lookup"
+            );
             let lookup = IterativeLookup::new(target_id, seed);
             let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
             discv5.active_lookups.push(lookup);

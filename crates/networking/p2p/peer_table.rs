@@ -427,8 +427,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn target_peers_completion(&self) -> Response<f64>;
     fn get_contact_to_initiate(&self) -> Response<Option<Box<Contact>>>;
     fn get_contact_for_enr_lookup(&self) -> Response<Option<Box<Contact>>>;
-    fn get_closest_from_pool(&self, target: H256, count: usize)
-    -> Response<Vec<(H256, Node)>>;
+    fn get_closest_from_pool(&self, target: H256, count: usize) -> Response<Vec<(H256, Node)>>;
     fn get_contact(&self, node_id: H256) -> Response<Option<Box<Contact>>>;
     fn get_contact_to_revalidate(
         &self,

@@ -1,6 +1,6 @@
 use crate::{
-    discv4::messages::{Message, Packet},
     discovery::lookup::IterativeLookup,
+    discv4::messages::{Message, Packet},
     utils::node_id,
 };
 use bytes::BytesMut;
@@ -22,7 +22,6 @@ pub struct Discv4State {
     /// invalidate an already-bonded contact via `record_ping_sent`).
     pub pinged_nodes: FxHashSet<H256>,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Discv4Message {
