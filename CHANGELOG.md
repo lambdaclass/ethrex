@@ -4,6 +4,7 @@
 
 ### 2026-05-14
 
+- Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
 - Reuse account, storage, code, and precompile caches across blocks [#6581](https://github.com/lambdaclass/ethrex/pull/6581)
 
 ### 2026-04-27

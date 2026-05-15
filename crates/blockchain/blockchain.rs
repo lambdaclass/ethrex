@@ -87,6 +87,7 @@ use ethrex_storage::{
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CrossBlockCache;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -440,7 +441,6 @@ impl Blockchain {
         parent_header: &BlockHeader,
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
-        caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase>,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -461,8 +461,12 @@ impl Blockchain {
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = vm.db.store.clone();
                 let cancelled_ref = &cancelled;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -566,11 +570,14 @@ impl Blockchain {
                         "merkleization thread panicked".to_string(),
                     ))
                 });
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
+                #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+                let warmer_duration = Duration::ZERO;
                 Ok((execution_result, merkleization_result, warmer_duration))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
@@ -1865,8 +1872,7 @@ impl Blockchain {
             parent_header.hash(),
             vm.db.store.clone(),
         );
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = session.as_database();
-        vm.db.store = caching_store.clone();
+        vm.db.store = session.as_database();
 
         let (
             res,
@@ -1876,7 +1882,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, caching_store)?;
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1897,6 +1903,14 @@ impl Blockchain {
             self.storage
                 .store_witness(block_hash, block_number, witness)?;
         };
+
+        // Store the produced BAL (present on Amsterdam+ blocks) so peers can request it
+        if let Some(bal) = &produced_bal {
+            let block_hash = block.hash();
+            if let Err(err) = self.storage.store_block_access_list(block_hash, bal) {
+                warn!("Failed to store block access list for block {block_hash}: {err}");
+            }
+        }
 
         let result = self.store_block(block, account_updates_list, res);
 

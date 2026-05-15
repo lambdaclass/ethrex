@@ -4,6 +4,7 @@ use ethrex_common::{
     types::{AccountState, AccountUpdate, BlockHash, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use lru::LruCache;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::{FxBuildHasher, FxHashSet};
 use std::num::NonZeroUsize;
@@ -208,6 +209,7 @@ impl Database for CachingDatabase {
         self.precompile_cache.as_ref()
     }
 
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         let inner = self.current_inner()?;
         let fetched: Vec<(Address, AccountState)> = addresses
@@ -223,6 +225,7 @@ impl Database for CachingDatabase {
         Ok(())
     }
 
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
         let inner = self.current_inner()?;
         let fetched: Vec<((Address, H256), U256)> = keys
