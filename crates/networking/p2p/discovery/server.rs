@@ -129,7 +129,7 @@ impl DiscoveryServer {
             );
             peer_table
                 .new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
-            Some(Discv4State::new())
+            Some(Discv4State::default())
         } else {
             None
         };

@@ -290,7 +290,7 @@ impl DiscoveryServer {
         // Remove finished lookups (geth-style back-to-back chaining)
         self.discv5
             .as_mut()
-            .unwrap()
+            .expect("discv5 state must exist")
             .active_lookups
             .retain(|l| !l.is_finished());
 
@@ -303,7 +303,7 @@ impl DiscoveryServer {
         };
 
         // Start new lookups up to the limit
-        while self.discv5.as_ref().unwrap().active_lookups.len() < max_lookups {
+        while self.discv5.as_ref().expect("discv5 state must exist").active_lookups.len() < max_lookups {
             let mut rng = OsRng;
             let target_id: H256 = rng.r#gen();
 
@@ -319,7 +319,7 @@ impl DiscoveryServer {
 
             trace!(protocol = "discv5", seeds = seed.len(), "Starting new iterative lookup");
             let lookup = IterativeLookup::new(target_id, seed);
-            let discv5 = self.discv5.as_mut().unwrap();
+            let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
             discv5.active_lookups.push(lookup);
         }
 
@@ -359,10 +359,10 @@ impl DiscoveryServer {
                 error!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
-                if let Some(discv5) = &mut self.discv5 {
-                    if let Some(lookup) = discv5.active_lookups.get_mut(idx) {
-                        lookup.record_timeout();
-                    }
+                if let Some(discv5) = &mut self.discv5
+                    && let Some(lookup) = discv5.active_lookups.get_mut(idx)
+                {
+                    lookup.record_timeout();
                 }
             }
         }

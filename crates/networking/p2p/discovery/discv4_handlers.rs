@@ -134,7 +134,7 @@ impl DiscoveryServer {
         // Remove finished lookups (geth-style back-to-back chaining)
         self.discv4
             .as_mut()
-            .unwrap()
+            .expect("discv4 state must exist")
             .active_lookups
             .retain(|(l, _)| !l.is_finished());
 
@@ -147,7 +147,7 @@ impl DiscoveryServer {
         };
 
         // Start new lookups up to the limit
-        while self.discv4.as_ref().unwrap().active_lookups.len() < max_lookups {
+        while self.discv4.as_ref().expect("discv4 state must exist").active_lookups.len() < max_lookups {
             // Generate random target
             let random_priv_key = SecretKey::new(&mut OsRng);
             let random_pub_key = public_key_from_signing_key(&random_priv_key);
@@ -172,7 +172,7 @@ impl DiscoveryServer {
             let mut buf = BytesMut::new();
             msg.encode_with_header(&mut buf, &self.signer);
 
-            let discv4 = self.discv4.as_mut().unwrap();
+            let discv4 = self.discv4.as_mut().expect("discv4 state must exist");
             discv4.active_lookups.push((lookup, buf));
         }
 
@@ -214,10 +214,10 @@ impl DiscoveryServer {
                 error!(protocol = "discv4", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
-                if let Some(discv4) = &mut self.discv4 {
-                    if let Some((lookup, _)) = discv4.active_lookups.get_mut(idx) {
-                        lookup.record_timeout();
-                    }
+                if let Some(discv4) = &mut self.discv4
+                    && let Some((lookup, _)) = discv4.active_lookups.get_mut(idx)
+                {
+                    lookup.record_timeout();
                 }
             } else {
                 #[cfg(feature = "metrics")]
@@ -227,7 +227,7 @@ impl DiscoveryServer {
                 }
                 self.discv4
                     .as_mut()
-                    .unwrap()
+                    .expect("discv4 state must exist")
                     .pending_find_node
                     .insert(node_id, std::time::Instant::now());
             }

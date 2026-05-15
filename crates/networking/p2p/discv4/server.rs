@@ -11,7 +11,7 @@ use std::{collections::HashMap, net::SocketAddr, time::Instant};
 pub const EXPIRATION_SECONDS: u64 = 20;
 
 /// Discv4-specific state held within the unified DiscoveryServer.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Discv4State {
     /// Tracks pending FindNode requests by node_id -> sent_at.
     /// Used to reject unsolicited Neighbors responses.
@@ -23,15 +23,6 @@ pub struct Discv4State {
     pub pinged_nodes: FxHashSet<H256>,
 }
 
-impl Discv4State {
-    pub fn new() -> Self {
-        Self {
-            pending_find_node: HashMap::new(),
-            active_lookups: Vec::new(),
-            pinged_nodes: FxHashSet::default(),
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Discv4Message {
