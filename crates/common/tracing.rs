@@ -128,20 +128,23 @@ fn is_zero_nonce(n: &u64) -> bool {
 
 // ─── OpcodeTracer types ──────────────────────────────────────────────────────
 
-/// Per-opcode trace entry (EIP-3155 step content), emitted under the de-facto
-/// cross-client `structLogger` wrapper.
+/// Per-opcode trace entry conforming to [EIP-3155](https://eips.ethereum.org/EIPS/eip-3155).
 ///
-/// Wrapper keys: `{failed, gas, returnValue, structLogs}`. Per-step `gas`,
-/// `gasCost`, `refund` are numeric; `op` is the opcode mnemonic string.
-/// `memSize`, `returnData`, and `refund` are always emitted (an extension
-/// beyond the common minimal step shape); consumers ignoring extra fields are
-/// unaffected.
+/// Wire format per the spec: `op` is a numeric opcode byte; `gas`, `gasCost`, `refund`
+/// are `"0xN"` hex strings ("Hex-Number"); `pc`, `memSize`, `depth` are plain JSON
+/// numbers; `stack` is always an array (never null) of `"0xN"` hex strings. The
+/// optional `opName`, `error`, `memory`, `storage` fields follow when populated.
+/// Field order matches the spec's listed order.
+///
+/// When emitted via geth's `debug_traceTransaction` RPC, this struct lives inside
+/// the geth-specific `{failed, gas, returnValue, structLogs}` wrapper
+/// ([`OpcodeTraceResult`]); when emitted via an EIP-3155 streaming sink, it stands
+/// alone as a JSONL line.
 #[derive(Debug)]
 pub struct OpcodeStep {
     pub pc: u64,
-    /// Raw opcode byte value (e.g. 0x60 for PUSH1). Serialized as its mnemonic
-    /// string (`"PUSH1"`); unassigned bytes serialize as
-    /// `"opcode 0xNN not defined"`.
+    /// Raw opcode byte value (e.g. 0x60 for PUSH1). Emitted as a JSON number under
+    /// the `"op"` key; the mnemonic is emitted separately as `"opName"`.
     pub op: u8,
     pub gas: u64,
     pub gas_cost: u64,
@@ -152,7 +155,8 @@ pub struct OpcodeStep {
     pub return_data: bytes::Bytes,
     /// Gas refund counter (always emitted).
     pub refund: u64,
-    /// `Some(vec)` when stack capture is enabled (bottom-first); `None` when disabled (emits JSON null).
+    /// `Some(vec)` when stack capture is enabled (bottom-first); `None` when disabled
+    /// (still serialized as `[]` per EIP-3155's "MUST initialize to empty array" rule).
     pub stack: Option<Vec<U256>>,
     /// `Some(chunks)` when memory capture is enabled; `None` when disabled (field omitted).
     pub memory: Option<Vec<MemoryChunk>>,
@@ -380,9 +384,10 @@ impl serde::Serialize for OpcodeStep {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
 
-        // Base fields: pc, op, gas, gasCost, depth, stack, memSize, returnData, refund = 9
-        // Optional: error, memory, storage
-        let mut field_count = 9;
+        // Required: pc, op, gas, gasCost, memSize, stack, depth, returnData, refund = 9
+        // Always-emitted optional: opName = 1
+        // Conditional optional: error, memory, storage
+        let mut field_count = 10;
         if self.error.is_some() {
             field_count += 1;
         }
@@ -395,42 +400,47 @@ impl serde::Serialize for OpcodeStep {
 
         let mut map = serializer.serialize_map(Some(field_count))?;
 
+        // Required fields, in EIP-3155 spec order.
         map.serialize_entry("pc", &self.pc)?;
-        // op: emit the mnemonic string. Unknown bytes use the conventional
-        // "opcode 0xNN not defined" fallback.
-        match opcode_name(self.op) {
-            Some(name) => map.serialize_entry("op", name)?,
-            None => map.serialize_entry("op", &format!("opcode 0x{:02x} not defined", self.op))?,
-        }
-        map.serialize_entry("gas", &self.gas)?;
-        map.serialize_entry("gasCost", &self.gas_cost)?;
-        map.serialize_entry("depth", &self.depth)?;
+        // op: numeric opcode byte (spec: Number).
+        map.serialize_entry("op", &self.op)?;
+        // gas, gasCost, refund: spec type "Hex-Number" — JSON string of form "0xN".
+        map.serialize_entry("gas", &format!("{:#x}", self.gas))?;
+        map.serialize_entry("gasCost", &format!("{:#x}", self.gas_cost))?;
+        map.serialize_entry("memSize", &self.mem_size)?;
 
-        // stack: Some → array of hex strings; None → JSON null (when disabled)
+        // stack: always an array (spec: "MUST be initialized to empty arrays NOT to null").
+        // Bottom-first ordering, U256 values formatted as "0xN" via `geth_uint256_hex`.
         struct StackSerializer<'a>(&'a Option<Vec<U256>>);
         impl serde::Serialize for StackSerializer<'_> {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
                 use serde::ser::SerializeSeq;
-                match self.0 {
-                    None => serializer.serialize_none(),
-                    Some(vec) => {
-                        let mut seq = serializer.serialize_seq(Some(vec.len()))?;
-                        for v in vec {
-                            seq.serialize_element(&geth_uint256_hex(v))?;
-                        }
-                        seq.end()
-                    }
+                let vec_ref: &[U256] = self.0.as_deref().unwrap_or(&[]);
+                let mut seq = serializer.serialize_seq(Some(vec_ref.len()))?;
+                for v in vec_ref {
+                    seq.serialize_element(&geth_uint256_hex(v))?;
                 }
+                seq.end()
             }
         }
         map.serialize_entry("stack", &StackSerializer(&self.stack))?;
 
-        map.serialize_entry("memSize", &self.mem_size)?;
+        map.serialize_entry("depth", &self.depth)?;
         map.serialize_entry(
             "returnData",
             &format!("0x{}", hex::encode(&self.return_data)),
         )?;
-        map.serialize_entry("refund", &self.refund)?;
+        map.serialize_entry("refund", &format!("{:#x}", self.refund))?;
+
+        // Optional fields, in EIP-3155 spec order: opName, error, memory, storage.
+        // opName always emitted: every byte has either a known mnemonic or a stable
+        // "opcode 0xNN not defined" fallback.
+        match opcode_name(self.op) {
+            Some(name) => map.serialize_entry("opName", name)?,
+            None => {
+                map.serialize_entry("opName", &format!("opcode 0x{:02x} not defined", self.op))?
+            }
+        }
 
         if let Some(err) = &self.error {
             map.serialize_entry("error", err)?;
