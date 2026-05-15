@@ -779,6 +779,25 @@ impl<'a> VM<'a> {
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
 
+        // Empty bytecode would only execute STOP; skip the dispatch loop.
+        // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
+        // fail past this point and has no inner calls, so there's nothing to roll back.
+        if self.is_simple_transfer_fast_path() {
+            #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
+            let gas_used = self
+                .current_call_frame
+                .gas_limit
+                .checked_sub(self.current_call_frame.gas_remaining as u64)
+                .ok_or(InternalError::Underflow)?;
+            let context_result = ContextResult {
+                result: TxResult::Success,
+                gas_used,
+                gas_spent: gas_used,
+                output: Bytes::new(),
+            };
+            return self.finalize_execution(context_result);
+        }
+
         // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
         // after prepare_execution (nonce increment, etc.) but before actual execution.
         // When the top-level call fails, we restore to this checkpoint so that inner call
@@ -800,6 +819,23 @@ impl<'a> VM<'a> {
         let report = self.finalize_execution(context_result)?;
 
         Ok(report)
+    }
+
+    /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into
+    /// `bytecode`.
+    #[inline(always)]
+    fn is_simple_transfer_fast_path(&self) -> bool {
+        !self.current_call_frame.is_create
+            && self.current_call_frame.bytecode.bytecode.is_empty()
+            // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
+            && self.current_call_frame.gas_remaining >= 0
+            && self.tx.authorization_list().is_none()
+            // Precompiles dispatch via run_execution even with empty bytecode.
+            && !precompiles::is_precompile(
+                &self.current_call_frame.to,
+                self.env.config.fork,
+                self.vm_type,
+            )
     }
 
     /// Main execution loop.
