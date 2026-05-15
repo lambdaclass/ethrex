@@ -2858,6 +2858,10 @@ pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
 /// well-known EIP-8037 state-gas constants (NEW_ACCOUNT, STORAGE_SET, AUTH_*),
 /// scaled by a plausible gas_price. Best-effort hint to triage gas-accounting
 /// drifts at a glance.
+///
+/// `dead_code` allowed: only reached via the L1 BAL-validation path, which is
+/// not exercised in the L2 build profile so the per-crate analysis flags it.
+#[allow(dead_code)]
 fn describe_balance_diff(expected: U256, actual: U256) -> String {
     let (sign, mag) = if expected >= actual {
         ("+", expected - actual)
