@@ -320,6 +320,22 @@ pub async fn default_context_with_storage(storage: Store) -> RpcApiContext {
 ///   `rg "context\.peer_handler|ctx\.peer_handler" crates/networking/rpc/eth/block.rs` -> empty
 static SHARED_SYNCER: OnceCell<Arc<SyncManager>> = OnceCell::const_new();
 
+thread_local! {
+    /// Per-OS-thread merkleization pool, lazily built on first use.
+    /// The merkle protocol requires its 16 worker jobs to run concurrently and
+    /// communicate via channels, so each pool can have only ONE concurrent
+    /// `in_place_scope` caller. Keying by `thread_local!` makes the calling
+    /// tokio worker thread the natural exclusive owner of its pool — there are
+    /// at most `num_cpus` worker threads alive, so total OS-thread cost is
+    /// bounded by `num_cpus * 17` instead of `fixture_count * 17`.
+    static THREAD_LOCAL_MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
+        const { std::cell::OnceCell::new() };
+}
+
+fn thread_local_merkle_pool() -> Arc<rayon::ThreadPool> {
+    THREAD_LOCAL_MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
+}
+
 /// In-process engine-API context for testing, sharing the P2P scaffold across calls.
 ///
 /// Reuses a single `Arc<SyncManager>` per process (via `SHARED_SYNCER`), so the
@@ -333,7 +349,10 @@ pub async fn engine_only_context(storage: Store) -> RpcApiContext {
         .get_or_init(|| async { Arc::new(dummy_sync_manager().await) })
         .await
         .clone();
-    let blockchain = Arc::new(Blockchain::default_with_store(storage.clone()));
+    let blockchain = Arc::new(Blockchain::default_with_store_and_pool(
+        storage.clone(),
+        thread_local_merkle_pool(),
+    ));
     let local_node_record = example_local_node_record();
     let block_worker_channel = start_block_executor(blockchain.clone());
     RpcApiContext {
