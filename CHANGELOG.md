@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-05-14
+
+- Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
+
 ### 2026-04-27
 
 - Reduce peak disk usage during snap sync by moving SST files into the temp DB instead of copying [#6532](https://github.com/lambdaclass/ethrex/pull/6532)
