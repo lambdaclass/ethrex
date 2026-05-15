@@ -451,24 +451,29 @@ impl DiscoveryServer {
         self.peer_table
             .new_contacts(nodes.clone(), DiscoveryProtocol::Discv4)?;
 
-        // Pre-bond: ping new nodes so they accept our future FindNode queries
-        for node in &nodes {
-            let nid = node.node_id();
-            if nid == self.local_node.node_id() {
-                continue;
+        // Pre-bond: ping new nodes so they accept our future FindNode queries.
+        // Only during bootstrap — once we have enough peers this is unnecessary
+        // and would generate excessive UDP traffic.
+        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
+        if peer_count < BOOTSTRAP_THRESHOLD {
+            for node in &nodes {
+                let nid = node.node_id();
+                if nid == self.local_node.node_id() {
+                    continue;
+                }
+                let already_pinged = self
+                    .discv4
+                    .as_ref()
+                    .map(|s| s.pinged_nodes.contains(&nid))
+                    .unwrap_or(true);
+                if already_pinged {
+                    continue;
+                }
+                if let Some(discv4) = &mut self.discv4 {
+                    discv4.pinged_nodes.insert(nid);
+                }
+                let _ = self.discv4_send_ping(node).await;
             }
-            let already_pinged = self
-                .discv4
-                .as_ref()
-                .map(|s| s.pinged_nodes.contains(&nid))
-                .unwrap_or(true);
-            if already_pinged {
-                continue;
-            }
-            if let Some(discv4) = &mut self.discv4 {
-                discv4.pinged_nodes.insert(nid);
-            }
-            let _ = self.discv4_send_ping(node).await;
         }
 
         // Feed results into ALL active lookups and advance them
