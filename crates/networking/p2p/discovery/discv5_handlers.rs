@@ -286,7 +286,7 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        // Remove finished lookups (geth-style back-to-back chaining)
+        // Remove finished lookups
         self.discv5
             .as_mut()
             .expect("discv5 state must exist")
@@ -300,6 +300,20 @@ impl DiscoveryServer {
         } else {
             1
         };
+
+        // Above bootstrap threshold, don't chain back-to-back — let the timer
+        // fall back to the slow interval between lookups to avoid excessive
+        // FindNode traffic at steady-state.
+        if peer_count >= BOOTSTRAP_THRESHOLD
+            && self
+                .discv5
+                .as_ref()
+                .expect("discv5 state must exist")
+                .active_lookups
+                .is_empty()
+        {
+            return Ok(());
+        }
 
         // Start new lookups up to the limit
         while self
