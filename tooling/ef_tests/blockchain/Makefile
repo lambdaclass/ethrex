@@ -50,16 +50,20 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
-amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+$(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam
 
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
 
-zkevm-vectors: $(ZKEVM_ARTIFACT)
+$(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 	rm -rf $(ZKEVM_VECTORS_DIR)
 	mkdir -p $(ZKEVM_VECTORS_DIR)
 	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'

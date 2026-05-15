@@ -2,6 +2,7 @@
 members = [
   "archive_sync",
   "ef_tests/blockchain",
+  "ef_tests/hive",
   "ef_tests/state",
   "ef_tests/state_v2",
   "hive_report",
@@ -86,6 +87,8 @@ crossbeam = "0.8.4"
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
+anyhow = "1.0.86"
+datatest-stable = "0.2.9"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
