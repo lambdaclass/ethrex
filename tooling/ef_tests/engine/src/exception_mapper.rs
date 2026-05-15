@@ -31,6 +31,7 @@ struct Entry {
 
 // ─── Mapping tables (kept in lock-step with the Python `EthrexExceptionMapper`) ────────
 
+#[rustfmt::skip]
 const PATTERNS: &[Entry] = &[
     // ─── mapping_substring ─────────────────────────────────────────────────────────
     Entry { canonical: "BlockException.INVALID_GASLIMIT", kind: Kind::Sub,

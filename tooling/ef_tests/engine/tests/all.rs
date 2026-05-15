@@ -41,7 +41,9 @@ fn print_fixture_summary() {
         }
     };
     let (g, r, y, c, b, z) = if color {
-        ("\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[36m", "\x1b[1m", "\x1b[0m")
+        (
+            "\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[36m", "\x1b[1m", "\x1b[0m",
+        )
     } else {
         ("", "", "", "", "", "")
     };

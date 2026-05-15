@@ -91,11 +91,6 @@ impl EngineApiHarness {
         })
     }
 
-    /// Build an in-memory harness (convenience wrapper for the common case).
-    pub async fn new_in_memory(genesis_json: &str) -> anyhow::Result<Self> {
-        Self::from_genesis(genesis_json, Backend::InMemory).await
-    }
-
     /// Round-trip a JSON-RPC request body through the in-process dispatcher.
     ///
     /// Routes Engine-namespace requests through `map_engine_requests` and all
@@ -111,48 +106,42 @@ impl EngineApiHarness {
         Ok(rpc_response(req.id.clone(), res)?)
     }
 
+    /// Build a JSON-RPC envelope and dispatch it via `call_raw`.
+    async fn call(&self, method: &str, params: Vec<Value>) -> anyhow::Result<Value> {
+        let body = serde_json::to_string(&RpcRequest {
+            id: RpcRequestId::Number(1),
+            jsonrpc: "2.0".to_string(),
+            method: method.to_string(),
+            params: Some(params),
+        })?;
+        self.call_raw(&body).await
+    }
+
     /// Call `engine_forkchoiceUpdatedVx` with `head` as head, safe, and finalized hash.
     /// `version` must be 1–4; passes no payload attributes.
     pub async fn fcu(&self, version: u8, head: H256) -> anyhow::Result<Value> {
-        let method = format!("engine_forkchoiceUpdatedV{version}");
         let fcs = serde_json::json!({
             "headBlockHash": format!("{head:#x}"),
             "safeBlockHash": format!("{head:#x}"),
             "finalizedBlockHash": format!("{head:#x}"),
         });
-        let body = serde_json::to_string(&RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method,
-            params: Some(vec![fcs]),
-        })?;
-        self.call_raw(&body).await
+        self.call(&format!("engine_forkchoiceUpdatedV{version}"), vec![fcs])
+            .await
     }
 
     /// Call `engine_newPayloadVx`. `params` is the EEST fixture's pre-built params array.
     pub async fn new_payload(&self, version: u8, params: &[Value]) -> anyhow::Result<Value> {
-        let method = format!("engine_newPayloadV{version}");
-        let body = serde_json::to_string(&RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method,
-            params: Some(params.to_vec()),
-        })?;
-        self.call_raw(&body).await
+        self.call(&format!("engine_newPayloadV{version}"), params.to_vec())
+            .await
     }
 
     /// Call `eth_getBlockByNumber("0x0", false)` and return the raw JSON response.
     pub async fn get_block_by_number_zero(&self) -> anyhow::Result<Value> {
-        let body = serde_json::to_string(&RpcRequest {
-            id: RpcRequestId::Number(1),
-            jsonrpc: "2.0".to_string(),
-            method: "eth_getBlockByNumber".to_string(),
-            params: Some(vec![
-                serde_json::Value::String("0x0".to_string()),
-                serde_json::Value::Bool(false),
-            ]),
-        })?;
-        self.call_raw(&body).await
+        self.call(
+            "eth_getBlockByNumber",
+            vec![Value::String("0x0".to_string()), Value::Bool(false)],
+        )
+        .await
     }
 }
 
@@ -166,7 +155,7 @@ mod tests {
     /// resulting context has a live syncer.
     #[tokio::test]
     async fn harness_builds_from_genesis() {
-        let h = EngineApiHarness::new_in_memory(GENESIS)
+        let h = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
             .await
             .expect("harness construction failed");
         assert!(h.ctx.syncer.is_some(), "syncer must be Some");
@@ -177,10 +166,10 @@ mod tests {
     #[tokio::test]
     async fn shared_syncer_is_same_arc() {
         use std::sync::Arc;
-        let h1 = EngineApiHarness::new_in_memory(GENESIS)
+        let h1 = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
             .await
             .expect("first harness");
-        let h2 = EngineApiHarness::new_in_memory(GENESIS)
+        let h2 = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
             .await
             .expect("second harness");
         let p1 = Arc::as_ptr(h1.ctx.syncer.as_ref().unwrap());
@@ -218,7 +207,7 @@ mod tests {
         // InMemory
         let t0 = std::time::Instant::now();
         for _ in 0..ITERATIONS {
-            let _h = EngineApiHarness::new_in_memory(GENESIS)
+            let _h = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
                 .await
                 .expect("harness construction failed in bench");
         }
@@ -257,7 +246,7 @@ mod tests {
     /// Verify `eth_getBlockByNumber("0x0", false)` succeeds and returns the genesis block.
     #[tokio::test]
     async fn eth_get_block_by_number_zero_returns_genesis() {
-        let h = EngineApiHarness::new_in_memory(GENESIS)
+        let h = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
             .await
             .expect("harness construction failed");
 

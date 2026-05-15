@@ -10,7 +10,5 @@ pub fn render_failures(failures: &[(String, FixtureFailure)]) -> String {
 }
 
 pub fn render_summary(total: usize, passed: usize, skipped: usize, failed: usize) -> String {
-    format!(
-        "=== {total} fixtures: {passed} passed, {skipped} skipped, {failed} failed ===",
-    )
+    format!("=== {total} fixtures: {passed} passed, {skipped} skipped, {failed} failed ===",)
 }

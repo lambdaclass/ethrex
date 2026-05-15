@@ -101,7 +101,12 @@ impl EngineFixture {
     /// Parse the fixture `network` field. Returns `(genesis_fork, transition)` where
     /// `transition = Some((target_fork, activation_time_secs))` when the fixture is a
     /// fork-transition test (e.g. `CancunToPragueAtTime15k`).
-    pub fn schedule(&self) -> anyhow::Result<(ethrex_common::types::Fork, Option<(ethrex_common::types::Fork, u64)>)> {
+    pub(crate) fn schedule(
+        &self,
+    ) -> anyhow::Result<(
+        ethrex_common::types::Fork,
+        Option<(ethrex_common::types::Fork, u64)>,
+    )> {
         parse_network(&self.network)
     }
 
@@ -407,7 +412,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_sample_fixture() {
+    fn parses_sample_and_builds_genesis() {
         let raw = include_str!("../fixtures_sample/one_payload.json");
         let fixtures: EngineFixtureFile = serde_json::from_str(raw).expect("fixture should parse");
         assert_eq!(fixtures.len(), 1, "expected exactly 1 fixture entry");
@@ -416,16 +421,8 @@ mod tests {
             !fixture.engine_new_payloads.is_empty(),
             "expected at least 1 payload"
         );
-    }
-
-    #[test]
-    fn build_genesis_returns_ok_with_correct_chain_id() {
-        let raw = include_str!("../fixtures_sample/one_payload.json");
-        let fixtures: EngineFixtureFile = serde_json::from_str(raw).unwrap();
-        let (_, fixture) = fixtures.iter().next().unwrap();
         let genesis = fixture.build_genesis().expect("build_genesis must succeed");
-        // The sample fixture uses chainId 1.
-        assert_eq!(genesis.config.chain_id, 1);
+        assert_eq!(genesis.config.chain_id, 1, "sample fixture uses chainId 1");
     }
 
     #[test]
