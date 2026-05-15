@@ -10,8 +10,6 @@ pub const LOOKUP_ALPHA: usize = 3;
 pub const LOOKUP_BUCKET_SIZE: usize = 16;
 /// Maximum duration before a lookup is considered timed out.
 pub const LOOKUP_TIMEOUT: Duration = Duration::from_secs(20);
-/// Aggressive alpha used during bootstrap (query all entries at once).
-pub const BOOTSTRAP_ALPHA: usize = LOOKUP_BUCKET_SIZE;
 
 /// A single entry in the iterative lookup result set.
 #[derive(Debug, Clone)]

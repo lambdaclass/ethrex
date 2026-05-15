@@ -41,6 +41,9 @@ const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// Faster tick rate used while an iterative lookup is active to drive convergence.
 const ACTIVE_LOOKUP_TICK: Duration = Duration::from_millis(50);
+/// Slower tick during bootstrap to give ping/pong bonds time to establish
+/// between lookup ticks, reducing wasted FindNode queries.
+const BOOTSTRAP_LOOKUP_TICK: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Error)]
 pub enum DiscoveryServerError {
@@ -284,7 +287,12 @@ impl DiscoveryServer {
             .as_ref()
             .is_some_and(|s| !s.active_lookups.is_empty())
         {
-            ACTIVE_LOOKUP_TICK
+            let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
+            if peer_count < 30 {
+                BOOTSTRAP_LOOKUP_TICK
+            } else {
+                ACTIVE_LOOKUP_TICK
+            }
         } else {
             self.get_lookup_interval().await
         };
@@ -306,7 +314,12 @@ impl DiscoveryServer {
             .as_ref()
             .is_some_and(|s| !s.active_lookups.is_empty())
         {
-            ACTIVE_LOOKUP_TICK
+            let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
+            if peer_count < 30 {
+                BOOTSTRAP_LOOKUP_TICK
+            } else {
+                ACTIVE_LOOKUP_TICK
+            }
         } else {
             self.get_lookup_interval().await
         };

@@ -1,5 +1,5 @@
 use crate::{
-    discovery::lookup::{BOOTSTRAP_ALPHA, IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
+    discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
@@ -31,9 +31,7 @@ use super::server::{DiscoveryServer, DiscoveryServerError};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 const MAX_ENRS_PER_MESSAGE: usize = 3;
-/// Maximum number of concurrent iterative lookups during bootstrap.
-const MAX_CONCURRENT_LOOKUPS: usize = 3;
-/// Peer count threshold below which we use aggressive bootstrap settings.
+/// Peer count threshold below which we use bootstrap-mode settings.
 const BOOTSTRAP_THRESHOLD: usize = 30;
 /// Nodes not validated within this interval are candidates for revalidation.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
@@ -293,13 +291,7 @@ impl DiscoveryServer {
             .active_lookups
             .retain(|l| !l.is_finished());
 
-        // Determine max concurrent lookups based on peer count
         let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
-        let max_lookups = if peer_count < BOOTSTRAP_THRESHOLD {
-            MAX_CONCURRENT_LOOKUPS
-        } else {
-            1
-        };
 
         // Above bootstrap threshold, don't chain back-to-back — let the timer
         // fall back to the slow interval between lookups to avoid excessive
@@ -315,14 +307,13 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        // Start new lookups up to the limit
-        while self
+        // Start a new lookup if none active
+        if self
             .discv5
             .as_ref()
             .expect("discv5 state must exist")
             .active_lookups
-            .len()
-            < max_lookups
+            .is_empty()
         {
             let mut rng = OsRng;
             let target_id: H256 = rng.r#gen();
@@ -332,22 +323,21 @@ impl DiscoveryServer {
                 .peer_table
                 .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
                 .await?;
-            if seed.is_empty() {
+            if !seed.is_empty() {
+                trace!(
+                    protocol = "discv5",
+                    seeds = seed.len(),
+                    "Starting new iterative lookup"
+                );
+                let lookup = IterativeLookup::new(target_id, seed);
+                let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+                discv5.active_lookups.push(lookup);
+            } else {
                 trace!(
                     protocol = "discv5",
                     "No seeds for lookup, connection pool empty"
                 );
-                break;
             }
-
-            trace!(
-                protocol = "discv5",
-                seeds = seed.len(),
-                "Starting new iterative lookup"
-            );
-            let lookup = IterativeLookup::new(target_id, seed);
-            let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-            discv5.active_lookups.push(lookup);
         }
 
         self.advance_v5_lookup().await
@@ -363,19 +353,11 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        // Adaptive alpha: query aggressively during bootstrap
-        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
-        let alpha = if peer_count < BOOTSTRAP_THRESHOLD {
-            BOOTSTRAP_ALPHA
-        } else {
-            LOOKUP_ALPHA
-        };
-
-        // Collect all queries from all active lookups
+        // Collect queries from all active lookups
         let mut queries: Vec<(usize, H256, H256, Node)> = Vec::new();
         for (idx, lookup) in discv5.active_lookups.iter_mut().enumerate() {
             let target = lookup.target;
-            for (node_id, node) in lookup.next_to_query(alpha) {
+            for (node_id, node) in lookup.next_to_query(LOOKUP_ALPHA) {
                 queries.push((idx, target, node_id, node));
             }
         }
