@@ -199,9 +199,7 @@ pub async fn run_fixture(
     let genesis = fix
         .build_genesis()
         .map_err(|e| FixtureFailure::FixtureParse(e.to_string()))?;
-    let genesis_json =
-        serde_json::to_string(&genesis).map_err(|e| FixtureFailure::FixtureParse(e.to_string()))?;
-    let harness = Box::pin(EngineApiHarness::from_genesis(&genesis_json, opts.backend))
+    let harness = Box::pin(EngineApiHarness::from_genesis(genesis, opts.backend))
         .await
         .map_err(|e| FixtureFailure::HarnessSetup(e.to_string()))?;
 

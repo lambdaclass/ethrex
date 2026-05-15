@@ -62,13 +62,9 @@ fn prefer_tmpfs_dir() -> PathBuf {
 }
 
 impl EngineApiHarness {
-    /// Build a harness from a JSON-encoded genesis document.
-    ///
-    /// `backend` controls the backing store (`InMemory` for fast unit-style
-    /// runs, `RocksDB` for persistence benchmarks).
-    pub async fn from_genesis(genesis_json: &str, backend: Backend) -> anyhow::Result<Self> {
-        let genesis: Genesis = serde_json::from_str(genesis_json)?;
-
+    /// Build a harness from a typed `Genesis`. Hot path: callers should use this
+    /// when they already hold a parsed `Genesis` to skip a round-trip through JSON.
+    pub async fn from_genesis(genesis: Genesis, backend: Backend) -> anyhow::Result<Self> {
         let (store, tempdir) = match backend {
             Backend::InMemory => {
                 let store = Store::new("", EngineType::InMemory)?;
@@ -91,13 +87,16 @@ impl EngineApiHarness {
         })
     }
 
-    /// Round-trip a JSON-RPC request body through the in-process dispatcher.
-    ///
-    /// Routes Engine-namespace requests through `map_engine_requests` and all
-    /// other namespaces through `map_http_requests`, skipping HTTP transport
-    /// and JWT authentication.
-    pub async fn call_raw(&self, body: &str) -> anyhow::Result<Value> {
-        let req: RpcRequest = serde_json::from_str(body)?;
+    /// Convenience for callers that hold a JSON-encoded genesis (mostly tests).
+    pub async fn from_genesis_json(genesis_json: &str, backend: Backend) -> anyhow::Result<Self> {
+        let genesis: Genesis = serde_json::from_str(genesis_json)?;
+        Self::from_genesis(genesis, backend).await
+    }
+
+    /// Dispatch a pre-built `RpcRequest` directly. Skips the JSON envelope
+    /// round-trip — the per-method `serde_json::from_value::<T>(params)` inside
+    /// each handler still exercises the serde path that matters for coverage.
+    async fn dispatch(&self, req: RpcRequest) -> anyhow::Result<Value> {
         let res = match req.namespace() {
             Ok(RpcNamespace::Engine) => map_engine_requests(&req, self.ctx.clone()).await,
             Ok(_) => map_http_requests(&req, self.ctx.clone()).await,
@@ -106,15 +105,22 @@ impl EngineApiHarness {
         Ok(rpc_response(req.id.clone(), res)?)
     }
 
-    /// Build a JSON-RPC envelope and dispatch it via `call_raw`.
+    /// Round-trip a JSON-RPC request body through the in-process dispatcher.
+    /// Exercises the full envelope-parse path; used by external callers / tests.
+    pub async fn call_raw(&self, body: &str) -> anyhow::Result<Value> {
+        let req: RpcRequest = serde_json::from_str(body)?;
+        self.dispatch(req).await
+    }
+
+    /// Build an RpcRequest and dispatch it directly (no envelope round-trip).
     async fn call(&self, method: &str, params: Vec<Value>) -> anyhow::Result<Value> {
-        let body = serde_json::to_string(&RpcRequest {
+        let req = RpcRequest {
             id: RpcRequestId::Number(1),
             jsonrpc: "2.0".to_string(),
             method: method.to_string(),
             params: Some(params),
-        })?;
-        self.call_raw(&body).await
+        };
+        self.dispatch(req).await
     }
 
     /// Call `engine_forkchoiceUpdatedVx` with `head` as head, safe, and finalized hash.
@@ -155,7 +161,7 @@ mod tests {
     /// resulting context has a live syncer.
     #[tokio::test]
     async fn harness_builds_from_genesis() {
-        let h = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
+        let h = EngineApiHarness::from_genesis_json(GENESIS, Backend::InMemory)
             .await
             .expect("harness construction failed");
         assert!(h.ctx.syncer.is_some(), "syncer must be Some");
@@ -166,10 +172,10 @@ mod tests {
     #[tokio::test]
     async fn shared_syncer_is_same_arc() {
         use std::sync::Arc;
-        let h1 = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
+        let h1 = EngineApiHarness::from_genesis_json(GENESIS, Backend::InMemory)
             .await
             .expect("first harness");
-        let h2 = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
+        let h2 = EngineApiHarness::from_genesis_json(GENESIS, Backend::InMemory)
             .await
             .expect("second harness");
         let p1 = Arc::as_ptr(h1.ctx.syncer.as_ref().unwrap());
@@ -183,7 +189,7 @@ mod tests {
     #[cfg(feature = "rocksdb")]
     #[tokio::test]
     async fn rocksdb_harness_builds_and_tempdir_is_some() {
-        let h = EngineApiHarness::from_genesis(GENESIS, Backend::RocksDB)
+        let h = EngineApiHarness::from_genesis_json(GENESIS, Backend::RocksDB)
             .await
             .expect("RocksDB harness construction failed");
         assert!(h._tempdir.is_some(), "_tempdir must be Some for RocksDB");
@@ -207,7 +213,7 @@ mod tests {
         // InMemory
         let t0 = std::time::Instant::now();
         for _ in 0..ITERATIONS {
-            let _h = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
+            let _h = EngineApiHarness::from_genesis_json(GENESIS, Backend::InMemory)
                 .await
                 .expect("harness construction failed in bench");
         }
@@ -218,7 +224,7 @@ mod tests {
         let rocksdb_mean_ms = {
             let t1 = std::time::Instant::now();
             for _ in 0..ITERATIONS {
-                let _h = EngineApiHarness::from_genesis(GENESIS, Backend::RocksDB)
+                let _h = EngineApiHarness::from_genesis_json(GENESIS, Backend::RocksDB)
                     .await
                     .expect("RocksDB harness construction failed in bench");
             }
@@ -246,7 +252,7 @@ mod tests {
     /// Verify `eth_getBlockByNumber("0x0", false)` succeeds and returns the genesis block.
     #[tokio::test]
     async fn eth_get_block_by_number_zero_returns_genesis() {
-        let h = EngineApiHarness::from_genesis(GENESIS, Backend::InMemory)
+        let h = EngineApiHarness::from_genesis_json(GENESIS, Backend::InMemory)
             .await
             .expect("harness construction failed");
 
