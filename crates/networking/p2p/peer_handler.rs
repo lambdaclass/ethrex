@@ -7,9 +7,12 @@ use crate::{
     rlpx::{
         connection::server::PeerConnection,
         error::PeerConnectionError,
-        eth::blocks::{
-            BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
-            HashOrNumber,
+        eth::{
+            block_access_lists::{BlockAccessLists, GetBlockAccessLists},
+            blocks::{
+                BLOCK_HEADER_LIMIT, BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders,
+                HashOrNumber,
+            },
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
@@ -17,7 +20,7 @@ use crate::{
 };
 use ethrex_common::{
     H256,
-    types::{BlockBody, BlockHeader, validate_block_body},
+    types::{BlockBody, BlockHeader, block_access_list::BlockAccessList, validate_block_body},
 };
 use ethrex_crypto::NativeCrypto;
 use spawned_concurrency::{error::ActorError, tasks::ActorRef};
@@ -565,6 +568,45 @@ impl PeerHandler {
         }
         Ok(None)
     }
+
+    /// Requests block access lists from a peer that supports eth/71.
+    /// Returns a vector of optional BALs (one per requested block hash) or None if:
+    /// - There are no available eth/71 peers
+    /// - The peer did not respond in time
+    pub async fn request_block_access_lists(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<Vec<Option<BlockAccessList>>>, PeerHandlerError> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockAccessLists(GetBlockAccessLists {
+            id: request_id,
+            block_hashes: block_hashes.to_vec(),
+        });
+        match self.get_random_peer(&[Capability::eth(71)]).await? {
+            None => Ok(None),
+            Some((peer_id, mut connection, permit)) => {
+                let response = connection
+                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                    .await;
+                drop(permit);
+                match response {
+                    Ok(RLPxMessage::BlockAccessLists(BlockAccessLists {
+                        id,
+                        block_access_lists,
+                    })) if id == request_id => {
+                        self.peer_table.record_success(peer_id)?;
+                        Ok(Some(block_access_lists))
+                    }
+                    _ => {
+                        warn!("[SYNCING] Didn't receive block access lists from peer {peer_id}");
+                        self.peer_table.record_failure(peer_id)?;
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
     /// Returns diagnostic snapshots for all connected peers (scores, requests, eligibility).
     pub async fn read_peer_diagnostics(&self) -> Vec<PeerDiagnostics> {
         self.peer_table
