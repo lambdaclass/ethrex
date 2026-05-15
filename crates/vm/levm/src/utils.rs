@@ -449,8 +449,10 @@ impl<'a> VM<'a> {
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
 
-        // EIP-8037 (PR #2689): Capture the intrinsic state gas charged so that top-level
-        // failure handling can distinguish intrinsic (stays charged) from execution (wiped).
+        // EIP-8037: Capture the intrinsic state gas charged so refund_sender's
+        // Policy A `execution_portion = state_gas_used − intrinsic − absorbed − pending`
+        // formula stays correct after revert/halt/OOG (where state_gas_used and
+        // intrinsic_state_gas_charged are intentionally not decremented).
         debug_assert_eq!(
             self.intrinsic_state_gas_charged, 0,
             "intrinsic_state_gas_charged set twice"
@@ -462,37 +464,40 @@ impl<'a> VM<'a> {
         // regular execution gas is allowed (capped at TX_MAX_GAS_LIMIT_AMSTERDAM); the difference becomes
         // the reservoir for drawing state gas without consuming regular gas_remaining.
         if self.env.config.fork >= Fork::Amsterdam {
-            let gas_limit = self.tx.gas_limit();
-            let execution_gas = gas_limit.saturating_sub(total_gas);
-            let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-            let gas_left = regular_gas_budget.min(execution_gas);
-            let reservoir = execution_gas.saturating_sub(gas_left);
-            if reservoir > 0 {
-                // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
-                let reservoir_i64 =
-                    i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
-                self.current_call_frame.gas_remaining = self
-                    .current_call_frame
-                    .gas_remaining
-                    .checked_sub(reservoir_i64)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_gas_reservoir = reservoir;
-            }
-            // Capture initial reservoir for block-dimensional regular gas computation.
-            self.state_gas_reservoir_initial = reservoir;
-
-            // EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system
-            // transactions get an extra state-gas reservoir of
-            // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
-            // the 30M regular budget — so SSTORE-heavy system contracts
-            // (EIP-2935, EIP-4788) cannot OOG on state-gas growth alone.
-            // This is additive, not pre-consumed from gas_remaining.
             if self.env.is_system_call {
+                // EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system
+                // transactions get a dedicated state-gas reservoir of
+                // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
+                // the full SYS_CALL_GAS_LIMIT regular budget — so SSTORE-heavy
+                // system contracts (EIP-2935, EIP-4788) cannot OOG on state-gas
+                // growth alone. Skip the regular reservoir computation so we don't
+                // pre-consume `gas_remaining`; EELS sets `intrinsic_regular_gas=0`
+                // and `gas=SYSTEM_TRANSACTION_GAS` for the message
+                // (amsterdam/fork.py::process_unchecked_system_transaction).
                 let sys_reservoir = self
                     .state_gas_storage_set
                     .saturating_mul(SYSTEM_MAX_SSTORES_PER_CALL);
                 self.state_gas_reservoir = sys_reservoir;
                 self.state_gas_reservoir_initial = sys_reservoir;
+            } else {
+                let gas_limit = self.tx.gas_limit();
+                let execution_gas = gas_limit.saturating_sub(total_gas);
+                let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
+                let gas_left = regular_gas_budget.min(execution_gas);
+                let reservoir = execution_gas.saturating_sub(gas_left);
+                if reservoir > 0 {
+                    // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
+                    let reservoir_i64 =
+                        i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
+                    self.current_call_frame.gas_remaining = self
+                        .current_call_frame
+                        .gas_remaining
+                        .checked_sub(reservoir_i64)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_gas_reservoir = reservoir;
+                }
+                // Capture initial reservoir for block-dimensional regular gas computation.
+                self.state_gas_reservoir_initial = reservoir;
             }
         }
 

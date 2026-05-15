@@ -483,8 +483,9 @@ pub struct VM<'a> {
     pub state_gas_auth_total: u64,
     /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
     /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
-    /// `set_delegation` when the authority's code slot already holds a
-    /// delegation indicator (EELS PR #2836).
+    /// `set_delegation` when no new delegation indicator bytes are written —
+    /// either the authority's code slot already holds an indicator (EELS PR
+    /// #2836) or the auth clears against an empty authority (EELS PR #2848).
     pub state_gas_auth_base: u64,
     /// EIP-8037 clamp-and-spill: state gas refund amount that has been clamped by child frames but
     /// not yet absorbed by an ancestor frame. Flushed into the current frame on successful sub-call
@@ -494,9 +495,10 @@ pub struct VM<'a> {
     /// far in this transaction (across all depths). Used at finalization to compute net
     /// state_gas_used. Restored from snapshot on child revert.
     pub state_gas_refund_absorbed: u64,
-    /// EIP-8037 (PR #2689): snapshot of state_gas_used taken immediately after intrinsic gas
-    /// is charged. On top-level tx failure, only this portion stays charged; the execution
-    /// portion (state_gas_used - intrinsic_state_gas_charged) is wiped back to the reservoir.
+    /// EIP-8037: snapshot of state_gas_used taken immediately after intrinsic gas is charged.
+    /// On top-level tx failure (Policy A, EELS PR #2815), the execution portion
+    /// (state_gas_used − intrinsic_state_gas_charged − absorbed − pending) is refilled into
+    /// the reservoir while state_gas_used itself stays elevated for block-accounting.
     pub intrinsic_state_gas_charged: u64,
     /// EIP-8037 bal-devnet-7 (EELS PR #2816): state-gas refund channel.
     /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
