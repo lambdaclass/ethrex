@@ -30,39 +30,46 @@ use crate::modules::{
 };
 
 #[derive(Args, Debug)]
+#[group(required = true, multiple = false)]
 pub struct StatetestOptions {
     /// Emit full EIP-3155 JSONL trace + stateRoot line for the given fixture.
-    #[arg(long, value_name = "PATH", conflicts_with = "json_outcome")]
+    #[arg(long, value_name = "PATH", group = "mode")]
     pub json: Option<PathBuf>,
     /// Emit only the stateRoot line for the given fixture (no per-opcode trace).
-    #[arg(long, value_name = "PATH", conflicts_with = "json")]
+    #[arg(long, value_name = "PATH", group = "mode")]
     pub json_outcome: Option<PathBuf>,
 }
 
 impl StatetestOptions {
-    /// Returns `(path, emit_trace)`. Exactly one of `--json` / `--json-outcome` must be set.
-    fn fixture_path(&self) -> Result<(&PathBuf, bool), RunnerError> {
+    /// Returns `(path, emit_trace)`. The clap `ArgGroup` guarantees exactly one is set.
+    fn fixture_path(&self) -> (&PathBuf, bool) {
         match (&self.json, &self.json_outcome) {
-            (Some(p), None) => Ok((p, true)),
-            (None, Some(p)) => Ok((p, false)),
-            _ => Err(RunnerError::Custom(
-                "exactly one of --json or --json-outcome must be provided".to_string(),
-            )),
+            (Some(p), None) => (p, true),
+            (None, Some(p)) => (p, false),
+            _ => unreachable!("clap ArgGroup enforces exactly one of --json / --json-outcome"),
         }
     }
 }
 
 pub async fn run(opts: StatetestOptions) -> Result<ExitCode, RunnerError> {
-    let (path, emit_trace) = opts.fixture_path()?;
+    let (path, emit_trace) = opts.fixture_path();
     let tests = parse_file(path, false)?;
+
+    // `Tests::from` filters out forks not in `DEFAULT_FORKS` (types.rs). A fixture
+    // whose `post` map contains only unsupported forks would therefore parse fine
+    // but produce zero `test_cases`, and we'd silently exit 0 with no `stateRoot`
+    // emitted — a false-green that goevmlab can't detect. Surface it as an error.
+    if tests.iter().all(|t| t.test_cases.is_empty()) {
+        return Err(RunnerError::Custom(format!(
+            "no runnable test cases in {}: none of the post-state forks are in the runnable allow-list",
+            path.display(),
+        )));
+    }
 
     let mut any_mismatch = false;
     for test in &tests {
         for test_case in &test.test_cases {
-            let mismatch = run_case(test, test_case, emit_trace).await?;
-            if mismatch {
-                any_mismatch = true;
-            }
+            any_mismatch |= run_case(test, test_case, emit_trace).await?;
         }
     }
 
