@@ -2,9 +2,13 @@
 
 ## Perf
 
-### 2026-05-05
+### 2026-05-15
 
 - Optimize trie building in snap sync insertion: parallelize state trie build across 16 nibble ranges, eliminate redundant code-hash iteration, and reuse buffers (~700M alloc reduction on mainnet) [#6410](https://github.com/lambdaclass/ethrex/pull/6410)
+
+### 2026-05-14
+
+- Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
 
 ### 2026-04-27
 
