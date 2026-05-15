@@ -7,7 +7,7 @@
 /// This code is only sound because the guest is guaranteed to be single-threaded.
 pub struct OnceCell<T>(core::cell::UnsafeCell<Option<T>>);
 
-unsafe impl<T: Send> Sync for OnceCell<T> {}
+unsafe impl<T: Sync> Sync for OnceCell<T> {}
 
 impl<T> OnceCell<T> {
     #[inline]

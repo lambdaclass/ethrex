@@ -17,7 +17,7 @@ use std::sync::OnceLock;
 pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
 
 #[cfg(feature = "eip-8025")]
-unsafe impl<T: Send> Sync for OnceLock<T> {}
+unsafe impl<T: Sync> Sync for OnceLock<T> {}
 
 #[cfg(feature = "eip-8025")]
 impl<T> OnceLock<T> {
