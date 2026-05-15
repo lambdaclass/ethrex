@@ -18,7 +18,7 @@ impl RunOptions {
     pub fn from_env() -> Self {
         Self {
             backend: parse_backend_env(),
-            strict_exceptions: std::env::var("ETHREX_HIVE_STRICT_EXCEPTIONS")
+            strict_exceptions: std::env::var("ETHREX_ENGINE_STRICT_EXCEPTIONS")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false),
         }
@@ -26,12 +26,12 @@ impl RunOptions {
 }
 
 fn parse_backend_env() -> Backend {
-    match std::env::var("ETHREX_HIVE_BACKEND").as_deref() {
+    match std::env::var("ETHREX_ENGINE_BACKEND").as_deref() {
         Ok("inmemory") | Err(_) => Backend::InMemory,
         #[cfg(feature = "rocksdb")]
         Ok("rocksdb") => Backend::RocksDB,
         Ok(other) => panic!(
-            "ETHREX_HIVE_BACKEND='{other}' invalid; valid: inmemory{}",
+            "ETHREX_ENGINE_BACKEND='{other}' invalid; valid: inmemory{}",
             if cfg!(feature = "rocksdb") {
                 ", rocksdb"
             } else {

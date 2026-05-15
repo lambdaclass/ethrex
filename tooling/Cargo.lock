@@ -2929,7 +2929,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ef_tests-hive"
+name = "ef_tests-engine"
 version = "4.0.0"
 dependencies = [
  "anyhow",

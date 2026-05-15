@@ -1,5 +1,5 @@
 [package]
-name = "ef_tests-hive"
+name = "ef_tests-engine"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true

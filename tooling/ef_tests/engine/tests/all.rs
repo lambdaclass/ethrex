@@ -6,12 +6,12 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use ef_tests_hive::{
+use ef_tests_engine::{
     EngineFixtureFile, FixtureFailure, RunOptions, render_failures, render_summary, run_fixture,
 };
 use regex::Regex;
 
-// Aggregate fixture counters across all `hive_runner` calls. libtest reports
+// Aggregate fixture counters across all `engine_runner` calls. libtest reports
 // one test per JSON file, but each file holds many fixtures; these atomics
 // surface the inner totals in a final line printed at process exit.
 static F_PASSED: AtomicUsize = AtomicUsize::new(0);
@@ -72,21 +72,21 @@ fn runtime() -> &'static tokio::runtime::Runtime {
 }
 
 /// Optional fixture-name regex (mirrors hive's `--sim.limit`).
-/// Set via `ETHREX_HIVE_LIMIT=<regex>` to run only fixtures whose name matches.
+/// Set via `ETHREX_ENGINE_LIMIT=<regex>` to run only fixtures whose name matches.
 static LIMIT: OnceLock<Option<Regex>> = OnceLock::new();
 
 fn limit() -> Option<&'static Regex> {
     LIMIT
         .get_or_init(|| {
-            std::env::var("ETHREX_HIVE_LIMIT").ok().map(|pat| {
+            std::env::var("ETHREX_ENGINE_LIMIT").ok().map(|pat| {
                 Regex::new(&pat)
-                    .unwrap_or_else(|e| panic!("ETHREX_HIVE_LIMIT='{pat}' invalid regex: {e}"))
+                    .unwrap_or_else(|e| panic!("ETHREX_ENGINE_LIMIT='{pat}' invalid regex: {e}"))
             })
         })
         .as_ref()
 }
 
-fn hive_runner(path: &Path) -> datatest_stable::Result<()> {
+fn engine_runner(path: &Path) -> datatest_stable::Result<()> {
     // Skip entire file if path matches any skip pattern.
     let path_str = path.to_string_lossy();
     for pat in SKIP_PATTERNS {
@@ -138,4 +138,4 @@ fn hive_runner(path: &Path) -> datatest_stable::Result<()> {
     Err(report.into())
 }
 
-datatest_stable::harness!(hive_runner, "vectors/eest/", r".*\.json$");
+datatest_stable::harness!(engine_runner, "vectors/eest/", r".*\.json$");

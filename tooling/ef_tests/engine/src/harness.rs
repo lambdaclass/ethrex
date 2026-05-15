@@ -190,7 +190,7 @@ mod tests {
 
     /// Smoke test: RocksDB harness constructs and drops cleanly, tempdir is set.
     ///
-    /// Requires the `rocksdb` feature: `cargo test -p ef_tests-hive --features rocksdb`.
+    /// Requires the `rocksdb` feature: `cargo test -p ef_tests-engine --features rocksdb`.
     #[cfg(feature = "rocksdb")]
     #[tokio::test]
     async fn rocksdb_harness_builds_and_tempdir_is_some() {
@@ -205,7 +205,7 @@ mod tests {
     /// stated targets for both backends over 100 iterations.
     ///
     /// Run with:
-    ///   `cargo test -p ef_tests-hive --release --features rocksdb \
+    ///   `cargo test -p ef_tests-engine --release --features rocksdb \
     ///       -- --include-ignored bench_backends_100`
     #[ignore = "timing guard; run with --release --include-ignored"]
     #[tokio::test]

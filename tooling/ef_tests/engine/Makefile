@@ -39,10 +39,10 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT)
 
 test: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run engine-format fixture suite (InMemory, release)
-	cargo test -p ef_tests-hive --release
+	cargo test -p ef_tests-engine --release
 
 test-rocksdb: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run with RocksDB backend
-	cargo test -p ef_tests-hive --release --features rocksdb
+	cargo test -p ef_tests-engine --release --features rocksdb
 
 test-strict: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run with strict validationError checking
-	ETHREX_HIVE_STRICT_EXCEPTIONS=1 cargo test -p ef_tests-hive --release
+	ETHREX_ENGINE_STRICT_EXCEPTIONS=1 cargo test -p ef_tests-engine --release
