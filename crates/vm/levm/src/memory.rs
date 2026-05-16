@@ -55,7 +55,7 @@ impl Memory {
     }
 
     /// Truncates the memory back to base. This is crucial for constrained
-    /// memory in zkVMs. The memory is not freed, but rather shrinked in `len`,
+    /// memory in zkVMs. The memory is not freed, but rather shrunk in `len`,
     /// so that the already allocated `capacity` is reused.
     #[cfg(feature = "eip-8025")]
     #[inline]
