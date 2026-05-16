@@ -1133,7 +1133,9 @@ impl<'a> VM<'a> {
             ..
         } = executed_call_frame;
 
+        #[cfg(not(feature = "eip-8025"))]
         old_callframe_memory.clean_from_base();
+
         #[cfg(feature = "eip-8025")]
         old_callframe_memory.truncate_to_base();
 
@@ -1284,7 +1286,9 @@ impl<'a> VM<'a> {
             ..
         } = executed_call_frame;
 
+        #[cfg(not(feature = "eip-8025"))]
         old_callframe_memory.clean_from_base();
+
         #[cfg(feature = "eip-8025")]
         old_callframe_memory.truncate_to_base();
 
