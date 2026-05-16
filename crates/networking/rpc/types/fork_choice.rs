@@ -35,6 +35,11 @@ pub struct PayloadAttributesV4 {
     pub parent_beacon_block_root: Option<H256>,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub slot_number: u64,
+    // execution-apis#796: CL-supplied target gas limit for local payload
+    // building. Required when Amsterdam (= upstream "Glamsterdam") is
+    // active; kept Option so the EL still accepts pre-rollout CLs.
+    #[serde(default, with = "serde_utils::u64::hex_str_opt")]
+    pub target_gas_limit: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
