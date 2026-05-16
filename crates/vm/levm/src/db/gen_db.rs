@@ -106,9 +106,9 @@ impl GeneralizedDatabase {
         self.bal_recorder = None;
     }
 
-    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint32).
     /// Call this before each transaction or phase.
-    pub fn set_bal_index(&mut self, index: u16) {
+    pub fn set_bal_index(&mut self, index: u32) {
         if let Some(recorder) = &mut self.bal_recorder {
             recorder.set_block_access_index(index);
         }
@@ -534,12 +534,13 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
-        let account = self.db.get_account_mut(address)?;
-
+        // Backup must be taken before mark_modified flips `exists` to true.
+        let account = self.db.get_account(address)?;
         self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
 
+        let account = self.db.get_account_mut(address)?;
         Ok(account)
     }
 
@@ -548,6 +549,9 @@ impl<'a> VM<'a> {
         address: Address,
         increase: U256,
     ) -> Result<(), InternalError> {
+        if increase.is_zero() {
+            return Ok(());
+        }
         let account = self.get_account_mut(address)?;
 
         // Get initial balance BEFORE modification (avoids duplicate lookup)
@@ -575,6 +579,9 @@ impl<'a> VM<'a> {
         address: Address,
         decrease: U256,
     ) -> Result<(), InternalError> {
+        if decrease.is_zero() {
+            return Ok(());
+        }
         let account = self.get_account_mut(address)?;
 
         // Get initial balance BEFORE modification (avoids duplicate lookup)
