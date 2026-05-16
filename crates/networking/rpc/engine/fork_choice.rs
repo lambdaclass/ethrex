@@ -536,6 +536,13 @@ fn validate_attributes_v4(
             "V4 payload attributes missing parent_beacon_block_root".to_string(),
         ));
     }
+    // execution-apis#796: required field. The paired CL on
+    // glamsterdam-devnet-4 ships consensus-specs#5235 and supplies it.
+    if attributes.target_gas_limit.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V4 payload attributes missing target_gas_limit".to_string(),
+        ));
+    }
     validate_timestamp_v4(attributes, head_block)
 }
 
@@ -556,6 +563,11 @@ async fn build_payload_v4(
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
 ) -> Result<u64, RpcErr> {
+    // validate_attributes_v4 guarantees target_gas_limit.is_some() before
+    // we reach this point (execution-apis#796).
+    let gas_ceil = attributes.target_gas_limit.ok_or_else(|| {
+        RpcErr::Internal("build_payload_v4 reached with no target_gas_limit".to_string())
+    })?;
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
@@ -566,7 +578,7 @@ async fn build_payload_v4(
         slot_number: Some(attributes.slot_number),
         version: 4,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: context.gas_ceil,
+        gas_ceil,
     };
     let payload_id = args
         .id()
@@ -575,6 +587,7 @@ async fn build_payload_v4(
     info!(
         id = payload_id,
         slot = attributes.slot_number,
+        gas_ceil,
         "Fork choice updated V4 includes payload attributes. Creating a new payload"
     );
     let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
@@ -592,8 +605,137 @@ async fn build_payload_v4(
 #[cfg(test)]
 mod tests {
     use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
-    use crate::types::fork_choice::PayloadAttributesV3;
+    use crate::types::fork_choice::{PayloadAttributesV3, PayloadAttributesV4};
     use ethrex_common::types::{BlockHeader, Withdrawal};
+
+    #[test]
+    fn payload_attributes_v4_parses_target_gas_limit_when_present() {
+        // execution-apis#796: targetGasLimit field is a hex QUANTITY.
+        let json = serde_json::json!({
+            "timestamp": "0x65",
+            "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "suggestedFeeRecipient": "0x0000000000000000000000000000000000000002",
+            "withdrawals": [],
+            "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
+            "slotNumber": "0x10",
+            "targetGasLimit": "0x2faf080",
+        });
+        let attrs: PayloadAttributesV4 = serde_json::from_value(json).unwrap();
+        assert_eq!(attrs.target_gas_limit, Some(50_000_000));
+        assert_eq!(attrs.slot_number, 0x10);
+    }
+
+    #[test]
+    fn payload_attributes_v4_accepts_missing_target_gas_limit() {
+        // Deserialization is permissive: an absent `targetGasLimit` parses to
+        // `None`. The strict spec contract is enforced separately in
+        // `validate_attributes_v4` (see `v4_rejects_target_gas_limit_absent`),
+        // which rejects such requests with `RpcErr::InvalidPayloadAttributes`.
+        let json = serde_json::json!({
+            "timestamp": "0x65",
+            "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "suggestedFeeRecipient": "0x0000000000000000000000000000000000000002",
+            "withdrawals": [],
+            "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
+            "slotNumber": "0x10",
+        });
+        let attrs: PayloadAttributesV4 = serde_json::from_value(json).unwrap();
+        assert!(attrs.target_gas_limit.is_none());
+    }
+
+    #[test]
+    fn payload_attributes_v4_parses_explicit_null_target_gas_limit() {
+        let json = serde_json::json!({
+            "timestamp": "0x65",
+            "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+            "suggestedFeeRecipient": "0x0000000000000000000000000000000000000002",
+            "withdrawals": [],
+            "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
+            "slotNumber": "0x10",
+            "targetGasLimit": null,
+        });
+        let attrs: PayloadAttributesV4 = serde_json::from_value(json).unwrap();
+        assert!(attrs.target_gas_limit.is_none());
+    }
+
+    /// Async validator coverage. Builds an in-memory store from a custom
+    /// genesis with Amsterdam (= upstream "Glamsterdam") activated at t=0
+    /// so we can exercise the V4 validator paths added by
+    /// execution-apis#796.
+    mod validator {
+        use super::super::validate_attributes_v4;
+        use crate::test_utils::default_context_with_storage;
+        use crate::types::fork_choice::PayloadAttributesV4;
+        use crate::utils::RpcErr;
+        use ethrex_common::H256;
+        use ethrex_common::types::{BlockHeader, Genesis};
+        use ethrex_storage::{EngineType, Store};
+
+        async fn amsterdam_active_context() -> crate::rpc::RpcApiContext {
+            let mut genesis: Genesis =
+                serde_json::from_str(include_str!("../../../../fixtures/genesis/l1.json"))
+                    .expect("test genesis fixture should parse");
+            genesis.config.amsterdam_time = Some(0);
+            let mut store =
+                Store::new("amsterdam-test-store", EngineType::InMemory).expect("in-memory store");
+            store.add_initial_state(genesis).await.unwrap();
+            default_context_with_storage(store).await
+        }
+
+        fn amsterdam_attributes(target_gas_limit: Option<u64>) -> PayloadAttributesV4 {
+            PayloadAttributesV4 {
+                timestamp: 2,
+                prev_randao: H256::zero(),
+                suggested_fee_recipient: Default::default(),
+                withdrawals: Some(Vec::new()),
+                parent_beacon_block_root: Some(H256::zero()),
+                slot_number: 1,
+                target_gas_limit,
+            }
+        }
+
+        #[tokio::test]
+        async fn v4_accepts_target_gas_limit_present() {
+            let context = amsterdam_active_context().await;
+            let head = BlockHeader {
+                timestamp: 1,
+                ..Default::default()
+            };
+            let attrs = amsterdam_attributes(Some(50_000_000));
+            assert!(validate_attributes_v4(&attrs, &head, &context).is_ok());
+        }
+
+        #[tokio::test]
+        async fn v4_rejects_target_gas_limit_absent() {
+            // execution-apis#796: targetGasLimit is required on V4.
+            let context = amsterdam_active_context().await;
+            let head = BlockHeader {
+                timestamp: 1,
+                ..Default::default()
+            };
+            let attrs = amsterdam_attributes(None);
+            let err = validate_attributes_v4(&attrs, &head, &context).unwrap_err();
+            let RpcErr::InvalidPayloadAttributes(msg) = err else {
+                panic!("expected InvalidPayloadAttributes, got {:?}", err);
+            };
+            assert!(msg.contains("target_gas_limit"), "got: {msg}");
+        }
+
+        #[tokio::test]
+        async fn v4_rejects_pre_amsterdam_unchanged() {
+            // Default fixture has no amsterdam_time set; V4 attributes must
+            // still be rejected outright for pre-Amsterdam timestamps.
+            let storage = crate::test_utils::setup_store().await;
+            let context = default_context_with_storage(storage).await;
+            let head = BlockHeader {
+                timestamp: 1,
+                ..Default::default()
+            };
+            let attrs = amsterdam_attributes(Some(50_000_000));
+            let err = validate_attributes_v4(&attrs, &head, &context).unwrap_err();
+            assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
+        }
+    }
 
     #[test]
     fn forkchoice_updated_v2_returns_invalid_payload_attributes_when_withdrawals_missing() {
