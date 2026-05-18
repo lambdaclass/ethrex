@@ -6,7 +6,9 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
-use ethrex_common::types::block_access_list::{BlockAccessList, BlockAccessListRecorder};
+use ethrex_common::types::block_access_list::{
+    BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
+};
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
@@ -23,6 +25,166 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 
 pub type CacheDB = FxHashMap<Address, LevmAccount>;
+
+/// Per-tx BAL cursor for lazy on-read prefix materialization.
+/// `bal_index = tx_idx + 1`; cursor's effective max_idx is `bal_index - 1`,
+/// matching `seed_db_from_bal`'s `max_idx = tx_idx` semantics.
+#[derive(Clone)]
+pub struct LazyBalCursor {
+    pub bal: Arc<BlockAccessList>,
+    pub bal_index: u32,
+    pub index: Arc<BalAddressIndex>,
+}
+
+/// Apply balance, nonce, and code fields from BAL for a single account into `db`.
+///
+/// Returns `true` if any info field was applied; `false` if all field positions
+/// were 0 (no info changes for this account at indices <= max_idx).
+/// Does NOT touch `account.storage`.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn seed_one_address_info_from_bal(
+    db: &mut GeneralizedDatabase,
+    bal: &BlockAccessList,
+    acct_idx: usize,
+    max_idx: u32,
+) -> Result<bool, InternalError> {
+    use ethrex_common::types::AccountInfo;
+
+    let acct_changes = bal
+        .accounts()
+        .get(acct_idx)
+        .ok_or(InternalError::AccountNotFound)?;
+    let addr = acct_changes.address;
+
+    let balance_pos = acct_changes
+        .balance_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+    let nonce_pos = acct_changes
+        .nonce_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+    let code_pos = acct_changes
+        .code_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+
+    if balance_pos == 0 && nonce_pos == 0 && code_pos == 0 {
+        return Ok(false);
+    }
+
+    // Compute code update before borrowing acc (borrow checker: can't access
+    // db.codes while acc holds a mutable borrow of db).
+    let code_update = if code_pos > 0 {
+        let entry = acct_changes
+            .code_changes
+            .get(code_pos.saturating_sub(1))
+            .ok_or(InternalError::AccountNotFound)?;
+        Some(code_from_bal(&entry.new_code))
+    } else {
+        None
+    };
+
+    // When BAL covers all account info fields (balance + nonce + code), insert
+    // a default LevmAccount directly to skip the store/shared_base lookup.
+    // For partial coverage, load from store to fill missing fields.
+    let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
+    if has_all_info {
+        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        let balance = acct_changes
+            .balance_changes
+            .get(balance_pos.saturating_sub(1))
+            .ok_or(InternalError::AccountNotFound)?
+            .post_balance;
+        let nonce = acct_changes
+            .nonce_changes
+            .get(nonce_pos.saturating_sub(1))
+            .ok_or(InternalError::AccountNotFound)?
+            .post_nonce;
+        let code_hash = code_update
+            .as_ref()
+            .map(|(h, _)| *h)
+            .unwrap_or(*EMPTY_KECCACK_HASH);
+        let acc = db
+            .current_accounts_state
+            .entry(addr)
+            .or_insert_with(|| LevmAccount {
+                info: AccountInfo::default(),
+                storage: FxHashMap::default(),
+                has_storage: false,
+                status: AccountStatus::Modified,
+                exists: true,
+            });
+        acc.info.balance = balance;
+        acc.info.nonce = nonce;
+        acc.info.code_hash = code_hash;
+        acc.mark_modified();
+    } else {
+        db.get_account(addr)
+            .map_err(|e| InternalError::Custom(format!("seed_db_from_bal load: {e}")))?;
+        let acc = db
+            .get_account_mut(addr)
+            .map_err(|e| InternalError::Custom(format!("seed bal: {e}")))?;
+
+        if balance_pos > 0
+            && let Some(entry) = acct_changes
+                .balance_changes
+                .get(balance_pos.saturating_sub(1))
+        {
+            acc.info.balance = entry.post_balance;
+        }
+        if nonce_pos > 0
+            && let Some(entry) = acct_changes.nonce_changes.get(nonce_pos.saturating_sub(1))
+        {
+            acc.info.nonce = entry.post_nonce;
+        }
+        if let Some((hash, _)) = &code_update {
+            acc.info.code_hash = *hash;
+        }
+    }
+
+    // Insert code object after acc borrow is released.
+    if let Some((hash, Some(code_obj))) = code_update {
+        db.codes.entry(hash).or_insert(code_obj);
+    }
+
+    Ok(true)
+}
+
+/// Read the post-value of a single storage slot from the BAL up to `max_idx`.
+///
+/// Pure read; does not touch `db`. Returns `Some(value)` if a change at
+/// `block_access_index <= max_idx` exists for `key`, `None` otherwise.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn seed_one_storage_slot_from_bal(
+    bal: &BlockAccessList,
+    acct_idx: usize,
+    key: H256,
+    max_idx: u32,
+) -> Option<U256> {
+    let acct_changes = bal.accounts().get(acct_idx)?;
+    let sc = acct_changes
+        .storage_changes
+        .iter()
+        .find(|sc| ethrex_common::utils::u256_to_h256(sc.slot) == key)?;
+    let pos = sc
+        .slot_changes
+        .partition_point(|c| c.block_access_index <= max_idx);
+    sc.slot_changes
+        .get(pos.saturating_sub(1))
+        .filter(|_| pos > 0)
+        .map(|c| c.post_value)
+}
+
+/// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
+    use ethrex_common::constants::EMPTY_KECCACK_HASH;
+    if new_code.is_empty() {
+        (*EMPTY_KECCACK_HASH, None)
+    } else {
+        let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
+        let hash = code_obj.hash;
+        (hash, Some(code_obj))
+    }
+}
 
 #[derive(Clone)]
 pub struct GeneralizedDatabase {
@@ -45,6 +207,9 @@ pub struct GeneralizedDatabase {
     /// Optional tracker for BAL validation: records addresses accessed via load_account.
     /// Enabled only during parallel execution to detect extraneous BAL pure-access entries.
     pub accessed_accounts: Option<FxHashSet<Address>>,
+    /// Optional BAL cursor for lazy per-read prefix materialization.
+    /// When set, account loads and storage reads consult the BAL before hitting the store.
+    pub lazy_bal: Option<LazyBalCursor>,
 }
 
 impl GeneralizedDatabase {
@@ -60,6 +225,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
+            lazy_bal: None,
         }
     }
 
@@ -92,6 +258,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: true,
             accessed_accounts: None,
+            lazy_bal: None,
         }
     }
 
@@ -150,6 +317,7 @@ impl GeneralizedDatabase {
             bal_recorder: None,
             skip_initial_tracking: false,
             accessed_accounts: None,
+            lazy_bal: None,
         }
     }
 
@@ -160,29 +328,89 @@ impl GeneralizedDatabase {
         if let Some(tracker) = &mut self.accessed_accounts {
             tracker.insert(address);
         }
-        match self.current_accounts_state.entry(address) {
-            Entry::Occupied(entry) => Ok(entry.into_mut()),
-            Entry::Vacant(entry) => {
-                if let Some(account) = self.initial_accounts_state.get(&address) {
-                    return Ok(entry.insert(account.clone()));
+
+        // Fast path: already cached.
+        if self.current_accounts_state.contains_key(&address) {
+            return self
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound);
+        }
+
+        // Initial-state fast path.
+        if let Some(account) = self.initial_accounts_state.get(&address) {
+            let clone = account.clone();
+            return Ok(self.current_accounts_state.entry(address).or_insert(clone));
+        }
+
+        // Check shared_base (read-only post-system-call snapshot) before hitting store.
+        if let Some(ref base) = self.shared_base
+            && let Some(account) = base.get(&address)
+        {
+            let account = account.clone();
+            if !self.skip_initial_tracking {
+                self.initial_accounts_state.insert(address, account.clone());
+            }
+            return Ok(self
+                .current_accounts_state
+                .entry(address)
+                .or_insert(account));
+        }
+
+        // Lazy-BAL hook: if the cursor finds this address, materialize info from the BAL
+        // before falling back to the store.
+        //
+        // IMPORTANT: we `.take()` the cursor out of `self.lazy_bal` before calling
+        // `seed_one_address_info_from_bal`. For partial-coverage accounts (e.g. balance-only
+        // change with no nonce/code) the helper calls `db.get_account(addr)` internally to
+        // load the base state from the store before overlaying. If `self.lazy_bal` were still
+        // `Some(...)` at that point, `get_account` → `load_account` would re-enter this same
+        // block and recurse infinitely. Taking the cursor out breaks the cycle: the inner call
+        // sees `lazy_bal = None` and falls straight through to the store. We restore the cursor
+        // unconditionally afterward (even on error) so the outer caller still sees it.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        {
+            let cursor_opt = self.lazy_bal.take();
+            let helper_result = if let Some(cursor) = cursor_opt.as_ref() {
+                debug_assert!(
+                    cursor.bal_index >= 1,
+                    "LazyBalCursor bal_index must be >= 1"
+                );
+                let max_idx = cursor.bal_index.saturating_sub(1);
+                if let Some(&acct_idx) = cursor.index.addr_to_idx.get(&address) {
+                    Some(
+                        seed_one_address_info_from_bal(self, &cursor.bal, acct_idx, max_idx)
+                            .map(|_| true),
+                    )
+                } else {
+                    None
                 }
-                // Check shared_base (read-only post-system-call snapshot) before hitting store.
-                if let Some(ref base) = self.shared_base
-                    && let Some(account) = base.get(&address)
-                {
-                    if !self.skip_initial_tracking {
-                        self.initial_accounts_state.insert(address, account.clone());
-                    }
-                    return Ok(entry.insert(account.clone()));
+            } else {
+                None
+            };
+            // Restore the cursor before propagating any error or returning.
+            self.lazy_bal = cursor_opt;
+            if let Some(result) = helper_result {
+                result.map_err(|e| InternalError::Custom(format!("lazy_bal seed: {e}")))?;
+                if self.current_accounts_state.contains_key(&address) {
+                    return self
+                        .current_accounts_state
+                        .get_mut(&address)
+                        .ok_or(InternalError::AccountNotFound);
                 }
-                let state = self.store.get_account_state(address)?;
-                let account = LevmAccount::from(state);
-                if !self.skip_initial_tracking {
-                    self.initial_accounts_state.insert(address, account.clone());
-                }
-                Ok(entry.insert(account))
             }
         }
+
+        // Store fallback.
+        let state = self.store.get_account_state(address)?;
+        let account = LevmAccount::from(state);
+        if !self.skip_initial_tracking {
+            self.initial_accounts_state.insert(address, account.clone());
+        }
+        Ok(self
+            .current_accounts_state
+            .entry(address)
+            .or_insert(account))
     }
 
     /// Gets reference of an account
@@ -683,6 +911,7 @@ impl<'a> VM<'a> {
         key: H256,
     ) -> Result<(U256, U256, bool), InternalError> {
         let storage_slot_was_cold = self.substate.add_accessed_slot(address, key);
+        // SSTORE pre-image flows transitively through get_storage_value, which consults lazy_bal.
         let current_value = self.get_storage_value(address, key)?;
         let original_value = match self
             .storage_original_values
@@ -723,6 +952,29 @@ impl<'a> VM<'a> {
         } else {
             // When requesting storage of an account we should've previously requested and cached the account
             return Err(InternalError::AccountNotFound);
+        }
+
+        // Lazy-BAL hook: copy result out BEFORE taking &mut on current_accounts_state
+        // so the immutable borrow of lazy_bal is released before the mutable reborrow.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let bal_hit: Option<U256> = self.db.lazy_bal.as_ref().and_then(|cursor| {
+            debug_assert!(
+                cursor.bal_index >= 1,
+                "LazyBalCursor bal_index must be >= 1"
+            );
+            let max_idx = cursor.bal_index.saturating_sub(1);
+            let &acct_idx = cursor.index.addr_to_idx.get(&address)?;
+            seed_one_storage_slot_from_bal(&cursor.bal, acct_idx, key, max_idx)
+        });
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if let Some(value) = bal_hit {
+            let account = self
+                .db
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound)?;
+            account.storage.insert(key, value);
+            return Ok(value);
         }
 
         let value = self.db.get_value_from_database(address, key)?;
