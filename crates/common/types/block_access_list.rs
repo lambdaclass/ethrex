@@ -602,6 +602,7 @@ impl BlockAccessList {
 
 /// Pre-computed index for fast per-tx BAL validation lookups.
 /// Built once per block, shared read-only across parallel tx validations.
+#[derive(Clone)]
 pub struct BalAddressIndex {
     /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
     pub addr_to_idx: FxHashMap<Address, usize>,
