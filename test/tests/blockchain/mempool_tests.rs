@@ -2962,10 +2962,10 @@ fn add_transaction_no_broadcast_keeps_tx_out_of_broadcast_pool() {
     let private_tx = MempoolTransaction::new(private_decoded, private_sender);
 
     mempool
-        .add_transaction(public_hash, public_sender, public_tx.clone(), None, None)
+        .add_transaction(public_hash, public_sender, public_tx, None, None)
         .expect("public tx should land in broadcast pool");
     mempool
-        .add_transaction_no_broadcast(private_hash, private_sender, private_tx.clone(), None, None)
+        .add_transaction_no_broadcast(private_hash, private_sender, private_tx, None, None)
         .expect("private tx should land in mempool but not broadcast pool");
 
     // Both txs are queryable from the mempool itself.

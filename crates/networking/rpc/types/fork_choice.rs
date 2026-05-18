@@ -68,6 +68,11 @@ impl From<&PayloadAttributesV5> for PayloadAttributesV4 {
             withdrawals: value.withdrawals.clone(),
             parent_beacon_block_root: value.parent_beacon_block_root,
             slot_number: value.slot_number,
+            // V5 does not currently propagate the Amsterdam target_gas_limit
+            // (execution-apis#796). The V5 build path falls back to
+            // `context.gas_ceil`, matching the pre-glamsterdam-devnet-4
+            // behavior.
+            target_gas_limit: None,
         }
     }
 }
