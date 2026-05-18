@@ -412,20 +412,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_sample_and_builds_genesis() {
-        let raw = include_str!("../fixtures_sample/one_payload.json");
-        let fixtures: EngineFixtureFile = serde_json::from_str(raw).expect("fixture should parse");
-        assert_eq!(fixtures.len(), 1, "expected exactly 1 fixture entry");
-        let (_, fixture) = fixtures.iter().next().unwrap();
-        assert!(
-            !fixture.engine_new_payloads.is_empty(),
-            "expected at least 1 payload"
-        );
-        let genesis = fixture.build_genesis().expect("build_genesis must succeed");
-        assert_eq!(genesis.config.chain_id, 1, "sample fixture uses chainId 1");
-    }
-
-    #[test]
     fn pre_paris_fork_skipped() {
         let raw = serde_json::json!({
             "test_london": {

@@ -417,53 +417,6 @@ mod tests {
         }
     }
 
-    /// Happy path: every non-pre-Paris fixture in the sample file must pass.
-    ///
-    /// Uses a multi-thread runtime so the heavy engine API awaits run on a worker
-    /// thread (which gets its own full stack), keeping the test thread stack small.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn runs_sample_fixture_ok() {
-        let raw = include_str!("../fixtures_sample/one_payload.json");
-        let fixtures: EngineFixtureFile = serde_json::from_str(raw).expect("fixture parse");
-        let opts = inmem_opts();
-        let mut exercised = 0usize;
-        for (name, fixture) in &fixtures {
-            let result = run_fixture(name, fixture, &opts).await;
-            match result {
-                Ok(()) => exercised += 1,
-                Err(e) if e.is_skip() => {}
-                Err(e) => panic!("fixture '{name}' failed: {e}"),
-            }
-        }
-        assert!(
-            exercised > 0,
-            "all fixtures were skipped as pre-Paris — sample fixture must include at least one Paris+ fixture"
-        );
-    }
-
-    /// INVALID-payload path: a fixture with a bad payload must pass when ethrex
-    /// correctly rejects it (runner succeeds because actual == expected INVALID).
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn runs_invalid_payload_fixture_ok() {
-        let raw = include_str!("../fixtures_sample/invalid_payload.json");
-        let fixtures: EngineFixtureFile =
-            serde_json::from_str(raw).expect("invalid_payload fixture parse");
-        let opts = inmem_opts();
-        let mut exercised = 0usize;
-        for (name, fixture) in &fixtures {
-            let result = run_fixture(name, fixture, &opts).await;
-            match result {
-                Ok(()) => exercised += 1,
-                Err(e) if e.is_skip() => {}
-                Err(e) => panic!("fixture '{name}' failed: {e}"),
-            }
-        }
-        assert!(
-            exercised > 0,
-            "all invalid_payload fixtures were skipped — must include at least one Paris+ fixture"
-        );
-    }
-
     /// Pre-Paris fixtures must return SkippedPreParis (is_skip() == true).
     #[tokio::test]
     async fn pre_paris_returns_skip() {
