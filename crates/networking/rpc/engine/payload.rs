@@ -192,6 +192,15 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // EIP-7928 / Amsterdam: V4 payloads MUST NOT include the BAL field — that
+        // field belongs to V5. Per engine-API spec, structurally-invalid payloads
+        // return JSON-RPC -32602 (Invalid params), not PayloadStatus.INVALID.
+        if self.payload.block_access_list.is_some() {
+            return Err(RpcErr::WrongParam(
+                "block_access_list not allowed in engine_newPayloadV4".to_string(),
+            ));
+        }
+
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
@@ -211,6 +220,13 @@ impl RpcHandler for NewPayloadV4Request {
         };
 
         let chain_config = context.storage.get_chain_config();
+
+        // Amsterdam-active timestamps must use V5, not V4 (-32602 per engine-API spec).
+        if chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Err(RpcErr::WrongParam(
+                "engine_newPayloadV4 cannot accept Amsterdam timestamps".to_string(),
+            ));
+        }
 
         if !chain_config.is_prague_activated(block.header.timestamp) {
             return Err(RpcErr::UnsupportedFork(format!(
@@ -295,6 +311,15 @@ impl RpcHandler for NewPayloadV5Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // EIP-7928 / Amsterdam: V5 payloads MUST include the BAL field — its
+        // absence is a structural error, not a block-validity failure. Per
+        // engine-API spec, this returns JSON-RPC -32602 (Invalid params).
+        if self.payload.block_access_list.is_none() {
+            return Err(RpcErr::WrongParam(
+                "block_access_list required in engine_newPayloadV5".to_string(),
+            ));
+        }
+
         validate_execution_payload_v4(&self.payload)?;
 
         // validate the received requests
@@ -322,11 +347,11 @@ impl RpcHandler for NewPayloadV5Request {
 
         let chain_config = context.storage.get_chain_config();
 
+        // Pre-Amsterdam timestamps must use V4, not V5 (-32602 per engine-API spec).
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsupportedFork(format!(
-                "{:?}",
-                chain_config.get_fork(block.header.timestamp)
-            )));
+            return Err(RpcErr::WrongParam(
+                "engine_newPayloadV5 requires Amsterdam timestamp".to_string(),
+            ));
         }
 
         let bal = self.payload.block_access_list.clone();
