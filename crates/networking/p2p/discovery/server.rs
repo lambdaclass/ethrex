@@ -40,6 +40,12 @@ const DISCV4_MIN_PACKET_SIZE: usize = 98;
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 
+/// Lookup interval bounds for iterative lookups. Each iterative lookup
+/// generates ~16 FindNode messages (vs 1 in the old approach), so we use
+/// longer intervals to produce similar per-second traffic.
+const ITERATIVE_LOOKUP_INITIAL_MS: f64 = 2_000.0; // 0.5 lookups/sec at startup
+const ITERATIVE_LOOKUP_INTERVAL_MS: f64 = 10_000.0; // ~6 lookups/min at steady-state
+
 #[derive(Debug, Error)]
 pub enum DiscoveryServerError {
     #[error(transparent)]
@@ -421,8 +427,8 @@ impl DiscoveryServer {
             .unwrap_or_default();
         lookup_interval_function(
             peer_completion,
-            self.config.initial_lookup_interval,
-            super::LOOKUP_INTERVAL_MS,
+            ITERATIVE_LOOKUP_INITIAL_MS,
+            ITERATIVE_LOOKUP_INTERVAL_MS,
         )
     }
 }
