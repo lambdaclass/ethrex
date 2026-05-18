@@ -143,7 +143,7 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        // EIP-8037 (Amsterdam+, bal-devnet-7): CREATE-tx address collision.
+        // EIP-8037 (Amsterdam+): CREATE-tx address collision.
         // Per EELS process_message_call (interpreter.py:120-145) the collision
         // returns `state_gas_left = message.state_gas_reservoir` (reservoir is
         // PRESERVED, not burned). The failure block in fork.py:1086-1094 then
@@ -153,9 +153,9 @@ impl Hook for DefaultHook {
         // calldata_floor). The user does NOT lose the whole gas_limit.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // v7.2.0: state_gas_used is already net (signed, inline refunds applied).
+            // state_gas_used is already net (signed, inline refunds applied).
             // state_refund carries the EIP-7702 auth refund and CREATE-failure intrinsic
-            // (added by vm.finalize_execution). Clamp at zero per spec PR #2863.
+            // (added by vm.finalize_execution). Clamp at zero.
             let state_refund_signed =
                 i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
             let state_gas: u64 =
@@ -242,8 +242,8 @@ pub fn refund_sender(
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
-        // EIP-8037 v7.2.0: state_gas_used is already net (signed, credits applied inline).
-        // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero per PR #2863.
+        // EIP-8037: state_gas_used is already net (signed, credits applied inline).
+        // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero.
         let state_refund_signed =
             i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
         let state_gas: u64 =

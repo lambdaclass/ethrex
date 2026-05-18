@@ -447,7 +447,7 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
     /// Signed: goes negative when inline refunds exceed gross charges in the local frame
-    /// (e.g. SSTORE 0→x→0 restoration matching an ancestor's charge). PR #2863.
+    /// (e.g. SSTORE 0→x→0 restoration matching an ancestor's charge).
     pub state_gas_used: i64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
@@ -471,10 +471,10 @@ pub struct VM<'a> {
     /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
     /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
     /// `set_delegation` when no new delegation indicator bytes are written —
-    /// either the authority's code slot already holds an indicator (EELS PR
-    /// #2836) or the auth clears against an empty authority (EELS PR #2848).
+    /// either the authority's code slot already holds an indicator or the
+    /// auth clears against an empty authority.
     pub state_gas_auth_base: u64,
-    /// EIP-8037 bal-devnet-7 (EELS PR #2816): state-gas refund channel.
+    /// EIP-8037: state-gas refund channel.
     /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
     /// for refunds that bypass per-frame `state_gas_used` accounting. Populated by
     /// `set_delegation` for existing-authority refunds, subtracted from block-level
@@ -644,8 +644,8 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    /// EIP-8037 v7.2.0: credit `amount` directly to the local frame's reservoir; `state_gas_used`
-    /// may go negative when the matching charge lives in an ancestor frame (PR #2863).
+    /// EIP-8037: credit `amount` directly to the local frame's reservoir; `state_gas_used`
+    /// may go negative when the matching charge lives in an ancestor frame.
     ///
     /// Must only be called for Amsterdam+ forks.
     pub fn credit_state_gas_refund(&mut self, amount: u64) -> Result<(), VMError> {
@@ -880,7 +880,7 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        // EIP-8037 v7.2.0 (PR #2863): On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
+        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
         // refund only the EXECUTION portion of state gas to the reservoir; the intrinsic
         // stays in `state_gas_used` so block accounting bills it. EELS keeps these in
         // separate fields (`tx_output.state_gas_used` vs `tx_env.intrinsic_state_gas`);
@@ -904,7 +904,7 @@ impl<'a> VM<'a> {
                 self.state_gas_used = intrinsic_signed;
             }
 
-            // EIP-8037 bal-devnet-7 (EELS PR #2823): on ANY top-level CREATE-tx
+            // EIP-8037: on ANY top-level CREATE-tx
             // failure (revert / halt / OOG / collision), refund the intrinsic
             // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the reservoir.
             // Also add to `state_refund` so block-level accounting subtracts it.
@@ -936,7 +936,7 @@ impl<'a> VM<'a> {
             Vec::new()
         };
 
-        // EIP-8037 v7.2.0 (PR #2863): `state_gas_used` is already net (signed; credits
+        // EIP-8037: `state_gas_used` is already net (signed; credits
         // decrement it inline). Subtract `state_refund` (EIP-7702 tx-level channel) and
         // clamp at zero for block accounting — `state_gas_used` may be negative when inline
         // refunds exceed gross charges.

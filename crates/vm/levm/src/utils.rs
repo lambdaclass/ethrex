@@ -346,7 +346,7 @@ impl<'a> VM<'a> {
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    // EELS PR #2816 (bal-devnet-7): refund
+                    // EIP-7702: refund
                     // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for each existing authority via
                     // two independent channels:
                     //   1. `state_gas_reservoir += refund` — sender gets the gas back via
@@ -372,7 +372,7 @@ impl<'a> VM<'a> {
                 }
             }
 
-            // EELS PR #2836 + #2848 (bal-devnet-7, tests-bal@v7.1.1): refill the
+            // EIP-7702: refill the
             // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas
             // when no new delegation indicator bytes are written. That covers
             // two cases:
@@ -459,7 +459,7 @@ impl<'a> VM<'a> {
         // the reservoir for drawing state gas without consuming regular gas_remaining.
         if self.env.config.fork >= Fork::Amsterdam {
             if self.env.is_system_call {
-                // EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system
+                // EIP-8037: system
                 // transactions get a dedicated state-gas reservoir of
                 // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
                 // the full SYS_CALL_GAS_LIMIT regular budget — so SSTORE-heavy

@@ -1139,12 +1139,12 @@ impl<'a> VM<'a> {
             TxResult::Success => {
                 self.current_call_frame.stack.push(SUCCESS)?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
-                // EIP-8037 v7.2.0: on success, child's state_gas_used is already
+                // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
             }
             TxResult::Revert(_) => {
-                // EIP-8037 v7.2.0 (PR #2863) incorporate_child_on_error:
+                // EIP-8037 incorporate_child_on_error:
                 //   parent.state_gas_left += child.state_gas_used + child.state_gas_left
                 // In ethrex's shared-VM model the child holds the whole reservoir
                 // during execution, so `child.state_gas_left == self.state_gas_reservoir`
@@ -1211,12 +1211,12 @@ impl<'a> VM<'a> {
             TxResult::Success => {
                 self.current_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
-                // EIP-8037 v7.2.0: on success, child's state_gas_used is already
+                // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
             }
             TxResult::Revert(err) => {
-                // EIP-8037 v7.2.0 (PR #2863) incorporate_child_on_error: see
+                // EIP-8037 incorporate_child_on_error: see
                 // handle_return_call for the derivation.
                 let child_state_gas_used = self
                     .state_gas_used

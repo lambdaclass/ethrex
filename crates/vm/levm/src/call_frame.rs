@@ -287,7 +287,7 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
-    /// EIP-8037 v7.2.0: snapshot of VM.state_gas_used (signed) at child-frame entry.
+    /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
     /// Used to restore parent's state_gas_used on child revert.
     pub state_gas_used_at_entry: i64,
 }
