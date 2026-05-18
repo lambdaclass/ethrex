@@ -156,11 +156,11 @@ impl Hook for DefaultHook {
             // v7.2.0: state_gas_used is already net (signed, inline refunds applied).
             // state_refund carries the EIP-7702 auth refund and CREATE-failure intrinsic
             // (added by vm.finalize_execution). Clamp at zero per spec PR #2863.
-            #[expect(clippy::as_conversions, reason = "value is clamped to >=0 by .max(0)")]
-            let state_gas = vm
-                .state_gas_used
-                .saturating_sub(i64::try_from(vm.state_refund).unwrap_or(i64::MAX))
-                .max(0) as u64;
+            let state_refund_signed =
+                i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+            let state_gas: u64 =
+                u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
+                    .map_err(|_| InternalError::Overflow)?;
             let floor = vm.get_min_gas_used()?;
             // Regular gas = gas_limit - state_gas_left, where state_gas_left =
             // reservoir (PRESERVED across collision in EELS, with new_account_refund
@@ -244,11 +244,11 @@ pub fn refund_sender(
         let floor = vm.get_min_gas_used()?;
         // EIP-8037 v7.2.0: state_gas_used is already net (signed, credits applied inline).
         // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero per PR #2863.
-        #[expect(clippy::as_conversions, reason = "value is clamped to >=0 by .max(0)")]
-        let state_gas = vm
-            .state_gas_used
-            .saturating_sub(i64::try_from(vm.state_refund).unwrap_or(i64::MAX))
-            .max(0) as u64;
+        let state_refund_signed =
+            i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+        let state_gas: u64 =
+            u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
+                .map_err(|_| InternalError::Overflow)?;
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.
