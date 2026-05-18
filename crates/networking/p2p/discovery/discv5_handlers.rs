@@ -289,39 +289,45 @@ impl DiscoveryServer {
             .active_lookups
             .retain(|l| !l.is_finished());
 
-        // Start a new lookup if none active
-        if self
+        // If a lookup is already active, don't start a new one — the active
+        // lookup is driven forward by incoming Nodes responses (which call
+        // advance_v5_lookup). The timer only needs to start fresh lookups.
+        if !self
             .discv5
             .as_ref()
             .expect("discv5 state must exist")
             .active_lookups
             .is_empty()
         {
-            let mut rng = OsRng;
-            let target_id: H256 = rng.r#gen();
-
-            // Seed with closest known nodes from the connection pool
-            let seed = self
-                .peer_table
-                .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
-                .await?;
-            if !seed.is_empty() {
-                trace!(
-                    protocol = "discv5",
-                    seeds = seed.len(),
-                    "Starting new iterative lookup"
-                );
-                let lookup = IterativeLookup::new(target_id, seed);
-                let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
-                discv5.active_lookups.push(lookup);
-            } else {
-                trace!(
-                    protocol = "discv5",
-                    "No seeds for lookup, connection pool empty"
-                );
-            }
+            return Ok(());
         }
 
+        let mut rng = OsRng;
+        let target_id: H256 = rng.r#gen();
+
+        // Seed with closest known nodes from the connection pool
+        let seed = self
+            .peer_table
+            .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
+            .await?;
+        if seed.is_empty() {
+            trace!(
+                protocol = "discv5",
+                "No seeds for lookup, connection pool empty"
+            );
+            return Ok(());
+        }
+
+        trace!(
+            protocol = "discv5",
+            seeds = seed.len(),
+            "Starting new iterative lookup"
+        );
+        let lookup = IterativeLookup::new(target_id, seed);
+        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        discv5.active_lookups.push(lookup);
+
+        // Fire the initial queries for the new lookup
         self.advance_v5_lookup().await
     }
 

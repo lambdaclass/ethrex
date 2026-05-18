@@ -136,48 +136,54 @@ impl DiscoveryServer {
             .active_lookups
             .retain(|(l, _)| !l.is_finished());
 
-        // Start a new lookup if none active
-        if self
+        // If a lookup is already active, don't start a new one — the active
+        // lookup is driven forward by incoming Neighbors responses (which call
+        // advance_v4_lookup). The timer only needs to start fresh lookups.
+        if !self
             .discv4
             .as_ref()
             .expect("discv4 state must exist")
             .active_lookups
             .is_empty()
         {
-            // Generate random target
-            let random_priv_key = SecretKey::new(&mut OsRng);
-            let random_pub_key = public_key_from_signing_key(&random_priv_key);
-            let target_id = node_id(&random_pub_key);
-
-            // Seed with closest known nodes from the connection pool
-            let seed = self
-                .peer_table
-                .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
-                .await?;
-            if !seed.is_empty() {
-                trace!(
-                    protocol = "discv4",
-                    seeds = seed.len(),
-                    "Starting new iterative lookup"
-                );
-                let lookup = IterativeLookup::new(target_id, seed);
-
-                // Sign one FindNode message for this target
-                let expiration = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
-                let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
-                let mut buf = BytesMut::new();
-                msg.encode_with_header(&mut buf, &self.signer);
-
-                let discv4 = self.discv4.as_mut().expect("discv4 state must exist");
-                discv4.active_lookups.push((lookup, buf));
-            } else {
-                trace!(
-                    protocol = "discv4",
-                    "No seeds for lookup, connection pool empty"
-                );
-            }
+            return Ok(());
         }
 
+        // Generate random target
+        let random_priv_key = SecretKey::new(&mut OsRng);
+        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+        let target_id = node_id(&random_pub_key);
+
+        // Seed with closest known nodes from the connection pool
+        let seed = self
+            .peer_table
+            .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
+            .await?;
+        if seed.is_empty() {
+            trace!(
+                protocol = "discv4",
+                "No seeds for lookup, connection pool empty"
+            );
+            return Ok(());
+        }
+
+        trace!(
+            protocol = "discv4",
+            seeds = seed.len(),
+            "Starting new iterative lookup"
+        );
+        let lookup = IterativeLookup::new(target_id, seed);
+
+        // Sign one FindNode message for this target
+        let expiration = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
+        let mut buf = BytesMut::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+
+        let discv4 = self.discv4.as_mut().expect("discv4 state must exist");
+        discv4.active_lookups.push((lookup, buf));
+
+        // Fire the initial queries for the new lookup
         self.advance_v4_lookup().await
     }
 
