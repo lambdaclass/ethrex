@@ -478,7 +478,8 @@ pub struct StructLoggerEmit {
     pub mem_size: bool,
     /// Emit `returnData` (as `"0x..."` hex). Default `false` matches geth.
     pub return_data: bool,
-    /// Emit `refund` (decimal number). Default `false` matches geth's empirical output.
+    /// Force-emit `refund` even when it's zero. Default `false` matches geth's
+    /// `omitempty` behavior — non-zero refund is always emitted regardless of this flag.
     pub refund: bool,
 }
 
@@ -504,7 +505,7 @@ impl serde::Serialize for StructLoggerStep<'_> {
         if emit.return_data {
             field_count += 1;
         }
-        if emit.refund {
+        if emit.refund || step.refund != 0 {
             field_count += 1;
         }
         if step.error.is_some() {
@@ -556,7 +557,9 @@ impl serde::Serialize for StructLoggerStep<'_> {
                 &format!("0x{}", hex::encode(&step.return_data)),
             )?;
         }
-        if emit.refund {
+        // `refund` is omitempty-for-zero in geth's wire output: always emitted when
+        // non-zero; emitted-when-zero only when the caller forces it via `emit.refund`.
+        if emit.refund || step.refund != 0 {
             map.serialize_entry("refund", &step.refund)?;
         }
 
