@@ -153,17 +153,14 @@ impl Hook for DefaultHook {
         // calldata_floor). The user does NOT lose the whole gas_limit.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // `vm.finalize_execution` already bumped state_gas_refund_absorbed by
-            // new_account_refund (for the CREATE-failure intrinsic refund), and
-            // state_refund carries any EIP-7702 auth refund. Subtract both so the
-            // state dimension lands at 0.
-            let exec_refund = vm
-                .state_gas_refund_absorbed
-                .saturating_add(vm.state_gas_refund_pending);
+            // v7.2.0: state_gas_used is already net (signed, inline refunds applied).
+            // state_refund carries the EIP-7702 auth refund and CREATE-failure intrinsic
+            // (added by vm.finalize_execution). Clamp at zero per spec PR #2863.
+            #[expect(clippy::as_conversions, reason = "value is clamped to >=0 by .max(0)")]
             let state_gas = vm
                 .state_gas_used
-                .saturating_sub(exec_refund)
-                .saturating_sub(vm.state_refund);
+                .saturating_sub(i64::try_from(vm.state_refund).unwrap_or(i64::MAX))
+                .max(0) as u64;
             let floor = vm.get_min_gas_used()?;
             // Regular gas = gas_limit - state_gas_left, where state_gas_left =
             // reservoir (PRESERVED across collision in EELS, with new_account_refund
@@ -245,39 +242,25 @@ pub fn refund_sender(
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
-        // EELS block accounting per fork.py:
-        //   tx_regular_gas = intrinsic_regular + regular_gas_used
-        //   tx_state_gas   = intrinsic_state   + state_gas_used (net after refunds)
-        // Reservoir activity (auth refunds, SSTORE 0→N→0 credits) is NEUTRAL to
-        // block accounting — it only affects sender refund. To derive tx_regular_gas
-        // from our raw gas consumption, subtract intrinsic_state, the initial
-        // reservoir (pre-consumed from gas_remaining in add_intrinsic_gas), and any
-        // state-gas spills that reduced gas_remaining (EELS charge_state_gas spills
-        // don't count as regular_gas_used).
-        let execution_state_gas_refund = vm
-            .state_gas_refund_absorbed
-            .saturating_add(vm.state_gas_refund_pending);
-        // EELS PR #2816 (bal-devnet-7): subtract `state_refund` (EIP-7702
-        // existing-authority refund channel) from the state dimension. Lives separately
-        // from `state_gas_refund_absorbed/pending` because it bypasses per-frame
-        // accounting and survives revert/halt/OOG (it's a tx-level refund, not a
-        // frame-local credit). Matches EELS
-        // `tx_state_gas = intrinsic_state + state_gas_used - state_refund`.
+        // EIP-8037 v7.2.0: state_gas_used is already net (signed, credits applied inline).
+        // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero per PR #2863.
+        #[expect(clippy::as_conversions, reason = "value is clamped to >=0 by .max(0)")]
         let state_gas = vm
             .state_gas_used
-            .saturating_sub(execution_state_gas_refund)
-            .saturating_sub(vm.state_refund);
+            .saturating_sub(i64::try_from(vm.state_refund).unwrap_or(i64::MAX))
+            .max(0) as u64;
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.
         #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
         let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
         let raw_consumed = vm.env.gas_limit.saturating_sub(gas_remaining);
-        // EIP-8037 (PR #2815, Policy A): state-gas spills are refunded via the reservoir
-        // (finalize_execution adds the execution portion back). Subtract every spill so it
-        // does not count toward the regular dimension; no reclassification term needed.
+        // Subtract intrinsic_state (pre-consumed from gas_remaining as part of total intrinsic),
+        // the initial reservoir (pre-consumed from gas_remaining), and state-gas spills
+        // (EELS charge_state_gas spills don't count as regular_gas_used).
+        let intrinsic_state_gas = vm.get_intrinsic_gas()?.1;
         let regular_gas = raw_consumed
-            .saturating_sub(vm.intrinsic_state_gas_charged)
+            .saturating_sub(intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
             .saturating_sub(vm.state_gas_spill);
         let effective_regular = regular_gas.max(floor);

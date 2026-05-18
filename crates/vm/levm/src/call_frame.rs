@@ -287,21 +287,9 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
-    /// EIP-8037: snapshot of VM.state_gas_used at the start of this frame (for revert restoration)
-    pub state_gas_used_snapshot: u64,
-    /// EIP-8037 clamp-and-spill: amount of state gas that has been credited back to this frame.
-    /// Used to compute the unrefunded local charge when clamping a refund against this frame.
-    pub state_gas_refund: u64,
-    /// EIP-8037 clamp-and-spill: snapshot of VM.state_gas_refund_pending at the start of this
-    /// frame. Restored on revert so reverted children don't contribute pending refunds.
-    pub state_gas_refund_pending_snapshot: u64,
-    /// EIP-8037 clamp-and-spill: snapshot of VM.state_gas_refund_absorbed at the start of this
-    /// frame. Restored on revert so reverted children don't contribute absorbed refunds.
-    pub state_gas_refund_absorbed_snapshot: u64,
-    /// EIP-8037: snapshot of VM.state_gas_spill_outstanding at the start of this frame.
-    /// Baseline for `credit_state_gas_refund`'s
-    /// `applied_to_spill = min(clamped, frame_outstanding_delta)` clamp.
-    pub state_gas_spill_outstanding_snapshot: u64,
+    /// EIP-8037 v7.2.0: snapshot of VM.state_gas_used (signed) at child-frame entry.
+    /// Used to restore parent's state_gas_used on child revert.
+    pub state_gas_used_at_entry: i64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -406,11 +394,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
-            state_gas_used_snapshot: 0,
-            state_gas_refund: 0,
-            state_gas_refund_pending_snapshot: 0,
-            state_gas_refund_absorbed_snapshot: 0,
-            state_gas_spill_outstanding_snapshot: 0,
+            state_gas_used_at_entry: 0,
         }
     }
 
