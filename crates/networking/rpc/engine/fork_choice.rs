@@ -882,7 +882,7 @@ mod tests {
                 ..Default::default()
             };
             let attrs = amsterdam_attributes(Some(50_000_000));
-            assert!(validate_attributes_v4(&attrs, &head, &context).is_ok());
+            assert!(validate_attributes_v4(&attrs, &head, &context.storage.get_chain_config()).is_ok());
         }
 
         #[tokio::test]
@@ -894,7 +894,7 @@ mod tests {
                 ..Default::default()
             };
             let attrs = amsterdam_attributes(None);
-            let err = validate_attributes_v4(&attrs, &head, &context).unwrap_err();
+            let err = validate_attributes_v4(&attrs, &head, &context.storage.get_chain_config()).unwrap_err();
             let RpcErr::InvalidPayloadAttributes(msg) = err else {
                 panic!("expected InvalidPayloadAttributes, got {:?}", err);
             };
@@ -912,7 +912,7 @@ mod tests {
                 ..Default::default()
             };
             let attrs = amsterdam_attributes(Some(50_000_000));
-            let err = validate_attributes_v4(&attrs, &head, &context).unwrap_err();
+            let err = validate_attributes_v4(&attrs, &head, &context.storage.get_chain_config()).unwrap_err();
             assert!(matches!(err, RpcErr::InvalidPayloadAttributes(_)));
         }
     }
@@ -1011,6 +1011,8 @@ mod tests {
             withdrawals: Some(vec![]),
             parent_beacon_block_root: Some(Default::default()),
             slot_number: 1,
+            // execution-apis#796: V4 requires target_gas_limit under Amsterdam.
+            target_gas_limit: Some(60_000_000),
             ..Default::default()
         };
         let head_block = BlockHeader {

@@ -1308,6 +1308,7 @@ mod tests {
             version: 4,
             elasticity_multiplier: 2,
             gas_ceil: 60_000_000,
+            inclusion_list_transactions: None,
         }
     }
 
