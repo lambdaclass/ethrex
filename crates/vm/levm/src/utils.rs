@@ -315,8 +315,9 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let empty_or_delegated = authority_code.bytecode.is_empty()
-                || code_has_delegation(&authority_code.bytecode)?;
+            let authority_code_is_empty = authority_code.bytecode.is_empty();
+            let empty_or_delegated =
+                authority_code_is_empty || code_has_delegation(&authority_code.bytecode)?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -345,16 +346,25 @@ impl<'a> VM<'a> {
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    // EELS bal-devnet-6 `set_delegation` (devnets/bal/6 spec):
-                    // `message.state_gas_reservoir += STATE_BYTES_PER_NEW_ACCOUNT × cpsb`,
-                    // with NO mutation of intrinsic_state_gas or state_gas_used. Block-level
-                    // `state_gas_used` intentionally stays "inflated" by the refund amount
-                    // — the auth refund is a sender-side credit only in bal-6, not a
-                    // block-accounting reduction. The block-level subtraction lands in
-                    // bal-devnet-7 via the separate `state_refund` channel (EELS PR #2816).
+                    // EELS PR #2816 (bal-devnet-7): refund
+                    // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for each existing authority via
+                    // two independent channels:
+                    //   1. `state_gas_reservoir += refund` — sender gets the gas back via
+                    //      receipt refund at tx finalize.
+                    //   2. `state_refund += refund` — block-level state-gas accounting
+                    //      subtracts this at refund_sender (mirrors EELS
+                    //      `MessageCallOutput.state_refund`).
+                    // `state_gas_used` and `intrinsic_state_gas_charged` are intentionally
+                    // NOT decremented: spec keeps them immutable after validation so
+                    // Policy A's `execution_portion` math and refund_sender's regular-gas
+                    // formula stay correct on revert/halt/OOG paths.
                     let refund = self.state_gas_new_account;
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
+                        .checked_add(refund)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_refund = self
+                        .state_refund
                         .checked_add(refund)
                         .ok_or(InternalError::Overflow)?;
                 } else {
@@ -362,6 +372,32 @@ impl<'a> VM<'a> {
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
                         .ok_or(InternalError::Overflow)?;
                 }
+            }
+
+            // EELS PR #2836 + #2848 (bal-devnet-7, tests-bal@v7.1.1): refill the
+            // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas
+            // when no new delegation indicator bytes are written. That covers
+            // two cases:
+            //   1. Authority's code slot already holds a delegation indicator
+            //      (overwrite or clear in place — PR #2836).
+            //   2. The auth is a clear (`auth.address == 0x00`) against an
+            //      authority with no prior code — also writes zero bytes
+            //      (PR #2848).
+            // Step 5 already restricts non-empty pre-state code to a valid
+            // delegation indicator, so checking `!authority_code_is_empty` is
+            // equivalent to EELS's `code_hash != EMPTY_CODE_HASH`.
+            let writes_no_new_indicator =
+                !authority_code_is_empty || auth_tuple.address == Address::zero();
+            if self.env.config.fork >= Fork::Amsterdam && writes_no_new_indicator {
+                let refund = self.state_gas_auth_base;
+                self.state_gas_reservoir = self
+                    .state_gas_reservoir
+                    .checked_add(refund)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_refund = self
+                    .state_refund
+                    .checked_add(refund)
+                    .ok_or(InternalError::Overflow)?;
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
@@ -413,8 +449,10 @@ impl<'a> VM<'a> {
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
 
-        // EIP-8037 (PR #2689): Capture the intrinsic state gas charged so that top-level
-        // failure handling can distinguish intrinsic (stays charged) from execution (wiped).
+        // EIP-8037: Capture the intrinsic state gas charged so refund_sender's
+        // Policy A `execution_portion = state_gas_used − intrinsic − absorbed − pending`
+        // formula stays correct after revert/halt/OOG (where state_gas_used and
+        // intrinsic_state_gas_charged are intentionally not decremented).
         debug_assert_eq!(
             self.intrinsic_state_gas_charged, 0,
             "intrinsic_state_gas_charged set twice"
@@ -426,24 +464,41 @@ impl<'a> VM<'a> {
         // regular execution gas is allowed (capped at TX_MAX_GAS_LIMIT_AMSTERDAM); the difference becomes
         // the reservoir for drawing state gas without consuming regular gas_remaining.
         if self.env.config.fork >= Fork::Amsterdam {
-            let gas_limit = self.tx.gas_limit();
-            let execution_gas = gas_limit.saturating_sub(total_gas);
-            let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
-            let gas_left = regular_gas_budget.min(execution_gas);
-            let reservoir = execution_gas.saturating_sub(gas_left);
-            if reservoir > 0 {
-                // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
-                let reservoir_i64 =
-                    i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
-                self.current_call_frame.gas_remaining = self
-                    .current_call_frame
-                    .gas_remaining
-                    .checked_sub(reservoir_i64)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_gas_reservoir = reservoir;
+            if self.env.is_system_call {
+                // EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system
+                // transactions get a dedicated state-gas reservoir of
+                // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
+                // the full SYS_CALL_GAS_LIMIT regular budget — so SSTORE-heavy
+                // system contracts (EIP-2935, EIP-4788) cannot OOG on state-gas
+                // growth alone. Skip the regular reservoir computation so we don't
+                // pre-consume `gas_remaining`; EELS sets `intrinsic_regular_gas=0`
+                // and `gas=SYSTEM_TRANSACTION_GAS` for the message
+                // (amsterdam/fork.py::process_unchecked_system_transaction).
+                let sys_reservoir = self
+                    .state_gas_storage_set
+                    .saturating_mul(SYSTEM_MAX_SSTORES_PER_CALL);
+                self.state_gas_reservoir = sys_reservoir;
+                self.state_gas_reservoir_initial = sys_reservoir;
+            } else {
+                let gas_limit = self.tx.gas_limit();
+                let execution_gas = gas_limit.saturating_sub(total_gas);
+                let regular_gas_budget = TX_MAX_GAS_LIMIT_AMSTERDAM.saturating_sub(regular_gas);
+                let gas_left = regular_gas_budget.min(execution_gas);
+                let reservoir = execution_gas.saturating_sub(gas_left);
+                if reservoir > 0 {
+                    // Pre-consume reservoir from gas_remaining so GAS opcode returns <= TX_MAX_GAS_LIMIT_AMSTERDAM
+                    let reservoir_i64 =
+                        i64::try_from(reservoir).map_err(|_| InternalError::Overflow)?;
+                    self.current_call_frame.gas_remaining = self
+                        .current_call_frame
+                        .gas_remaining
+                        .checked_sub(reservoir_i64)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_gas_reservoir = reservoir;
+                }
+                // Capture initial reservoir for block-dimensional regular gas computation.
+                self.state_gas_reservoir_initial = reservoir;
             }
-            // Capture initial reservoir for block-dimensional regular gas computation.
-            self.state_gas_reservoir_initial = reservoir;
         }
 
         Ok(())
