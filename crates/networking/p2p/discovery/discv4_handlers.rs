@@ -436,29 +436,6 @@ impl DiscoveryServer {
         self.peer_table
             .new_contacts(nodes.clone(), DiscoveryProtocol::Discv4)?;
 
-        // Pre-bond: ping newly discovered nodes so they accept our future
-        // FindNode queries. The pinged_nodes set prevents re-pinging which
-        // would invalidate existing bonds. By pinging here (on Neighbors
-        // receipt) rather than at query time, bonds have ~1s+ to establish
-        // before the next lookup tick queries these nodes.
-        for node in &nodes {
-            let nid = node.node_id();
-            if nid == self.local_node.node_id() {
-                continue;
-            }
-            let already_pinged = self
-                .discv4
-                .as_ref()
-                .map(|s| s.pinged_nodes.contains(&nid))
-                .unwrap_or(true);
-            if !already_pinged {
-                if let Some(discv4) = &mut self.discv4 {
-                    discv4.pinged_nodes.insert(nid);
-                }
-                let _ = self.discv4_send_ping(node).await;
-            }
-        }
-
         // Feed results into ALL active lookups (but don't advance — the timer
         // drives lookup progress so that traffic stays controlled).
         if let Some(discv4) = &mut self.discv4 {
