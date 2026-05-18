@@ -57,7 +57,7 @@ impl Memory {
     /// Truncates the memory back to base. This is crucial for constrained
     /// memory in zkVMs. The memory is not freed, but rather shrunk in `len`,
     /// so that the already allocated `capacity` is reused.
-    #[cfg(feature = "eip-8025")]
+    #[cfg(target_arch = "riscv64")]
     #[inline]
     pub fn truncate_to_base(&self) {
         self.buffer.borrow_mut().truncate(self.current_base);
