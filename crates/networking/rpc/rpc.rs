@@ -582,14 +582,7 @@ pub async fn start_api(
         allowed_namespaces: Arc::new(allowed_namespaces),
         il_config,
     };
-    start_api_with_context(
-        http_addr,
-        ws,
-        authrpc_addr,
-        active_filters,
-        service_context,
-    )
-    .await
+    start_api_with_context(http_addr, ws, authrpc_addr, active_filters, service_context).await
 }
 
 /// Shared body for `start_api` — wires HTTP, WS, and authrpc servers off of an

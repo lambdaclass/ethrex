@@ -898,6 +898,8 @@ mod tests {
             withdrawals: Some(vec![]),
             parent_beacon_block_root: Some(Default::default()),
             slot_number: 1,
+            // execution-apis#796: V4 requires target_gas_limit under Amsterdam.
+            target_gas_limit: Some(60_000_000),
             ..Default::default()
         };
         let head_block = BlockHeader {

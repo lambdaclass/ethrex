@@ -50,10 +50,11 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
         version: 1,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        inclusion_list_transactions: None,
     };
     let blockchain = Blockchain::default_with_store(store.clone());
     let block = create_payload(&args, store, Bytes::new()).unwrap();
-    blockchain.build_payload(block).unwrap().payload
+    blockchain.build_payload(block, &[]).unwrap().payload
 }
 
 async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> RpcApiContext {
