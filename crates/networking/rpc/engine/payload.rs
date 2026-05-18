@@ -234,6 +234,24 @@ impl RpcHandler for NewPayloadV4Request {
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
+
+        // EIP-7928 fork-boundary detector: V4 doesn't carry block_access_list_hash
+        // in its header schema. If the payload's block_hash matches what a V5-style
+        // header (with block_access_list_hash injected) would produce, the sender
+        // used the wrong API version — reject with -32602. Real value-mismatch
+        // tests don't match this alternate and fall through to PayloadStatus.INVALID.
+        if block.hash() != self.payload.block_hash {
+            let mut alt_header = block.header.clone();
+            alt_header.block_access_list_hash = Some(H256::zero());
+            let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+            if alt_hash == self.payload.block_hash {
+                return Err(RpcErr::WrongParam(
+                    "engine_newPayloadV4 received header with Amsterdam block_access_list_hash field"
+                        .to_string(),
+                ));
+            }
+        }
+
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
@@ -352,6 +370,23 @@ impl RpcHandler for NewPayloadV5Request {
             return Err(RpcErr::WrongParam(
                 "engine_newPayloadV5 requires Amsterdam timestamp".to_string(),
             ));
+        }
+
+        // EIP-7928 fork-boundary detector: V5 requires block_access_list_hash in
+        // the header. If the payload's block_hash matches what a V4-style header
+        // (without the field) would produce, the sender used the wrong API
+        // version — reject with -32602. Real value-mismatch tests don't match
+        // this alternate and fall through to PayloadStatus.INVALID.
+        if block.hash() != self.payload.block_hash {
+            let mut alt_header = block.header.clone();
+            alt_header.block_access_list_hash = None;
+            let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+            if alt_hash == self.payload.block_hash {
+                return Err(RpcErr::WrongParam(
+                    "engine_newPayloadV5 received header missing block_access_list_hash field"
+                        .to_string(),
+                ));
+            }
         }
 
         let bal = self.payload.block_access_list.clone();
