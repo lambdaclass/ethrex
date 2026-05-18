@@ -136,9 +136,10 @@ impl DiscoveryServer {
             .active_lookups
             .retain(|(l, _)| !l.is_finished());
 
-        // If a lookup is already active, don't start a new one — the active
-        // lookup is driven forward by incoming Neighbors responses (which call
-        // advance_v4_lookup). The timer only needs to start fresh lookups.
+        // If a lookup is already active, advance it instead of starting a new
+        // one. Lookups are timer-driven: each tick sends the next alpha queries.
+        // Responses feed results into the lookup but don't trigger new queries,
+        // which naturally throttles traffic.
         if !self
             .discv4
             .as_ref()
@@ -146,7 +147,7 @@ impl DiscoveryServer {
             .active_lookups
             .is_empty()
         {
-            return Ok(());
+            return self.advance_v4_lookup().await;
         }
 
         // Generate random target
@@ -214,21 +215,6 @@ impl DiscoveryServer {
         }
 
         for (idx, node_id, node, message) in queries {
-            // Pre-bond: ping the node before querying it so it accepts our
-            // FindNode. Skip nodes we've already pinged (the pinged_nodes set
-            // prevents re-pinging which would invalidate existing bonds).
-            let already_pinged = self
-                .discv4
-                .as_ref()
-                .map(|s| s.pinged_nodes.contains(&node_id))
-                .unwrap_or(true);
-            if !already_pinged {
-                if let Some(discv4) = &mut self.discv4 {
-                    discv4.pinged_nodes.insert(node_id);
-                }
-                let _ = self.discv4_send_ping(&node).await;
-            }
-
             if let Err(e) = self.udp_socket.send_to(&message, &node.udp_addr()).await {
                 error!(protocol = "discv4", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
@@ -450,19 +436,41 @@ impl DiscoveryServer {
         self.peer_table
             .new_contacts(nodes.clone(), DiscoveryProtocol::Discv4)?;
 
-        // Feed results into ALL active lookups and advance them
+        // Pre-bond: ping newly discovered nodes so they accept our future
+        // FindNode queries. The pinged_nodes set prevents re-pinging which
+        // would invalidate existing bonds. By pinging here (on Neighbors
+        // receipt) rather than at query time, bonds have ~1s+ to establish
+        // before the next lookup tick queries these nodes.
+        for node in &nodes {
+            let nid = node.node_id();
+            if nid == self.local_node.node_id() {
+                continue;
+            }
+            let already_pinged = self
+                .discv4
+                .as_ref()
+                .map(|s| s.pinged_nodes.contains(&nid))
+                .unwrap_or(true);
+            if !already_pinged {
+                if let Some(discv4) = &mut self.discv4 {
+                    discv4.pinged_nodes.insert(nid);
+                }
+                let _ = self.discv4_send_ping(node).await;
+            }
+        }
+
+        // Feed results into ALL active lookups (but don't advance — the timer
+        // drives lookup progress so that traffic stays controlled).
         if let Some(discv4) = &mut self.discv4 {
             let entries: Vec<(H256, Node)> =
                 nodes.iter().map(|n| (n.node_id(), n.clone())).collect();
             for (lookup, _) in &mut discv4.active_lookups {
                 lookup.feed_results(entries.clone());
             }
-            // Record response on first active lookup (we don't track which triggered it)
             if let Some((lookup, _)) = discv4.active_lookups.first_mut() {
                 lookup.record_response();
             }
         }
-        self.advance_v4_lookup().await?;
 
         Ok(())
     }

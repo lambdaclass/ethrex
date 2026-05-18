@@ -289,9 +289,10 @@ impl DiscoveryServer {
             .active_lookups
             .retain(|l| !l.is_finished());
 
-        // If a lookup is already active, don't start a new one — the active
-        // lookup is driven forward by incoming Nodes responses (which call
-        // advance_v5_lookup). The timer only needs to start fresh lookups.
+        // If a lookup is already active, advance it instead of starting a new
+        // one. Lookups are timer-driven: each tick sends the next alpha queries.
+        // Responses feed results into the lookup but don't trigger new queries,
+        // which naturally throttles traffic.
         if !self
             .discv5
             .as_ref()
@@ -299,7 +300,7 @@ impl DiscoveryServer {
             .active_lookups
             .is_empty()
         {
-            return Ok(());
+            return self.advance_v5_lookup().await;
         }
 
         let mut rng = OsRng;
@@ -533,7 +534,8 @@ impl DiscoveryServer {
         self.peer_table
             .new_contact_records(nodes_message.nodes.clone())?;
 
-        // Feed results into ALL active lookups and advance them
+        // Feed results into ALL active lookups (but don't advance — the timer
+        // drives lookup progress so that traffic stays controlled).
         if let Some(discv5) = &mut self.discv5 {
             let entries: Vec<(H256, Node)> = nodes_message
                 .nodes
@@ -543,12 +545,10 @@ impl DiscoveryServer {
             for lookup in &mut discv5.active_lookups {
                 lookup.feed_results(entries.clone());
             }
-            // Record response on first active lookup (we don't track which triggered it)
             if let Some(lookup) = discv5.active_lookups.first_mut() {
                 lookup.record_response();
             }
         }
-        self.advance_v5_lookup().await?;
 
         Ok(())
     }
