@@ -11,6 +11,8 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
+ethrex-p2p.workspace = true
+rayon.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

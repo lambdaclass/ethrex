@@ -13,9 +13,10 @@ use ethrex_common::{H256, types::Genesis};
 use ethrex_rpc::{
     RpcApiContext,
     rpc::{map_engine_requests, map_http_requests, rpc_response},
-    test_utils::engine_only_context,
     utils::{RpcNamespace, RpcRequest, RpcRequestId},
 };
+
+use crate::engine_ctx::engine_only_context;
 use ethrex_storage::{EngineType, Store};
 use serde_json::Value;
 

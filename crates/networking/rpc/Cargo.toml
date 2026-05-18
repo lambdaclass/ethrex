@@ -21,7 +21,6 @@ ethrex-common.workspace = true
 ethrex-storage.workspace = true
 ethrex-vm.workspace = true
 ethrex-blockchain.workspace = true
-rayon.workspace = true
 ethrex-metrics.workspace = true
 ethrex-crypto.workspace = true
 ethrex-p2p = { workspace = true, features = ["test-utils"] }
