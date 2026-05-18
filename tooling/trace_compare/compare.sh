@@ -121,8 +121,21 @@ for i in "${!RPC_NAMES[@]}"; do
     svc="${RPC_NAMES[$i]}"
     url="${RPC_URLS[$i]}"
     out="$OUT_DIR/${svc}.json"
+
+    # Per-client tracer config:
+    # geth/besu/reth/erigon default to the structLogger (opcode-level) tracer when
+    # no `tracer` is set in params. ethrex's RPC default is `callTracer` instead
+    # (call-frame level), so we have to opt into the opcode tracer explicitly.
+    # The named tracer "opcodeTracer" exists only on ethrex; passing it to geth
+    # would error with "unknown tracer". Hence the conditional.
+    if [[ "$svc" == *"-ethrex-"* ]]; then
+        tracer_cfg='{"tracer":"opcodeTracer"}'
+    else
+        tracer_cfg='{}'
+    fi
+
     curl -s "$url" -H 'content-type: application/json' \
-        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"debug_traceTransaction\",\"params\":[\"$TX_HASH\",{}]}" \
+        -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"debug_traceTransaction\",\"params\":[\"$TX_HASH\",$tracer_cfg]}" \
         > "$out"
     if jq -e '.error' "$out" >/dev/null 2>&1; then
         echo "  $svc -> $out (ERROR: $(jq -r '.error.message' "$out"))"
