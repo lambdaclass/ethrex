@@ -60,13 +60,14 @@ if ! kurtosis enclave inspect "$ENCLAVE" >/dev/null 2>&1; then
 fi
 
 # Discover EL services. Kurtosis names them `el-N-<client>-<cl>`, e.g. `el-1-geth-lighthouse`.
+# In `kurtosis enclave inspect` the service name is column 2 (after the UUID).
 # Avoid `mapfile` because macOS still ships bash 3.2.
 SERVICES=()
 while IFS= read -r svc; do
     [[ -n "$svc" ]] && SERVICES+=("$svc")
 done < <(
     kurtosis enclave inspect "$ENCLAVE" 2>/dev/null \
-        | awk '/^el-/ {print $1}' \
+        | awk '$2 ~ /^el-/ {print $2}' \
         | sort -u
 )
 
