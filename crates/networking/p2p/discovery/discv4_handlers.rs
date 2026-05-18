@@ -26,8 +26,6 @@ use super::server::{DiscoveryServer, DiscoveryServerError};
 
 /// Discv4 revalidation interval.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
-/// Peer count threshold below which we use bootstrap-mode settings.
-const BOOTSTRAP_THRESHOLD: usize = 30;
 
 impl DiscoveryServer {
     pub(crate) async fn discv4_process_message(
@@ -138,22 +136,6 @@ impl DiscoveryServer {
             .active_lookups
             .retain(|(l, _)| !l.is_finished());
 
-        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
-
-        // Above bootstrap threshold, don't chain back-to-back — let the timer
-        // fall back to the slow interval between lookups to avoid excessive
-        // FindNode traffic at steady-state.
-        if peer_count >= BOOTSTRAP_THRESHOLD
-            && self
-                .discv4
-                .as_ref()
-                .expect("discv4 state must exist")
-                .active_lookups
-                .is_empty()
-        {
-            return Ok(());
-        }
-
         // Start a new lookup if none active
         if self
             .discv4
@@ -209,8 +191,6 @@ impl DiscoveryServer {
             return Ok(());
         }
 
-        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
-
         // Collect queries from all active lookups
         let mut queries: Vec<(usize, H256, Node, BytesMut)> = Vec::new();
         for (idx, (lookup, message)) in discv4.active_lookups.iter_mut().enumerate() {
@@ -229,20 +209,18 @@ impl DiscoveryServer {
 
         for (idx, node_id, node, message) in queries {
             // Pre-bond: ping the node before querying it so it accepts our
-            // FindNode. Only during bootstrap, and only nodes we haven't
-            // already pinged.
-            if peer_count < BOOTSTRAP_THRESHOLD {
-                let already_pinged = self
-                    .discv4
-                    .as_ref()
-                    .map(|s| s.pinged_nodes.contains(&node_id))
-                    .unwrap_or(true);
-                if !already_pinged {
-                    if let Some(discv4) = &mut self.discv4 {
-                        discv4.pinged_nodes.insert(node_id);
-                    }
-                    let _ = self.discv4_send_ping(&node).await;
+            // FindNode. Skip nodes we've already pinged (the pinged_nodes set
+            // prevents re-pinging which would invalidate existing bonds).
+            let already_pinged = self
+                .discv4
+                .as_ref()
+                .map(|s| s.pinged_nodes.contains(&node_id))
+                .unwrap_or(true);
+            if !already_pinged {
+                if let Some(discv4) = &mut self.discv4 {
+                    discv4.pinged_nodes.insert(node_id);
                 }
+                let _ = self.discv4_send_ping(&node).await;
             }
 
             if let Err(e) = self.udp_socket.send_to(&message, &node.udp_addr()).await {

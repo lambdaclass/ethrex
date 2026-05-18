@@ -31,8 +31,6 @@ use super::server::{DiscoveryServer, DiscoveryServerError};
 
 /// Maximum number of ENRs per NODES message (limited by UDP packet size).
 const MAX_ENRS_PER_MESSAGE: usize = 3;
-/// Peer count threshold below which we use bootstrap-mode settings.
-const BOOTSTRAP_THRESHOLD: usize = 30;
 /// Nodes not validated within this interval are candidates for revalidation.
 const REVALIDATION_INTERVAL: Duration = Duration::from_secs(12 * 60 * 60); // 12 hours
 /// Minimum interval between WHOAREYOU packets to the same IP address.
@@ -290,22 +288,6 @@ impl DiscoveryServer {
             .expect("discv5 state must exist")
             .active_lookups
             .retain(|l| !l.is_finished());
-
-        let peer_count = self.peer_table.peer_count().await.unwrap_or(0);
-
-        // Above bootstrap threshold, don't chain back-to-back — let the timer
-        // fall back to the slow interval between lookups to avoid excessive
-        // FindNode traffic at steady-state.
-        if peer_count >= BOOTSTRAP_THRESHOLD
-            && self
-                .discv5
-                .as_ref()
-                .expect("discv5 state must exist")
-                .active_lookups
-                .is_empty()
-        {
-            return Ok(());
-        }
 
         // Start a new lookup if none active
         if self
