@@ -3,7 +3,7 @@ use std::time::Duration;
 use ethrex_common::H256;
 use ethrex_common::{
     serde_utils,
-    tracing::{CallTraceFrame, PrestateResult},
+    tracing::{CallTraceFrame, PrestateResult, StructLoggerResult},
 };
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
@@ -198,7 +198,8 @@ impl RpcHandler for TraceTransactionRequest {
                     .trace_transaction_opcodes(self.tx_hash, reexec, timeout, cfg)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                Ok(serde_json::to_value(result)?)
+                // `debug_traceTransaction` returns the geth-RPC structLogger shape.
+                Ok(serde_json::to_value(StructLoggerResult(&result))?)
             }
         }
     }
@@ -324,10 +325,18 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .trace_block_opcodes(block, reexec, timeout, cfg)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                let block_trace: BlockTrace<_> = opcode_traces
+                // Wrap each result with StructLoggerResult so it serializes in the
+                // geth-RPC shape expected by `debug_traceBlockByNumber` consumers.
+                let block_trace: Vec<serde_json::Value> = opcode_traces
                     .into_iter()
-                    .map(|(hash, result)| (hash, result).into())
-                    .collect();
+                    .map(|(hash, result)| {
+                        let wrapped = serde_json::to_value(StructLoggerResult(&result))?;
+                        serde_json::to_value(BlockTraceComponent {
+                            tx_hash: hash,
+                            result: wrapped,
+                        })
+                    })
+                    .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
         }

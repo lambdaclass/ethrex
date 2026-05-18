@@ -1,3 +1,40 @@
+//! Trace data types and their wire-format serializers.
+//!
+//! ## Architecture
+//!
+//! Capture, data, and output format are separated:
+//!
+//! - **Capture** lives in `ethrex-levm` (`LevmOpcodeTracer`, the dispatch-loop hook).
+//!   It runs once per tx and produces a [`Vec<OpcodeStep>`] plus the trailing
+//!   metadata in [`OpcodeTraceResult`].
+//! - **Data** are the bare structs [`OpcodeStep`] and [`OpcodeTraceResult`] in this
+//!   module. They carry no `Serialize` impl — they're consumer-agnostic. The same
+//!   captured data feeds every downstream wire format.
+//! - **Wire format** is a newtype wrapper around one of those data structs with its
+//!   own `Serialize` impl. Two shapes coexist:
+//!     - [`StructLoggerStep`] / [`StructLoggerResult`] — the geth-RPC `debug_traceTransaction`
+//!       structLogger shape: `op` as string mnemonic, no `opName`, decimal `gas`, etc.
+//!       Used by the RPC handler and matches what every major client (geth, besu, …) emits
+//!       from this endpoint. Consumers: Blockscout, Foundry, Tenderly, anything reading
+//!       `debug_traceTransaction`.
+//!     - [`Eip3155Step`] — strict [EIP-3155](https://eips.ethereum.org/EIPS/eip-3155)
+//!       shape: numeric `op` byte + separate `opName`, `"0xN"` hex `gas`/`gasCost`/`refund`,
+//!       `stack:[]` (never null) when disabled. Used by streaming sinks that want
+//!       spec-conformant per-step JSONL — e.g. the `ef-tests-statev2 statetest` subcommand
+//!       feeding goevmlab.
+//!
+//! Adding a third format (Parity-style flat call, opcode-count tracers, …) means another
+//! newtype with its own `Serialize` impl. No changes to the data types or capture layer.
+//!
+//! ## Why not match geth-RPC everywhere
+//!
+//! `debug_traceTransaction` predates EIP-3155 by years and its de-facto shape diverges
+//! from the spec on three points: `op` is a string, `opName` is absent, and `gas`/`gasCost`
+//! are decimal numbers instead of `"0xN"` hex strings. Every major client matches geth's
+//! shape there for tooling compat, not EIP-3155. So:
+//! - RPC consumer expects structLogger → use [`StructLoggerStep`]/[`StructLoggerResult`].
+//! - EIP-3155-conformant CLI consumer (goevmlab, fuzzers) → use [`Eip3155Step`].
+
 use bytes::Bytes;
 use ethereum_types::H256;
 use ethereum_types::{Address, U256};
@@ -128,35 +165,31 @@ fn is_zero_nonce(n: &u64) -> bool {
 
 // ─── OpcodeTracer types ──────────────────────────────────────────────────────
 
-/// Per-opcode trace entry conforming to [EIP-3155](https://eips.ethereum.org/EIPS/eip-3155).
+/// Per-opcode trace entry — pure data, no `Serialize` impl.
 ///
-/// Wire format per the spec: `op` is a numeric opcode byte; `gas`, `gasCost`, `refund`
-/// are `"0xN"` hex strings ("Hex-Number"); `pc`, `memSize`, `depth` are plain JSON
-/// numbers; `stack` is always an array (never null) of `"0xN"` hex strings. The
-/// optional `opName`, `error`, `memory`, `storage` fields follow when populated.
-/// Field order matches the spec's listed order.
+/// To get this on the wire, wrap in one of the format newtypes:
+/// - [`StructLoggerStep`] for geth-RPC `debug_traceTransaction` shape.
+/// - [`Eip3155Step`] for EIP-3155 spec shape.
 ///
-/// When emitted via geth's `debug_traceTransaction` RPC, this struct lives inside
-/// the geth-specific `{failed, gas, returnValue, structLogs}` wrapper
-/// ([`OpcodeTraceResult`]); when emitted via an EIP-3155 streaming sink, it stands
-/// alone as a JSONL line.
+/// See the module-level doc for why both formats coexist.
 #[derive(Debug)]
 pub struct OpcodeStep {
     pub pc: u64,
-    /// Raw opcode byte value (e.g. 0x60 for PUSH1). Emitted as a JSON number under
-    /// the `"op"` key; the mnemonic is emitted separately as `"opName"`.
+    /// Raw opcode byte value (e.g. 0x60 for PUSH1). Each format serializer decides
+    /// how to render this (numeric byte, hex string, mnemonic string).
     pub op: u8,
     pub gas: u64,
     pub gas_cost: u64,
-    /// Current memory size in bytes (always emitted).
+    /// Current memory size in bytes.
     pub mem_size: u64,
     pub depth: u32,
-    /// Return data from the previous sub-call (always emitted; `"0x"` when disabled or empty).
+    /// Return data from the previous sub-call.
     pub return_data: bytes::Bytes,
-    /// Gas refund counter (always emitted).
+    /// Gas refund counter.
     pub refund: u64,
-    /// `Some(vec)` when stack capture is enabled (bottom-first); `None` when disabled
-    /// (still serialized as `[]` per EIP-3155's "MUST initialize to empty array" rule).
+    /// `Some(vec)` when stack capture is enabled (bottom-first); `None` when disabled.
+    /// Each format serializer decides how to render `None`: structLogger emits JSON null,
+    /// EIP-3155 emits `[]` (per spec's "MUST initialize to empty array" rule).
     pub stack: Option<Vec<U256>>,
     /// `Some(chunks)` when memory capture is enabled; `None` when disabled (field omitted).
     pub memory: Option<Vec<MemoryChunk>>,
@@ -170,16 +203,16 @@ pub struct OpcodeStep {
 #[derive(Debug)]
 pub struct MemoryChunk(pub [u8; 32]);
 
-/// Top-level result returned by an opcode (EIP-3155) trace.
+/// Top-level result of one opcode-traced transaction — pure data, no `Serialize` impl.
 ///
-/// Wraps per-step entries as `{failed, gas, returnValue, structLogs}` matching
-/// the de-facto `debug_traceTransaction` response shape used across major
-/// execution clients.
+/// Wrap in [`StructLoggerResult`] to get the geth-RPC `{failed, gas, returnValue, structLogs}`
+/// wire shape. EIP-3155-conformant CLI consumers stream per-step [`OpcodeStep`]s
+/// directly (via [`Eip3155Step`]) and emit their own summary line, so there's no
+/// EIP-3155 wrapper newtype for the result.
 #[derive(Debug)]
 pub struct OpcodeTraceResult {
     pub gas_used: u64,
-    /// True iff the transaction completed without error. Serialized as the
-    /// inverted `failed` field on the wire.
+    /// True iff the transaction completed without error.
     pub pass: bool,
     pub output: bytes::Bytes,
     pub steps: Vec<OpcodeStep>,
@@ -380,37 +413,204 @@ impl serde::Serialize for MemoryChunk {
     }
 }
 
-impl serde::Serialize for OpcodeStep {
+// Shared utilities used by both wire-format serializers below.
+
+fn serialize_storage_map<S: serde::Serializer>(
+    serializer: S,
+    storage: &BTreeMap<H256, H256>,
+) -> Result<S::Ok, S::Error> {
+    use serde::ser::SerializeMap;
+    let mut m = serializer.serialize_map(Some(storage.len()))?;
+    for (k, v) in storage {
+        let k_str = format!("0x{}", hex::encode(k.as_bytes()));
+        let v_str = format!("0x{}", hex::encode(v.as_bytes()));
+        m.serialize_entry(&k_str, &v_str)?;
+    }
+    m.end()
+}
+
+/// Mnemonic string for an opcode byte, falling back to `"opcode 0xNN not defined"`
+/// for bytes outside the assigned table.
+fn opcode_name_or_fallback(byte: u8) -> String {
+    opcode_name(byte)
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("opcode 0x{byte:02x} not defined"))
+}
+
+// ─── Wire format: geth-RPC structLogger ───────────────────────────────────
+//
+// The de-facto `debug_traceTransaction` response shape, emitted by every major
+// execution client (geth, besu, reth, erigon, nethermind). Predates EIP-3155
+// and diverges from it on three per-step fields:
+//
+//   - `op`: string mnemonic (`"PUSH1"`), not the numeric opcode byte.
+//   - No separate `opName` field.
+//   - `gas`, `gasCost`, `refund`: decimal JSON numbers, not `"0xN"` hex strings.
+//
+// `stack` is serialized as JSON `null` when capture is disabled — also a divergence
+// from EIP-3155, which mandates `[]` — but it matches geth's RPC behavior so we
+// preserve it on this code path.
+//
+// Verified against geth and besu on a kurtosis localnet via `debug_traceTransaction`:
+// byte-for-byte identical to the StructLogger output.
+
+/// Wraps an [`OpcodeStep`] to serialize in the geth-RPC `structLogger` shape used by
+/// `debug_traceTransaction`. See module-level docs and the comment above this type
+/// for the field-shape divergences from EIP-3155.
+pub struct StructLoggerStep<'a>(pub &'a OpcodeStep);
+
+impl serde::Serialize for StructLoggerStep<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
+        let step = self.0;
 
-        // Required: pc, op, gas, gasCost, memSize, stack, depth, returnData, refund = 9
-        // Always-emitted optional: opName = 1
-        // Conditional optional: error, memory, storage
-        let mut field_count = 10;
-        if self.error.is_some() {
+        let mut field_count = 9; // pc, op, gas, gasCost, depth, stack, memSize, returnData, refund
+        if step.error.is_some() {
             field_count += 1;
         }
-        if self.memory.is_some() {
+        if step.memory.is_some() {
             field_count += 1;
         }
-        if self.storage.is_some() {
+        if step.storage.is_some() {
             field_count += 1;
         }
 
         let mut map = serializer.serialize_map(Some(field_count))?;
 
-        // Required fields, in EIP-3155 spec order.
-        map.serialize_entry("pc", &self.pc)?;
-        // op: numeric opcode byte (spec: Number).
-        map.serialize_entry("op", &self.op)?;
-        // gas, gasCost, refund: spec type "Hex-Number" — JSON string of form "0xN".
-        map.serialize_entry("gas", &format!("{:#x}", self.gas))?;
-        map.serialize_entry("gasCost", &format!("{:#x}", self.gas_cost))?;
-        map.serialize_entry("memSize", &self.mem_size)?;
+        map.serialize_entry("pc", &step.pc)?;
+        // op: string mnemonic, matching geth's wire output (NOT EIP-3155's numeric form).
+        map.serialize_entry("op", &opcode_name_or_fallback(step.op))?;
+        // gas/gasCost/refund: decimal JSON numbers, matching geth's wire output.
+        map.serialize_entry("gas", &step.gas)?;
+        map.serialize_entry("gasCost", &step.gas_cost)?;
+        map.serialize_entry("depth", &step.depth)?;
 
-        // stack: always an array (spec: "MUST be initialized to empty arrays NOT to null").
-        // Bottom-first ordering, U256 values formatted as "0xN" via `geth_uint256_hex`.
+        // stack: JSON null when disabled, array of `"0xN"` hex strings when enabled.
+        // Matches geth's RPC behavior; diverges from EIP-3155's "MUST be []" rule.
+        struct StackSerializer<'a>(&'a Option<Vec<U256>>);
+        impl serde::Serialize for StackSerializer<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                use serde::ser::SerializeSeq;
+                match self.0 {
+                    None => serializer.serialize_none(),
+                    Some(vec) => {
+                        let mut seq = serializer.serialize_seq(Some(vec.len()))?;
+                        for v in vec {
+                            seq.serialize_element(&geth_uint256_hex(v))?;
+                        }
+                        seq.end()
+                    }
+                }
+            }
+        }
+        map.serialize_entry("stack", &StackSerializer(&step.stack))?;
+
+        map.serialize_entry("memSize", &step.mem_size)?;
+        map.serialize_entry(
+            "returnData",
+            &format!("0x{}", hex::encode(&step.return_data)),
+        )?;
+        map.serialize_entry("refund", &step.refund)?;
+
+        if let Some(err) = &step.error {
+            map.serialize_entry("error", err)?;
+        }
+        if let Some(mem) = &step.memory {
+            map.serialize_entry("memory", mem)?;
+        }
+        if let Some(storage) = &step.storage {
+            struct Wrap<'a>(&'a BTreeMap<H256, H256>);
+            impl serde::Serialize for Wrap<'_> {
+                fn serialize<S: serde::Serializer>(
+                    &self,
+                    serializer: S,
+                ) -> Result<S::Ok, S::Error> {
+                    serialize_storage_map(serializer, self.0)
+                }
+            }
+            map.serialize_entry("storage", &Wrap(storage))?;
+        }
+
+        map.end()
+    }
+}
+
+/// Wraps an [`OpcodeTraceResult`] to serialize as the geth-RPC `debug_traceTransaction`
+/// response: `{failed, gas, returnValue, structLogs: [...]}`. Each step inside
+/// `structLogs` is itself serialized via [`StructLoggerStep`].
+pub struct StructLoggerResult<'a>(pub &'a OpcodeTraceResult);
+
+impl serde::Serialize for StructLoggerResult<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeSeq};
+        let r = self.0;
+
+        // structLogs uses StructLoggerStep for each entry.
+        struct Steps<'a>(&'a [OpcodeStep]);
+        impl serde::Serialize for Steps<'_> {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
+                for s in self.0 {
+                    seq.serialize_element(&StructLoggerStep(s))?;
+                }
+                seq.end()
+            }
+        }
+
+        let mut map = serializer.serialize_map(Some(4))?;
+        // `failed` is the inverse of `pass` — matches the geth wire shape.
+        map.serialize_entry("failed", &!r.pass)?;
+        map.serialize_entry("gas", &r.gas_used)?;
+        map.serialize_entry("returnValue", &format!("0x{}", hex::encode(&r.output)))?;
+        map.serialize_entry("structLogs", &Steps(&r.steps))?;
+        map.end()
+    }
+}
+
+// ─── Wire format: EIP-3155 ────────────────────────────────────────────────
+//
+// The shape defined by EIP-3155 §"Required Fields":
+//
+//   - `op`: numeric opcode byte (e.g. `96` for PUSH1).
+//   - `opName`: separate string mnemonic, always emitted (technically optional per spec).
+//   - `gas`, `gasCost`, `refund`: `"0xN"` hex strings ("Hex-Number" per spec).
+//   - `stack`: always an array, never null (spec: "All array attributes MUST be
+//     initialized to empty arrays NOT to null").
+//
+// Field order matches the spec's listed order. Used by streaming sinks that feed
+// EIP-3155-conformant tooling (goevmlab, fuzzers). NOT used by `debug_traceTransaction`,
+// where existing tooling expects the structLogger shape above.
+
+/// Wraps an [`OpcodeStep`] to serialize in strict EIP-3155 shape. See module-level
+/// docs and the comment above this type for the field-shape choices.
+pub struct Eip3155Step<'a>(pub &'a OpcodeStep);
+
+impl serde::Serialize for Eip3155Step<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let step = self.0;
+
+        let mut field_count = 10; // required 9 + always-emitted opName
+        if step.error.is_some() {
+            field_count += 1;
+        }
+        if step.memory.is_some() {
+            field_count += 1;
+        }
+        if step.storage.is_some() {
+            field_count += 1;
+        }
+
+        let mut map = serializer.serialize_map(Some(field_count))?;
+
+        // Required fields in spec order.
+        map.serialize_entry("pc", &step.pc)?;
+        map.serialize_entry("op", &step.op)?;
+        map.serialize_entry("gas", &format!("{:#x}", step.gas))?;
+        map.serialize_entry("gasCost", &format!("{:#x}", step.gas_cost))?;
+        map.serialize_entry("memSize", &step.mem_size)?;
+
+        // stack: always an array; `None` (disabled) becomes `[]`.
         struct StackSerializer<'a>(&'a Option<Vec<U256>>);
         impl serde::Serialize for StackSerializer<'_> {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -423,66 +623,38 @@ impl serde::Serialize for OpcodeStep {
                 seq.end()
             }
         }
-        map.serialize_entry("stack", &StackSerializer(&self.stack))?;
+        map.serialize_entry("stack", &StackSerializer(&step.stack))?;
 
-        map.serialize_entry("depth", &self.depth)?;
+        map.serialize_entry("depth", &step.depth)?;
         map.serialize_entry(
             "returnData",
-            &format!("0x{}", hex::encode(&self.return_data)),
+            &format!("0x{}", hex::encode(&step.return_data)),
         )?;
-        map.serialize_entry("refund", &format!("{:#x}", self.refund))?;
+        map.serialize_entry("refund", &format!("{:#x}", step.refund))?;
 
-        // Optional fields, in EIP-3155 spec order: opName, error, memory, storage.
-        // opName always emitted: every byte has either a known mnemonic or a stable
-        // "opcode 0xNN not defined" fallback.
-        match opcode_name(self.op) {
-            Some(name) => map.serialize_entry("opName", name)?,
-            None => {
-                map.serialize_entry("opName", &format!("opcode 0x{:02x} not defined", self.op))?
-            }
-        }
+        // Optional fields in spec order: opName, error, memory, storage.
+        // opName always emitted (covers both known and unknown opcode bytes).
+        map.serialize_entry("opName", &opcode_name_or_fallback(step.op))?;
 
-        if let Some(err) = &self.error {
+        if let Some(err) = &step.error {
             map.serialize_entry("error", err)?;
         }
-
-        if let Some(mem) = &self.memory {
+        if let Some(mem) = &step.memory {
             map.serialize_entry("memory", mem)?;
         }
-
-        if let Some(storage) = &self.storage {
-            struct StorageSerializer<'a>(&'a BTreeMap<H256, H256>);
-            impl serde::Serialize for StorageSerializer<'_> {
+        if let Some(storage) = &step.storage {
+            struct Wrap<'a>(&'a BTreeMap<H256, H256>);
+            impl serde::Serialize for Wrap<'_> {
                 fn serialize<S: serde::Serializer>(
                     &self,
                     serializer: S,
                 ) -> Result<S::Ok, S::Error> {
-                    use serde::ser::SerializeMap;
-                    let mut m = serializer.serialize_map(Some(self.0.len()))?;
-                    for (k, v) in self.0 {
-                        let k_str = format!("0x{}", hex::encode(k.as_bytes()));
-                        let v_str = format!("0x{}", hex::encode(v.as_bytes()));
-                        m.serialize_entry(&k_str, &v_str)?;
-                    }
-                    m.end()
+                    serialize_storage_map(serializer, self.0)
                 }
             }
-            map.serialize_entry("storage", &StorageSerializer(storage))?;
+            map.serialize_entry("storage", &Wrap(storage))?;
         }
 
-        map.end()
-    }
-}
-
-impl serde::Serialize for OpcodeTraceResult {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(4))?;
-        // `failed` is the inverse of `pass` — matches the conventional wire shape.
-        map.serialize_entry("failed", &!self.pass)?;
-        map.serialize_entry("gas", &self.gas_used)?;
-        map.serialize_entry("returnValue", &format!("0x{}", hex::encode(&self.output)))?;
-        map.serialize_entry("structLogs", &self.steps)?;
         map.end()
     }
 }
