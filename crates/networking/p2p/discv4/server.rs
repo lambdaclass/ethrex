@@ -5,7 +5,6 @@ use crate::{
 };
 use bytes::BytesMut;
 use ethrex_common::{H256, H512};
-use rustc_hash::FxHashSet;
 use std::{collections::HashMap, net::SocketAddr, time::Instant};
 
 pub const EXPIRATION_SECONDS: u64 = 20;
@@ -18,9 +17,6 @@ pub struct Discv4State {
     pub pending_find_node: HashMap<H256, Instant>,
     /// Currently active iterative lookups, each with its cached signed FindNode message.
     pub active_lookups: Vec<(IterativeLookup, BytesMut)>,
-    /// Tracks nodes we have already pinged so we don't re-ping (which would
-    /// invalidate an already-bonded contact via `record_ping_sent`).
-    pub pinged_nodes: FxHashSet<H256>,
 }
 
 #[derive(Debug, Clone)]

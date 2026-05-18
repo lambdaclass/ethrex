@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn new_sorts_by_distance_and_truncates() {
         let target = H256::zero();
-        let seeds: Vec<_> = (1..=20).map(|i| make_node(i)).collect();
+        let seeds: Vec<_> = (1..=20).map(make_node).collect();
         let lookup = IterativeLookup::new(target, seeds);
 
         assert!(lookup.result.len() <= LOOKUP_BUCKET_SIZE);
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn next_to_query_returns_alpha_entries() {
         let target = H256::zero();
-        let seeds: Vec<_> = (1..=10).map(|i| make_node(i)).collect();
+        let seeds: Vec<_> = (1..=10).map(make_node).collect();
         let mut lookup = IterativeLookup::new(target, seeds);
 
         let batch = lookup.next_to_query(LOOKUP_ALPHA);
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn feed_results_deduplicates() {
         let target = H256::zero();
-        let seeds: Vec<_> = (1..=3).map(|i| make_node(i)).collect();
+        let seeds: Vec<_> = (1..=3).map(make_node).collect();
         let mut lookup = IterativeLookup::new(target, seeds.clone());
 
         let initial_len = lookup.result.len();
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn is_finished_when_all_queried() {
         let target = H256::zero();
-        let seeds: Vec<_> = (1..=2).map(|i| make_node(i)).collect();
+        let seeds: Vec<_> = (1..=2).map(make_node).collect();
         let mut lookup = IterativeLookup::new(target, seeds);
 
         assert!(!lookup.is_finished());

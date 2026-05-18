@@ -338,9 +338,6 @@ impl DiscoveryServer {
             .unwrap_or(false)
         {
             self.discv4_send_ping(&node).await?;
-            if let Some(discv4) = &mut self.discv4 {
-                discv4.pinged_nodes.insert(node.node_id());
-            }
         } else {
             let node_id = node_id(&sender_public_key);
             let stored_enr_seq = self
