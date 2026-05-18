@@ -825,12 +825,7 @@ impl<'a> VM<'a> {
         new_call_frame.state_gas_used_snapshot = create_state_gas_used_snapshot;
         new_call_frame.state_gas_refund_pending_snapshot = self.state_gas_refund_pending;
         new_call_frame.state_gas_refund_absorbed_snapshot = self.state_gas_refund_absorbed;
-        new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
         new_call_frame.state_gas_spill_outstanding_snapshot = self.state_gas_spill_outstanding;
-        new_call_frame.state_gas_credit_against_drain_snapshot =
-            self.state_gas_credit_against_drain;
-        new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
-        new_call_frame.regular_gas_reclassified_snapshot = self.regular_gas_reclassified;
 
         self.add_callframe(new_call_frame);
 
@@ -1048,12 +1043,7 @@ impl<'a> VM<'a> {
             new_call_frame.state_gas_used_snapshot = self.state_gas_used;
             new_call_frame.state_gas_refund_pending_snapshot = self.state_gas_refund_pending;
             new_call_frame.state_gas_refund_absorbed_snapshot = self.state_gas_refund_absorbed;
-            new_call_frame.state_gas_reservoir_snapshot = self.state_gas_reservoir;
             new_call_frame.state_gas_spill_outstanding_snapshot = self.state_gas_spill_outstanding;
-            new_call_frame.state_gas_credit_against_drain_snapshot =
-                self.state_gas_credit_against_drain;
-            new_call_frame.state_gas_spill_snapshot = self.state_gas_spill;
-            new_call_frame.regular_gas_reclassified_snapshot = self.regular_gas_reclassified;
 
             self.add_callframe(new_call_frame);
 
@@ -1123,11 +1113,6 @@ impl<'a> VM<'a> {
             state_gas_used_snapshot,
             state_gas_refund_pending_snapshot,
             state_gas_refund_absorbed_snapshot,
-            state_gas_reservoir_snapshot,
-            state_gas_spill_outstanding_snapshot,
-            state_gas_credit_against_drain_snapshot,
-            state_gas_spill_snapshot,
-            regular_gas_reclassified_snapshot,
             call_frame_backup,
             stack,
             ..
@@ -1174,77 +1159,42 @@ impl<'a> VM<'a> {
                     self.credit_state_gas_refund(pending)?;
                 }
             }
-            TxResult::Revert(err) => {
-                let outstanding_delta = self
-                    .state_gas_spill_outstanding
-                    .saturating_sub(state_gas_spill_outstanding_snapshot);
-                let credit_against_drain_delta = self
-                    .state_gas_credit_against_drain
-                    .saturating_sub(state_gas_credit_against_drain_snapshot);
-                debug_assert!(
-                    outstanding_delta >= credit_against_drain_delta,
-                    "reservoir revert invariant violated: credit_against_drain_delta \
-                     ({credit_against_drain_delta}) > outstanding_delta \
-                     ({outstanding_delta})"
-                );
+            TxResult::Revert(_) => {
+                // EELS PR #2823 (bal-devnet-7) incorporate_child_on_error:
+                //   parent.state_gas_left += child.state_gas_used + child.state_gas_left
+                // where EELS `credit_state_gas_refund` decrements the child's
+                // `state_gas_used` (applied = min(amount, state_gas_used);
+                // state_gas_used -= applied). So `child.state_gas_used` here is
+                // already NET of any inline credits the child applied.
+                //
+                // ethrex bookkeeping: gross charges live in `state_gas_used`, the
+                // matching deduction lives in `state_gas_refund_absorbed`. The
+                // EELS-equivalent net is therefore (used − absorbed) accumulated
+                // during the child:
+                //   new_res = current_res + (used_delta − absorbed_delta)
+                // The pre-child reservoir is preserved implicitly because the
+                // child's reservoir mutations are layered on top of the parent's
+                // current value.
+                //
+                // `state_gas_refund_absorbed` is restored to snapshot so the child's
+                // absorbed credit (which targeted its own rolled-back charge) does
+                // not discount the parent's later block-accounted charges.
+                let used_delta = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
+                let absorbed_delta = self
+                    .state_gas_refund_absorbed
+                    .saturating_sub(state_gas_refund_absorbed_snapshot);
+                let child_net_used = used_delta.saturating_sub(absorbed_delta);
 
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-
-                if err.is_revert_opcode() {
-                    // REVERT opcode (intentional): pre-PR-2689 behaviour — give the
-                    // un-cancelled spill back to the reservoir; do NOT reclassify to
-                    // regular_gas. state_gas_spill_outstanding stays elevated so the
-                    // spill counts as state-gas in the regular_gas formula's
-                    // subtraction (i.e. excluded from regular_gas).
-                    //
-                    // EELS v1.1.0 burn propagation: do NOT roll back
-                    // `state_gas_credit_against_drain` — leave it at the post-credit
-                    // value so the credit's "burn" propagates up the cascade as
-                    // additional drain_delta in ancestor handle_return_call
-                    // invocations. This implements the
-                    // `parent.state_gas_left += child_used + child_left - child_refund`
-                    // formula across multiple cascade levels, so a subtree's inline
-                    // refund is burned at every incorporate boundary on the way to
-                    // the top (per test_nested_failure_resets_to_tx_reservoir's
-                    // `non_top_refund_burn` sum).
-                    self.state_gas_reservoir = state_gas_reservoir_snapshot
-                        .saturating_add(outstanding_delta)
-                        .saturating_sub(credit_against_drain_delta);
-                } else {
-                    self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                    // ExceptionalHalt (PR #2689): reclassify the subtree's
-                    // un-cancelled local spill PLUS the credit-cancelled spill
-                    // that wasn't already reclassified at a deeper halt boundary.
-                    //
-                    // - `local_excess` = outstanding_delta - credit_against_drain_delta:
-                    //   the un-credited spill in this subtree (un-cancelled).
-                    // - `credit_cancelled_spill` = subtree_gross_spill - outstanding_delta:
-                    //   spill that was credited away (e.g. CREATE-halt's NEW_ACCOUNT
-                    //   refund). Permanently consumed from gas_remaining; default_hook's
-                    //   `regular = raw - state_gas_spill + reclassified` would
-                    //   silently drop it.
-                    // - `already_reclassified_in_subtree` = current reclassified -
-                    //   snapshot at frame entry: amounts already counted at deeper
-                    //   halts. Subtract to avoid double-counting.
-                    let local_excess = outstanding_delta.saturating_sub(credit_against_drain_delta);
-                    let subtree_gross_spill = self
-                        .state_gas_spill
-                        .saturating_sub(state_gas_spill_snapshot);
-                    let credit_cancelled_spill =
-                        subtree_gross_spill.saturating_sub(outstanding_delta);
-                    let already_reclassified_in_subtree = self
-                        .regular_gas_reclassified
-                        .saturating_sub(regular_gas_reclassified_snapshot);
-                    let new_reclassify = local_excess
-                        .saturating_add(credit_cancelled_spill)
-                        .saturating_sub(already_reclassified_in_subtree);
-                    self.regular_gas_reclassified =
-                        self.regular_gas_reclassified.saturating_add(new_reclassify);
-                    self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
-                    self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                }
+                self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(child_net_used);
+                // `state_gas_credit_against_drain`: NOT restored (left elevated per
+                // Policy A so its burn propagates up the cascade).
+                // `state_gas_spill_outstanding`: NOT restored — its baseline lives
+                // on the parent's snapshot (vm.rs `credit_state_gas_refund`) so
+                // the child's outstanding contribution stays visible to the
+                // parent's clamp.
 
                 self.current_call_frame.stack.push(FAIL)?;
             }
@@ -1273,11 +1223,6 @@ impl<'a> VM<'a> {
             state_gas_used_snapshot,
             state_gas_refund_pending_snapshot,
             state_gas_refund_absorbed_snapshot,
-            state_gas_reservoir_snapshot,
-            state_gas_spill_outstanding_snapshot,
-            state_gas_credit_against_drain_snapshot,
-            state_gas_spill_snapshot,
-            regular_gas_reclassified_snapshot,
             stack,
             ..
         } = executed_call_frame;
@@ -1308,58 +1253,19 @@ impl<'a> VM<'a> {
                 }
             }
             TxResult::Revert(err) => {
-                // PR #2689 reclassification on child halt — same split as handle_return_call.
-                let outstanding_delta = self
-                    .state_gas_spill_outstanding
-                    .saturating_sub(state_gas_spill_outstanding_snapshot);
-                let credit_against_drain_delta = self
-                    .state_gas_credit_against_drain
-                    .saturating_sub(state_gas_credit_against_drain_snapshot);
-                debug_assert!(
-                    outstanding_delta >= credit_against_drain_delta,
-                    "reservoir revert invariant violated: credit_against_drain_delta \
-                     ({credit_against_drain_delta}) > outstanding_delta \
-                     ({outstanding_delta})"
-                );
+                // EELS PR #2823 (bal-devnet-7): see handle_return_call for the full
+                // derivation. new_reservoir = current_reservoir + (used_delta −
+                // absorbed_delta) where deltas are child's effective net charges.
+                let used_delta = self.state_gas_used.saturating_sub(state_gas_used_snapshot);
+                let absorbed_delta = self
+                    .state_gas_refund_absorbed
+                    .saturating_sub(state_gas_refund_absorbed_snapshot);
+                let child_net_used = used_delta.saturating_sub(absorbed_delta);
 
                 self.state_gas_used = state_gas_used_snapshot;
                 self.state_gas_refund_pending = state_gas_refund_pending_snapshot;
                 self.state_gas_refund_absorbed = state_gas_refund_absorbed_snapshot;
-
-                if err.is_revert_opcode() {
-                    // REVERT opcode (matching handle_return_call): leave
-                    // `state_gas_credit_against_drain` elevated so the credit's burn
-                    // propagates up the cascade. See handle_return_call REVERT comment.
-                    self.state_gas_reservoir = state_gas_reservoir_snapshot
-                        .saturating_add(outstanding_delta)
-                        .saturating_sub(credit_against_drain_delta);
-                } else {
-                    self.state_gas_credit_against_drain = state_gas_credit_against_drain_snapshot;
-                    // ExceptionalHalt (PR #2689): reclassify the subtree's
-                    // un-cancelled local spill PLUS the credit-cancelled spill
-                    // that wasn't already reclassified at a deeper halt boundary.
-                    // Mirrors handle_return_call's formula — see comment there for
-                    // the term-by-term breakdown. Without the credit_cancelled_spill
-                    // term, a nested CREATE child whose initcode credits NEW_ACCOUNT
-                    // and then ExceptionalHalts under-reclassifies state gas by
-                    // exactly AccountCreationCost.
-                    let local_excess = outstanding_delta.saturating_sub(credit_against_drain_delta);
-                    let subtree_gross_spill = self
-                        .state_gas_spill
-                        .saturating_sub(state_gas_spill_snapshot);
-                    let credit_cancelled_spill =
-                        subtree_gross_spill.saturating_sub(outstanding_delta);
-                    let already_reclassified_in_subtree = self
-                        .regular_gas_reclassified
-                        .saturating_sub(regular_gas_reclassified_snapshot);
-                    let new_reclassify = local_excess
-                        .saturating_add(credit_cancelled_spill)
-                        .saturating_sub(already_reclassified_in_subtree);
-                    self.regular_gas_reclassified =
-                        self.regular_gas_reclassified.saturating_add(new_reclassify);
-                    self.state_gas_spill_outstanding = state_gas_spill_outstanding_snapshot;
-                    self.state_gas_reservoir = state_gas_reservoir_snapshot;
-                }
+                self.state_gas_reservoir = self.state_gas_reservoir.saturating_add(child_net_used);
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS
@@ -1368,7 +1274,7 @@ impl<'a> VM<'a> {
                     self.credit_state_gas_refund(self.state_gas_new_account)?;
                 }
 
-                // If revert we have to copy the return_data
+                // Return data is only propagated on REVERT opcode, not on ExceptionalHalt.
                 if err.is_revert_opcode() {
                     self.current_call_frame.sub_return_data = ctx_result.output.clone();
                 }
