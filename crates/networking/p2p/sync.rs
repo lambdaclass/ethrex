@@ -206,9 +206,12 @@ impl Syncer {
         if self.snap_enabled.load(Ordering::Relaxed) {
             // Probe the sync head's block number before committing to snap sync.
             // On a fresh devnet the chain head may be only a few blocks deep; the
-            // existing in-loop `head_close_to_0` guard in `sync_cycle_snap` is
-            // only reached after a successful header batch, which can stall when
-            // peers are barely synced themselves. Pre-checking avoids that.
+            // existing in-loop `head_close_to_0` guard in `sync_cycle_snap`
+            // (snap_sync.rs, same `< MIN_FULL_BLOCKS` check) is only reached
+            // after a successful header batch, which can stall when peers are
+            // barely synced themselves. Pre-checking avoids that. The probe
+            // response is intentionally discarded; on the snap path the loop
+            // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
             if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
                 && sync_head_number < MIN_FULL_BLOCKS
             {
@@ -217,6 +220,13 @@ impl Syncer {
                     "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
                 );
                 self.snap_enabled.store(false, Ordering::Relaxed);
+                // Clear any stale snap checkpoint so the manager loop in
+                // `sync_manager.rs` doesn't keep re-entering this branch
+                // after the full sync completes. Mirrors the cleanup done
+                // when the manager auto-switches to full on startup.
+                if let Err(e) = store.clear_snap_state().await {
+                    warn!("Failed to clear stale snap state: {e}");
+                }
                 return full::sync_cycle_full(
                     &mut self.peers,
                     self.blockchain.clone(),
@@ -265,6 +275,12 @@ const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::fr
 /// Returns `None` if peers don't respond with the requested header within
 /// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
 /// and fall through to the regular sync path.
+///
+/// Worst-case latency budget: `PROBE_SYNC_HEAD_ATTEMPTS` × `PEER_REPLY_TIMEOUT`
+/// (5s, from `snap/constants.rs`) + (`PROBE_SYNC_HEAD_ATTEMPTS` − 1) ×
+/// `PROBE_SYNC_HEAD_RETRY_DELAY` = ~19s on a peer-starved network before we
+/// fall through to the snap path. On a healthy network the first attempt
+/// usually returns in well under a second.
 async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Option<u64> {
     for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
         match peers
