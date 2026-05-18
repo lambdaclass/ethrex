@@ -60,7 +60,11 @@ if ! kurtosis enclave inspect "$ENCLAVE" >/dev/null 2>&1; then
 fi
 
 # Discover EL services. Kurtosis names them `el-N-<client>-<cl>`, e.g. `el-1-geth-lighthouse`.
-mapfile -t SERVICES < <(
+# Avoid `mapfile` because macOS still ships bash 3.2.
+SERVICES=()
+while IFS= read -r svc; do
+    [[ -n "$svc" ]] && SERVICES+=("$svc")
+done < <(
     kurtosis enclave inspect "$ENCLAVE" 2>/dev/null \
         | awk '/^el-/ {print $1}' \
         | sort -u
@@ -71,7 +75,10 @@ if [[ ${#SERVICES[@]} -eq 0 ]]; then
     exit 1
 fi
 
-declare -A RPC_URL
+# Parallel arrays instead of `declare -A` (associative arrays are bash 4+).
+# `RPC_NAMES[i]` is the service name, `RPC_URLS[i]` its rpc/http endpoint.
+RPC_NAMES=()
+RPC_URLS=()
 for svc in "${SERVICES[@]}"; do
     # Try `rpc` first (geth/ethrex/reth), then `http` (besu/nethermind sometimes).
     url=$(kurtosis port print "$ENCLAVE" "$svc" rpc 2>/dev/null || true)
@@ -82,19 +89,20 @@ for svc in "${SERVICES[@]}"; do
         echo "warn: no rpc/http port found for $svc, skipping" >&2
         continue
     fi
-    RPC_URL["$svc"]="$url"
+    RPC_NAMES+=("$svc")
+    RPC_URLS+=("$url")
     echo "$svc -> $url"
 done
 
-if [[ ${#RPC_URL[@]} -eq 0 ]]; then
+if [[ ${#RPC_NAMES[@]} -eq 0 ]]; then
     echo "error: no usable RPC URLs discovered" >&2
     exit 1
 fi
 
 # Pick a tx if not specified.
 if [[ -z "$TX_HASH" ]]; then
-    some_svc="${SERVICES[0]}"
-    some_url="${RPC_URL[$some_svc]}"
+    some_svc="${RPC_NAMES[0]}"
+    some_url="${RPC_URLS[0]}"
     TX_HASH=$(
         curl -s "$some_url" -H 'content-type: application/json' \
             -d '{"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":["latest",false]}' \
@@ -107,9 +115,10 @@ if [[ -z "$TX_HASH" ]]; then
     echo "auto-picked tx: $TX_HASH (from $some_svc)"
 fi
 
-echo "tracing $TX_HASH across ${#RPC_URL[@]} clients..."
-for svc in "${!RPC_URL[@]}"; do
-    url="${RPC_URL[$svc]}"
+echo "tracing $TX_HASH across ${#RPC_NAMES[@]} clients..."
+for i in "${!RPC_NAMES[@]}"; do
+    svc="${RPC_NAMES[$i]}"
+    url="${RPC_URLS[$i]}"
     out="$OUT_DIR/${svc}.json"
     curl -s "$url" -H 'content-type: application/json' \
         -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"debug_traceTransaction\",\"params\":[\"$TX_HASH\",{}]}" \
@@ -129,10 +138,9 @@ echo ""
 # Print pairwise diff commands. structLogs comparison is the interesting bit;
 # wrappers and per-step extras can introduce noise.
 echo "compare with (structLogs only):"
-sorted=( $(printf '%s\n' "${!RPC_URL[@]}" | sort) )
-for ((i=0; i<${#sorted[@]}; i++)); do
-    for ((j=i+1; j<${#sorted[@]}; j++)); do
-        a="${sorted[i]}"; b="${sorted[j]}"
+for ((i=0; i<${#RPC_NAMES[@]}; i++)); do
+    for ((j=i+1; j<${#RPC_NAMES[@]}; j++)); do
+        a="${RPC_NAMES[i]}"; b="${RPC_NAMES[j]}"
         echo "  diff <(jq '.result.structLogs' $OUT_DIR/$a.json) <(jq '.result.structLogs' $OUT_DIR/$b.json)"
     done
 done
