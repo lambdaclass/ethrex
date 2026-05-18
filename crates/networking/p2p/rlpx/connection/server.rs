@@ -61,6 +61,7 @@ use spawned_concurrency::{
 use spawned_rt::tasks::BroadcastStream;
 use std::{
     collections::HashMap,
+    io::ErrorKind,
     net::SocketAddr,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
@@ -423,8 +424,16 @@ impl PeerConnectionServer {
             }
             Err(err) => {
                 // Handshake failed, just log a debug message.
-                // No connection was established so no need to perform any other action
-                debug!("Failed Handshake on RLPx connection {err}");
+                // No connection was established so no need to perform any other action.
+                // `early eof` during the RLPx handshake is expected on
+                // simultaneous-dial races (both peers initiate, one connection
+                // wins), so demote it to trace to avoid noise.
+                match &err {
+                    PeerConnectionError::IoError(e) if e.kind() == ErrorKind::UnexpectedEof => {
+                        trace!(error = %err, "RLPx handshake aborted (likely simultaneous dial)");
+                    }
+                    _ => debug!(error = %err, "RLPx handshake failed"),
+                }
                 self.state = ConnectionState::HandshakeFailed;
                 ctx.stop();
             }
@@ -1155,13 +1164,18 @@ where
             }
             debug!("Negotiated eth version: eth/{}", negotiated_eth_version);
             state.negotiated_eth_capability = Some(Capability::eth(negotiated_eth_version));
-
             if negotiated_snap_version != 0 {
                 debug!("Negotiated snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
             }
-
             state.node.version = Some(hello_message.client_id);
+
+            debug!(
+                peer = %state.node,
+                eth = negotiated_eth_version,
+                snap = negotiated_snap_version,
+                "RLPx capabilities negotiated",
+            );
 
             Ok(())
         }
