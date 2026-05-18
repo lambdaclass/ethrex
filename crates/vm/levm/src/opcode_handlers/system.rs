@@ -818,6 +818,9 @@ impl<'a> VM<'a> {
         );
         // Store BAL checkpoint in the call frame's backup for restoration on revert
         new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+        // Snapshot AFTER the CREATE account state-gas charge has landed in
+        // `vm.state_gas_used`, so the revert restore in `handle_return_create`
+        // keeps the parent's pre-CREATE intrinsic without re-refunding it.
         new_call_frame.state_gas_used_at_entry = self.state_gas_used;
 
         self.add_callframe(new_call_frame);
@@ -1144,27 +1147,7 @@ impl<'a> VM<'a> {
                 // No pending flush needed — credits were applied inline.
             }
             TxResult::Revert(_) => {
-                // EIP-8037 incorporate_child_on_error:
-                //   parent.state_gas_left += child.state_gas_used + child.state_gas_left
-                // In ethrex's shared-VM model the child holds the whole reservoir
-                // during execution, so `child.state_gas_left == self.state_gas_reservoir`
-                // at revert (absolute, not a delta against entry).
-                let child_state_gas_used = self
-                    .state_gas_used
-                    .checked_sub(state_gas_used_at_entry)
-                    .ok_or(InternalError::Underflow)?;
-                let child_state_gas_left =
-                    i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
-                self.state_gas_used = state_gas_used_at_entry;
-                // child_state_gas_used may be negative when inline refunds exceed gross charges.
-                let net_return = child_state_gas_used
-                    .checked_add(child_state_gas_left)
-                    .ok_or(InternalError::Overflow)?;
-                // net_return < 0 would mean the child returned less gas than it consumed AND
-                // the inline-refund accounting underflowed — impossible by the spec invariant.
-                self.state_gas_reservoir =
-                    u64::try_from(net_return.max(0)).map_err(|_| InternalError::Overflow)?;
-
+                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };
@@ -1216,20 +1199,7 @@ impl<'a> VM<'a> {
                 // No pending flush needed — credits were applied inline.
             }
             TxResult::Revert(err) => {
-                // EIP-8037 incorporate_child_on_error: see
-                // handle_return_call for the derivation.
-                let child_state_gas_used = self
-                    .state_gas_used
-                    .checked_sub(state_gas_used_at_entry)
-                    .ok_or(InternalError::Underflow)?;
-                let child_state_gas_left =
-                    i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
-                self.state_gas_used = state_gas_used_at_entry;
-                let net_return = child_state_gas_used
-                    .checked_add(child_state_gas_left)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_gas_reservoir =
-                    u64::try_from(net_return.max(0)).map_err(|_| InternalError::Overflow)?;
+                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS

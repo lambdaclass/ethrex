@@ -660,7 +660,39 @@ impl<'a> VM<'a> {
         self.state_gas_used = self
             .state_gas_used
             .checked_sub(i64::try_from(amount).map_err(|_| InternalError::Overflow)?)
-            .ok_or(InternalError::Underflow)?;
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
+    }
+
+    /// EIP-8037 `incorporate_child_on_error`: on child revert, restore the parent's
+    /// `state_gas_used` to its pre-child value and refund the child's net
+    /// `(state_gas_used + state_gas_left)` back into the parent's reservoir.
+    ///
+    /// In ethrex's shared-VM model the child holds the entire reservoir during its
+    /// execution, so `child.state_gas_left == self.state_gas_reservoir` (absolute,
+    /// not a delta against entry). `child.state_gas_used` can be negative when
+    /// inline refunds inside the child exceeded its gross charges.
+    pub fn incorporate_child_state_gas_on_revert(
+        &mut self,
+        state_gas_used_at_entry: i64,
+    ) -> Result<(), VMError> {
+        let child_state_gas_used = self
+            .state_gas_used
+            .checked_sub(state_gas_used_at_entry)
+            .ok_or(InternalError::Overflow)?;
+        let child_state_gas_left =
+            i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
+        self.state_gas_used = state_gas_used_at_entry;
+        let net_return = child_state_gas_used
+            .checked_add(child_state_gas_left)
+            .ok_or(InternalError::Overflow)?;
+        // net_return is always >= 0 by the spec invariant (reservoir conservation
+        // means a child cannot refund more than its ancestors charged); clamp
+        // defensively and cast — `as u64` is sound because of the `.max(0)`.
+        #[expect(clippy::as_conversions, reason = ".max(0) proves non-negativity")]
+        {
+            self.state_gas_reservoir = net_return.max(0) as u64;
+        }
         Ok(())
     }
 
@@ -915,9 +947,14 @@ impl<'a> VM<'a> {
             //       tx_output.state_refund   += new_account_refund
             if self.is_create()? {
                 let new_account_refund = self.state_gas_new_account;
-                self.state_gas_reservoir =
-                    self.state_gas_reservoir.saturating_add(new_account_refund);
-                self.state_refund = self.state_refund.saturating_add(new_account_refund);
+                self.state_gas_reservoir = self
+                    .state_gas_reservoir
+                    .checked_add(new_account_refund)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_refund = self
+                    .state_refund
+                    .checked_add(new_account_refund)
+                    .ok_or(InternalError::Overflow)?;
             }
         }
 
