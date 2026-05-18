@@ -929,9 +929,12 @@ async fn handle_new_payload_v1_v2(
             "New payload requested but syncer is not initialized".to_string(),
         ));
     };
-    // Validate block hash
+    // Validate block hash. Per engine-API spec, a hash mismatch is a structural
+    // payload error (the sender's hash was computed over header fields the
+    // receiver doesn't know about, or vice versa) and surfaces as JSON-RPC
+    // -32602, not PayloadStatus.INVALID.
     if let Err(RpcErr::Internal(error_msg)) = validate_block_hash(payload, &block) {
-        return Ok(PayloadStatus::invalid_with_err(&error_msg));
+        return Err(RpcErr::WrongParam(error_msg));
     }
 
     // Check for invalid ancestors
