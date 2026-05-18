@@ -6,6 +6,32 @@ pragma solidity =0.8.31;
 /// @notice A CommonBridge contract is a contract that allows L1<->L2 communication
 /// from L1. It both sends messages from L1 to L2 and receives messages from L2.
 interface ICommonBridge {
+    // Initialization errors
+    error OnChainProposerIsZeroAddress(); // 0xe5758136
+
+    // Deposit errors
+    error DepositAmountIsZero(); // 0x0ddbd934
+
+    // Versioned hash errors
+    error NumberIsZero(); // 0xde5d32ac
+    error ExceedsPendingTxHashesLength(); // 0xd7782ce0
+    error ExceedsPendingL2MessagesLength(); // 0x74b0ced0
+
+    // Withdrawal errors
+    error WithdrawalLogsAlreadyPublished(); // 0xa32b28c9
+    error InsufficientDeposits(); // 0xa2725db5
+    error WithdrawalBatchNotCommitted(); // 0xb1912e3f
+    error WithdrawalBatchNotVerified(); // 0xa77a7721
+    error WithdrawalAlreadyClaimed(); // 0x2f29b3db
+    error InvalidWithdrawalProof(); // 0xb86abc9c
+    error FailedToSendClaimedAmount(); // 0xa759d4a4
+    error UseClaimWithdrawalForETH(); // 0x34b67c69
+    error InsufficientTokenDeposits(); // 0xed830794
+
+    // Access control errors
+    error CallerNotOnChainProposer(); // 0x60291889
+    error CallerNotSharedBridgeRouter(); // 0x2842ff8e
+
     /// @notice A privileged transaction to L2 has initiated.
     /// @dev Event emitted when a privileged transaction is initiated.
     /// @param l1From the address that initiated the transaction.
