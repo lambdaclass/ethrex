@@ -43,7 +43,7 @@ const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
 /// Lookup interval bounds for iterative lookups. Each iterative lookup
 /// generates ~16 FindNode messages (vs 1 in the old approach), so we use
 /// longer intervals to produce similar per-second traffic.
-const ITERATIVE_LOOKUP_INITIAL_MS: f64 = 2_000.0; // 0.5 lookups/sec at startup
+const ITERATIVE_LOOKUP_INITIAL_MS: f64 = 1_000.0; // 1 lookup/sec at startup
 const ITERATIVE_LOOKUP_INTERVAL_MS: f64 = 10_000.0; // ~6 lookups/min at steady-state
 
 #[derive(Debug, Error)]
