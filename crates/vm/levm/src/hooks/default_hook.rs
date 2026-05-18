@@ -258,9 +258,8 @@ pub fn refund_sender(
         // Subtract intrinsic_state (pre-consumed from gas_remaining as part of total intrinsic),
         // the initial reservoir (pre-consumed from gas_remaining), and state-gas spills
         // (EELS charge_state_gas spills don't count as regular_gas_used).
-        let intrinsic_state_gas = vm.get_intrinsic_gas()?.1;
         let regular_gas = raw_consumed
-            .saturating_sub(intrinsic_state_gas)
+            .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
             .saturating_sub(vm.state_gas_spill);
         let effective_regular = regular_gas.max(floor);

@@ -447,6 +447,11 @@ impl<'a> VM<'a> {
             .state_gas_used
             .checked_add(i64::try_from(state_gas).map_err(|_| InternalError::Overflow)?)
             .ok_or(InternalError::Overflow)?;
+        // Remember the intrinsic split so we can leave it in state_gas_used on top-level
+        // error (matches EELS `tx_env.intrinsic_state_gas`, which is kept separate from
+        // `tx_output.state_gas_used` and never refunded).
+        debug_assert_eq!(self.intrinsic_state_gas, 0, "intrinsic_state_gas set twice");
+        self.intrinsic_state_gas = state_gas;
 
         // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.
         // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much

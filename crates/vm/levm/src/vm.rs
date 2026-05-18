@@ -481,6 +481,12 @@ pub struct VM<'a> {
     /// state-gas at the end of `refund_sender`. Survives revert/halt/OOG since it lives
     /// on the VM, not in any call-frame backup.
     pub state_refund: u64,
+    /// EIP-8037: intrinsic state gas (`tx_env.intrinsic_state_gas` in EELS). Captured at
+    /// `add_intrinsic_gas` time. ethrex lumps intrinsic + execution into `state_gas_used`,
+    /// so on top-level error this field is what we leave behind when refunding the
+    /// execution portion to the reservoir — block accounting then bills the intrinsic
+    /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
+    pub intrinsic_state_gas: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -549,6 +555,7 @@ impl<'a> VM<'a> {
             state_gas_auth_total,
             state_gas_auth_base,
             state_refund: 0,
+            intrinsic_state_gas: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -874,17 +881,27 @@ impl<'a> VM<'a> {
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
         // EIP-8037 v7.2.0 (PR #2863): On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
-        // restore reservoir via the `state_gas_left + state_gas_used` invariant.
-        // With signed `state_gas_used`, `max(0, state_gas_used)` safely handles negative values
-        // (which arise when inline refunds exceed gross charges in this frame).
+        // refund only the EXECUTION portion of state gas to the reservoir; the intrinsic
+        // stays in `state_gas_used` so block accounting bills it. EELS keeps these in
+        // separate fields (`tx_output.state_gas_used` vs `tx_env.intrinsic_state_gas`);
+        // ethrex lumps them so we split on the way out:
+        //   tx_output.state_gas_left += tx_output.state_gas_used
+        //   tx_output.state_gas_used  = 0
+        // becomes in lumped form (with intrinsic preserved):
+        //   reservoir   += signed(state_gas_used − intrinsic)   [clamped at 0]
+        //   state_gas_used = intrinsic
         // Collision is handled separately in the hook.
         if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
             if !ctx_result.is_collision() {
-                #[expect(clippy::as_conversions, reason = "value is clamped to >=0 by .max(0)")]
-                let execution_portion = self.state_gas_used.max(0) as u64;
+                let intrinsic_signed =
+                    i64::try_from(self.intrinsic_state_gas).map_err(|_| InternalError::Overflow)?;
+                let execution_state_gas_used = self.state_gas_used.saturating_sub(intrinsic_signed);
+                let reservoir_signed = i64::try_from(self.state_gas_reservoir)
+                    .map_err(|_| InternalError::Overflow)?
+                    .saturating_add(execution_state_gas_used);
                 self.state_gas_reservoir =
-                    self.state_gas_reservoir.saturating_add(execution_portion);
-                self.state_gas_used = 0;
+                    u64::try_from(reservoir_signed.max(0)).map_err(|_| InternalError::Overflow)?;
+                self.state_gas_used = intrinsic_signed;
             }
 
             // EIP-8037 bal-devnet-7 (EELS PR #2823): on ANY top-level CREATE-tx
