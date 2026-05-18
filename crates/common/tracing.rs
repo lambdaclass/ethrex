@@ -454,17 +454,59 @@ fn opcode_name_or_fallback(byte: u8) -> String {
 // Verified against geth and besu on a kurtosis localnet via `debug_traceTransaction`:
 // byte-for-byte identical to the StructLogger output.
 
+/// Controls which always-populated per-step fields the structLogger wire format emits.
+///
+/// `mem_size`, `return_data`, and `refund` are always present in the captured
+/// [`OpcodeStep`] (the capture layer just defaults them to zero/empty when the
+/// corresponding capture config is off). geth's `debug_traceTransaction` *suppresses*
+/// these fields unless their data is actually captured. To match geth byte-for-byte
+/// we honor the caller's intent explicitly here.
+///
+/// Typical mapping at the RPC layer:
+///
+/// ```ignore
+/// let emit = StructLoggerEmit {
+///     mem_size: cfg.enable_memory,        // memSize travels with memory
+///     return_data: cfg.enable_return_data,
+///     refund: false,                      // no equivalent geth flag; off by default
+/// };
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StructLoggerEmit {
+    /// Emit `memSize` even when its value is meaningful at every step.
+    /// Geth ties this to memory capture; default `false` matches geth's default config.
+    pub mem_size: bool,
+    /// Emit `returnData` (as `"0x..."` hex). Default `false` matches geth.
+    pub return_data: bool,
+    /// Emit `refund` (decimal number). Default `false` matches geth's empirical output.
+    pub refund: bool,
+}
+
 /// Wraps an [`OpcodeStep`] to serialize in the geth-RPC `structLogger` shape used by
 /// `debug_traceTransaction`. See module-level docs and the comment above this type
 /// for the field-shape divergences from EIP-3155.
-pub struct StructLoggerStep<'a>(pub &'a OpcodeStep);
+pub struct StructLoggerStep<'a> {
+    pub step: &'a OpcodeStep,
+    pub emit: StructLoggerEmit,
+}
 
 impl serde::Serialize for StructLoggerStep<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
-        let step = self.0;
+        let step = self.step;
+        let emit = self.emit;
 
-        let mut field_count = 9; // pc, op, gas, gasCost, depth, stack, memSize, returnData, refund
+        // pc, op, gas, gasCost, depth, stack are always emitted (6 base fields).
+        let mut field_count = 6;
+        if emit.mem_size {
+            field_count += 1;
+        }
+        if emit.return_data {
+            field_count += 1;
+        }
+        if emit.refund {
+            field_count += 1;
+        }
         if step.error.is_some() {
             field_count += 1;
         }
@@ -505,12 +547,18 @@ impl serde::Serialize for StructLoggerStep<'_> {
         }
         map.serialize_entry("stack", &StackSerializer(&step.stack))?;
 
-        map.serialize_entry("memSize", &step.mem_size)?;
-        map.serialize_entry(
-            "returnData",
-            &format!("0x{}", hex::encode(&step.return_data)),
-        )?;
-        map.serialize_entry("refund", &step.refund)?;
+        if emit.mem_size {
+            map.serialize_entry("memSize", &step.mem_size)?;
+        }
+        if emit.return_data {
+            map.serialize_entry(
+                "returnData",
+                &format!("0x{}", hex::encode(&step.return_data)),
+            )?;
+        }
+        if emit.refund {
+            map.serialize_entry("refund", &step.refund)?;
+        }
 
         if let Some(err) = &step.error {
             map.serialize_entry("error", err)?;
@@ -537,21 +585,31 @@ impl serde::Serialize for StructLoggerStep<'_> {
 
 /// Wraps an [`OpcodeTraceResult`] to serialize as the geth-RPC `debug_traceTransaction`
 /// response: `{failed, gas, returnValue, structLogs: [...]}`. Each step inside
-/// `structLogs` is itself serialized via [`StructLoggerStep`].
-pub struct StructLoggerResult<'a>(pub &'a OpcodeTraceResult);
+/// `structLogs` is itself serialized via [`StructLoggerStep`] using the same `emit` flags.
+pub struct StructLoggerResult<'a> {
+    pub result: &'a OpcodeTraceResult,
+    pub emit: StructLoggerEmit,
+}
 
 impl serde::Serialize for StructLoggerResult<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::{SerializeMap, SerializeSeq};
-        let r = self.0;
+        let r = self.result;
+        let emit = self.emit;
 
-        // structLogs uses StructLoggerStep for each entry.
-        struct Steps<'a>(&'a [OpcodeStep]);
+        // structLogs uses StructLoggerStep for each entry, with the same emit options.
+        struct Steps<'a> {
+            steps: &'a [OpcodeStep],
+            emit: StructLoggerEmit,
+        }
         impl serde::Serialize for Steps<'_> {
             fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                let mut seq = serializer.serialize_seq(Some(self.0.len()))?;
-                for s in self.0 {
-                    seq.serialize_element(&StructLoggerStep(s))?;
+                let mut seq = serializer.serialize_seq(Some(self.steps.len()))?;
+                for s in self.steps {
+                    seq.serialize_element(&StructLoggerStep {
+                        step: s,
+                        emit: self.emit,
+                    })?;
                 }
                 seq.end()
             }
@@ -562,7 +620,13 @@ impl serde::Serialize for StructLoggerResult<'_> {
         map.serialize_entry("failed", &!r.pass)?;
         map.serialize_entry("gas", &r.gas_used)?;
         map.serialize_entry("returnValue", &format!("0x{}", hex::encode(&r.output)))?;
-        map.serialize_entry("structLogs", &Steps(&r.steps))?;
+        map.serialize_entry(
+            "structLogs",
+            &Steps {
+                steps: &r.steps,
+                emit,
+            },
+        )?;
         map.end()
     }
 }

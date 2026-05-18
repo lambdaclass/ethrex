@@ -16,7 +16,7 @@
 
 use super::test_db::TestDatabase;
 use bytes::Bytes;
-use ethrex_common::tracing::StructLoggerResult;
+use ethrex_common::tracing::{StructLoggerEmit, StructLoggerResult};
 use ethrex_common::{
     Address, U256,
     types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
@@ -96,9 +96,18 @@ fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
     let header = default_header();
     let tx = make_tx(contract_addr, sender_addr);
 
+    let emit = StructLoggerEmit {
+        mem_size: cfg.enable_memory,
+        return_data: cfg.enable_return_data,
+        refund: false,
+    };
     let result = LEVM::trace_tx_opcodes(&mut db, &header, &tx, cfg, VMType::L1, &NativeCrypto)
         .expect("trace should succeed");
-    serde_json::to_value(StructLoggerResult(&result)).expect("serialize")
+    serde_json::to_value(StructLoggerResult {
+        result: &result,
+        emit,
+    })
+    .expect("serialize")
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -106,9 +115,10 @@ fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
 /// `PUSH1 0x01 PUSH1 0x02 ADD STOP`
 ///
 /// Pins the structLogger wrapper (`failed`/`gas`/`returnValue`/`structLogs`)
-/// and per-step fields: string `op` mnemonic (no `opName`), decimal `gas`/
-/// `gasCost`/`refund`, decimal `pc`/`memSize`/`depth`, bottom-first `stack`,
-/// always-present `returnData`.
+/// and the per-step fields emitted under geth's *default* tracer config:
+/// `pc, op, gas, gasCost, depth, stack` — and nothing else. With memory/returnData
+/// capture off (the geth default), `memSize`, `returnData`, and `refund` are suppressed
+/// to match geth's empirical wire output byte-for-byte.
 #[test]
 fn opcode_tracer_basic_execution() {
     let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00];
@@ -127,10 +137,21 @@ fn opcode_tracer_basic_execution() {
     assert!(steps[0]["gas"].is_number(), "gas is a number");
     assert_eq!(steps[0]["gasCost"].as_u64(), Some(3));
     assert_eq!(steps[0]["depth"].as_u64(), Some(1));
-    assert_eq!(steps[0]["refund"].as_u64(), Some(0));
-    assert_eq!(steps[0]["returnData"].as_str(), Some("0x"));
-    assert_eq!(steps[0]["memSize"].as_u64(), Some(0));
     assert_eq!(steps[0]["stack"], Value::Array(vec![]));
+
+    // Fields suppressed under default config (geth-compat).
+    assert!(
+        steps[0].get("memSize").is_none(),
+        "memSize must be absent when memory capture is disabled"
+    );
+    assert!(
+        steps[0].get("returnData").is_none(),
+        "returnData must be absent when return-data capture is disabled"
+    );
+    assert!(
+        steps[0].get("refund").is_none(),
+        "refund must be absent under geth-compat emit defaults"
+    );
     assert!(
         steps[0].get("opName").is_none(),
         "structLogger shape: no separate opName field"
