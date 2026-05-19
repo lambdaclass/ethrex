@@ -143,6 +143,12 @@ type BlockExecutionPipelineResult = (
     Duration,                // warmer duration
 );
 
+type AddBlockPipelineInnerResult = (
+    Option<BlockAccessList>,
+    Option<ExecutionWitness>,
+    Result<(), ChainError>,
+);
+
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
@@ -1852,14 +1858,7 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
         force_witness: bool,
-    ) -> Result<
-        (
-            Option<BlockAccessList>,
-            Option<ExecutionWitness>,
-            Result<(), ChainError>,
-        ),
-        ChainError,
-    > {
+    ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
