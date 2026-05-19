@@ -565,12 +565,13 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        if bal.is_some() && produced_bal.is_none() {
-                            return Err(ChainError::Custom(
-                                "BAL validation path produced no BAL; cannot validate BAL hash"
-                                    .to_string(),
-                            ));
-                        }
+                        // Amsterdam validation path uses the header BAL directly to drive
+                        // execution; it doesn't rebuild a BAL, so produced_bal is None.
+                        // BAL correctness on that path is enforced inside
+                        // execute_block_pipeline (header-BAL index/size/withdrawal-index
+                        // checks plus unread_storage_reads / unaccessed_pure_accounts).
+                        // Pre-Amsterdam / streaming paths return Some(produced_bal) and
+                        // the hash check below still runs.
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
