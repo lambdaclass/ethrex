@@ -1,6 +1,6 @@
 use prometheus::Histogram;
 use prometheus::HistogramOpts;
-use prometheus::{Encoder, Gauge, IntGauge, Registry, TextEncoder};
+use prometheus::{Encoder, Gauge, IntCounter, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
 
 use crate::MetricsError;
@@ -37,6 +37,17 @@ pub struct MetricsBlocks {
     warmer_ms: Gauge,
     /// Warmer finished early (positive) or late (negative) relative to exec, in ms
     warmer_early_ms: Gauge,
+    // BAL (EIP-7928) metrics.
+    /// Cumulative count of BAL-carrying blocks processed (post-Amsterdam).
+    bal_blocks_total: IntCounter,
+    /// RLP-encoded size of the most recent BAL, in bytes.
+    bal_size_bytes: Gauge,
+    /// Distribution of RLP-encoded BAL sizes in bytes.
+    bal_size_bytes_histogram: Histogram,
+    /// Number of accounts in the most recent BAL.
+    bal_account_count: IntGauge,
+    /// Unique storage slots (writes + reads) in the most recent BAL.
+    bal_slot_count: IntGauge,
 }
 
 impl Default for MetricsBlocks {
@@ -157,6 +168,40 @@ impl MetricsBlocks {
                 "Warmer finished early (positive) or late (negative) relative to exec in milliseconds",
             )
             .expect("Failed to create warmer_early_ms metric"),
+            bal_blocks_total: IntCounter::new(
+                "bal_blocks_total",
+                "Cumulative count of Block Access List (EIP-7928) carrying blocks processed",
+            )
+            .expect("Failed to create bal_blocks_total metric"),
+            bal_size_bytes: Gauge::new(
+                "bal_size_bytes",
+                "RLP-encoded size of the most recent Block Access List, in bytes",
+            )
+            .expect("Failed to create bal_size_bytes metric"),
+            bal_size_bytes_histogram: Histogram::with_opts(
+                HistogramOpts::new(
+                    "bal_size_bytes_histogram",
+                    "Distribution of RLP-encoded Block Access List sizes in bytes",
+                )
+                .buckets({
+                    let mut buckets =
+                        prometheus::exponential_buckets(1024.0, 2.0, 16)
+                            .expect("Invalid bucket params");
+                    buckets.insert(0, 0.0);
+                    buckets
+                }),
+            )
+            .expect("Failed to create bal_size_bytes_histogram metric"),
+            bal_account_count: IntGauge::new(
+                "bal_account_count",
+                "Number of accounts in the most recent Block Access List",
+            )
+            .expect("Failed to create bal_account_count metric"),
+            bal_slot_count: IntGauge::new(
+                "bal_slot_count",
+                "Unique storage slots (writes + reads) in the most recent BAL",
+            )
+            .expect("Failed to create bal_slot_count metric"),
         }
     }
 
@@ -233,6 +278,23 @@ impl MetricsBlocks {
         self.warmer_early_ms.set(warmer_early_ms);
     }
 
+    pub fn inc_bal_blocks_total(&self) {
+        self.bal_blocks_total.inc();
+    }
+
+    pub fn set_bal_size_bytes(&self, size_bytes: f64) {
+        self.bal_size_bytes.set(size_bytes);
+        self.bal_size_bytes_histogram.observe(size_bytes);
+    }
+
+    pub fn set_bal_account_count(&self, account_count: i64) {
+        self.bal_account_count.set(account_count);
+    }
+
+    pub fn set_bal_slot_count(&self, slot_count: i64) {
+        self.bal_slot_count.set(slot_count);
+    }
+
     pub fn gather_metrics(&self) -> Result<String, MetricsError> {
         if self.block_number.get() <= 0 {
             return Ok(String::new());
@@ -277,6 +339,16 @@ impl MetricsBlocks {
         r.register(Box::new(self.warmer_ms.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
         r.register(Box::new(self.warmer_early_ms.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.bal_blocks_total.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.bal_size_bytes.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.bal_size_bytes_histogram.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.bal_account_count.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.bal_slot_count.clone()))
             .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
 
         let encoder = TextEncoder::new();
