@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-05-19
+
+- Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
+
 ### 2026-05-15
 
 - Replace synchronous disk I/O with async operations in snap sync [#6113](https://github.com/lambdaclass/ethrex/pull/6113)
