@@ -17,7 +17,7 @@ AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
 # zkevm@v0.3.3 ships fixtures filled against an older Amsterdam base
-# (bal@v5.6.1). Extracting them on top of the snobal-devnet-6 tree would
+# (bal@v5.6.1). Extracting them on top of the bal-devnet-7 tree would
 # clobber the newer fixtures with stale gas-accounting expectations, so we
 # keep them in a separate root and only the stateless harness reads from it.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
