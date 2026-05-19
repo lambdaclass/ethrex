@@ -1109,17 +1109,26 @@ impl LEVM {
         let bal_account_count = bal.accounts().len();
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
-        //    BAL validation is deferred to after the gas limit check (step 3) so that
-        //    blocks exceeding gas limit produce GAS_USED_OVERFLOW before BAL mismatch.
+        //    BAL validation runs INSIDE the par_iter closure (parallel) but its
+        //    errors are deferred via Option<EvmError> so the post-par_iter
+        //    gas-limit check still takes priority (GAS_USED_OVERFLOW must beat
+        //    BAL mismatch on blocks exceeding the gas limit; the BAL is built
+        //    assuming rejected txs, so miner balance in the BAL won't match
+        //    execution that ran all txs).
+        //
+        //    The closure also precomputes the small (Vec<(Address, H256)>,
+        //    Vec<Address>) inputs needed to update the shared
+        //    `unread_storage_reads` / `unaccessed_pure_accounts` sets, so the
+        //    serial pass after par_iter is just hash-set ops; current_state
+        //    and codes never cross the rayon boundary.
         type TxExecResult = (
             usize,
             TxType,
             ExecutionReport,
-            FxHashMap<Address, LevmAccount>,
-            FxHashMap<H256, ethrex_common::types::Code>,
             FxHashSet<Address>,   // accessed_accounts tracker (coarse)
-            Vec<Address>,         // shadow recorder touched_addresses (EIP-7928 exact)
-            Vec<(Address, U256)>, // shadow recorder storage_reads (EIP-7928 exact)
+            Vec<(Address, H256)>, // reads_satisfied: (addr, slot) loaded during this tx
+            Vec<Address>,         // destroyed: accounts selfdestructed during this tx
+            Option<EvmError>,     // deferred BAL validation error
         );
 
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
@@ -1185,37 +1194,109 @@ impl LEVM {
                     .take()
                     .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
                     .unwrap_or_default();
+
+                // Precompute the per-tx inputs the serial pass uses to update
+                // the shared unread_storage_reads set. Selfdestruct clears
+                // storage from the final state, so destroyed accounts
+                // satisfy ALL their BAL storage_reads regardless of which
+                // slots remain in `current_state`.
+                let mut reads_satisfied: Vec<(Address, H256)> = Vec::new();
+                let mut destroyed: Vec<Address> = Vec::new();
+                for (addr, acct) in &current_state {
+                    if matches!(
+                        acct.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                    ) {
+                        destroyed.push(*addr);
+                    } else {
+                        for key in acct.storage.keys() {
+                            reads_satisfied.push((*addr, *key));
+                        }
+                    }
+                }
+
+                // Run BAL validation inline. Errors are DEFERRED: stored in
+                // Option<EvmError> so the serial gas-limit check below still
+                // takes priority. Borrow current_state / codes during the
+                // validation closure, then drop them before returning so
+                // they don't cross the rayon boundary.
+                let deferred_bal_err: Option<EvmError> = (|| -> Result<(), EvmError> {
+                    let bal_idx = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                    let seed_idx = u32::try_from(tx_idx).unwrap_or(u32::MAX);
+                    Self::validate_tx_execution(
+                        bal_idx,
+                        seed_idx,
+                        &current_state,
+                        &codes,
+                        bal,
+                        validation_index,
+                        &system_seed,
+                        &store,
+                    )
+                    .map_err(|e| {
+                        EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}"))
+                    })?;
+
+                    // EIP-7928 (Group B): missing-access detection via shadow recorder.
+                    for addr in &shadow_touched {
+                        if !validation_index.addr_to_idx.contains_key(addr) {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for tx {tx_idx}: account {addr:?} was \
+                                 accessed during execution but is missing from BAL"
+                            )));
+                        }
+                    }
+                    for (addr, slot) in &shadow_reads {
+                        let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
+                            // Already caught by the touched-address check above.
+                            continue;
+                        };
+                        let acct = &bal.accounts()[bal_acct_idx];
+                        let in_changes = acct
+                            .storage_changes
+                            .binary_search_by(|sc| sc.slot.cmp(slot))
+                            .is_ok();
+                        let in_reads = acct.storage_reads.contains(slot);
+                        if !in_changes && !in_reads {
+                            return Err(EvmError::Custom(format!(
+                                "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
+                                 account {addr:?} was read during execution but is missing from \
+                                 BAL (no storage_changes or storage_reads entry)"
+                            )));
+                        }
+                    }
+                    Ok(())
+                })()
+                .err();
+
+                drop(current_state);
+                drop(codes);
+
                 Ok((
                     tx_idx,
                     tx.tx_type(),
                     report,
-                    current_state,
-                    codes,
                     tracked,
-                    shadow_touched,
-                    shadow_reads,
+                    reads_satisfied,
+                    destroyed,
+                    deferred_bal_err,
                 ))
             })
             .collect();
 
         let mut exec_results = exec_results?;
 
-        // Sort so gas accounting and validation happen in tx order.
-        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _, _)| *idx);
+        // Sort so gas accounting and error surfacing happen in tx order.
+        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _)| *idx);
 
-        // 3. Gas limit check — must happen BEFORE BAL validation so that blocks
-        //    exceeding the gas limit produce GAS_USED_OVERFLOW instead of a BAL
-        //    mismatch error (the BAL is built assuming rejected txs, so the miner
-        //    balance in the BAL won't match execution that ran all txs).
-        //
-        //    EIP-8037 PR #2703: also enforce the per-tx 2D inclusion check
-        //    against running block totals. A tx whose worst-case regular or
-        //    state contribution exceeds the remaining budget at its inclusion
-        //    position invalidates the block with GAS_ALLOWANCE_EXCEEDED.
+        // 3. Gas limit check — must happen BEFORE BAL validation errors so that
+        //    blocks exceeding the gas limit produce GAS_USED_OVERFLOW instead of
+        //    a BAL mismatch error. EIP-8037 PR #2703: also enforce the per-tx
+        //    2D inclusion check against running block totals.
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
-        for (tx_idx, _, report, _, _, _, _, _) in &exec_results {
+        for (tx_idx, _, report, _, _, _, _) in &exec_results {
             let (tx, _) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
@@ -1246,48 +1327,25 @@ impl LEVM {
             )));
         }
 
-        // 4. Per-tx BAL validation — now safe to run after gas limit is confirmed OK.
-        //    Also mark off storage_reads that appear in per-tx execution state.
-        for (tx_idx, _, _, current_state, codes, tracked_accounts, shadow_touched, shadow_reads) in
-            &exec_results
-        {
-            let bal_idx = u32::try_from(*tx_idx + 1).unwrap_or(u32::MAX);
-            let seed_idx = u32::try_from(*tx_idx).unwrap_or(u32::MAX);
-            Self::validate_tx_execution(
-                bal_idx,
-                seed_idx,
-                current_state,
-                codes,
-                bal,
-                validation_index,
-                &system_seed,
-                &store,
-            )
-            .map_err(|e| EvmError::Custom(format!("BAL validation failed for tx {tx_idx}: {e}")))?;
+        // 4. Surface the first deferred BAL validation error (in tx order) now
+        //    that the gas-limit check has passed.
+        for (_, _, _, _, _, _, deferred) in &mut exec_results {
+            if let Some(err) = deferred.take() {
+                return Err(err);
+            }
+        }
 
-            // Mark storage_reads that were actually loaded during this tx.
-            // storage_reads slots are NOT in storage_changes (conflict check ensures this),
-            // so they're not seeded. If a slot appears in the per-tx state's storage,
-            // the tx genuinely read it via SLOAD.
-            // Special case: selfdestruct clears storage from the final state, so reads
-            // that happened before destruction are no longer visible. For destroyed
-            // accounts, mark ALL their BAL storage_reads as satisfied.
+        // 5. Apply per-tx reads_satisfied / destroyed / tracked to the shared
+        //    sets (cheap hash-set ops; preserves prior semantics).
+        for (_, _, _, tracked_accounts, reads_satisfied, destroyed, _) in &exec_results {
             if !unread_storage_reads.is_empty() {
-                for (addr, acct) in current_state {
-                    if matches!(
-                        acct.status,
-                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
-                    ) {
-                        unread_storage_reads.retain(|&(a, _)| a != *addr);
-                    } else {
-                        for key in acct.storage.keys() {
-                            unread_storage_reads.remove(&(*addr, *key));
-                        }
-                    }
+                for addr in destroyed {
+                    unread_storage_reads.retain(|&(a, _)| a != *addr);
+                }
+                for pair in reads_satisfied {
+                    unread_storage_reads.remove(pair);
                 }
             }
-
-            // Mark pure-access accounts that were accessed during this tx.
             // The coinbase is always accessed during fee finalization (geth's
             // readerTracker records it), even when the miner fee is zero and
             // ethrex skips the load_account call.
@@ -1297,44 +1355,12 @@ impl LEVM {
                     unaccessed_pure_accounts.remove(addr);
                 }
             }
-
-            // EIP-7928 (Group B): missing-access detection using the shadow recorder.
-            // For each address the per-tx shadow recorder marked as touched, the header
-            // BAL must contain an entry for it. For each storage read, the header BAL
-            // must carry the slot either in storage_changes or storage_reads.
-            for addr in shadow_touched {
-                if !validation_index.addr_to_idx.contains_key(addr) {
-                    return Err(EvmError::Custom(format!(
-                        "BAL validation failed for tx {tx_idx}: account {addr:?} was \
-                         accessed during execution but is missing from BAL"
-                    )));
-                }
-            }
-            for (addr, slot) in shadow_reads {
-                let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
-                    // Already caught by the touched-address check above.
-                    continue;
-                };
-                let acct = &bal.accounts()[bal_acct_idx];
-                let in_changes = acct
-                    .storage_changes
-                    .binary_search_by(|sc| sc.slot.cmp(slot))
-                    .is_ok();
-                let in_reads = acct.storage_reads.contains(slot);
-                if !in_changes && !in_reads {
-                    return Err(EvmError::Custom(format!(
-                        "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
-                         account {addr:?} was read during execution but is missing from \
-                         BAL (no storage_changes or storage_reads entry)"
-                    )));
-                }
-            }
         }
 
-        // 5. Build receipts in tx order.
+        // 6. Build receipts in tx order.
         let mut receipts = Vec::with_capacity(n_txs);
         let mut cumulative_gas_used = 0_u64;
-        for (_, tx_type, report, _, _, _, _, _) in exec_results {
+        for (_, tx_type, report, _, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
             let receipt = Receipt::new(
                 tx_type,
