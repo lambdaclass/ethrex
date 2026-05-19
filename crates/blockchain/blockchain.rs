@@ -897,9 +897,12 @@ impl Blockchain {
     }
 
     /// Validation path synthesizes `BalSynthesisItem`s from the input BAL pre-execution and
-    /// merkleizes optimistically in parallel with EVM execution. Correctness is gated by
-    /// `validate_block_access_list_hash` post-execution; on mismatch the optimistic merkle
-    /// result is discarded by the `?` error propagation on the execution thread's join result.
+    /// merkleizes optimistically in parallel with EVM execution. Two gates guard the result:
+    /// (1) `validate_block_access_list_hash` against the produced BAL post-execution, and
+    /// (2) the downstream `state_root` comparison against the block header. A missing
+    /// `produced_bal` on this path is treated as a hard error so gate (1) is never silently
+    /// skipped. On any mismatch the optimistic merkle output is discarded via `?` on the
+    /// execution thread's join result.
     #[instrument(
         level = "trace",
         name = "Trie update (BAL)",
