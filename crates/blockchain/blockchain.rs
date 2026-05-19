@@ -933,25 +933,6 @@ impl Blockchain {
             accounts.push((hashed, item));
         }
 
-        // Warm parent state-trie pages for all touched accounts in parallel before
-        // Stage B / Stage C race for them. This replaces the prefetch that the old
-        // streaming path got for free via `bal_to_account_updates`.
-        //
-        // Mirror Stage B / Stage C's "one trie per worker" pattern: chunk the
-        // addresses across NUM_WORKERS rayon tasks rather than opening a fresh
-        // state trie per account (`open_state_trie` holds an RwLock read, clones
-        // the trie cache, and allocates a `BackendTrieDB` + `TrieWrapper`).
-        let chunk_size = accounts.len().div_ceil(NUM_WORKERS).max(1);
-        accounts
-            .par_chunks(chunk_size)
-            .try_for_each(|chunk| -> Result<(), StoreError> {
-                let state_trie = self.storage.open_state_trie(parent_state_root)?;
-                for (hashed_address, _) in chunk {
-                    let _ = state_trie.get(hashed_address.as_bytes())?;
-                }
-                Ok(())
-            })?;
-
         // === Stage B: Parallel per-account storage root computation ===
 
         // Sort by storage weight (descending) for greedy bin packing.
