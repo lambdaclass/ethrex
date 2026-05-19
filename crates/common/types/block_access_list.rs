@@ -1617,7 +1617,6 @@ impl BlockAccessListRecorder {
 /// deltas it knows about, without fabricating defaults for unchanged state.
 #[derive(Debug, Clone, Default)]
 pub struct BalSynthesisItem {
-    pub address: Address,
     pub balance: Option<U256>,
     pub nonce: Option<u64>,
     pub code_hash: Option<H256>,
@@ -1653,26 +1652,19 @@ pub fn synthesize_bal_updates(bal: &BlockAccessList) -> FxHashMap<Address, BalSy
 
         let mut added_storage: FxHashMap<H256, U256> = FxHashMap::default();
         for sc in &account.storage_changes {
-            debug_assert!(
-                !sc.slot_changes.is_empty(),
-                "SlotChange has empty slot_changes; canonical BAL ordering requires at least one entry"
-            );
-            if sc.slot_changes.is_empty() {
+            // Canonical BAL ordering requires `slot_changes` to be non-empty, but
+            // wire-format decoding is permissive. Defensively skip empty entries
+            // rather than panic; structural validation belongs upstream.
+            let Some(last) = sc.slot_changes.last() else {
                 continue;
-            }
+            };
             let key = H256::from_uint(&sc.slot);
-            let value = sc
-                .slot_changes
-                .last()
-                .expect("slot_changes non-empty: checked above")
-                .post_value;
-            added_storage.insert(key, value);
+            added_storage.insert(key, last.post_value);
         }
 
         result.insert(
             account.address,
             BalSynthesisItem {
-                address: account.address,
                 balance,
                 nonce,
                 code_hash,
@@ -1943,14 +1935,10 @@ mod synthesize_tests {
         );
     }
 
-    /// A SlotChange with empty slot_changes triggers the debug_assert in debug builds.
-    /// In release builds the defensive `continue` silently skips the slot.
-    /// This test covers the debug-build path: the assert fires as expected.
+    /// A SlotChange with empty slot_changes is canonically forbidden but
+    /// reachable via permissive wire-format decoding; synthesis must skip it
+    /// without panicking and without polluting `added_storage`.
     #[test]
-    #[cfg_attr(
-        debug_assertions,
-        should_panic(expected = "SlotChange has empty slot_changes")
-    )]
     fn synthesize_skips_when_slot_changes_empty() {
         let empty_sc = SlotChange::new(U256::from(1));
         let mut account = AccountChanges::new(addr(11));
@@ -1959,7 +1947,6 @@ mod synthesize_tests {
         account.balance_changes = vec![BalanceChange::new(1, U256::from(5))];
         let bal = make_bal(account);
         let result = synthesize_bal_updates(&bal);
-        // Release-only path: outer entry present, but the empty slot is absent.
         let item = result.get(&addr(11)).expect("expected outer entry");
         let key = H256::from_uint(&U256::from(1));
         assert!(
