@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Args;
+use ethrex_common::tracing::Eip3155Step;
 use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     opcode_tracer::{LevmOpcodeTracer, OpcodeTracerConfig},
@@ -112,8 +113,12 @@ async fn run_case(
     let _ = vm.execute();
 
     if emit_trace {
+        // Wrap each step in `Eip3155Step` so the serializer emits the strict
+        // EIP-3155 wire shape (numeric `op` + separate `opName`, hex
+        // `gas`/`gasCost`/`refund`, `stack: []` when disabled) — what goevmlab's
+        // opLog unmarshaler expects, not the geth-RPC structLogger shape.
         for step in &vm.opcode_tracer.logs {
-            let line = serde_json::to_string(step)
+            let line = serde_json::to_string(&Eip3155Step(step))
                 .map_err(|e| RunnerError::Custom(format!("failed to serialize trace step: {e}")))?;
             eprintln!("{line}");
         }
