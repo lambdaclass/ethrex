@@ -191,9 +191,11 @@ pub struct GeneralizedDatabase {
     pub store: Arc<dyn Database>,
     pub current_accounts_state: CacheDB,
     pub initial_accounts_state: CacheDB,
-    /// Shared read-only base state (e.g. post-system-call snapshot for parallel groups).
-    /// Checked on load_account between initial_accounts_state and store lookups.
-    /// Accounts are cloned into initial_accounts_state on first access (lazy, per-account).
+    /// Shared read-only base state (pre-block snapshot of system-touched addresses for
+    /// parallel groups, captured from `initial_accounts_state` after `prepare_block`).
+    /// Checked on `load_account` AFTER the `lazy_bal` hook so the BAL overlay (which
+    /// includes system-call effects at idx 0) takes precedence for any address the BAL
+    /// covers. Accounts are cloned into `initial_accounts_state` on first access.
     pub shared_base: Option<Arc<CacheDB>>,
     pub codes: FxHashMap<H256, Code>,
     pub code_metadata: FxHashMap<H256, CodeMetadata>,
@@ -343,30 +345,23 @@ impl GeneralizedDatabase {
             return Ok(self.current_accounts_state.entry(address).or_insert(clone));
         }
 
-        // Check shared_base (read-only post-system-call snapshot) before hitting store.
-        if let Some(ref base) = self.shared_base
-            && let Some(account) = base.get(&address)
-        {
-            let account = account.clone();
-            if !self.skip_initial_tracking {
-                self.initial_accounts_state.insert(address, account.clone());
-            }
-            return Ok(self
-                .current_accounts_state
-                .entry(address)
-                .or_insert(account));
-        }
-
         // Lazy-BAL hook: if the cursor finds this address, materialize info from the BAL
-        // before falling back to the store.
+        // before consulting `shared_base` or the store.
         //
-        // IMPORTANT: we `.take()` the cursor out of `self.lazy_bal` before calling
+        // Ordering matters: `shared_base` holds the pre-block snapshot of system-touched
+        // addresses, but the canonical pre-state for tx N is the BAL prefix up to its
+        // `bal_index` (= system-call effects at idx 0 plus all prior txs). If `shared_base`
+        // were consulted first for an address it covers, the BAL overlay would be skipped
+        // and tx N would observe stale balance/nonce/code (consensus bug for system-touched
+        // predeploys mutated by a prior tx in the same block).
+        //
+        // We `.take()` the cursor out of `self.lazy_bal` before calling
         // `seed_one_address_info_from_bal`. For partial-coverage accounts (e.g. balance-only
         // change with no nonce/code) the helper calls `db.get_account(addr)` internally to
-        // load the base state from the store before overlaying. If `self.lazy_bal` were still
-        // `Some(...)` at that point, `get_account` → `load_account` would re-enter this same
-        // block and recurse infinitely. Taking the cursor out breaks the cycle: the inner call
-        // sees `lazy_bal = None` and falls straight through to the store. We restore the cursor
+        // load the base state before overlaying. If `self.lazy_bal` were still `Some(...)`
+        // at that point, `get_account` → `load_account` would re-enter this same block and
+        // recurse infinitely. Taking the cursor out breaks the cycle: the inner call sees
+        // `lazy_bal = None` and falls through to `shared_base`/store. We restore the cursor
         // unconditionally afterward (even on error) so the outer caller still sees it.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         {
@@ -399,6 +394,20 @@ impl GeneralizedDatabase {
                         .ok_or(InternalError::AccountNotFound);
                 }
             }
+        }
+
+        // Check shared_base (read-only pre-block snapshot) before hitting store.
+        if let Some(ref base) = self.shared_base
+            && let Some(account) = base.get(&address)
+        {
+            let account = account.clone();
+            if !self.skip_initial_tracking {
+                self.initial_accounts_state.insert(address, account.clone());
+            }
+            return Ok(self
+                .current_accounts_state
+                .entry(address)
+                .or_insert(account));
         }
 
         // Store fallback.

@@ -127,6 +127,63 @@ mod inner {
         assert_eq!(at_2, Some(V1), "at max_idx=2 should see V1 (tx 1's write)");
     }
 
+    /// T4b: `lazy_bal_takes_precedence_over_shared_base`
+    ///
+    /// Regression test for the consensus issue flagged in PR #6669 review: when an
+    /// address is present in BOTH `shared_base` (pre-block snapshot of system-touched
+    /// addresses) AND the BAL prefix (e.g. a system-contract predeploy mutated by a
+    /// prior tx in the same block), `load_account` must surface the BAL-overlaid value,
+    /// not the stale `shared_base` value.
+    ///
+    /// Setup mirrors `execute_block_parallel`:
+    /// - `shared_base` holds `CONTRACT` with `balance = 0` (pre-block state).
+    /// - BAL has a balance change for `CONTRACT` at `block_access_index = 1`
+    ///   (= post-tx-0 state).
+    /// - Per-tx DB for tx 1 is constructed with both `shared_base` and a
+    ///   `LazyBalCursor` at `bal_index = 2` (so `max_idx = 1`).
+    ///
+    /// Expected: `load_account(CONTRACT)` returns the BAL post-balance (42_000),
+    /// not the `shared_base` pre-balance (0). Before the fix, `shared_base` short-
+    /// circuited the lazy hook and tx 1 saw the stale value.
+    #[test]
+    fn lazy_bal_takes_precedence_over_shared_base() {
+        use ethrex_common::types::AccountInfo;
+        use ethrex_levm::account::LevmAccount;
+        use rustc_hash::FxHashMap;
+
+        let post_balance = U256::from(42_000u64);
+
+        let mut shared = FxHashMap::default();
+        shared.insert(
+            CONTRACT,
+            LevmAccount {
+                info: AccountInfo::default(),
+                ..Default::default()
+            },
+        );
+        let shared_base = Arc::new(shared);
+
+        let acct = AccountChanges::new(CONTRACT)
+            .with_balance_changes(vec![BalanceChange::new(1, post_balance)]);
+        let bal = BlockAccessList::from_accounts(vec![acct]);
+        let arc_bal = Arc::new(bal);
+        let arc_idx = Arc::new(arc_bal.build_validation_index());
+
+        let mut db =
+            GeneralizedDatabase::new_with_shared_base(Arc::new(TestDatabase::new()), shared_base);
+        db.lazy_bal = Some(LazyBalCursor {
+            bal: arc_bal,
+            bal_index: 2,
+            index: arc_idx,
+        });
+
+        let acc = db.get_account(CONTRACT).expect("load_account must succeed");
+        assert_eq!(
+            acc.info.balance, post_balance,
+            "lazy_bal overlay must take precedence over shared_base; saw stale shared_base value"
+        );
+    }
+
     /// T4: `lazy_load_account_partial_coverage_does_not_recurse`
     ///
     /// A BAL with a partial-coverage account (balance change only, no nonce,
