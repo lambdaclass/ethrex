@@ -128,7 +128,117 @@ async fn run_case(
         .map_err(|e| RunnerError::FailedToGetAccountsUpdates(e.to_string()))?;
     let computed_root = post_state_root(&account_updates, initial_block_hash, storage);
 
-    eprintln!("{{\"stateRoot\":\"0x{computed_root:x}\"}}");
+    eprintln!("{}", stateroot_line(&computed_root));
 
     Ok(computed_root != test_case.post.hash)
+}
+
+/// Formats a state root as the literal line goevmlab's adapter scans for in
+/// each client's stderr stream: the substring `"stateRoot":"0x<64 lowercase hex>"`.
+///
+/// Extracted so the regression test below can pin the exact wire format without
+/// reaching into `eprintln!`. Surrounding JSON shape is flexible per the goevmlab
+/// spec — only the literal substring matters — but emitting it as a valid one-key
+/// JSON object keeps the line parseable too.
+fn stateroot_line(root: &ethrex_common::H256) -> String {
+    format!("{{\"stateRoot\":\"0x{root:x}\"}}")
+}
+
+#[cfg(test)]
+mod tests {
+    //! Regression tests for the wire-format contract that goevmlab consumes.
+    //!
+    //! Two invariants matter end-to-end:
+    //!   1. Each opcode trace line is JSON parseable by goevmlab's `opLog`
+    //!      unmarshaler (`evms/gen_oplog.go`). That means `op` is a number
+    //!      (cast to `vm.OpCode`), `gas`/`gasCost` are decimal-or-hex numbers,
+    //!      `stack` is a non-null array. We rely on `Eip3155Step`'s serializer
+    //!      to emit this shape — see `crates/common/tracing.rs`.
+    //!   2. The final stateRoot line contains the exact literal substring
+    //!      `"stateRoot":"0x<64 hex chars>"` so goevmlab can scan for it by
+    //!      raw byte search (see [revm.go](https://github.com/holiman/goevmlab/blob/master/evms/revm.go)).
+
+    use super::stateroot_line;
+    use ethrex_common::{H256, U256, tracing::Eip3155Step, tracing::OpcodeStep};
+    use serde_json::Value;
+
+    /// Builds a minimal `OpcodeStep` for `PUSH1` (opcode 0x60) with one stack entry.
+    fn sample_step() -> OpcodeStep {
+        OpcodeStep {
+            pc: 0,
+            op: 0x60,
+            gas: 21_000,
+            gas_cost: 3,
+            mem_size: 0,
+            depth: 1,
+            return_data: bytes::Bytes::new(),
+            refund: 0,
+            stack: Some(vec![U256::from(0x42)]),
+            memory: None,
+            storage: None,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn eip3155_step_matches_goevmlab_oplog_shape() {
+        let line = serde_json::to_string(&Eip3155Step(&sample_step())).expect("serialize");
+        let v: Value = serde_json::from_str(&line).expect("valid JSON");
+
+        // EIP-3155 spec types, mirroring the fields goevmlab's gen_oplog.go
+        // expects to unmarshal into uint64/vm.OpCode/uint256.Int/etc.
+        assert!(v["pc"].is_number(), "pc must be a JSON number");
+        assert!(
+            v["op"].is_number(),
+            "op must be a NUMERIC opcode byte (goevmlab casts to vm.OpCode); got: {}",
+            v["op"]
+        );
+        assert_eq!(v["op"].as_u64(), Some(0x60));
+        assert_eq!(v["opName"].as_str(), Some("PUSH1"));
+
+        let gas = v["gas"].as_str().expect("gas must be a hex string");
+        assert!(
+            gas.starts_with("0x"),
+            "gas must be `\"0x...\"` form per EIP-3155 Hex-Number; got: {gas}"
+        );
+        let gas_cost = v["gasCost"].as_str().expect("gasCost must be a hex string");
+        assert!(gas_cost.starts_with("0x"));
+
+        // EIP-3155: `stack` MUST be `[]`, never null.
+        assert!(v["stack"].is_array(), "stack must be an array, never null");
+        assert_eq!(v["stack"][0].as_str(), Some("0x42"));
+    }
+
+    #[test]
+    fn eip3155_step_stack_disabled_renders_as_empty_array() {
+        let mut step = sample_step();
+        step.stack = None;
+        let line = serde_json::to_string(&Eip3155Step(&step)).expect("serialize");
+        let v: Value = serde_json::from_str(&line).expect("valid JSON");
+        assert_eq!(
+            v["stack"],
+            Value::Array(vec![]),
+            "EIP-3155: stack must be `[]` when disabled, not null",
+        );
+    }
+
+    #[test]
+    fn stateroot_line_pins_literal_goevmlab_scan_pattern() {
+        let root = H256::repeat_byte(0xab);
+        let line = stateroot_line(&root);
+
+        // The literal substring `"stateRoot":"0x<64 hex>"` is what goevmlab byte-
+        // scans for; surrounding JSON shape is flexible. Pin both halves.
+        let expected_hex = format!("0x{}", "ab".repeat(32));
+        assert_eq!(expected_hex.len(), 66, "64 hex chars + 0x prefix");
+        assert!(
+            line.contains(&format!("\"stateRoot\":\"{expected_hex}\"")),
+            "missing goevmlab scan pattern; line={line}"
+        );
+
+        // Sanity: H256's LowerHex zero-pads to 64 chars even for low-value roots.
+        let small = H256::from_low_u64_be(1);
+        let line_small = stateroot_line(&small);
+        assert!(line_small.contains(&format!("\"0x{:0>64}\"", "1")));
+    }
 }
