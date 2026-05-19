@@ -966,7 +966,8 @@ impl<'a> VM<'a> {
                 timings.update(opcode, time);
             }
 
-            // Struct-log post-step: patch gas_cost and error into the buffered entry.
+            // Struct-log post-step: patch gas_cost, refund-after-op, and error
+            // into the buffered entry.
             if tracer_active {
                 #[expect(
                     clippy::as_conversions,
@@ -980,9 +981,14 @@ impl<'a> VM<'a> {
                     .last_opcode_gas_cost
                     .take()
                     .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
+                // refund-after-op matches geth's structLogger timing: for SSTORE and
+                // (pre-London) SELFDESTRUCT, the refund counter shown is the value
+                // *after* the opcode's accounting applied. Other opcodes don't touch
+                // refund, so the post-op value equals the captured pre-op value.
+                let refund_after = self.substate.refunded_gas;
                 let err_str = error.get().map(|e| e.to_string());
                 self.opcode_tracer
-                    .finalize_step(gas_cost, err_str.as_deref());
+                    .finalize_step(gas_cost, refund_after, err_str.as_deref());
             }
 
             let result = match op_result {

@@ -169,18 +169,25 @@ impl LevmOpcodeTracer {
     }
 
     /// Patches the entry recorded by the most recent `pre_step_capture` with the
-    /// actual gas cost and any step-level error string.  Called immediately after
-    /// the opcode handler returns.
+    /// actual gas cost, the post-execution refund counter, and any step-level
+    /// error string. Called immediately after the opcode handler returns.
+    ///
+    /// `refund_after` matches geth's structLogger timing: the refund counter
+    /// shown on an opcode's step is the value *after* the opcode's gas+refund
+    /// accounting has been applied. For opcodes that don't mutate the refund
+    /// counter (every opcode except SSTORE and pre-London SELFDESTRUCT) this is
+    /// a no-op since the captured pre-op refund already equals the post-op one.
     ///
     /// No-op when the most recent `pre_step_capture` did not push (limit reached).
     /// Synthesized entries (e.g. fused JUMPDEST) push directly into `logs` without
     /// updating `last_step_index`, so this still patches the correct parent entry.
-    pub fn finalize_step(&mut self, gas_cost: u64, error: Option<&str>) {
+    pub fn finalize_step(&mut self, gas_cost: u64, refund_after: u64, error: Option<&str>) {
         let Some(idx) = self.last_step_index else {
             return;
         };
         if let Some(log) = self.logs.get_mut(idx) {
             log.gas_cost = gas_cost;
+            log.refund = refund_after;
             log.error = error.map(str::to_owned);
         }
     }

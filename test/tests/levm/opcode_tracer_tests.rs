@@ -201,6 +201,92 @@ fn opcode_tracer_sstore_storage_emission() {
     assert!(steps[3].get("storage").is_none());
 }
 
+/// Prefills slot 0x01 with value 0x42, then runs `PUSH1 0 PUSH1 1 SSTORE STOP`
+/// which clears that slot. The clearing triggers a refund (post-London: 4800 gas
+/// per EIP-3529), which under geth's structLogger timing must appear on the
+/// SSTORE step itself rather than only on the subsequent STOP.
+///
+/// Regression for #6672: previously LEVM's `pre_step_capture` snapshotted the
+/// refund counter before the SSTORE handler applied the credit, so the refund
+/// showed up one step late vs geth.
+#[test]
+fn opcode_tracer_sstore_refund_on_clearing_step() {
+    // Bytecode: PUSH1 0 PUSH1 1 SSTORE STOP
+    let bytecode = vec![0x60, 0x00, 0x60, 0x01, 0x55, 0x00];
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+
+    let slot_1 = ethrex_common::H256::from_low_u64_be(1);
+    let mut storage = FxHashMap::default();
+    storage.insert(slot_1, U256::from(0x42));
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto),
+            1,
+            storage,
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
+    let header = default_header();
+    let tx = make_tx(contract_addr, sender_addr);
+
+    // Force refund emission even on zero so we can assert against the SSTORE step
+    // unambiguously (geth emits refund whenever non-zero, but the test asserts on
+    // a known step index regardless).
+    let emit = StructLoggerEmit {
+        mem_size: false,
+        return_data: false,
+        refund: true,
+    };
+    let result = LEVM::trace_tx_opcodes(
+        &mut db,
+        &header,
+        &tx,
+        OpcodeTracerConfig::default(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+    let j = serde_json::to_value(StructLoggerResult {
+        result: &result,
+        emit,
+    })
+    .expect("serialize");
+    let steps = j["structLogs"].as_array().expect("structLogs");
+    assert_eq!(steps.len(), 4, "PUSH PUSH SSTORE STOP");
+
+    // Steps 0-1: PUSH ops, refund is still 0.
+    assert_eq!(steps[0]["refund"].as_u64(), Some(0));
+    assert_eq!(steps[1]["refund"].as_u64(), Some(0));
+
+    // Step 2: the SSTORE itself MUST carry the refund credit, not step 3.
+    assert_eq!(steps[2]["op"].as_str(), Some("SSTORE"));
+    let sstore_refund = steps[2]["refund"]
+        .as_u64()
+        .expect("SSTORE refund must be present");
+    assert!(
+        sstore_refund > 0,
+        "SSTORE step must show the refund credit from clearing slot 1 (got {sstore_refund})"
+    );
+
+    // Step 3: STOP must see the same refund (no further mutation).
+    assert_eq!(steps[3]["refund"].as_u64(), Some(sstore_refund));
+}
+
 /// `PUSH1 0x2a PUSH1 0x01 SSTORE PUSH1 0xab PUSH1 0x02 SSTORE STOP`
 ///
 /// Storage accumulates across the transaction (matches geth's structLogger).
