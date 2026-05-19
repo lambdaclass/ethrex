@@ -391,8 +391,13 @@ impl LEVM {
         // `execute_block` instead. Adding dummy let to avoid unused warnings.
         let _ = header_bal;
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-        // When BAL is provided (Amsterdam+ validation path): use parallel execution
-        if let Some(bal) = header_bal {
+        // When BAL is provided (Amsterdam+ validation path): use parallel execution.
+        // The `is_amsterdam` gate is required: `execute_block_parallel` (and the
+        // optimistic merkleization it feeds) is only correct on Amsterdam+; a
+        // pre-Amsterdam call here in release would skip the inner debug_assert.
+        if let Some(bal) = header_bal
+            && is_amsterdam
+        {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
             // Note: size cap validation is deferred until after transaction processing
@@ -558,8 +563,14 @@ impl LEVM {
 
         // Sequential path (existing code, for block production and non-Amsterdam).
         // The non-BAL caller always provides a Sender; the BAL path returned above.
-        let merkleizer = merkleizer
-            .expect("sequential execution path requires a merkleizer Sender (non-BAL caller)");
+        // Surface a missing Sender as a normal error instead of panicking, so a
+        // future refactor that reshapes the BAL branch can't silently break the
+        // contract and bring down the executor thread.
+        let Some(merkleizer) = merkleizer else {
+            return Err(EvmError::Custom(
+                "sequential execution path called without a merkleizer Sender".to_string(),
+            ));
+        };
         if is_amsterdam {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)

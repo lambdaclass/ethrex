@@ -322,7 +322,6 @@ struct BalStateWorkItem {
     nonce: Option<u64>,
     balance: Option<U256>,
     code_hash: Option<H256>,
-    removed: bool,
     /// Pre-computed storage root from Stage B, or None to keep existing.
     storage_root: Option<H256>,
 }
@@ -566,6 +565,12 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
+                        if bal.is_some() && produced_bal.is_none() {
+                            return Err(ChainError::Custom(
+                                "BAL validation path produced no BAL; cannot validate BAL hash"
+                                    .to_string(),
+                            ));
+                        }
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -927,11 +932,19 @@ impl Blockchain {
         // Warm parent state-trie pages for all touched accounts in parallel before
         // Stage B / Stage C race for them. This replaces the prefetch that the old
         // streaming path got for free via `bal_to_account_updates`.
+        //
+        // Mirror Stage B / Stage C's "one trie per worker" pattern: chunk the
+        // addresses across NUM_WORKERS rayon tasks rather than opening a fresh
+        // state trie per account (`open_state_trie` holds an RwLock read, clones
+        // the trie cache, and allocates a `BackendTrieDB` + `TrieWrapper`).
+        let chunk_size = accounts.len().div_ceil(NUM_WORKERS).max(1);
         accounts
-            .par_iter()
-            .try_for_each(|(hashed_address, _)| -> Result<(), StoreError> {
+            .par_chunks(chunk_size)
+            .try_for_each(|chunk| -> Result<(), StoreError> {
                 let state_trie = self.storage.open_state_trie(parent_state_root)?;
-                let _ = state_trie.get(hashed_address.as_bytes())?;
+                for (hashed_address, _) in chunk {
+                    let _ = state_trie.get(hashed_address.as_bytes())?;
+                }
                 Ok(())
             })?;
 
@@ -1067,7 +1080,6 @@ impl Blockchain {
                 nonce: item.nonce,
                 balance: item.balance,
                 code_hash: item.code_hash,
-                removed: false,
                 storage_root: storage_roots[idx],
             });
         }
@@ -1109,21 +1121,17 @@ impl Blockchain {
                                         None => AccountState::default(),
                                     };
 
-                                    if item.removed {
-                                        account_state = AccountState::default();
-                                    } else {
-                                        if let Some(n) = item.nonce {
-                                            account_state.nonce = n;
-                                        }
-                                        if let Some(b) = item.balance {
-                                            account_state.balance = b;
-                                        }
-                                        if let Some(ch) = item.code_hash {
-                                            account_state.code_hash = ch;
-                                        }
-                                        if let Some(storage_root) = item.storage_root {
-                                            account_state.storage_root = storage_root;
-                                        }
+                                    if let Some(n) = item.nonce {
+                                        account_state.nonce = n;
+                                    }
+                                    if let Some(b) = item.balance {
+                                        account_state.balance = b;
+                                    }
+                                    if let Some(ch) = item.code_hash {
+                                        account_state.code_hash = ch;
+                                    }
+                                    if let Some(storage_root) = item.storage_root {
+                                        account_state.storage_root = storage_root;
                                     }
 
                                     // EIP-161: remove empty accounts (zero nonce, zero balance,
