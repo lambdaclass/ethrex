@@ -171,11 +171,11 @@ fn opcode_tracer_basic_execution() {
 
 /// `PUSH1 0x2a PUSH1 0x01 SSTORE STOP`
 ///
-/// SSTORE step's `storage` map must be a **single-entry** object (no
-/// accumulation across the transaction). Non-SLOAD/SSTORE steps omit the
-/// field entirely.
+/// Single-SSTORE case: the SSTORE step embeds the (single) slot that's been
+/// touched so far. Non-SLOAD/SSTORE steps omit the field entirely (matching
+/// geth's structLogger).
 #[test]
-fn opcode_tracer_sstore_single_entry_storage() {
+fn opcode_tracer_sstore_storage_emission() {
     let bytecode = vec![0x60, 0x2a, 0x60, 0x01, 0x55, 0x00];
     let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
     let steps = j["structLogs"].as_array().expect("structLogs");
@@ -185,11 +185,11 @@ fn opcode_tracer_sstore_single_entry_storage() {
     assert!(steps[0].get("storage").is_none());
     assert!(steps[1].get("storage").is_none());
 
-    // SSTORE — exactly one entry, key=0x01, value=0x2a.
+    // SSTORE — single accumulated entry, key=0x01, value=0x2a.
     let sstore = &steps[2];
     assert_eq!(sstore["op"].as_str(), Some("SSTORE"));
     let storage = sstore["storage"].as_object().expect("storage object");
-    assert_eq!(storage.len(), 1, "single entry, no accumulation");
+    assert_eq!(storage.len(), 1, "only one slot touched so far");
     let key = format!("0x{:0>64}", "1");
     let val = format!("0x{:0>64}", "2a");
     assert_eq!(
@@ -199,6 +199,63 @@ fn opcode_tracer_sstore_single_entry_storage() {
 
     // STOP — no storage field.
     assert!(steps[3].get("storage").is_none());
+}
+
+/// `PUSH1 0x2a PUSH1 0x01 SSTORE PUSH1 0xab PUSH1 0x02 SSTORE STOP`
+///
+/// Storage accumulates across the transaction (matches geth's structLogger).
+/// The first SSTORE step carries only its slot; the second SSTORE step carries
+/// both slots. Non-SLOAD/SSTORE steps still omit the field.
+#[test]
+fn opcode_tracer_sstore_storage_accumulates() {
+    let bytecode = vec![
+        0x60, 0x2a, 0x60, 0x01, 0x55, // SSTORE slot 0x01 = 0x2a
+        0x60, 0xab, 0x60, 0x02, 0x55, // SSTORE slot 0x02 = 0xab
+        0x00, // STOP
+    ];
+    let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
+    let steps = j["structLogs"].as_array().expect("structLogs");
+    assert_eq!(steps.len(), 7, "PUSH PUSH SSTORE PUSH PUSH SSTORE STOP");
+
+    let slot_1 = format!("0x{:0>64}", "1");
+    let slot_2 = format!("0x{:0>64}", "2");
+    let val_2a = format!("0x{:0>64}", "2a");
+    let val_ab = format!("0x{:0>64}", "ab");
+
+    // First SSTORE — storage has just slot 1.
+    let first_sstore = &steps[2];
+    assert_eq!(first_sstore["op"].as_str(), Some("SSTORE"));
+    let s1 = first_sstore["storage"]
+        .as_object()
+        .expect("storage on 1st SSTORE");
+    assert_eq!(s1.len(), 1);
+    assert_eq!(
+        s1.get(&slot_1).and_then(Value::as_str),
+        Some(val_2a.as_str())
+    );
+
+    // Intermediate PUSH steps — no storage.
+    assert!(steps[3].get("storage").is_none());
+    assert!(steps[4].get("storage").is_none());
+
+    // Second SSTORE — storage accumulates both slots.
+    let second_sstore = &steps[5];
+    assert_eq!(second_sstore["op"].as_str(), Some("SSTORE"));
+    let s2 = second_sstore["storage"]
+        .as_object()
+        .expect("storage on 2nd SSTORE");
+    assert_eq!(s2.len(), 2, "accumulated across both SSTOREs");
+    assert_eq!(
+        s2.get(&slot_1).and_then(Value::as_str),
+        Some(val_2a.as_str())
+    );
+    assert_eq!(
+        s2.get(&slot_2).and_then(Value::as_str),
+        Some(val_ab.as_str())
+    );
+
+    // STOP — no storage field (only SLOAD/SSTORE steps carry it).
+    assert!(steps[6].get("storage").is_none());
 }
 
 /// `PUSH1 0x20 PUSH1 0x00 MSTORE STOP` with `enableMemory=true`

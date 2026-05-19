@@ -53,6 +53,15 @@ pub struct LevmOpcodeTracer {
     /// steps (e.g. fused JUMPDEST) push directly without touching this index,
     /// preserving the parent opcode's pending finalize target.
     pub last_step_index: Option<usize>,
+    /// Cumulative map of every storage slot touched by an SLOAD/SSTORE so far in
+    /// this transaction, with the most recent value observed. Each
+    /// SLOAD/SSTORE-bearing step embeds a snapshot of this map under its
+    /// `storage` field, matching geth's structLogger behavior of accumulating
+    /// touched slots across the trace rather than emitting only the slot just
+    /// accessed. Empty until the first SLOAD/SSTORE; not reset between call
+    /// frames (consistent with how slot keys are indexed — by slot only, not by
+    /// `(address, slot)` — so cross-frame frame isolation is a separate concern).
+    pub cumulative_storage: BTreeMap<H256, H256>,
 }
 
 impl LevmOpcodeTracer {
@@ -67,6 +76,7 @@ impl LevmOpcodeTracer {
             gas_used: 0,
             last_opcode_gas_cost: None,
             last_step_index: None,
+            cumulative_storage: BTreeMap::new(),
         }
     }
 
@@ -81,6 +91,7 @@ impl LevmOpcodeTracer {
             gas_used: 0,
             last_opcode_gas_cost: None,
             last_step_index: None,
+            cumulative_storage: BTreeMap::new(),
         }
     }
 
@@ -114,6 +125,13 @@ impl LevmOpcodeTracer {
         return_data: &Bytes,
         storage_kv: Option<(H256, H256)>,
     ) {
+        // Update the cumulative storage map BEFORE the limit check so that the
+        // observed slot value is preserved even when a later step is dropped by
+        // the limit cap.
+        if let Some((key, value)) = storage_kv {
+            self.cumulative_storage.insert(key, value);
+        }
+
         // Enforce limit: stop appending once the cap is reached. Clearing the
         // patch index ensures `finalize_step` does not clobber the last retained
         // step on subsequent opcodes.
@@ -122,7 +140,7 @@ impl LevmOpcodeTracer {
             return;
         }
 
-        let log = build_step(
+        let mut log = build_step(
             &self.cfg,
             pc,
             opcode,
@@ -136,6 +154,15 @@ impl LevmOpcodeTracer {
             return_data,
             storage_kv,
         );
+
+        // For SLOAD/SSTORE steps, replace the single-entry storage map produced
+        // by `build_step` with a snapshot of the cumulative map, matching geth's
+        // structLogger behavior. `build_step` is also called by synthetic-step
+        // builders (e.g. fused JUMPDEST) that pass `storage_kv: None` and so
+        // produce `log.storage == None`; those are left untouched.
+        if log.storage.is_some() {
+            log.storage = Some(self.cumulative_storage.clone());
+        }
 
         self.last_step_index = Some(self.logs.len());
         self.logs.push(log);
@@ -234,7 +261,10 @@ pub fn build_step(
         None
     };
 
-    // Storage: single-entry map for this step only (no accumulation).
+    // Storage: presence/absence of `storage_kv` is what signals "this step
+    // touches storage". Callers from `pre_step_capture` overwrite this with a
+    // snapshot of the tracer's cumulative storage map; callers from synthetic-
+    // step paths (e.g. fused JUMPDEST) pass `None` and get `None` here.
     let storage = storage_kv.map(|(key, value)| {
         let mut m = BTreeMap::new();
         m.insert(key, value);
