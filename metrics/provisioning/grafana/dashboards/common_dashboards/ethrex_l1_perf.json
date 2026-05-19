@@ -1629,9 +1629,9 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 8,
+            "w": 6,
             "x": 0,
-            "y": 0
+            "y": 27
           },
           "id": 301,
           "interval": "10s",
@@ -1734,9 +1734,9 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 8,
-            "x": 8,
-            "y": 0
+            "w": 6,
+            "x": 6,
+            "y": 27
           },
           "id": 302,
           "interval": "10s",
@@ -1773,90 +1773,6 @@
           ],
           "title": "BAL Size (bytes)",
           "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "Distribution of BAL sizes (heatmap of histogram buckets).",
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "scaleDistribution": {
-                  "type": "linear"
-                }
-              }
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 16,
-            "y": 0
-          },
-          "id": 303,
-          "interval": "10s",
-          "options": {
-            "calculate": false,
-            "cellGap": 1,
-            "color": {
-              "exponent": 0.5,
-              "fill": "dark-orange",
-              "mode": "scheme",
-              "reverse": false,
-              "scale": "exponential",
-              "scheme": "Oranges",
-              "steps": 64
-            },
-            "exemplars": {
-              "color": "rgba(255,0,255,0.7)"
-            },
-            "filterValues": {
-              "le": 1e-09
-            },
-            "legend": {
-              "show": true
-            },
-            "rowsFrame": {
-              "layout": "auto"
-            },
-            "showValue": "never",
-            "tooltip": {
-              "mode": "single",
-              "showColorScale": false,
-              "yHistogram": false
-            },
-            "yAxis": {
-              "axisPlacement": "left",
-              "reverse": false,
-              "unit": "bytes"
-            }
-          },
-          "pluginVersion": "12.2.1",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "editorMode": "code",
-              "expr": "sum by (le)(rate(bal_size_bytes_histogram_bucket{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
-              "format": "heatmap",
-              "instant": false,
-              "legendFormat": "{{le}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "BAL Size Distribution",
-          "type": "heatmap"
         },
         {
           "datasource": {
@@ -1923,9 +1839,9 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 8
+            "w": 6,
+            "x": 12,
+            "y": 27
           },
           "id": 304,
           "interval": "10s",
@@ -2028,9 +1944,9 @@
           },
           "gridPos": {
             "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 8
+            "w": 6,
+            "x": 18,
+            "y": 27
           },
           "id": 305,
           "interval": "10s",
@@ -2067,6 +1983,90 @@
           ],
           "title": "BAL Slot Count",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "description": "Distribution of BAL sizes (heatmap of histogram buckets).",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "hideFrom": {
+                  "legend": false,
+                  "tooltip": false,
+                  "viz": false
+                },
+                "scaleDistribution": {
+                  "type": "linear"
+                }
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 35
+          },
+          "id": 303,
+          "interval": "10s",
+          "options": {
+            "calculate": false,
+            "cellGap": 1,
+            "color": {
+              "exponent": 0.5,
+              "fill": "dark-orange",
+              "mode": "scheme",
+              "reverse": false,
+              "scale": "exponential",
+              "scheme": "Oranges",
+              "steps": 64
+            },
+            "exemplars": {
+              "color": "rgba(255,0,255,0.7)"
+            },
+            "filterValues": {
+              "le": 1e-09
+            },
+            "legend": {
+              "show": true
+            },
+            "rowsFrame": {
+              "layout": "auto"
+            },
+            "showValue": "never",
+            "tooltip": {
+              "mode": "single",
+              "showColorScale": false,
+              "yHistogram": false
+            },
+            "yAxis": {
+              "axisPlacement": "left",
+              "reverse": false,
+              "unit": "bytes"
+            }
+          },
+          "pluginVersion": "12.2.1",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${DS_PROMETHEUS}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (le)(rate(bal_size_bytes_histogram_bucket{job=\"$job\", instance=~\"$instance(:\\\\d+)?$\"}[$__rate_interval]))",
+              "format": "heatmap",
+              "instant": false,
+              "legendFormat": "{{le}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "BAL Size Distribution",
+          "type": "heatmap"
         }
       ],
       "title": "BAL (EIP-7928)",
