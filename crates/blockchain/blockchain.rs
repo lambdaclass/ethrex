@@ -1980,6 +1980,16 @@ impl Blockchain {
             );
         }
 
+        metrics!(if let Some(bal) = produced_bal.as_ref().or(bal) {
+            let account_count = bal.accounts().len() as u64;
+            let slot_count = bal.item_count().saturating_sub(account_count);
+            let size_bytes = bal.length() as f64;
+            METRICS_BLOCKS.inc_bal_blocks_total();
+            METRICS_BLOCKS.set_bal_size_bytes(size_bytes);
+            METRICS_BLOCKS.set_bal_account_count(account_count as i64);
+            METRICS_BLOCKS.set_bal_slot_count(slot_count as i64);
+        });
+
         Ok((produced_bal, result))
     }
 
