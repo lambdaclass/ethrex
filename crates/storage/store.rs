@@ -168,8 +168,8 @@ pub struct Store {
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    /// Channel for sending trie updates to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
+    /// Channel for sending trie updates (and idle pings) to the background worker.
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieMessage>,
     /// Cached latest canonical block header.
     ///
     /// Wrapped in Arc for cheap reads with infrequent writes.
@@ -270,6 +270,23 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    /// Block until the trie-update background worker has drained every prior
+    /// message and is waiting for new work — i.e. Phase 2 (disk write of the
+    /// bottom-most diff layer) and Phase 3 (in-memory layer removal) for all
+    /// previously-applied updates have completed.
+    ///
+    /// Implementation: the worker channel is `sync_channel(0)`, so a send only
+    /// returns once the worker calls `recv()` on the next loop iteration.
+    /// `TrieMessage::Ping` carries no work, so the send completing is itself
+    /// the idle signal.
+    pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
+        let tx = self.trie_update_worker_tx.clone();
+        tokio::task::spawn_blocking(move || tx.send(TrieMessage::Ping))
+            .await
+            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
+            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))
+    }
+
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -1414,9 +1431,11 @@ impl Store {
             child_state_root: last_state_root,
             is_batch,
         };
-        trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-        })?;
+        trie_upd_worker_tx
+            .send(TrieMessage::Update(trie_update))
+            .map_err(|e| {
+                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            })?;
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1611,7 +1630,7 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok(trie_update) => {
+                    Ok(TrieMessage::Update(trie_update)) => {
                         // FIXME: what should we do on error?
                         let _ = apply_trie_updates(
                             backend.as_ref(),
@@ -1620,6 +1639,10 @@ impl Store {
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                    }
+                    Ok(TrieMessage::Ping) => {
+                        // Rendezvous handshake only — sender just wanted to know
+                        // we were idle and back at recv(). No work to do.
                     }
                     Err(err) => {
                         debug!("Trie update sender disconnected: {err}");
@@ -2926,6 +2949,18 @@ struct TrieUpdate {
     account_updates: TrieNodesUpdate,
     storage_updates: Vec<(H256, TrieNodesUpdate)>,
     is_batch: bool,
+}
+
+/// Messages handled by the trie-update background worker.
+///
+/// `Ping` is a no-op the worker handles between real updates. Because the
+/// worker channel is `sync_channel(0)` (rendezvous), a successful `Ping` send
+/// proves the worker has finished its previous iteration (Phase 1+2+3) and is
+/// blocked back at `recv()` — i.e. persistence is idle. See
+/// `Store::wait_for_persistence_idle`.
+enum TrieMessage {
+    Update(TrieUpdate),
+    Ping,
 }
 
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
