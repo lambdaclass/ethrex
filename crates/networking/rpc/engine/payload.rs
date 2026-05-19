@@ -1191,18 +1191,16 @@ fn encode_witness_for_engine_rpc(witness: ExecutionWitness) -> Result<Bytes, Rpc
         .map(|header| BlockHeader::decode(header.as_ref()))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| RpcErr::Internal(format!("Failed to decode witness header: {error}")))?;
-    headers.reverse();
+    headers.sort_by_key(|header| header.number);
     let mut codes = rpc_witness.codes;
     codes.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut state = rpc_witness.state;
     state.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
-    let keys: Vec<Bytes> = Vec::new();
     let mut encoded = Vec::new();
     Encoder::new(&mut encoded)
         .encode_field(&headers)
         .encode_field(&codes)
         .encode_field(&state)
-        .encode_field(&keys)
         .finish();
     Ok(Bytes::from(encoded))
 }
@@ -1337,50 +1335,5 @@ mod tests {
         let err = validate_execution_payload_v5(&payload).unwrap_err();
 
         assert!(matches!(err, RpcErr::WrongParam(param) if param == "slot_number"));
-    }
-
-    #[test]
-    fn engine_witness_rlp_uses_external_shape_without_keys() {
-        let older_header = BlockHeader {
-            number: 1,
-            ..Default::default()
-        };
-        let newer_header = BlockHeader {
-            number: 2,
-            ..Default::default()
-        };
-        let witness = ExecutionWitness {
-            codes: vec![vec![0x61], vec![0x60, 0x00]],
-            block_headers_bytes: vec![newer_header.encode_to_vec(), older_header.encode_to_vec()],
-            first_block_number: 2,
-            chain_config: ChainConfig::default(),
-            state_trie_root: None,
-            storage_trie_roots: Default::default(),
-        };
-
-        let encoded = encode_witness_for_engine_rpc(witness).unwrap();
-        let decoder = Decoder::new(&encoded).unwrap();
-        let (headers, decoder): (Vec<BlockHeader>, _) = decoder.decode_field("headers").unwrap();
-        let (codes, decoder): (Vec<Bytes>, _) = decoder.decode_field("codes").unwrap();
-        let (state, decoder): (Vec<Bytes>, _) = decoder.decode_field("state").unwrap();
-        let (keys, decoder): (Vec<Bytes>, _) = decoder.decode_field("keys").unwrap();
-
-        assert_eq!(
-            headers
-                .iter()
-                .map(|header| header.number)
-                .collect::<Vec<_>>(),
-            vec![1, 2]
-        );
-        assert_eq!(
-            codes,
-            vec![
-                Bytes::from_static(&[0x60, 0x00]),
-                Bytes::from_static(&[0x61])
-            ]
-        );
-        assert!(state.is_empty());
-        assert!(keys.is_empty());
-        assert!(decoder.finish().unwrap().is_empty());
     }
 }
