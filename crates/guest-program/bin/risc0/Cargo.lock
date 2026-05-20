@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -967,7 +967,6 @@ dependencies = [
  "libssz-types",
  "lru",
  "once_cell",
- "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
@@ -979,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1001,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1013,7 +1012,9 @@ dependencies = [
  "hex",
  "k256",
  "libssz",
+ "libssz-derive",
  "libssz-merkle",
+ "libssz-types",
  "rkyv",
  "serde",
  "serde_with",
@@ -1023,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-risc0"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "c-kzg",
  "ethrex-common",
@@ -1037,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1055,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1063,7 +1064,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "malachite",
- "rayon",
  "rustc-hash",
  "serde",
  "strum",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1108,7 +1108,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
- "rayon",
  "rustc-hash",
  "serde",
  "thiserror",

@@ -2,7 +2,9 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{self, STANDARD_TOKEN_COST, TOTAL_COST_FLOOR_PER_TOKEN},
+    gas_cost::{
+        self, STANDARD_TOKEN_COST, floor_tokens_in_access_list, total_cost_floor_per_token,
+    },
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -141,39 +143,50 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
-        // Per EELS, collision at process_message_call level returns
-        // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
-        // The user pays tx.gas (everything), but block accounting only sees
-        // intrinsic gas (no execution gas was consumed).
+        // EIP-8037 (Amsterdam+, bal-devnet-7): CREATE-tx address collision.
+        // Per EELS process_message_call (interpreter.py:120-145) the collision
+        // returns `state_gas_left = message.state_gas_reservoir` (reservoir is
+        // PRESERVED, not burned). The failure block in fork.py:1086-1094 then
+        // adds `new_account_refund` to both `state_gas_left` and `state_refund`,
+        // so the user gets back reservoir + new_account_refund. tx_state_gas
+        // collapses to 0, tx_regular_gas = max(intrinsic_regular + message.gas,
+        // calldata_floor). The user does NOT lose the whole gas_limit.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // Block accounting: gas_used = intrinsic_regular + intrinsic_state
-            // state_gas_used already = intrinsic_state (no execution state gas)
+            // `vm.finalize_execution` already bumped state_gas_refund_absorbed by
+            // new_account_refund (for the CREATE-failure intrinsic refund), and
+            // state_refund carries any EIP-7702 auth refund. Subtract both so the
+            // state dimension lands at 0.
+            let exec_refund = vm
+                .state_gas_refund_absorbed
+                .saturating_add(vm.state_gas_refund_pending);
             let state_gas = vm
                 .state_gas_used
-                .saturating_sub(vm.intrinsic_state_gas_refund);
+                .saturating_sub(exec_refund)
+                .saturating_sub(vm.state_refund);
             let floor = vm.get_min_gas_used()?;
-            // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
-            // = total_intrinsic_gas consumed so far, minus state portion
-            #[expect(
-                clippy::as_conversions,
-                reason = "gas_remaining is positive at collision"
-            )]
-            let gas_remaining = vm.current_call_frame.gas_remaining as u64;
-            let total_intrinsic = gas_limit
-                .saturating_sub(vm.state_gas_reservoir)
-                .saturating_sub(gas_remaining);
-            let regular_gas = total_intrinsic.saturating_sub(state_gas);
+            // Regular gas = gas_limit - state_gas_left, where state_gas_left =
+            // reservoir (PRESERVED across collision in EELS, with new_account_refund
+            // already folded in by vm.finalize_execution above). Mirrors EELS
+            // tx_gas_used_before_refund = tx.gas - gas_left(=0) - state_gas_left.
+            let regular_gas = gas_limit.saturating_sub(vm.state_gas_reservoir);
             let effective_regular = regular_gas.max(floor);
             ctx_result.gas_used = effective_regular
                 .checked_add(state_gas)
                 .ok_or(InternalError::Overflow)?;
-            // User pays everything (gas_left=0, state_gas_left=0)
-            ctx_result.gas_spent = gas_limit;
-            // Coinbase gets paid on what user pays
-            pay_coinbase(vm, gas_limit)?;
-            // Return 0 gas to sender (they lose everything)
+            // User pays only the effective regular (post-floor); coinbase gets the
+            // same; remainder returns to sender.
+            ctx_result.gas_spent = effective_regular;
+            pay_coinbase(vm, effective_regular)?;
+            let gas_to_return = gas_limit
+                .checked_sub(effective_regular)
+                .ok_or(InternalError::Underflow)?;
+            let wei_return_amount = vm
+                .env
+                .gas_price
+                .checked_mul(U256::from(gas_to_return))
+                .ok_or(InternalError::Overflow)?;
+            vm.increase_account_balance(vm.env.origin, wei_return_amount)?;
             return Ok(());
         }
 
@@ -194,7 +207,7 @@ impl Hook for DefaultHook {
         let gas_refunded: u64 = compute_gas_refunded(vm, ctx_result)?;
         let gas_spent = compute_actual_gas_used(vm, gas_refunded, gas_used_pre_refund)?;
 
-        refund_sender(vm, ctx_result, gas_refunded, gas_spent, gas_used_pre_refund)?;
+        refund_sender(vm, ctx_result, gas_refunded, gas_spent)?;
 
         pay_coinbase(vm, gas_spent)?;
 
@@ -215,20 +228,14 @@ pub fn undo_value_transfer(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-/// Refunds unused gas to the sender.
-///
-/// # EIP-7778 Changes
-/// - `gas_spent`: Post-refund gas (what the user actually pays)
-/// - `gas_used_pre_refund`: Pre-refund gas (for block-level accounting in Amsterdam+)
-///
-/// For Amsterdam+, the block uses pre-refund gas (`gas_used`) while the user pays post-refund
-/// gas (`gas_spent`). Before Amsterdam, both values are the same (post-refund).
+/// Refunds unused gas to the sender. The user pays `gas_spent` (post-refund);
+/// for Amsterdam+, block-level accounting is recomputed dimensionally from VM
+/// fields, not from a pre-refund total.
 pub fn refund_sender(
     vm: &mut VM<'_>,
     ctx_result: &mut ContextResult,
     refunded_gas: u64,
     gas_spent: u64,
-    gas_used_pre_refund: u64,
 ) -> Result<(), VMError> {
     vm.substate.refunded_gas = refunded_gas;
 
@@ -238,18 +245,41 @@ pub fn refund_sender(
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
-        // Apply intrinsic state gas refund from existing authorities (EIP-7702/EIP-8037).
-        // This matches EELS where set_delegation permanently reduces tx_env.intrinsic_state_gas
-        // for existing authorities, regardless of execution outcome.
+        // EELS block accounting per fork.py:
+        //   tx_regular_gas = intrinsic_regular + regular_gas_used
+        //   tx_state_gas   = intrinsic_state   + state_gas_used (net after refunds)
+        // Reservoir activity (auth refunds, SSTORE 0→N→0 credits) is NEUTRAL to
+        // block accounting — it only affects sender refund. To derive tx_regular_gas
+        // from our raw gas consumption, subtract intrinsic_state, the initial
+        // reservoir (pre-consumed from gas_remaining in add_intrinsic_gas), and any
+        // state-gas spills that reduced gas_remaining (EELS charge_state_gas spills
+        // don't count as regular_gas_used).
+        let execution_state_gas_refund = vm
+            .state_gas_refund_absorbed
+            .saturating_add(vm.state_gas_refund_pending);
+        // EELS PR #2816 (bal-devnet-7): subtract `state_refund` (EIP-7702
+        // existing-authority refund channel) from the state dimension. Lives separately
+        // from `state_gas_refund_absorbed/pending` because it bypasses per-frame
+        // accounting and survives revert/halt/OOG (it's a tx-level refund, not a
+        // frame-local credit). Matches EELS
+        // `tx_state_gas = intrinsic_state + state_gas_used - state_refund`.
         let state_gas = vm
             .state_gas_used
-            .saturating_sub(vm.intrinsic_state_gas_refund);
-        // State gas from reverted children is added back to the reservoir
-        // (matching EELS incorporate_child_on_error), so gas_used_pre_refund
-        // already excludes it after the reservoir subtraction at line 184.
-        // EIP-8037 (bal@v5.4.0): regular_gas = total gas - state gas.
-        // Collision-burned gas counts as regular gas for 2D block accounting.
-        let regular_gas = gas_used_pre_refund.saturating_sub(state_gas);
+            .saturating_sub(execution_state_gas_refund)
+            .saturating_sub(vm.state_refund);
+        // Compute raw consumption from scratch (gas_limit minus gas_remaining)
+        // to avoid interference from any reservoir-current subtraction baked
+        // into the caller's pre-refund number.
+        #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
+        let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
+        let raw_consumed = vm.env.gas_limit.saturating_sub(gas_remaining);
+        // EIP-8037 (PR #2815, Policy A): state-gas spills are refunded via the reservoir
+        // (finalize_execution adds the execution portion back). Subtract every spill so it
+        // does not count toward the regular dimension; no reclassification term needed.
+        let regular_gas = raw_consumed
+            .saturating_sub(vm.intrinsic_state_gas_charged)
+            .saturating_sub(vm.state_gas_reservoir_initial)
+            .saturating_sub(vm.state_gas_spill);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)
@@ -393,15 +423,39 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
         return Err(TxValidationError::IntrinsicGasTooLow.into());
     }
 
-    // calldata_cost = tokens_in_calldata * 4
-    let calldata_cost: u64 = gas_cost::tx_calldata(&calldata)?;
+    let fork = vm.env.config.fork;
 
-    // same as calculated in gas_used()
-    let tokens_in_calldata: u64 = calldata_cost / STANDARD_TOKEN_COST;
+    // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
+    // floor_tokens_in_calldata = (zero_bytes + nonzero_bytes) * STANDARD_TOKEN_COST
+    // Pre-Amsterdam uses the weighted EIP-7623 formula: (nonzero * 16 + zero * 4) / 4
+    let mut tokens_in_calldata: u64 = if fork >= Fork::Amsterdam {
+        // EIP-7976: floor tokens = total_bytes * STANDARD_TOKEN_COST (unweighted).
+        let total_bytes: u64 = calldata
+            .len()
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        total_bytes
+            .checked_mul(STANDARD_TOKEN_COST)
+            .ok_or(InternalError::Overflow)?
+    } else {
+        // Pre-Amsterdam: weighted EIP-7623 token count.
+        gas_cost::tx_calldata(&calldata)? / STANDARD_TOKEN_COST
+    };
 
-    // floor_cost_by_tokens = TX_BASE_COST + TOTAL_COST_FLOOR_PER_TOKEN * tokens_in_calldata
+    // EIP-7981 (Amsterdam+): access-list data bytes fold into the floor-token count.
+    // floor_tokens_in_access_list = access_list_bytes * STANDARD_TOKEN_COST
+    // where access_list_bytes = 20 * address_count + 32 * storage_key_count.
+    if fork >= Fork::Amsterdam {
+        let al_floor_tokens = floor_tokens_in_access_list(vm.tx.access_list());
+        tokens_in_calldata = tokens_in_calldata
+            .checked_add(al_floor_tokens)
+            .ok_or(InternalError::Overflow)?;
+    }
+
+    // floor_cost_by_tokens = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
+    // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
     let floor_cost_by_tokens = tokens_in_calldata
-        .checked_mul(TOTAL_COST_FLOOR_PER_TOKEN)
+        .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
         .checked_add(TX_BASE_COST)
         .ok_or(InternalError::Overflow)?;
@@ -569,6 +623,12 @@ pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMEr
 }
 
 pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> {
+    // System contract calls (EIP-2935, EIP-4788, EIP-7002, EIP-7251) bypass the
+    // block-level gas-allowance check — their 30M gas budget is a protocol rule
+    // independent of `block_gas_limit`.
+    if vm.env.is_system_call {
+        return Ok(());
+    }
     if vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded {
             block_gas_limit: vm.env.block_gas_limit,

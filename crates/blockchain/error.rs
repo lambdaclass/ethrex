@@ -152,6 +152,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+    #[error("Reorg depth {reorg_depth} exceeds the client's limit of {limit}")]
+    TooDeepReorg { reorg_depth: u64, limit: u64 },
 
     // TODO(#5564): handle arbitrary reorgs
     #[error("State root of the new head is not reachable from the database")]

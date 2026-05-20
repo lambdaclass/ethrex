@@ -87,6 +87,7 @@ use ethrex_storage::{
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -377,7 +378,15 @@ impl Blockchain {
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
-        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
+            ethrex_vm::log_gas_used_mismatch(
+                &execution_result.tx_gas_breakdowns,
+                block.header.number,
+                execution_result.block_gas_used,
+                block.header.gas_used,
+            );
+            return Err(e.into());
+        }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
@@ -461,8 +470,10 @@ impl Blockchain {
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -503,7 +514,17 @@ impl Blockchain {
                         let (execution_result, produced_bal) = result?;
 
                         // Validate execution went alright
-                        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+                        if let Err(e) =
+                            validate_gas_used(execution_result.block_gas_used, &block.header)
+                        {
+                            ethrex_vm::log_gas_used_mismatch(
+                                &execution_result.tx_gas_breakdowns,
+                                block.header.number,
+                                execution_result.block_gas_used,
+                                block.header.gas_used,
+                            );
+                            return Err(e.into());
+                        }
                         validate_receipts_root(
                             &block.header,
                             &execution_result.receipts,
@@ -566,11 +587,14 @@ impl Blockchain {
                         "merkleization thread panicked".to_string(),
                     ))
                 });
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
+                #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+                let warmer_duration = Duration::ZERO;
                 Ok((execution_result, merkleization_result, warmer_duration))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
@@ -1147,7 +1171,15 @@ impl Blockchain {
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
-        validate_gas_used(execution_result.block_gas_used, &block.header)?;
+        if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
+            ethrex_vm::log_gas_used_mismatch(
+                &execution_result.tx_gas_breakdowns,
+                block.header.number,
+                execution_result.block_gas_used,
+                block.header.gas_used,
+            );
+            return Err(e.into());
+        }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
@@ -1899,6 +1931,14 @@ impl Blockchain {
             self.storage
                 .store_witness(block_hash, block_number, witness)?;
         };
+
+        // Store the produced BAL (present on Amsterdam+ blocks) so peers can request it
+        if let Some(bal) = &produced_bal {
+            let block_hash = block.hash();
+            if let Err(err) = self.storage.store_block_access_list(block_hash, bal) {
+                warn!("Failed to store block access list for block {block_hash}: {err}");
+            }
+        }
 
         let result = self.store_block(block, account_updates_list, res);
 
