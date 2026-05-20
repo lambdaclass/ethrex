@@ -376,6 +376,20 @@ impl StorageWriteBatch for RocksDBWriteTx {
         Ok(())
     }
 
+    fn delete_range(
+        &mut self,
+        table: &'static str,
+        start: &[u8],
+        end: &[u8],
+    ) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {table:?} not found")))?;
+        self.batch.delete_range_cf(&cf, start, end);
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         let batch = std::mem::take(&mut self.batch);
