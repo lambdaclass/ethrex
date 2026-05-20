@@ -482,7 +482,6 @@ impl Blockchain {
 
         let cancelled = AtomicBool::new(false);
         let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled;
-        let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
@@ -507,6 +506,8 @@ impl Blockchain {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())

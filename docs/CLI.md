@@ -80,6 +80,16 @@ Node options:
           
           [env: ETHREX_NO_PRECOMPILE_CACHE=]
 
+      --no-bal-parallel-exec
+          Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).
+          
+          [env: ETHREX_NO_BAL_PARALLEL_EXEC=]
+
+      --no-bal-prefetch
+          Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.
+          
+          [env: ETHREX_NO_BAL_PREFETCH=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
 
