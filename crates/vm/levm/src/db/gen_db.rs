@@ -7,7 +7,7 @@ use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
 use ethrex_common::types::block_access_list::{
-    BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
+    BalAddressIndex, BlockAccessList, BlockAccessListRecorder, SlotChange,
 };
 use ethrex_common::utils::ZERO_U256;
 
@@ -148,22 +148,12 @@ pub fn seed_one_address_info_from_bal(
     Ok(true)
 }
 
-/// Read the post-value of a single storage slot from the BAL up to `max_idx`.
+/// Select the post-value of a single `SlotChange` up to `max_idx`.
 ///
-/// Pure read; does not touch `db`. Returns `Some(value)` if a change at
-/// `block_access_index <= max_idx` exists for `key`, `None` otherwise.
+/// Pure read; returns `Some(value)` if any `slot_changes` entry has
+/// `block_access_index <= max_idx`, `None` otherwise.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-pub fn seed_one_storage_slot_from_bal(
-    bal: &BlockAccessList,
-    acct_idx: usize,
-    key: H256,
-    max_idx: u32,
-) -> Option<U256> {
-    let acct_changes = bal.accounts().get(acct_idx)?;
-    let sc = acct_changes
-        .storage_changes
-        .iter()
-        .find(|sc| ethrex_common::utils::u256_to_h256(sc.slot) == key)?;
+pub fn post_value_at_or_before(sc: &SlotChange, max_idx: u32) -> Option<U256> {
     let pos = sc
         .slot_changes
         .partition_point(|c| c.block_access_index <= max_idx);
@@ -171,6 +161,25 @@ pub fn seed_one_storage_slot_from_bal(
         .get(pos.saturating_sub(1))
         .filter(|_| pos > 0)
         .map(|c| c.post_value)
+}
+
+/// Read the post-value of a single storage slot from the BAL up to `max_idx`.
+///
+/// O(1) slot resolution via the precomputed `slot_idx_by_account` map in
+/// `BalAddressIndex`. Pure read; does not touch `db`.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+pub fn seed_one_storage_slot_from_bal(
+    bal: &BlockAccessList,
+    index: &BalAddressIndex,
+    acct_idx: usize,
+    key: H256,
+    max_idx: u32,
+) -> Option<U256> {
+    let acct_changes = bal.accounts().get(acct_idx)?;
+    let slot_map = index.slot_idx_by_account.get(acct_idx)?;
+    let sc_idx = *slot_map.get(&key)?;
+    let sc = acct_changes.storage_changes.get(sc_idx)?;
+    post_value_at_or_before(sc, max_idx)
 }
 
 /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
@@ -973,7 +982,7 @@ impl<'a> VM<'a> {
             );
             let max_idx = cursor.bal_index.saturating_sub(1);
             let &acct_idx = cursor.index.addr_to_idx.get(&address)?;
-            seed_one_storage_slot_from_bal(&cursor.bal, acct_idx, key, max_idx)
+            seed_one_storage_slot_from_bal(&cursor.bal, &cursor.index, acct_idx, key, max_idx)
         });
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if let Some(value) = bal_hit {
