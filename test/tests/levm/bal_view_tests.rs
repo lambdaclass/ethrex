@@ -51,10 +51,11 @@ mod inner {
     #[test]
     fn tx1_sees_tx0_write() {
         let bal = bal_single_slot_write_at_1();
+        let index = bal.build_validation_index();
         let key = u256_to_h256(SLOT);
 
         // tx 1 has bal_index = 2, so max_idx = 1 (same as seed_db_from_bal semantics).
-        let result = seed_one_storage_slot_from_bal(&bal, 0, key, 1);
+        let result = seed_one_storage_slot_from_bal(&bal, &index, 0, key, 1);
 
         assert_eq!(
             result,
@@ -116,14 +117,15 @@ mod inner {
         );
         let acct = AccountChanges::new(CONTRACT).with_storage_changes(vec![slot_change]);
         let bal = BlockAccessList::from_accounts(vec![acct]);
+        let index = bal.build_validation_index();
         let key = u256_to_h256(SLOT);
 
         // tx 1 cursor (bal_index=2, max_idx=1): should see V0 from tx 0.
-        let at_1 = seed_one_storage_slot_from_bal(&bal, 0, key, 1);
+        let at_1 = seed_one_storage_slot_from_bal(&bal, &index, 0, key, 1);
         assert_eq!(at_1, Some(V0), "at max_idx=1 should see V0 (tx 0's write)");
 
         // tx 2 cursor (bal_index=3, max_idx=2): should see V1 from tx 1.
-        let at_2 = seed_one_storage_slot_from_bal(&bal, 0, key, 2);
+        let at_2 = seed_one_storage_slot_from_bal(&bal, &index, 0, key, 2);
         assert_eq!(at_2, Some(V1), "at max_idx=2 should see V1 (tx 1's write)");
     }
 
