@@ -17,6 +17,7 @@ use crate::{
         hook::{Hook, get_hooks},
     },
     memory::Memory,
+    opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
@@ -25,7 +26,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
@@ -439,6 +440,8 @@ pub struct VM<'a> {
     pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
+    /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
+    pub opcode_tracer: LevmOpcodeTracer,
     /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
@@ -562,6 +565,7 @@ impl<'a> VM<'a> {
             hooks: get_hooks(&vm_type),
             storage_original_values: FxHashMap::default(),
             tracer,
+            opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
@@ -892,8 +896,62 @@ impl<'a> VM<'a> {
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
         loop {
+            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
+            let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
+
+            // Hoist the active flag to avoid reading it twice per opcode.
+            let tracer_active = self.opcode_tracer.active;
+
+            // Struct-log pre-step capture (single branch on the fast path when disabled).
+            let gas_before_op = if tracer_active {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+                )]
+                let gas_before = self.current_call_frame.gas_remaining.max(0) as u64;
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "call depth bounded by STACK_LIMIT=1024, fits in u32"
+                )]
+                let depth = (self.call_frames.len() as u32).saturating_add(1);
+                let refund = self.substate.refunded_gas;
+                let stack_view = self.collect_stack_for_trace();
+                let mem_view = self.collect_memory_for_trace();
+                // mem_size always reflects actual memory size, regardless of enable_memory.
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "memory size is bounded by gas; fits in u64"
+                )]
+                let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
+                let storage_kv = self.read_storage_for_trace(opcode);
+                let return_data = if self.opcode_tracer.cfg.enable_return_data {
+                    self.current_call_frame.sub_return_data.clone()
+                } else {
+                    Bytes::new()
+                };
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "pc is usize, fits in u64 on supported targets"
+                )]
+                let pc_u64 = pc_of_current_op as u64;
+                self.opcode_tracer.pre_step_capture(
+                    pc_u64,
+                    opcode,
+                    gas_before,
+                    depth,
+                    refund,
+                    &stack_view,
+                    &mem_view,
+                    mem_size_for_trace,
+                    &return_data,
+                    storage_kv,
+                );
+                gas_before
+            } else {
+                0
+            };
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
@@ -906,6 +964,31 @@ impl<'a> VM<'a> {
             {
                 let time = opcode_time_start.elapsed();
                 timings.update(opcode, time);
+            }
+
+            // Struct-log post-step: patch gas_cost, refund-after-op, and error
+            // into the buffered entry.
+            if tracer_active {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+                )]
+                let gas_after = self.current_call_frame.gas_remaining.max(0) as u64;
+                // Prefer the explicit opcode-overhead cost written by CALL/CREATE handlers;
+                // fall back to the gas diff for all other opcodes.
+                let gas_cost = self
+                    .opcode_tracer
+                    .last_opcode_gas_cost
+                    .take()
+                    .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
+                // refund-after-op matches geth's structLogger timing: for SSTORE and
+                // (pre-London) SELFDESTRUCT, the refund counter shown is the value
+                // *after* the opcode's accounting applied. Other opcodes don't touch
+                // refund, so the post-op value equals the captured pre-op value.
+                let refund_after = self.substate.refunded_gas;
+                let err_str = error.get().map(|e| e.to_string());
+                self.opcode_tracer
+                    .finalize_step(gas_cost, refund_after, err_str.as_deref());
             }
 
             let result = match op_result {
@@ -1042,6 +1125,17 @@ impl<'a> VM<'a> {
 
         self.tracer.exit_context(&ctx_result, true)?;
 
+        // Struct-log end-of-tx capture: record final output, gas used, and revert error.
+        // gas matches geth's `executionResult.Gas` which is post-refund (`receipt.GasUsed`).
+        if self.opcode_tracer.active {
+            self.opcode_tracer.output = ctx_result.output.clone();
+            self.opcode_tracer.gas_used = ctx_result.gas_spent;
+            self.opcode_tracer.error = match ctx_result.result {
+                TxResult::Revert(ref err) => Some(err.to_string()),
+                _ => None,
+            };
+        }
+
         // Only include logs if transaction succeeded. When a transaction reverts,
         // no logs should be emitted (including EIP-7708 Transfer logs).
         let logs = if ctx_result.is_success() {
@@ -1077,6 +1171,92 @@ impl<'a> VM<'a> {
         };
 
         Ok(report)
+    }
+
+    // ── Struct-log helper methods ─────────────────────────────────────────────
+
+    /// Collects the current stack in bottom-first order for struct-log emission.
+    ///
+    /// LEVM stack is top-first in memory (`values[offset]` = top), so we reverse
+    /// the active slice to produce the bottom-first wire format geth uses.
+    /// Returns an empty `Vec` when `cfg.disable_stack` is true.
+    pub fn collect_stack_for_trace(&self) -> Vec<U256> {
+        use crate::constants::STACK_LIMIT;
+        if self.opcode_tracer.cfg.disable_stack {
+            return Vec::new();
+        }
+        let s = &self.current_call_frame.stack;
+        // offset <= STACK_LIMIT by stack invariant.
+        s.values
+            .get(s.offset..STACK_LIMIT)
+            .map(|slice| slice.iter().rev().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Collects the live memory bytes for the current frame.
+    ///
+    /// Returns an empty `Vec` when `cfg.enable_memory` is false or memory is empty.
+    pub fn collect_memory_for_trace(&self) -> Vec<u8> {
+        if !self.opcode_tracer.cfg.enable_memory {
+            return Vec::new();
+        }
+        self.current_call_frame.memory.live_bytes()
+    }
+
+    /// Pre-reads the storage key/value for the current SLOAD or SSTORE opcode.
+    ///
+    /// Returns `None` when:
+    /// - `cfg.disable_storage` is set, or
+    /// - `opcode` is not SLOAD (0x54) or SSTORE (0x55), or
+    /// - the stack is empty (guard against underflow before the handler runs), or
+    /// - the storage read fails for any reason (including `AccountNotFound` —
+    ///   the trace omits the entry rather than emitting an ambiguous zero).
+    ///
+    /// For SLOAD: key = `stack.top`; value = the *current* stored value read from the DB.
+    /// For SSTORE: key = `stack.top`, value = `stack[top-1]` (the new value being written).
+    pub fn read_storage_for_trace(&mut self, opcode: u8) -> Option<(H256, H256)> {
+        const SLOAD: u8 = 0x54;
+        const SSTORE: u8 = 0x55;
+
+        if self.opcode_tracer.cfg.disable_storage {
+            return None;
+        }
+        if opcode != SLOAD && opcode != SSTORE {
+            return None;
+        }
+
+        // Need at least one element on stack for SLOAD, two for SSTORE.
+        use crate::constants::STACK_LIMIT;
+        let offset = self.current_call_frame.stack.offset;
+        if offset >= STACK_LIMIT {
+            return None; // stack empty
+        }
+
+        // SLOAD/SSTORE operate on the call's storage context (`to`), not the code's
+        // address. Under DELEGATECALL/CALLCODE these differ.
+        let addr = self.current_call_frame.to;
+
+        let stack_values = &self.current_call_frame.stack.values;
+        let key_u256 = *stack_values.get(offset)?;
+        let key = BigEndianHash::from_uint(&key_u256);
+
+        if opcode == SLOAD {
+            // Omit the entry on any read failure (incl. account not yet cached);
+            // a zero value would be indistinguishable from a legitimate never-written slot.
+            let v = self.get_storage_value(addr, key).ok()?;
+            let value = BigEndianHash::from_uint(&v);
+            Some((key, value))
+        } else {
+            // SSTORE: need two stack elements.
+            let next_offset = offset.checked_add(1)?;
+            if next_offset >= STACK_LIMIT {
+                return None;
+            }
+            // values[offset+1] is the new value being written (second from top = stack[top-1]).
+            let value_u256 = *self.current_call_frame.stack.values.get(next_offset)?;
+            let value = BigEndianHash::from_uint(&value_u256);
+            Some((key, value))
+        }
     }
 }
 
