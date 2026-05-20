@@ -87,6 +87,11 @@ pub fn seed_one_address_info_from_bal(
     // When BAL covers all account info fields (balance + nonce + code), insert
     // a default LevmAccount directly to skip the store/shared_base lookup.
     // For partial coverage, load from store to fill missing fields.
+    //
+    // Invariant: `account.storage` is left empty here. Storage is materialized
+    // lazily through `get_storage_value` (which also consults the cursor).
+    // Callers must NOT assume `account.storage` is fully populated after this
+    // path — iterate-all-keys / bulk-read patterns will see an empty map.
     let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
     if has_all_info {
         use ethrex_common::constants::EMPTY_KECCACK_HASH;
