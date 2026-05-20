@@ -72,6 +72,7 @@ runs:
             el_extra_params:
               - "--syncmode=snap"
               - "--log.level=info"
+              - "--http.api=eth,net,web3,debug,admin,txpool"
             cl_type: ${CL_TYPE}
             cl_image: ${CL_IMAGE}
             count: 1

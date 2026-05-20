@@ -20,6 +20,13 @@ pub const MEMORY_EXPANSION_QUOTIENT: u64 = 512;
 // Dedicated gas limit for system calls according to EIPs 2935, 4788, 7002 and 7251
 pub const SYS_CALL_GAS_LIMIT: u64 = 30000000;
 
+// EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system transactions
+// receive an extra state-gas reservoir of
+// `STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte * SYSTEM_MAX_SSTORES_PER_CALL`
+// on top of `SYS_CALL_GAS_LIMIT`, so SSTORE-heavy system contracts (EIP-2935,
+// EIP-4788) cannot OOG on state-gas growth alone.
+pub const SYSTEM_MAX_SSTORES_PER_CALL: u64 = 16;
+
 // Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
 

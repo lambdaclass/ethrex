@@ -245,13 +245,7 @@ fn apply_finalize_mutations(
             fee_token_ratio,
         )?;
     } else {
-        default_hook::refund_sender(
-            vm,
-            ctx_result,
-            gas_refunded,
-            actual_gas_used,
-            total_gas_pre_refund,
-        )?;
+        default_hook::refund_sender(vm, ctx_result, gas_refunded, actual_gas_used)?;
     }
 
     pay_coinbase_l2(

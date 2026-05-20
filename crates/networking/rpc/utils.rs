@@ -22,7 +22,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32602`: Invalid params
 /// - `-32603`: Internal error
 /// - `-32000`: Generic server error
-/// - `-38001` to `-38005`: Engine API specific errors
+/// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
@@ -54,6 +54,8 @@ pub enum RpcErr {
     InvalidForkChoiceState(String),
     #[error("Invalid payload attributes: {0}")]
     InvalidPayloadAttributes(String),
+    #[error("Too deep reorg: {0}")]
+    TooDeepReorg(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
     // EIP-8025 proof errors (-39001 .. -39004)
@@ -161,6 +163,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: Some(data),
                 message: "Invalid payload attributes".to_string(),
             },
+            RpcErr::TooDeepReorg(data) => RpcErrorMetadata {
+                code: -38006,
+                data: Some(data),
+                message: "Too deep reorg".to_string(),
+            },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,
                 data: None,
@@ -218,6 +225,7 @@ impl From<ethrex_crypto::CryptoError> for RpcErr {
 ///
 /// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
 /// Different namespaces may have different authentication requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RpcNamespace {
     /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
@@ -235,6 +243,23 @@ pub enum RpcNamespace {
     Mempool,
     /// Bor namespace for Polygon PoS specific methods.
     Bor,
+}
+
+impl RpcNamespace {
+    /// Parses a namespace name from its CLI/method-prefix form.
+    pub fn from_prefix(s: &str) -> Option<Self> {
+        match s {
+            "engine" => Some(RpcNamespace::Engine),
+            "eth" => Some(RpcNamespace::Eth),
+            "admin" => Some(RpcNamespace::Admin),
+            "debug" => Some(RpcNamespace::Debug),
+            "web3" => Some(RpcNamespace::Web3),
+            "net" => Some(RpcNamespace::Net),
+            "txpool" => Some(RpcNamespace::Mempool),
+            "bor" => Some(RpcNamespace::Bor),
+            _ => None,
+        }
+    }
 }
 
 /// JSON-RPC request identifier.
@@ -294,18 +319,7 @@ impl RpcRequest {
 }
 
 pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
-    match maybe_namespace {
-        "engine" => Ok(RpcNamespace::Engine),
-        "eth" => Ok(RpcNamespace::Eth),
-        "admin" => Ok(RpcNamespace::Admin),
-        "debug" => Ok(RpcNamespace::Debug),
-        "web3" => Ok(RpcNamespace::Web3),
-        "net" => Ok(RpcNamespace::Net),
-        // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
-        "txpool" => Ok(RpcNamespace::Mempool),
-        "bor" => Ok(RpcNamespace::Bor),
-        _ => Err(RpcErr::MethodNotFound(method)),
-    }
+    RpcNamespace::from_prefix(maybe_namespace).ok_or(RpcErr::MethodNotFound(method))
 }
 
 impl Default for RpcRequest {

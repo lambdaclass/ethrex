@@ -13,7 +13,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     H256,
-    types::{Block, BlockHeader},
+    types::{Block, BlockHeader, block_access_list::BlockAccessList},
 };
 use ethrex_storage::Store;
 use tokio::time::Instant;
@@ -292,6 +292,7 @@ pub async fn sync_cycle_full(
             blocks,
             final_batch,
             store.clone(),
+            peers,
         )
         .await?;
     }
@@ -313,6 +314,7 @@ pub async fn sync_cycle_full(
             pending_blocks,
             true,
             store.clone(),
+            peers,
         )
         .await?;
     }
@@ -327,6 +329,7 @@ async fn add_blocks_in_batch(
     blocks: Vec<Block>,
     final_batch: bool,
     store: Store,
+    peers: &mut PeerHandler,
 ) -> Result<(), SyncError> {
     let execution_start = Instant::now();
     // Copy some values for later
@@ -362,9 +365,31 @@ async fn add_blocks_in_batch(
         );
         return Ok(());
     }
+    let chain_config = store.get_chain_config();
+    let bals: Vec<Option<BlockAccessList>> = {
+        // Only the final batch goes through `run_blocks_pipeline`, which is the
+        // path that actually consumes BALs. Non-final batches use
+        // `blockchain.add_blocks_in_batch()` which doesn't accept BALs, so
+        // fetching them for those batches just wastes a network round-trip.
+        let any_amsterdam = final_batch
+            && blocks
+                .iter()
+                .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
+        if any_amsterdam {
+            match peers.request_block_access_lists(&blocks_hashes).await {
+                Ok(Some(bals)) if bals.len() == blocks.len() => bals,
+                _ => {
+                    debug!("[SYNCING] BAL fetch unavailable or failed, proceeding without BALs");
+                    vec![None; blocks.len()]
+                }
+            }
+        } else {
+            vec![None; blocks.len()]
+        }
+    };
     // Run the batch
     if let Err((err, batch_failure)) =
-        add_blocks(blockchain.clone(), blocks, final_batch, cancel_token).await
+        add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
     {
         if let Some(batch_failure) = batch_failure {
             warn!("Failed to add block during FullSync: {err}");
@@ -426,12 +451,13 @@ async fn add_blocks_in_batch(
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
+    bals: Vec<Option<BlockAccessList>>,
     sync_head_found: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     // If we found the sync head, run the blocks sequentially to store all the blocks's state
     if sync_head_found {
-        return run_blocks_pipeline(blockchain, blocks).await;
+        return run_blocks_pipeline(blockchain, blocks, bals).await;
     }
 
     // Try batch execution first (faster).
@@ -463,7 +489,7 @@ async fn add_blocks(
                 "Batch execution failed at {failed_block_info} with: {err}. \
                  Retrying batch with per-block pipeline execution."
             );
-            run_blocks_pipeline(blockchain, blocks).await
+            run_blocks_pipeline(blockchain, blocks, bals).await
         }
         Err(e) => Err(e),
     }
@@ -596,20 +622,23 @@ fn is_post_execution_error(err: &InvalidBlockError) -> bool {
 async fn run_blocks_pipeline(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
+    bals: Vec<Option<BlockAccessList>>,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     tokio::task::spawn_blocking(move || {
         let mut last_valid_hash = H256::default();
-        for block in blocks {
+        for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
-            blockchain.add_block_pipeline(block, None).map_err(|e| {
-                (
-                    e,
-                    Some(BatchBlockProcessingFailure {
-                        last_valid_hash,
-                        failed_block_hash: block_hash,
-                    }),
-                )
-            })?;
+            blockchain
+                .add_block_pipeline(block, bal.as_ref())
+                .map_err(|e| {
+                    (
+                        e,
+                        Some(BatchBlockProcessingFailure {
+                            last_valid_hash,
+                            failed_block_hash: block_hash,
+                        }),
+                    )
+                })?;
             last_valid_hash = block_hash;
         }
         Ok(())

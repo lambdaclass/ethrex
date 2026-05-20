@@ -15,12 +15,13 @@ use crate::{
         connection::{codec::RLPxCodec, handshake},
         error::PeerConnectionError,
         eth::{
+            block_access_lists::{BlockAccessLists, GetBlockAccessLists},
             blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
             },
-            status::{StatusMessage68, StatusMessage69, StatusMessage70},
+            status::{StatusMessage68, StatusMessage69, StatusMessage70, StatusMessage71},
             transactions::{GetPooledTransactions, NewPooledTransactionHashes},
             update::BlockRangeUpdate,
         },
@@ -668,6 +669,7 @@ where
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
         Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
+        Some(cap) if cap == &Capability::eth(71) => EthCapVersion::V71,
         _ => EthCapVersion::default(),
     };
     *eth_version
@@ -872,19 +874,20 @@ where
                 let msg = StatusMessage69::new(&state.storage).await?;
                 debug!(
                     peer=%state.node,
-                    eth_version = msg.eth_version,
-                    network_id = msg.network_id,
-                    genesis = ?msg.genesis,
-                    fork_id_hash = ?msg.fork_id.fork_hash,
-                    fork_id_next = msg.fork_id.fork_next,
-                    earliest_block = msg.earliest_block,
-                    latest_block = msg.latest_block,
-                    latest_hash = ?msg.latest_block_hash,
+                    eth_version = msg.0.eth_version,
+                    network_id = msg.0.network_id,
+                    genesis = ?msg.0.genesis,
+                    fork_id_hash = ?msg.0.fork_id.fork_hash,
+                    fork_id_next = msg.0.fork_id.fork_next,
+                    earliest_block = msg.0.earliest_block,
+                    latest_block = msg.0.latest_block,
+                    latest_hash = ?msg.0.latest_block_hash,
                     "Sending Status(69)"
                 );
                 Message::Status69(msg)
             }
             70 => Message::Status70(StatusMessage70::new(&state.storage).await?),
+            71 => Message::Status71(StatusMessage71::new(&state.storage).await?),
             ver => {
                 return Err(PeerConnectionError::HandshakeError(format!(
                     "Invalid eth version {ver}"
@@ -910,6 +913,10 @@ where
             }
             Message::Status70(msg_data) => {
                 trace!(peer=%state.node, "Received Status(70)");
+                backend::validate_status(msg_data, &state.storage, &eth).await?
+            }
+            Message::Status71(msg_data) => {
+                trace!(peer=%state.node, "Received Status(71)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
             }
             Message::Disconnect(disconnect) => {
@@ -1224,6 +1231,11 @@ async fn handle_incoming_message(
                 let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             }
         }
+        Message::Status71(msg_data) => {
+            if let Some(eth) = &state.negotiated_eth_capability {
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
+            }
+        }
         Message::GetAccountRange(req) => {
             let response = process_account_range_request(req, state.storage.clone()).await?;
             send(state, Message::AccountRange(response)).await?
@@ -1299,6 +1311,27 @@ async fn handle_incoming_message(
                 block_bodies,
             };
             send(state, Message::BlockBodies(response)).await?;
+        }
+        Message::GetBlockAccessLists(GetBlockAccessLists { id, block_hashes })
+            if peer_supports_eth =>
+        {
+            use crate::rlpx::eth::block_access_lists::BLOCK_ACCESS_LIST_LIMIT;
+            let mut block_access_lists =
+                Vec::with_capacity(block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT));
+            for hash in &block_hashes {
+                match state.storage.get_block_access_list(*hash) {
+                    Ok(bal) => block_access_lists.push(bal),
+                    Err(err) => {
+                        error!("Error accessing DB while building BAL response for peer: {err}");
+                        block_access_lists.push(None);
+                    }
+                }
+                if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
+                    break;
+                }
+            }
+            let response = BlockAccessLists::new(id, block_access_lists);
+            send(state, Message::BlockAccessLists(response)).await?;
         }
         Message::GetReceipts68(GetReceipts68 { id, block_hashes }) if peer_supports_eth => {
             let mut receipts = Vec::new();
@@ -1928,7 +1961,8 @@ async fn handle_incoming_message(
         | message @ Message::BlockHeaders(_)
         | message @ Message::Receipts68(_)
         | message @ Message::Receipts69(_)
-        | message @ Message::Receipts70(_) => {
+        | message @ Message::Receipts70(_)
+        | message @ Message::BlockAccessLists(_) => {
             if let Some((_, tx)) = message
                 .request_id()
                 .and_then(|id| state.current_requests.remove(&id))

@@ -319,6 +319,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        opts.http_api.iter().copied().collect(),
     );
 
     tracker.spawn(rpc_api);
@@ -347,6 +348,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        ..Default::default()
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config)
