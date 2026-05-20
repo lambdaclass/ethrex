@@ -221,11 +221,15 @@ impl RpcHandler for NewPayloadV4Request {
 
         let chain_config = context.storage.get_chain_config();
 
-        // Amsterdam-active timestamps must use V5, not V4 (-32602 per engine-API spec).
+        // Amsterdam-active timestamps must use V5, not V4. Per engine-API spec
+        // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
+        // if the timestamp of payload is greater than or equal to the Amsterdam
+        // activation timestamp."
         if chain_config.is_amsterdam_activated(block.header.timestamp) {
-            return Err(RpcErr::WrongParam(
-                "engine_newPayloadV4 cannot accept Amsterdam timestamps".to_string(),
-            ));
+            return Err(RpcErr::UnsupportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
         }
 
         if !chain_config.is_prague_activated(block.header.timestamp) {
