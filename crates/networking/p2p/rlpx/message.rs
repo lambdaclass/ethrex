@@ -7,6 +7,7 @@ use crate::rlpx::snap::{
     StorageRanges, TrieNodes,
 };
 
+use super::eth::block_access_lists::{BlockAccessLists, GetBlockAccessLists};
 use super::eth::blocks::{
     BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, NewBlockAnnouncement,
     NewBlockHashes,
@@ -15,7 +16,7 @@ use super::eth::bsc::UpgradeStatusMsg;
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
 };
-use super::eth::status::{StatusMessage68, StatusMessage69, StatusMessage70};
+use super::eth::status::{StatusMessage68, StatusMessage69, StatusMessage70, StatusMessage71};
 use super::eth::transactions::{
     GetPooledTransactions, NewPooledTransactionHashes, PooledTransactions, Transactions,
 };
@@ -35,9 +36,11 @@ const SNAP_CAPABILITY_OFFSET_ETH_69: u8 = 0x22;
 // format of GetReceipts (0x0F) and Receipts (0x10), so offsets are identical.
 // GetReceipts68 and GetReceipts69 are type aliases for the same struct (identical wire format).
 const SNAP_CAPABILITY_OFFSET_ETH_70: u8 = 0x22;
+const SNAP_CAPABILITY_OFFSET_ETH_71: u8 = 0x24;
 const BASED_CAPABILITY_OFFSET_ETH_68: u8 = 0x30;
 const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
+const BASED_CAPABILITY_OFFSET_ETH_71: u8 = 0x33;
 
 // When the bsc capability is negotiated alongside eth/68, capabilities are sorted
 // alphabetically: bsc < eth < snap.  The bsc sub-protocol message count depends on
@@ -64,6 +67,7 @@ pub enum EthCapVersion {
     /// eth/68 + bsc/1 negotiated (BSC mainnet chain ID 56, or Chapel testnet chain ID 97).
     /// Alphabetical capability ordering shifts all offsets by BSC_PROTOCOL_LENGTH (2).
     V68Bsc,
+    V71,
 }
 
 impl EthCapVersion {
@@ -84,6 +88,7 @@ impl EthCapVersion {
             EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => SNAP_CAPABILITY_OFFSET_ETH_70,
             EthCapVersion::V68Bsc => SNAP_CAPABILITY_OFFSET_ETH_68_BSC,
+            EthCapVersion::V71 => SNAP_CAPABILITY_OFFSET_ETH_71,
         }
     }
 
@@ -93,6 +98,7 @@ impl EthCapVersion {
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
             EthCapVersion::V68Bsc => BASED_CAPABILITY_OFFSET_ETH_68_BSC,
+            EthCapVersion::V71 => BASED_CAPABILITY_OFFSET_ETH_71,
         }
     }
 
@@ -123,6 +129,7 @@ pub enum Message {
     Status68(StatusMessage68),
     Status69(StatusMessage69),
     Status70(StatusMessage70),
+    Status71(StatusMessage71),
     // eth capability
     // https://github.com/ethereum/devp2p/blob/master/caps/eth.md
     GetBlockHeaders(GetBlockHeaders),
@@ -140,6 +147,8 @@ pub enum Message {
     Receipts69(Receipts69),
     Receipts70(Receipts70),
     BlockRangeUpdate(BlockRangeUpdate),
+    GetBlockAccessLists(GetBlockAccessLists),
+    BlockAccessLists(BlockAccessLists),
     // BSC-specific extension messages
     // https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/protocol.go
     UpgradeStatus(UpgradeStatusMsg),
@@ -182,6 +191,7 @@ impl Message {
             Message::Status68(_) => eth_version.eth_capability_offset() + StatusMessage68::CODE,
             Message::Status69(_) => eth_version.eth_capability_offset() + StatusMessage69::CODE,
             Message::Status70(_) => eth_version.eth_capability_offset() + StatusMessage70::CODE,
+            Message::Status71(_) => eth_version.eth_capability_offset() + StatusMessage71::CODE,
             Message::Transactions(_) => eth_version.eth_capability_offset() + Transactions::CODE,
             Message::GetBlockHeaders(_) => {
                 eth_version.eth_capability_offset() + GetBlockHeaders::CODE
@@ -211,6 +221,12 @@ impl Message {
             }
             Message::UpgradeStatus(_) => {
                 eth_version.eth_capability_offset() + UpgradeStatusMsg::CODE
+            }
+            Message::GetBlockAccessLists(_) => {
+                eth_version.eth_capability_offset() + GetBlockAccessLists::CODE
+            }
+            Message::BlockAccessLists(_) => {
+                eth_version.eth_capability_offset() + BlockAccessLists::CODE
             }
             // snap capability
             Message::GetAccountRange(_) => {
@@ -285,6 +301,9 @@ impl Message {
                 StatusMessage70::CODE if matches!(eth_version, EthCapVersion::V70) => {
                     Ok(Message::Status70(StatusMessage70::decode(data)?))
                 }
+                StatusMessage71::CODE if matches!(eth_version, EthCapVersion::V71) => {
+                    Ok(Message::Status71(StatusMessage71::decode(data)?))
+                }
                 Transactions::CODE => Ok(Message::Transactions(Transactions::decode(data)?)),
                 GetBlockHeaders::CODE => {
                     Ok(Message::GetBlockHeaders(GetBlockHeaders::decode(data)?))
@@ -306,7 +325,11 @@ impl Message {
                 {
                     Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
                 }
-                GetReceipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                // eth/71 (EIP-8159) builds on eth/69, not eth/70 — it uses the
+                // same receipt format as eth/69.
+                GetReceipts69::CODE
+                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
+                {
                     Ok(Message::GetReceipts69(GetReceipts69::decode(data)?))
                 }
                 GetReceipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
@@ -317,7 +340,9 @@ impl Message {
                 {
                     Ok(Message::Receipts68(Receipts68::decode(data)?))
                 }
-                Receipts69::CODE if matches!(eth_version, EthCapVersion::V69) => {
+                Receipts69::CODE
+                    if matches!(eth_version, EthCapVersion::V69 | EthCapVersion::V71) =>
+                {
                     Ok(Message::Receipts69(Receipts69::decode(data)?))
                 }
                 Receipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
@@ -328,6 +353,12 @@ impl Message {
                 }
                 UpgradeStatusMsg::CODE => {
                     Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
+                }
+                GetBlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => Ok(
+                    Message::GetBlockAccessLists(GetBlockAccessLists::decode(data)?),
+                ),
+                BlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => {
+                    Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
                 }
                 // NewBlockHashes (0x01) — deprecated in eth/68 but BSC peers still send it.
                 // Decode to extract the freshest announced hash so the BSC sync bridge
@@ -397,6 +428,7 @@ impl Message {
             Message::Status68(msg) => msg.encode(buf),
             Message::Status69(msg) => msg.encode(buf),
             Message::Status70(msg) => msg.encode(buf),
+            Message::Status71(msg) => msg.encode(buf),
             Message::Transactions(msg) => msg.encode(buf),
             Message::GetBlockHeaders(msg) => msg.encode(buf),
             Message::BlockHeaders(msg) => msg.encode(buf),
@@ -419,6 +451,8 @@ impl Message {
             Message::NewBlockHashes(msg) => msg.encode(buf),
             // We never send NewBlock; receive-only.
             Message::NewBlockAnnouncement(msg) => msg.encode(buf),
+            Message::GetBlockAccessLists(msg) => msg.encode(buf),
+            Message::BlockAccessLists(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -457,6 +491,8 @@ impl Message {
             Message::StorageRanges(message) => Some(message.id),
             Message::ByteCodes(message) => Some(message.id),
             Message::TrieNodes(message) => Some(message.id),
+            Message::GetBlockAccessLists(message) => Some(message.id),
+            Message::BlockAccessLists(message) => Some(message.id),
             // The rest of the message types does not have a request id.
             Message::Hello(_)
             | Message::Disconnect(_)
@@ -465,6 +501,7 @@ impl Message {
             | Message::Status68(_)
             | Message::Status69(_)
             | Message::Status70(_)
+            | Message::Status71(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
             | Message::BlockRangeUpdate(_)
@@ -489,6 +526,7 @@ impl Message {
             Message::Status68(_) => "Status",
             Message::Status69(_) => "Status",
             Message::Status70(_) => "Status",
+            Message::Status71(_) => "Status",
             Message::GetBlockHeaders(_) => "GetBlockHeaders",
             Message::BlockHeaders(_) => "BlockHeaders",
             Message::Transactions(_) => "Transactions",
@@ -508,6 +546,8 @@ impl Message {
             Message::BscIgnored => "BscIgnored",
             Message::NewBlockHashes(_) => "NewBlockHashes",
             Message::NewBlockAnnouncement(_) => "NewBlock",
+            Message::GetBlockAccessLists(_) => "GetBlockAccessLists",
+            Message::BlockAccessLists(_) => "BlockAccessLists",
             Message::GetAccountRange(_) => "GetAccountRange",
             Message::AccountRange(_) => "AccountRange",
             Message::GetStorageRanges(_) => "GetStorageRanges",
@@ -535,6 +575,7 @@ impl Display for Message {
             Message::Status68(_) => "eth:Status(68)".fmt(f),
             Message::Status69(_) => "eth:Status(69)".fmt(f),
             Message::Status70(_) => "eth:Status(70)".fmt(f),
+            Message::Status71(_) => "eth:Status(71)".fmt(f),
             Message::GetBlockHeaders(_) => "eth:getBlockHeaders".fmt(f),
             Message::BlockHeaders(_) => "eth:BlockHeaders".fmt(f),
             Message::BlockBodies(_) => "eth:BlockBodies".fmt(f),
@@ -554,6 +595,8 @@ impl Display for Message {
             Message::BscIgnored => "bsc:Ignored".fmt(f),
             Message::NewBlockHashes(_) => "eth:NewBlockHashes".fmt(f),
             Message::NewBlockAnnouncement(_) => "eth:NewBlock".fmt(f),
+            Message::GetBlockAccessLists(_) => "eth:GetBlockAccessLists".fmt(f),
+            Message::BlockAccessLists(_) => "eth:BlockAccessLists".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),

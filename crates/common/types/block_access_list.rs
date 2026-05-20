@@ -45,14 +45,14 @@ fn sorted_list_length<T: RLPEncode>(items: &[T]) -> usize {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct StorageChange {
-    /// Block access index per EIP-7928 spec (uint16).
-    pub block_access_index: u16,
+    /// Block access index per EIP-7928 spec (uint32).
+    pub block_access_index: u32,
     pub post_value: U256,
 }
 
 impl StorageChange {
     /// Creates a new storage change with the given block access index and post value.
-    pub fn new(block_access_index: u16, post_value: U256) -> Self {
+    pub fn new(block_access_index: u32, post_value: U256) -> Self {
         Self {
             block_access_index,
             post_value,
@@ -135,14 +135,14 @@ impl RLPDecode for SlotChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct BalanceChange {
-    /// Block access index per EIP-7928 spec (uint16).
-    pub block_access_index: u16,
+    /// Block access index per EIP-7928 spec (uint32).
+    pub block_access_index: u32,
     pub post_balance: U256,
 }
 
 impl BalanceChange {
     /// Creates a new balance change with the given block access index and post balance.
-    pub fn new(block_access_index: u16, post_balance: U256) -> Self {
+    pub fn new(block_access_index: u32, post_balance: U256) -> Self {
         Self {
             block_access_index,
             post_balance,
@@ -177,14 +177,14 @@ impl RLPDecode for BalanceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct NonceChange {
-    /// Block access index per EIP-7928 spec (uint16).
-    pub block_access_index: u16,
+    /// Block access index per EIP-7928 spec (uint32).
+    pub block_access_index: u32,
     pub post_nonce: u64,
 }
 
 impl NonceChange {
     /// Creates a new nonce change with the given block access index and post nonce.
-    pub fn new(block_access_index: u16, post_nonce: u64) -> Self {
+    pub fn new(block_access_index: u32, post_nonce: u64) -> Self {
         Self {
             block_access_index,
             post_nonce,
@@ -219,14 +219,14 @@ impl RLPDecode for NonceChange {
 
 #[derive(Default, Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CodeChange {
-    /// Block access index per EIP-7928 spec (uint16).
-    pub block_access_index: u16,
+    /// Block access index per EIP-7928 spec (uint32).
+    pub block_access_index: u32,
     pub new_code: Bytes,
 }
 
 impl CodeChange {
     /// Creates a new code change with the given block access index and new code.
-    pub fn new(block_access_index: u16, new_code: Bytes) -> Self {
+    pub fn new(block_access_index: u32, new_code: Bytes) -> Self {
         Self {
             block_access_index,
             new_code,
@@ -558,8 +558,8 @@ impl BlockAccessList {
     pub fn build_validation_index(&self) -> BalAddressIndex {
         let mut addr_to_idx =
             FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
-        let mut tx_to_accounts: FxHashMap<u16, Vec<usize>> = FxHashMap::default();
-        let mut accounts_by_min_index: Vec<(u16, usize)> = Vec::new();
+        let mut tx_to_accounts: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
+        let mut accounts_by_min_index: Vec<(u32, usize)> = Vec::new();
 
         for (i, acct) in self.inner.iter().enumerate() {
             addr_to_idx.insert(acct.address, i);
@@ -606,15 +606,15 @@ pub struct BalAddressIndex {
     /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
     pub addr_to_idx: FxHashMap<Address, usize>,
     /// For each block_access_index, the BAL-inner indices with changes at that index.
-    pub tx_to_accounts: FxHashMap<u16, Vec<usize>>,
+    pub tx_to_accounts: FxHashMap<u32, Vec<usize>>,
     /// BAL-inner indices sorted by their minimum block_access_index.
     /// Used by `seed_db_from_bal` to skip accounts with no changes at indices <= max_idx.
     /// Only includes accounts that have at least one mutation (balance/nonce/code/storage write).
-    pub accounts_by_min_index: Vec<(u16, usize)>,
+    pub accounts_by_min_index: Vec<(u32, usize)>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
-pub fn find_exact_change_balance(changes: &[BalanceChange], idx: u16) -> Option<U256> {
+pub fn find_exact_change_balance(changes: &[BalanceChange], idx: u32) -> Option<U256> {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     if pos < changes.len() && changes[pos].block_access_index == idx {
         Some(changes[pos].post_balance)
@@ -624,13 +624,13 @@ pub fn find_exact_change_balance(changes: &[BalanceChange], idx: u16) -> Option<
 }
 
 /// Returns true if there is a balance change exactly at `idx`.
-pub fn has_exact_change_balance(changes: &[BalanceChange], idx: u16) -> bool {
+pub fn has_exact_change_balance(changes: &[BalanceChange], idx: u32) -> bool {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     pos < changes.len() && changes[pos].block_access_index == idx
 }
 
 /// Binary search for exact match at `idx` in nonce changes.
-pub fn find_exact_change_nonce(changes: &[NonceChange], idx: u16) -> Option<u64> {
+pub fn find_exact_change_nonce(changes: &[NonceChange], idx: u32) -> Option<u64> {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     if pos < changes.len() && changes[pos].block_access_index == idx {
         Some(changes[pos].post_nonce)
@@ -640,13 +640,13 @@ pub fn find_exact_change_nonce(changes: &[NonceChange], idx: u16) -> Option<u64>
 }
 
 /// Returns true if there is a nonce change exactly at `idx`.
-pub fn has_exact_change_nonce(changes: &[NonceChange], idx: u16) -> bool {
+pub fn has_exact_change_nonce(changes: &[NonceChange], idx: u32) -> bool {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     pos < changes.len() && changes[pos].block_access_index == idx
 }
 
 /// Binary search for exact match at `idx` in code changes.
-pub fn find_exact_change_code(changes: &[CodeChange], idx: u16) -> Option<&Bytes> {
+pub fn find_exact_change_code(changes: &[CodeChange], idx: u32) -> Option<&Bytes> {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     if pos < changes.len() && changes[pos].block_access_index == idx {
         Some(&changes[pos].new_code)
@@ -656,13 +656,13 @@ pub fn find_exact_change_code(changes: &[CodeChange], idx: u16) -> Option<&Bytes
 }
 
 /// Returns true if there is a code change exactly at `idx`.
-pub fn has_exact_change_code(changes: &[CodeChange], idx: u16) -> bool {
+pub fn has_exact_change_code(changes: &[CodeChange], idx: u32) -> bool {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     pos < changes.len() && changes[pos].block_access_index == idx
 }
 
 /// Binary search for exact match at `idx` in storage changes.
-pub fn find_exact_change_storage(changes: &[StorageChange], idx: u16) -> Option<U256> {
+pub fn find_exact_change_storage(changes: &[StorageChange], idx: u32) -> Option<U256> {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     if pos < changes.len() && changes[pos].block_access_index == idx {
         Some(changes[pos].post_value)
@@ -672,7 +672,7 @@ pub fn find_exact_change_storage(changes: &[StorageChange], idx: u16) -> Option<
 }
 
 /// Returns true if there is a storage change exactly at `idx`.
-pub fn has_exact_change_storage(changes: &[StorageChange], idx: u16) -> bool {
+pub fn has_exact_change_storage(changes: &[StorageChange], idx: u32) -> bool {
     let pos = changes.partition_point(|c| c.block_access_index < idx);
     pos < changes.len() && changes[pos].block_access_index == idx
 }
@@ -719,7 +719,7 @@ pub struct BlockAccessListCheckpoint {
 #[derive(Debug)]
 pub struct TxCheckpoint {
     inner: BlockAccessListCheckpoint,
-    current_index: u16,
+    current_index: u32,
     touched_addresses_len: usize,
     storage_reads_lens: IndexMap<Address, usize>,
     initial_balances_len: usize,
@@ -737,9 +737,9 @@ pub struct TxCheckpoint {
 /// - n+1: Post-execution phase (withdrawals)
 #[derive(Debug, Default, Clone)]
 pub struct BlockAccessListRecorder {
-    /// Current block access index per EIP-7928 spec (uint16).
+    /// Current block access index per EIP-7928 spec (uint32).
     /// 0=pre-exec, 1..n=tx indices, n+1=post-exec.
-    current_index: u16,
+    current_index: u32,
     /// All addresses that must be in BAL (touched during execution).
     /// IndexSet for O(1) insert/lookup and length-based tx-level checkpoint/restore.
     touched_addresses: IndexSet<Address>,
@@ -747,7 +747,7 @@ pub struct BlockAccessListRecorder {
     /// IndexMap/IndexSet for length-based tx-level checkpoint/restore.
     storage_reads: IndexMap<Address, IndexSet<U256>>,
     /// Storage writes per address (slot -> list of (index, post_value) pairs).
-    storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u16, U256)>>>,
+    storage_writes: BTreeMap<Address, BTreeMap<U256, Vec<(u32, U256)>>>,
     /// Initial balances for detecting balance round-trips.
     /// IndexMap for length-based tx-level checkpoint/restore.
     initial_balances: IndexMap<Address, U256>,
@@ -761,11 +761,11 @@ pub struct BlockAccessListRecorder {
     /// pre-transaction code (e.g., delegate then reset), it MUST NOT be recorded.
     tx_initial_code: BTreeMap<Address, Bytes>,
     /// Balance changes per address (list of (index, post_balance) pairs).
-    balance_changes: BTreeMap<Address, Vec<(u16, U256)>>,
+    balance_changes: BTreeMap<Address, Vec<(u32, U256)>>,
     /// Nonce changes per address (list of (index, post_nonce) pairs).
-    nonce_changes: BTreeMap<Address, Vec<(u16, u64)>>,
+    nonce_changes: BTreeMap<Address, Vec<(u32, u64)>>,
     /// Code changes per address (list of (index, new_code) pairs).
-    code_changes: BTreeMap<Address, Vec<(u16, Bytes)>>,
+    code_changes: BTreeMap<Address, Vec<(u32, Bytes)>>,
     /// Addresses that had non-empty code at the start (before any code changes).
     /// IndexSet for length-based tx-level checkpoint/restore.
     addresses_with_initial_code: IndexSet<Address>,
@@ -785,12 +785,12 @@ impl BlockAccessListRecorder {
         Self::default()
     }
 
-    /// Sets the current block access index per EIP-7928 spec (uint16).
+    /// Sets the current block access index per EIP-7928 spec (uint32).
     /// Call this before each transaction (index 1..n) and for withdrawals (n+1).
     ///
     /// Filters net-zero storage writes and code changes for the current transaction
     /// before switching to a new transaction index.
-    pub fn set_block_access_index(&mut self, index: u16) {
+    pub fn set_block_access_index(&mut self, index: u32) {
         // Filter net-zero changes and clear per-transaction initial values when switching transactions
         if self.current_index != index {
             // Filter net-zero storage writes and code changes for the current transaction before switching
@@ -905,8 +905,8 @@ impl BlockAccessListRecorder {
         }
     }
 
-    /// Returns the current block access index per EIP-7928 spec (uint16).
-    pub fn current_index(&self) -> u16 {
+    /// Returns the current block access index per EIP-7928 spec (uint32).
+    pub fn current_index(&self) -> u32 {
         self.current_index
     }
 
@@ -920,6 +920,27 @@ impl BlockAccessListRecorder {
     /// Marks the recorder as no longer inside a system contract call.
     pub fn exit_system_call(&mut self) {
         self.in_system_call = false;
+    }
+
+    /// Consumes and returns the touched-addresses set.
+    /// Used by parallel BAL validation (shadow recorder) to diff against the header BAL.
+    pub fn take_touched_addresses(&mut self) -> Vec<Address> {
+        std::mem::take(&mut self.touched_addresses)
+            .into_iter()
+            .collect()
+    }
+
+    /// Consumes and returns recorded storage reads as `(address, slot)` pairs.
+    /// Excludes slots that were later written (they get promoted to `storage_writes`).
+    pub fn take_storage_reads(&mut self) -> Vec<(Address, U256)> {
+        let reads = std::mem::take(&mut self.storage_reads);
+        let mut out = Vec::new();
+        for (addr, slots) in reads {
+            for slot in slots {
+                out.push((addr, slot));
+            }
+        }
+        out
     }
 
     /// Records an address as touched during execution.
@@ -1148,7 +1169,7 @@ impl BlockAccessListRecorder {
             if let Some(slots) = self.storage_writes.get(address) {
                 for (slot, changes) in slots {
                     let mut slot_change = SlotChange::new(*slot);
-                    let mut deduped: BTreeMap<u16, U256> = BTreeMap::new();
+                    let mut deduped: BTreeMap<u32, U256> = BTreeMap::new();
                     for (index, post_value) in changes {
                         deduped.insert(*index, *post_value);
                     }
@@ -1183,7 +1204,7 @@ impl BlockAccessListRecorder {
             // change MUST NOT be recorded."
             if let Some(changes) = self.balance_changes.get(address) {
                 // Group balance changes by transaction index
-                let mut changes_by_tx: BTreeMap<u16, Vec<U256>> = BTreeMap::new();
+                let mut changes_by_tx: BTreeMap<u32, Vec<U256>> = BTreeMap::new();
                 for (index, post_balance) in changes {
                     changes_by_tx.entry(*index).or_default().push(*post_balance);
                 }
@@ -1216,7 +1237,7 @@ impl BlockAccessListRecorder {
             // Per EIP-7928, similar to balance changes, we only record the final nonce per tx.
             if let Some(changes) = self.nonce_changes.get(address) {
                 // Group nonce changes by transaction index
-                let mut changes_by_tx: BTreeMap<u16, u64> = BTreeMap::new();
+                let mut changes_by_tx: BTreeMap<u32, u64> = BTreeMap::new();
                 for (index, post_nonce) in changes {
                     // Only keep the final nonce for each transaction (last write wins)
                     changes_by_tx.insert(*index, *post_nonce);
@@ -1231,7 +1252,7 @@ impl BlockAccessListRecorder {
             // Per EIP-7928, similar to nonce/balance, we only record the final code per tx.
             if let Some(changes) = self.code_changes.get(address) {
                 // Group code changes by transaction index, keeping only the final one
-                let mut changes_by_tx: BTreeMap<u16, Bytes> = BTreeMap::new();
+                let mut changes_by_tx: BTreeMap<u32, Bytes> = BTreeMap::new();
                 for (index, new_code) in changes {
                     // Only keep the final code for each transaction (last write wins)
                     changes_by_tx.insert(*index, new_code.clone());
@@ -1567,5 +1588,91 @@ impl BlockAccessListRecorder {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    /// Sanity check that our RLP decoder produces the same `post_balance` for
+    /// the sender as the bytes literally encode in
+    /// `test_call_value_to_self_destructed_same_tx_account` at tests-bal@v7.1.0.
+    ///
+    /// If this passes, our decoder is correct and any mismatch observed during
+    /// hive runs comes from the BAL the test harness sends (not the fixture's
+    /// on-disk bytes). If it fails, the bug is local to this decoder.
+    #[test]
+    fn decode_v7_1_0_sender_balance_change() {
+        // Sender's entry only, manually trimmed from the v7.1.0 fixture's
+        // `engineNewPayloads[0].params[0].blockAccessList` field at
+        // `eip8037_state_creation_gas_cost_increase/state_gas_call/call_value_to_self_destructed_same_tx_account.json`.
+        // Wrapped in a single-element list (`0xee`) so it decodes as a full BAL.
+        // 0xee = list, 46 bytes follow:
+        //   0xed = AccountChanges list, 45 bytes follow:
+        //     0x94 + 20 byte address  (= 21 bytes)
+        //     0xc0                    storageReads empty list
+        //     0xc0                    storageChanges empty list
+        //     0xcc 0xcb 0x01 0x89 <9-byte post_balance>  balanceChanges (= 14 bytes)
+        //     0xc3 0xc2 0x01 0x01                       nonceChanges (= 4 bytes)
+        //     0xc0                    codeChanges empty list
+        //   total inner len = 21 + 1 + 1 + 14 + 4 + 1 = 42 bytes
+        // Outer 0xee covers 1-byte AccountChanges header + 42 bytes = 43 bytes
+        // Wait, let me recount the inner: 0xed is header (1 byte) for 42-byte payload.
+        //   AccountChanges total wire: 1 + 42 = 43 bytes.
+        //   Outer list (BlockAccessList) wraps that: 0x... + 43 bytes.
+        //   Outer header for a 43-byte payload: 0xc0 + 43 = 0xeb.
+        // Byte counts (carefully):
+        //   inner BalanceChange list:  [01, 89, 9_bytes] = 11 bytes  → header cb
+        //   inner balanceChanges:      [<12_byte_change>] = 12 bytes → header cc
+        //   inner NonceChange list:    [01, 01]           = 2 bytes  → header c2
+        //   inner nonceChanges:        [<3_byte_change>]  = 3 bytes  → header c3
+        //   AccountChanges payload:    addr(21) + c0 + c0 + bal(13) + nonce(4) + c0 = 41 bytes
+        //   AccountChanges total wire: e9 + 41 = 42 bytes
+        //   BAL payload:               42 bytes → header ea
+        let hex_str = concat!(
+            "ea", // outer list, 42 bytes follow
+            "e9", // AccountChanges list, 41 bytes follow
+            "94",
+            "1ad9bc24818784172ff393bb6f89f094d4d2ca29", // address (20 bytes)
+            "c0",                                       // storage_changes = []
+            "c0",                                       // storage_reads = []
+            "cc",                                       // balanceChanges list, 12 bytes follow
+            "cb",                                       // single change, 11 bytes follow
+            "01",                                       // block_access_index = 1
+            "89",
+            "3635c9adc5de6de476", // post_balance = 9-byte big-endian uint
+            "c3",                 // nonceChanges list, 3 bytes follow
+            "c2",                 // single change, 2 bytes follow
+            "01",                 // block_access_index = 1
+            "01",                 // post_nonce = 1
+            "c0",                 // codeChanges = []
+        );
+
+        let bytes = hex::decode(hex_str).expect("hex");
+        let bal = BlockAccessList::decode(&bytes).expect("BAL decode");
+
+        let accts = bal.accounts();
+        assert_eq!(accts.len(), 1, "expected exactly one account in the BAL");
+
+        let acct = &accts[0];
+        assert_eq!(
+            acct.address,
+            Address::from_str("0x1ad9bc24818784172ff393bb6f89f094d4d2ca29").unwrap(),
+            "address mismatch",
+        );
+        assert_eq!(acct.balance_changes.len(), 1, "expected one balance change");
+        let change = &acct.balance_changes[0];
+        assert_eq!(change.block_access_index, 1, "block_access_index");
+
+        // 0x3635c9adc5de6de476 = 999_999_999_999_996_716_150
+        // = 10^21 − 3_283_850 (= 328_385 gas × 10 gas_price)
+        let expected = U256::from_dec_str("999999999999996716150").expect("post_balance decimal");
+        assert_eq!(
+            change.post_balance, expected,
+            "RLP decoder produced wrong post_balance: got {}, expected {}",
+            change.post_balance, expected,
+        );
     }
 }

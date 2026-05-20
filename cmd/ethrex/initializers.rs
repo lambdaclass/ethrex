@@ -9,6 +9,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::{BlockHeader, Genesis};
 use ethrex_config::networks::Network;
+use ethrex_rpc::WebSocketConfig;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -186,23 +187,23 @@ pub async fn init_rpc_api(
     syncer: Arc<SyncManager>,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    #[cfg(feature = "eip-8025")] proof_coordinator: Option<
-        ethrex_blockchain::proof_coordinator::coordinator::CoordinatorHandle,
-    >,
 ) {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
 
-    let ws_socket_opts = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
+    let ws_config = if opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(opts),
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+        })
     } else {
         None
     };
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_socket_opts,
+        ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -215,8 +216,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator,
+        opts.http_api.iter().copied().collect(),
     );
 
     tracker.spawn(rpc_api);
@@ -245,6 +245,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        ..Default::default()
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config)
@@ -486,9 +487,14 @@ pub async fn init_l1(
     let store = match init_store(&datadir, genesis).await {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
-        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+        | Err(err @ StoreError::NotFoundDBVersion) => {
             return Err(eyre::eyre!(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(err @ StoreError::MigrationFailed { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. The database may be in an inconsistent state. Please erase your DB by running `ethrex removedb` and restart node to resync."
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
@@ -515,6 +521,7 @@ pub async fn init_l1(
             r#type: blockchain_type,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            precompile_cache_enabled: !opts.no_precompile_cache,
         },
     );
 
@@ -551,31 +558,6 @@ pub async fn init_l1(
     let initiator = RLPxInitiator::spawn(p2p_context.clone());
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
-
-    // Initialize EIP-8025 proof coordinator when the feature is enabled.
-    #[cfg(feature = "eip-8025")]
-    let proof_coordinator = {
-        use ethrex_blockchain::proof_coordinator::{
-            config::ProofCoordinatorConfig, coordinator::start_proof_coordinator,
-        };
-        let proof_config = ProofCoordinatorConfig {
-            callback_url: opts.proof_callback_url.clone(),
-            coordinator_addr: opts.proof_coordinator_addr.clone(),
-            coordinator_port: opts.proof_coordinator_port,
-        };
-        match start_proof_coordinator(store.clone(), proof_config).await {
-            Ok(handle) => {
-                info!("EIP-8025 proof coordinator started");
-                Some(handle)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to start proof coordinator: {e}. Proof endpoints will be unavailable."
-                );
-                None
-            }
-        }
-    };
 
     let syncmode = if opts.dev {
         &SyncMode::Full
@@ -663,8 +645,6 @@ pub async fn init_l1(
         syncer,
         tracker.clone(),
         log_filter_handler,
-        #[cfg(feature = "eip-8025")]
-        proof_coordinator,
     )
     .await;
 

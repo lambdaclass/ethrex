@@ -1,8 +1,10 @@
+pub(crate) mod block_access_lists;
 pub mod blocks;
 pub mod bsc;
 pub mod eth68;
 mod eth69;
 mod eth70;
+mod eth71;
 pub mod receipts;
 pub(crate) mod status;
 pub mod transactions;

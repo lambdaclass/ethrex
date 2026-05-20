@@ -15,7 +15,7 @@ use ethrex_crypto::Crypto;
 pub use ethrex_levm::call_frame::CallFrameBackup;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 pub use ethrex_levm::db::{CachingDatabase, Database as LevmDatabase};
-use ethrex_levm::errors::ExecutionReport;
+use ethrex_levm::errors::{ExecutionReport, TxResult};
 use ethrex_levm::vm::VMType;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -244,8 +244,8 @@ impl Evm {
         self.db.enable_bal_recording();
     }
 
-    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint16).
-    pub fn set_bal_index(&mut self, index: u16) {
+    /// Sets the current block access index for BAL recording per EIP-7928 spec (uint32).
+    pub fn set_bal_index(&mut self, index: u32) {
         self.db.set_bal_index(index);
     }
 
@@ -366,4 +366,119 @@ pub struct BlockExecutionResult {
     /// Block gas used (PRE-REFUND for Amsterdam+ per EIP-7778).
     /// This differs from receipt cumulative_gas_used which is POST-REFUND.
     pub block_gas_used: u64,
+    /// Per-tx gas-dimension breakdown. Populated by `execute_block`; left empty by
+    /// L2 producer / committer paths that build a `BlockExecutionResult` from
+    /// re-derived data. Used by `validate_gas_used` mismatch logging to localize
+    /// which tx and which dimension caused the divergence.
+    pub tx_gas_breakdowns: Vec<TxGasBreakdown>,
+}
+
+/// Per-tx gas-dimension snapshot captured at the block-execution boundary.
+/// All fields are pre-refund except `gas_spent` and `gas_refunded` which are
+/// the user-pays (post-refund) values.
+#[derive(Clone, Debug)]
+pub struct TxGasBreakdown {
+    pub tx_index: usize,
+    pub tx_hash: ethrex_common::H256,
+    pub status: TxStatus,
+    /// Pre-refund gas used (block-level dimension under EIP-7778).
+    pub gas_used: u64,
+    /// Post-refund gas paid by the sender.
+    pub gas_spent: u64,
+    pub gas_refunded: u64,
+    /// EIP-8037 state-gas portion of `gas_used` (Amsterdam+); 0 pre-Amsterdam.
+    pub state_gas_used: u64,
+    /// `gas_used - state_gas_used`. Saturating to avoid underflow on edge cases.
+    pub regular_gas_used: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxStatus {
+    Success,
+    Revert,
+    Halt,
+}
+
+impl core::fmt::Display for TxStatus {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            TxStatus::Success => f.write_str("success"),
+            TxStatus::Revert => f.write_str("revert"),
+            TxStatus::Halt => f.write_str("halt"),
+        }
+    }
+}
+
+impl TxGasBreakdown {
+    pub fn from_report(
+        tx_index: usize,
+        tx_hash: ethrex_common::H256,
+        report: &ExecutionReport,
+    ) -> Self {
+        let status = match &report.result {
+            TxResult::Success => TxStatus::Success,
+            TxResult::Revert(err) if err.is_revert_opcode() => TxStatus::Revert,
+            TxResult::Revert(_) => TxStatus::Halt,
+        };
+        Self {
+            tx_index,
+            tx_hash,
+            status,
+            gas_used: report.gas_used,
+            gas_spent: report.gas_spent,
+            gas_refunded: report.gas_refunded,
+            state_gas_used: report.state_gas_used,
+            regular_gas_used: report.gas_used.saturating_sub(report.state_gas_used),
+        }
+    }
+}
+
+/// Emit a structured per-tx gas-dimension dump. Called from the block-validation
+/// site when `block_gas_used` disagrees with `header.gas_used`. If `breakdowns` is
+/// empty (paths that don't populate it, e.g. L2 producer), a one-liner is logged.
+pub fn log_gas_used_mismatch(
+    breakdowns: &[TxGasBreakdown],
+    block_number: u64,
+    actual: u64,
+    expected: u64,
+) {
+    let delta = actual as i128 - expected as i128;
+    if breakdowns.is_empty() {
+        ::tracing::error!(
+            block = block_number,
+            actual,
+            expected,
+            delta,
+            "block gas_used mismatch (no per-tx breakdown available on this path)",
+        );
+        return;
+    }
+    let sum_regular: u64 = breakdowns.iter().map(|b| b.regular_gas_used).sum();
+    let sum_state: u64 = breakdowns.iter().map(|b| b.state_gas_used).sum();
+    let sum_refunded: u64 = breakdowns.iter().map(|b| b.gas_refunded).sum();
+    ::tracing::error!(
+        block = block_number,
+        actual,
+        expected,
+        delta,
+        n_txs = breakdowns.len(),
+        sum_regular,
+        sum_state,
+        max_dim = sum_regular.max(sum_state),
+        sum_refunded,
+        "block gas_used mismatch",
+    );
+    for b in breakdowns {
+        ::tracing::error!(
+            tx_idx = b.tx_index,
+            tx_hash = %b.tx_hash,
+            status = %b.status,
+            gas_used = b.gas_used,
+            regular = b.regular_gas_used,
+            state = b.state_gas_used,
+            gas_spent = b.gas_spent,
+            gas_refunded = b.gas_refunded,
+            "  tx breakdown",
+        );
+    }
 }

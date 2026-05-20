@@ -1,5 +1,5 @@
 [package]
-version = "10.0.0"
+version = "13.0.0"
 name = "ethrex-guest-zisk"
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -13,10 +13,13 @@ codegen-units = 1
 panic = "abort"
 
 [dependencies]
+# Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1" }
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 
-ethrex-guest-program = { path = "../../", default-features = false, features = ["zisk"] }
+ethrex-guest-program = { path = "../../", default-features = false, features = [
+    "zisk",
+] }
 ethrex-vm = { path = "../../../vm", default-features = false, features = [
     "zisk",
 ] }

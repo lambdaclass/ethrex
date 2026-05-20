@@ -1,56 +1,76 @@
 pub mod db;
 mod tracing;
 
-use super::BlockExecutionResult;
+use super::{BlockExecutionResult, TxGasBreakdown};
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::H256;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::Code;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::TxType;
+use ethrex_common::types::block_access_list::BlockAccessList;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::block_access_list::{
-    BalAddressIndex, BlockAccessList, find_exact_change_balance, find_exact_change_code,
-    find_exact_change_nonce, find_exact_change_storage, has_exact_change_balance,
-    has_exact_change_code, has_exact_change_nonce, has_exact_change_storage,
+    BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
+    find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
+    has_exact_change_nonce, has_exact_change_storage,
 };
 use ethrex_common::types::fee_config::FeeConfig;
-use ethrex_common::types::{AuthorizationTuple, Code, EIP7702Transaction};
+use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
-    Address, BigEndianHash, H256, U256,
+    Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, GWEI_TO_WEI,
-        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind, Withdrawal,
         requests::Requests,
     },
-    validate_block_access_list_size, validate_header_bal_indices,
 };
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
     POST_OSAKA_GAS_LIMIT_CAP, STACK_LIMIT, SYS_CALL_GAS_LIMIT, TX_BASE_COST,
+    TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
-use ethrex_levm::db::Database;
-use ethrex_levm::db::gen_db::{CacheDB, GeneralizedDatabase};
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
+use ethrex_levm::utils::intrinsic_gas_dimensions;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
 
 /// The struct implements the following functions:
@@ -76,8 +96,65 @@ fn check_gas_limit(
     Ok(())
 }
 
+/// EIP-8037 (Amsterdam+, execution-specs PR #2703) per-tx 2D inclusion check.
+///
+/// A tx is rejected (block invalid) if its worst-case contribution to either
+/// dimension exceeds the remaining budget at tx inclusion time:
+///
+/// - regular dim: `min(TX_MAX_GAS_LIMIT, tx.gas - intrinsic.state) > block_gas_limit - block_regular_gas_used`
+/// - state dim:   `tx.gas - intrinsic.regular > block_gas_limit - block_state_gas_used`
+///
+/// Mirrors `src/ethereum/forks/amsterdam/fork.py:560-578` at eels_commit `524b446`.
+///
+/// Note: `block_gas_used_regular` here equals EELS's `block_output.block_gas_used`
+/// because our `report.gas_used` already reflects `max(raw_regular, calldata_floor)`
+/// per-tx — i.e. the floor is applied before aggregation, not after. Keep this in
+/// sync with the aggregation loop in [`execute_block_parallel`].
+pub fn check_2d_gas_allowance(
+    tx: &Transaction,
+    fork: Fork,
+    block_gas_used_regular: u64,
+    block_gas_used_state: u64,
+    block_gas_limit: u64,
+) -> Result<(), EvmError> {
+    let (intrinsic_regular, intrinsic_state) = intrinsic_gas_dimensions(tx, fork, block_gas_limit)
+        .map_err(|e| EvmError::Transaction(format!("intrinsic gas computation failed: {e}")))?;
+
+    let tx_gas = tx.gas_limit();
+    let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
+    let state_available = block_gas_limit.saturating_sub(block_gas_used_state);
+
+    // Regular dim: worst-case regular contribution = tx.gas - intrinsic.state,
+    // capped at TX_MAX_GAS_LIMIT. If tx.gas < intrinsic.state the tx is
+    // intrinsic-underfunded and will be rejected later; treat the subtraction
+    // as zero so the 2D check doesn't spuriously reject on saturation.
+    let regular_contrib = tx_gas
+        .saturating_sub(intrinsic_state)
+        .min(TX_MAX_GAS_LIMIT_AMSTERDAM);
+    if regular_contrib > regular_available {
+        return Err(EvmError::Transaction(format!(
+            "Gas allowance exceeded: regular dim worst-case {regular_contrib} > \
+             available {regular_available} (block_gas_used_regular={block_gas_used_regular}, \
+             block_gas_limit={block_gas_limit})"
+        )));
+    }
+
+    // State dim: worst-case state contribution = tx.gas - intrinsic.regular.
+    let state_contrib = tx_gas.saturating_sub(intrinsic_regular);
+    if state_contrib > state_available {
+        return Err(EvmError::Transaction(format!(
+            "Gas allowance exceeded: state dim worst-case {state_contrib} > \
+             available {state_available} (block_gas_used_state={block_gas_used_state}, \
+             block_gas_limit={block_gas_limit})"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Error type for BAL validation failures, distinguishing state mismatches
 /// from database errors.
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 #[derive(Debug, thiserror::Error)]
 enum BalValidationError {
     #[error("{0}")]
@@ -103,6 +180,15 @@ impl LEVM {
         // is capped at block-remaining anyway. Skip the prospective block-gas check.
         let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
 
+        // EIP-7928 BlockAccessIndex is uint32. Block validity forbids >= 2^32 txs
+        // long before we'd reach this point, but guard the invariant explicitly
+        // so any upstream bug that inflates tx counts panics in debug instead of
+        // silently producing a `u32::MAX` index.
+        debug_assert!(
+            block.body.transactions.len() < u32::MAX as usize,
+            "tx count overflows u32 BlockAccessIndex"
+        );
+
         // Enable BAL recording for Amsterdam+ forks
         if is_amsterdam {
             db.enable_bal_recording();
@@ -112,7 +198,9 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
-        let mut receipts = Vec::new();
+        let n_txs = block.body.transactions.len();
+        let mut receipts = Vec::with_capacity(n_txs);
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -165,10 +253,21 @@ impl LEVM {
                 }
             }
 
-            // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
+            // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
             if is_amsterdam {
-                #[allow(clippy::cast_possible_truncation)]
-                db.set_bal_index((tx_idx + 1) as u16);
+                check_2d_gas_allowance(
+                    tx,
+                    Fork::Amsterdam,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                    block.header.gas_limit,
+                )?;
+            }
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928)
+            if is_amsterdam {
+                let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                db.set_bal_index(bal_index);
 
                 // Record tx sender and recipient for BAL
                 if let Some(recorder) = db.bal_recorder_mut() {
@@ -189,6 +288,7 @@ impl LEVM {
                 is_bsc_system_tx,
                 matches!(report.result, TxResult::Success),
             ));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -274,11 +374,11 @@ impl LEVM {
             )));
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals, uint16)
+        // Set BAL index for post-execution phase (requests + withdrawals)
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if is_amsterdam {
-            #[allow(clippy::cast_possible_truncation)]
-            let post_tx_index = (block.body.transactions.len() + 1) as u16;
+            let post_tx_index =
+                u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
             db.set_bal_index(post_tx_index);
 
             // Record ALL withdrawal recipients for BAL per EIP-7928:
@@ -313,6 +413,7 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                tx_gas_breakdowns,
             },
             bal,
         ))
@@ -331,6 +432,12 @@ impl LEVM {
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
         let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
 
+        // EIP-7928 BlockAccessIndex invariant — see `execute_block` for rationale.
+        debug_assert!(
+            block.body.transactions.len() < u32::MAX as usize,
+            "tx count overflows u32 BlockAccessIndex"
+        );
+
         let transactions_with_sender =
             block
                 .body
@@ -339,6 +446,11 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
+        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        // `eip-8025` does not call `execute_block_pipeline` it uses
+        // `execute_block` instead. Adding dummy let to avoid unused warnings.
+        let _ = header_bal;
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
             // Validate header BAL structural properties before execution.
@@ -349,7 +461,8 @@ impl LEVM {
             validate_header_bal_indices(bal, block.body.transactions.len())
                 .map_err(|e| EvmError::Custom(e.to_string()))?;
 
-            // No BAL recording needed: we have the header BAL, not building a new one
+            // Outer db has no BAL recorder: header BAL drives validation.
+            // Per-tx tx_dbs enable a shadow recorder for accessed-entry checks.
             Self::prepare_block(block, db, vm_type, crypto)?;
 
             // Build validation index once — shared across parallel execution and post-exec seeding.
@@ -376,35 +489,39 @@ impl LEVM {
             // contracts — SystemContractCallFailed takes priority over BAL errors.
             // The BAL may be inconsistent for blocks that are fundamentally invalid
             // due to a failing system contract.
-            let (receipts, block_gas_used, mut unread_storage_reads, mut unaccessed_pure_accounts) =
-                match parallel_result {
-                    Ok(result) => result,
-                    Err(parallel_err) => {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let last_tx_idx = block.body.transactions.len() as u16;
-                        if Self::seed_db_from_bal(
-                            db,
-                            bal,
-                            last_tx_idx,
-                            &validation_index.accounts_by_min_index,
-                        )
-                        .is_ok()
-                            && let VMType::L1 = vm_type
-                            && let Err(e @ EvmError::SystemContractCallFailed(_)) =
-                                extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
-                        {
-                            return Err(e);
-                        }
-                        return Err(parallel_err);
+            let (
+                receipts,
+                block_gas_used,
+                mut unread_storage_reads,
+                mut unaccessed_pure_accounts,
+                tx_gas_breakdowns,
+            ) = match parallel_result {
+                Ok(result) => result,
+                Err(parallel_err) => {
+                    let last_tx_idx =
+                        u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
+                    if Self::seed_db_from_bal(
+                        db,
+                        bal,
+                        last_tx_idx,
+                        &validation_index.accounts_by_min_index,
+                    )
+                    .is_ok()
+                        && let VMType::L1 = vm_type
+                        && let Err(e @ EvmError::SystemContractCallFailed(_)) =
+                            extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
+                    {
+                        return Err(e);
                     }
-                };
+                    return Err(parallel_err);
+                }
+            };
 
             // Seed main db with post-tx state (excluding withdrawal effects) so
             // request extraction system calls see user-queued requests on predeploys.
             // Withdrawal index is n_txs+1 in BAL; we use n_txs to avoid double-applying
             // withdrawal balances (process_withdrawals handles those below).
-            #[allow(clippy::cast_possible_truncation)]
-            let last_tx_idx = block.body.transactions.len() as u16;
+            let last_tx_idx = u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
             Self::seed_db_from_bal(
                 db,
                 bal,
@@ -428,9 +545,12 @@ impl LEVM {
             // not from db — no need to call send_state_transitions_tx here.
 
             // Validate BAL entries at the withdrawal index against actual
-            // post-withdrawal/request state.
-            #[allow(clippy::cast_possible_truncation)]
-            let withdrawal_idx = (block.body.transactions.len() as u16) + 1;
+            // post-withdrawal/request state. `saturating_add(1)` prevents a
+            // release-build wrap if `n == u32::MAX` (debug_assert on tx count
+            // catches this upstream, but belt-and-braces).
+            let withdrawal_idx = u32::try_from(block.body.transactions.len())
+                .map(|n| n.saturating_add(1))
+                .unwrap_or(u32::MAX);
             Self::validate_bal_withdrawal_index(db, bal, withdrawal_idx, &validation_index)?;
 
             // Mark storage_reads that occurred during the withdrawal/request phase.
@@ -453,6 +573,12 @@ impl LEVM {
                     }
                 }
                 for addr in db.current_accounts_state.keys() {
+                    // EIP-7928: SYSTEM_ADDRESS in db state comes from pre-exec system
+                    // calls and doesn't legitimize a bare BAL entry — the per-tx shadow
+                    // recorder has already marked off user-tx touches.
+                    if *addr == SYSTEM_ADDRESS {
+                        continue;
+                    }
                     unaccessed_pure_accounts.remove(addr);
                 }
             }
@@ -484,6 +610,7 @@ impl LEVM {
                     receipts,
                     requests,
                     block_gas_used,
+                    tx_gas_breakdowns,
                 },
                 None,
             ));
@@ -500,7 +627,9 @@ impl LEVM {
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
-        let mut receipts = Vec::new();
+        let n_txs = block.body.transactions.len();
+        let mut receipts = Vec::with_capacity(n_txs);
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -546,10 +675,21 @@ impl LEVM {
                 }
             }
 
-            // Set BAL index for this transaction (1-indexed per EIP-7928, uint16)
+            // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
             if is_amsterdam {
-                #[allow(clippy::cast_possible_truncation)]
-                db.set_bal_index((tx_idx + 1) as u16);
+                check_2d_gas_allowance(
+                    tx,
+                    Fork::Amsterdam,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                    block.header.gas_limit,
+                )?;
+            }
+
+            // Set BAL index for this transaction (1-indexed per EIP-7928)
+            if is_amsterdam {
+                let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                db.set_bal_index(bal_index);
 
                 // Record tx sender and recipient for BAL
                 if let Some(recorder) = db.bal_recorder_mut() {
@@ -579,6 +719,7 @@ impl LEVM {
                 is_bsc_system_tx,
                 matches!(report.result, TxResult::Success),
             ));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -680,11 +821,11 @@ impl LEVM {
             LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
         }
 
-        // Set BAL index for post-execution phase (requests + withdrawals, uint16)
+        // Set BAL index for post-execution phase (requests + withdrawals)
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if is_amsterdam {
-            #[allow(clippy::cast_possible_truncation)]
-            let post_tx_index = (block.body.transactions.len() + 1) as u16;
+            let post_tx_index =
+                u32::try_from(block.body.transactions.len() + 1).unwrap_or(u32::MAX);
             db.set_bal_index(post_tx_index);
 
             // Record ALL withdrawal recipients for BAL per EIP-7928
@@ -717,6 +858,7 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                tx_gas_breakdowns,
             },
             bal,
         ))
@@ -724,6 +866,7 @@ impl LEVM {
 
     /// Convert BAL into `Vec<AccountUpdate>` for the merkleizer.
     /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
         if new_code.is_empty() {
             (*EMPTY_KECCACK_HASH, None)
@@ -738,6 +881,7 @@ impl LEVM {
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -874,11 +1018,12 @@ impl LEVM {
     /// `max_idx` is the BAL block_access_index of the last tx whose effects
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
-        max_idx: u16,
-        accounts_by_min_index: &[(u16, usize)],
+        max_idx: u32,
+        accounts_by_min_index: &[(u32, usize)],
     ) -> Result<(), EvmError> {
         // Only visit accounts whose minimum change index <= max_idx.
         let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
@@ -1002,6 +1147,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
@@ -1020,12 +1166,23 @@ impl LEVM {
             u64,
             FxHashSet<(Address, H256)>,
             FxHashSet<Address>,
+            Vec<TxGasBreakdown>,
         ),
         EvmError,
     > {
         let store = db.store.clone();
         let header = &block.header;
         let n_txs = txs_with_sender.len();
+        // BAL-seeded parallel execution is only reachable on Amsterdam+ (callers
+        // gate on is_amsterdam before providing a header BAL). We recompute the
+        // flag here to gate the 2D inclusion check explicitly, keeping the
+        // invariant checkable rather than implicit.
+        let chain_config = store.get_chain_config()?;
+        let is_amsterdam = chain_config.is_amsterdam_activated(header.timestamp);
+        debug_assert!(
+            is_amsterdam,
+            "execute_block_parallel invoked on non-Amsterdam block"
+        );
 
         // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
         //    This covers ALL state changes: system calls, txs, withdrawals.
@@ -1057,7 +1214,14 @@ impl LEVM {
         }
 
         // Mark pure-access accounts that were touched during system calls.
+        // EIP-7928: SYSTEM_ADDRESS is excluded from BAL entries created by system calls
+        // (only user-tx touches legitimize it). Keep it in `unaccessed_pure_accounts` so a
+        // BAL that carries a bare SYSTEM_ADDRESS entry without a corresponding user-tx
+        // touch is rejected as extraneous.
         for addr in system_seed.keys() {
+            if *addr == SYSTEM_ADDRESS {
+                continue;
+            }
             unaccessed_pure_accounts.remove(addr);
         }
 
@@ -1080,7 +1244,9 @@ impl LEVM {
             ExecutionReport,
             FxHashMap<Address, LevmAccount>,
             FxHashMap<H256, ethrex_common::types::Code>,
-            FxHashSet<Address>, // accessed_accounts tracker
+            FxHashSet<Address>,   // accessed_accounts tracker (coarse)
+            Vec<Address>,         // shadow recorder touched_addresses (EIP-7928 exact)
+            Vec<(Address, U256)>, // shadow recorder storage_reads (EIP-7928 exact)
         );
 
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
@@ -1100,18 +1266,32 @@ impl LEVM {
                 // BAL index: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
                 // For tx at index i, we want state through BAL index i
                 // (= system calls + effects of txs 0..i-1).
-                #[allow(clippy::cast_possible_truncation)]
                 Self::seed_db_from_bal(
                     &mut tx_db,
                     bal,
-                    tx_idx as u16,
+                    u32::try_from(tx_idx).unwrap_or(u32::MAX),
                     &validation_index.accounts_by_min_index,
                 )?;
 
-                // Enable accessed_accounts tracker for BAL pure-access validation.
-                // Most txs touch sender + recipient + a few contracts; 16 avoids rehashing.
+                // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
+                // diagnostics. Safe to over-report: used only to REMOVE entries from a
+                // extraneous-entry checklist.
                 tx_db.accessed_accounts =
                     Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
+
+                // Enable a shadow BAL recorder on this per-tx db. The recorder is gated
+                // at the same gas-check points as the builder path, giving us an exact
+                // EIP-7928 access signal (missing-account and missing-storage-read
+                // detection). Per-tx recorder — no cross-task contention.
+                tx_db.enable_bal_recording();
+                let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                tx_db.set_bal_index(bal_index);
+                if let Some(recorder) = tx_db.bal_recorder_mut() {
+                    recorder.record_touched_address(*sender);
+                    if let TxKind::Call(to) = tx.to() {
+                        recorder.record_touched_address(to);
+                    }
+                }
 
                 let report = LEVM::execute_tx_in_block(
                     tx,
@@ -1127,22 +1307,57 @@ impl LEVM {
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
                 let codes = std::mem::take(&mut tx_db.codes);
                 let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
-                Ok((tx_idx, tx.tx_type(), report, current_state, codes, tracked))
+                let (shadow_touched, shadow_reads) = tx_db
+                    .bal_recorder
+                    .take()
+                    .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
+                    .unwrap_or_default();
+                Ok((
+                    tx_idx,
+                    tx.tx_type(),
+                    report,
+                    current_state,
+                    codes,
+                    tracked,
+                    shadow_touched,
+                    shadow_reads,
+                ))
             })
             .collect();
 
         let mut exec_results = exec_results?;
 
         // Sort so gas accounting and validation happen in tx order.
-        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _)| *idx);
+        exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _, _)| *idx);
 
         // 3. Gas limit check — must happen BEFORE BAL validation so that blocks
         //    exceeding the gas limit produce GAS_USED_OVERFLOW instead of a BAL
         //    mismatch error (the BAL is built assuming rejected txs, so the miner
         //    balance in the BAL won't match execution that ran all txs).
+        //
+        //    EIP-8037 PR #2703: also enforce the per-tx 2D inclusion check
+        //    against running block totals. A tx whose worst-case regular or
+        //    state contribution exceeds the remaining budget at its inclusion
+        //    position invalidates the block with GAS_ALLOWANCE_EXCEEDED.
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
-        for (_, _, report, _, _, _) in &exec_results {
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
+        for (tx_idx, _, report, _, _, _, _, _) in &exec_results {
+            let (tx, _) = txs_with_sender
+                .get(*tx_idx)
+                .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
+            if is_amsterdam {
+                check_2d_gas_allowance(
+                    tx,
+                    Fork::Amsterdam,
+                    block_regular_gas_used,
+                    block_state_gas_used,
+                    header.gas_limit,
+                )?;
+            }
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(*tx_idx, tx.hash(), report));
+
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
             block_regular_gas_used = block_regular_gas_used.saturating_add(tx_regular_gas);
@@ -1160,11 +1375,11 @@ impl LEVM {
 
         // 4. Per-tx BAL validation — now safe to run after gas limit is confirmed OK.
         //    Also mark off storage_reads that appear in per-tx execution state.
-        for (tx_idx, _, _, current_state, codes, tracked_accounts) in &exec_results {
-            #[allow(clippy::cast_possible_truncation)]
-            let bal_idx = (*tx_idx + 1) as u16;
-            #[allow(clippy::cast_possible_truncation)]
-            let seed_idx = *tx_idx as u16;
+        for (tx_idx, _, _, current_state, codes, tracked_accounts, shadow_touched, shadow_reads) in
+            &exec_results
+        {
+            let bal_idx = u32::try_from(*tx_idx + 1).unwrap_or(u32::MAX);
+            let seed_idx = u32::try_from(*tx_idx).unwrap_or(u32::MAX);
             Self::validate_tx_execution(
                 bal_idx,
                 seed_idx,
@@ -1209,12 +1424,44 @@ impl LEVM {
                     unaccessed_pure_accounts.remove(addr);
                 }
             }
+
+            // EIP-7928 (Group B): missing-access detection using the shadow recorder.
+            // For each address the per-tx shadow recorder marked as touched, the header
+            // BAL must contain an entry for it. For each storage read, the header BAL
+            // must carry the slot either in storage_changes or storage_reads.
+            for addr in shadow_touched {
+                if !validation_index.addr_to_idx.contains_key(addr) {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for tx {tx_idx}: account {addr:?} was \
+                         accessed during execution but is missing from BAL"
+                    )));
+                }
+            }
+            for (addr, slot) in shadow_reads {
+                let Some(&bal_acct_idx) = validation_index.addr_to_idx.get(addr) else {
+                    // Already caught by the touched-address check above.
+                    continue;
+                };
+                let acct = &bal.accounts()[bal_acct_idx];
+                let in_changes = acct
+                    .storage_changes
+                    .binary_search_by(|sc| sc.slot.cmp(slot))
+                    .is_ok();
+                let in_reads = acct.storage_reads.contains(slot);
+                if !in_changes && !in_reads {
+                    return Err(EvmError::Custom(format!(
+                        "BAL validation failed for tx {tx_idx}: storage slot {slot} of \
+                         account {addr:?} was read during execution but is missing from \
+                         BAL (no storage_changes or storage_reads entry)"
+                    )));
+                }
+            }
         }
 
         // 5. Build receipts in tx order.
         let mut receipts = Vec::with_capacity(n_txs);
         let mut cumulative_gas_used = 0_u64;
-        for (_, tx_type, report, _, _, _) in exec_results {
+        for (_, tx_type, report, _, _, _, _, _) in exec_results {
             cumulative_gas_used += report.gas_spent;
             let receipt = Receipt::new(
                 tx_type,
@@ -1230,13 +1477,15 @@ impl LEVM {
             block_gas_used,
             unread_storage_reads,
             unaccessed_pure_accounts,
+            tx_gas_breakdowns,
         ))
     }
 
     /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seeded_balance(
-        seed_idx: u16,
+        seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
@@ -1263,8 +1512,9 @@ impl LEVM {
 
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn seeded_nonce(
-        seed_idx: u16,
+        seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
         system_seed: &CacheDB,
         store: &Arc<dyn Database>,
@@ -1304,10 +1554,11 @@ impl LEVM {
     /// `index`: pre-built validation index
     /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
     /// `store`: database (fallback for pre-state lookups)
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     #[allow(clippy::too_many_arguments)]
     fn validate_tx_execution(
-        bal_idx: u16,
-        seed_idx: u16,
+        bal_idx: u32,
+        seed_idx: u32,
         current_state: &FxHashMap<Address, LevmAccount>,
         codes: &FxHashMap<H256, Code>,
         bal: &BlockAccessList,
@@ -1329,8 +1580,9 @@ impl LEVM {
                         Some(a) if a.info.balance == expected => {}
                         Some(a) => {
                             return Err(BalValidationError::Mismatch(format!(
-                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={}",
-                                a.info.balance
+                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={} (diff={})",
+                                a.info.balance,
+                                describe_balance_diff(expected, a.info.balance),
                             )));
                         }
                         None => {
@@ -1341,17 +1593,17 @@ impl LEVM {
                             let seeded = Self::seeded_balance(seed_idx, acct, system_seed, store)?;
                             if expected != seeded {
                                 // Dump full BAL entry for diagnosis
-                                let all_bal_indices: Vec<u16> = acct
+                                let all_bal_indices: Vec<u32> = acct
                                     .balance_changes
                                     .iter()
                                     .map(|c| c.block_access_index)
                                     .collect();
-                                let all_nonce_indices: Vec<u16> = acct
+                                let all_nonce_indices: Vec<u32> = acct
                                     .nonce_changes
                                     .iter()
                                     .map(|c| c.block_access_index)
                                     .collect();
-                                let all_storage_indices: Vec<(u16, u64)> = acct
+                                let all_storage_indices: Vec<(u32, u64)> = acct
                                     .storage_changes
                                     .iter()
                                     .flat_map(|sc| {
@@ -1360,7 +1612,7 @@ impl LEVM {
                                             .map(|c| (c.block_access_index, sc.slot.low_u64()))
                                     })
                                     .collect();
-                                let code_indices: Vec<u16> = acct
+                                let code_indices: Vec<u32> = acct
                                     .code_changes
                                     .iter()
                                     .map(|c| c.block_access_index)
@@ -1589,19 +1841,30 @@ impl LEVM {
                 let seeded_pos = acct
                     .code_changes
                     .partition_point(|c| c.block_access_index <= seed_idx);
-                if seeded_pos > 0 {
+                let seeded_hash = if seeded_pos > 0 {
                     let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
-                    let seeded_hash = if seeded_code.is_empty() {
+                    if seeded_code.is_empty() {
                         *EMPTY_KECCACK_HASH
                     } else {
                         ethrex_common::utils::keccak(seeded_code)
-                    };
-                    if account.info.code_hash != seeded_hash {
-                        return Err(BalValidationError::Mismatch(format!(
-                            "account {addr:?} code changed by execution but BAL has no \
-                             code change at index {bal_idx}"
-                        )));
                     }
+                } else {
+                    // No BAL code entry before this tx — value came from system_seed or store.
+                    system_seed
+                        .get(addr)
+                        .map(|a| a.info.code_hash)
+                        .unwrap_or_else(|| {
+                            store
+                                .get_account_state(*addr)
+                                .map(|a| a.code_hash)
+                                .unwrap_or(*EMPTY_KECCACK_HASH)
+                        })
+                };
+                if account.info.code_hash != seeded_hash {
+                    return Err(BalValidationError::Mismatch(format!(
+                        "account {addr:?} code changed by execution but BAL has no \
+                         code change at index {bal_idx} (seeded_hash={seeded_hash:?})"
+                    )));
                 }
             }
 
@@ -1649,10 +1912,11 @@ impl LEVM {
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
     ///         change.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
-        withdrawal_idx: u16,
+        withdrawal_idx: u32,
         index: &BalAddressIndex,
     ) -> Result<(), EvmError> {
         // Part A: For each BAL account with changes at the withdrawal index,
@@ -1947,6 +2211,7 @@ impl LEVM {
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -2024,6 +2289,7 @@ impl LEVM {
     ///   account cache AND trie layer cache nodes
     /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
     ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,
@@ -2143,6 +2409,7 @@ impl LEVM {
             is_privileged: matches!(tx, Transaction::PrivilegedL2Transaction(_)),
             fee_token: tx.fee_token(),
             disable_balance_check: false,
+            is_system_call: false,
         };
 
         Ok(env)
@@ -2463,7 +2730,12 @@ pub fn generic_system_contract_levm(
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas,
         block_blob_gas_used: block_header.blob_gas_used,
-        block_gas_limit: i64::MAX as u64, // System calls, have no constraint on the block's gas limit.
+        // Use the actual block's gas_limit so EIP-8037 cost_per_state_byte is correct.
+        // The gas-allowance check is bypassed via `is_system_call` below; feeding
+        // i64::MAX here would make cpsb astronomically large and OOG any SSTORE
+        // that charges state gas (e.g. EIP-2935, EIP-4788 new-slot writes).
+        block_gas_limit: block_header.gas_limit,
+        is_system_call: true,
         config,
         ..Default::default()
     };
@@ -2768,6 +3040,7 @@ fn env_from_generic(
         is_privileged: false,
         fee_token: tx.fee_token,
         disable_balance_check: false,
+        is_system_call: false,
     })
 }
 
@@ -2822,6 +3095,56 @@ pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
     } else {
         block_gas_limit
     }
+}
+
+/// Format a balance diff (signed wei) and try to identify it as a multiple of
+/// well-known EIP-8037 state-gas constants (NEW_ACCOUNT, STORAGE_SET, AUTH_*),
+/// scaled by a plausible gas_price. Best-effort hint to triage gas-accounting
+/// drifts at a glance.
+///
+/// `dead_code` allowed: only reached via the L1 BAL-validation path, which is
+/// not exercised in the L2 build profile so the per-crate analysis flags it.
+#[allow(dead_code)]
+fn describe_balance_diff(expected: U256, actual: U256) -> String {
+    let (sign, mag) = if expected >= actual {
+        ("+", expected - actual)
+    } else {
+        ("-", actual - expected)
+    };
+    let Ok(mag_u128) = u128::try_from(mag) else {
+        return format!("{sign}{mag}");
+    };
+    if mag_u128 == 0 {
+        return "0".to_string();
+    }
+    let cpsb: u128 = 1530;
+    // EIP-8037 state-byte constants
+    let consts = [
+        ("NEW_ACCOUNT", 120u128),
+        ("STORAGE_SET", 64),
+        ("AUTH_BASE", 23),
+        ("AUTH_TOTAL", 143),
+    ];
+    // Try common test gas_prices first, then 1 wei/gas as fallback.
+    for &gp in &[10u128, 1, 7, 100, 1000, 1_000_000_000] {
+        if !mag_u128.is_multiple_of(gp) {
+            continue;
+        }
+        let gas = mag_u128 / gp;
+        if !gas.is_multiple_of(cpsb) {
+            continue;
+        }
+        let bytes = gas / cpsb;
+        for (name, c) in consts {
+            if bytes.is_multiple_of(c) {
+                let n = bytes / c;
+                return format!(
+                    "{sign}{mag_u128} wei (= {gas} gas at {gp} wei/gas = {n}× {name}_state_gas)"
+                );
+            }
+        }
+    }
+    format!("{sign}{mag_u128} wei")
 }
 
 #[cfg(test)]
