@@ -1,0 +1,24 @@
+[package]
+name = "ef_tests-blocktest"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ef_tests-blockchain = { path = "../blockchain" }
+
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+rayon.workspace = true
+regex = "1"
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ef_tests-blockchain/c-kzg"]
+
+[[bin]]
+name = "ef_tests-blocktest"
+path = "src/main.rs"

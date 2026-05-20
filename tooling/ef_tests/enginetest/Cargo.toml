@@ -1,0 +1,36 @@
+[package]
+name = "ef_tests-enginetest"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ef_tests-blockchain = { path = "../blockchain" }
+
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-crypto.workspace = true
+ethrex-p2p.workspace = true
+ethrex-rpc.workspace = true
+ethrex-storage.workspace = true
+ethrex-vm.workspace = true
+ethrex-rlp.workspace = true
+
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+bytes.workspace = true
+hex.workspace = true
+clap.workspace = true
+rayon.workspace = true
+regex = "1"
+tokio = { workspace = true, features = ["full"] }
+
+[features]
+default = ["c-kzg"]
+c-kzg = ["ef_tests-blockchain/c-kzg"]
+
+[[bin]]
+name = "ef_tests-enginetest"
+path = "src/main.rs"
