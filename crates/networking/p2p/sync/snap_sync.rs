@@ -112,6 +112,7 @@ pub async fn sync_cycle_snap(
     // Request all block headers between the current head and the sync head
     // We will begin from the current head so that we download the earliest state first
     // This step is not parallelized
+    let chain_id = store.get_chain_config().chain_id;
     let mut block_sync_state = SnapBlockSyncState::new(store.clone());
     // Check if we have some blocks downloaded from a previous sync attempt
     // This applies only to snap sync—full sync always starts fetching headers
@@ -130,6 +131,45 @@ pub async fn sync_cycle_snap(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
     );
+    // BSC: peers occasionally announce stale heads (their own catch-up state).
+    // Picking a stale sync_head as the snap pivot strands the sync: we'd
+    // download tens of millions of headers only to discover the pivot is
+    // already past the staleness threshold and re-do everything. Require an
+    // affirmative freshness confirmation up front — if we can't fetch the
+    // header at all (peer routing picked a pruned peer that doesn't have it)
+    // or the header is stale, abort. Fresh-or-fail, not fresh-or-unknown.
+    if chain_id == 56 || chain_id == 97 {
+        let header = peers
+            .request_block_headers_from_hash(
+                sync_head,
+                crate::peer_handler::BlockRequestOrder::NewToOld,
+            )
+            .await
+            .ok()
+            .flatten()
+            .and_then(|hs| hs.into_iter().next());
+        let fresh = header
+            .as_ref()
+            .map(|h| bsc_head_is_fresh(h.timestamp))
+            .unwrap_or(false);
+        if !fresh {
+            match header {
+                Some(h) => {
+                    let age = current_unix_time().saturating_sub(h.timestamp);
+                    warn!(
+                        "BSC sync_head is stale (block {} ts {} age {}s) — aborting cycle so bridge can re-pick a fresher head",
+                        h.number, h.timestamp, age
+                    );
+                }
+                None => {
+                    warn!(
+                        "BSC sync_head freshness unverifiable (no peer served the header) — aborting cycle"
+                    );
+                }
+            }
+            return Ok(());
+        }
+    }
     let pending_block = match store.get_pending_block(sync_head).await {
         Ok(res) => res,
         Err(e) => return Err(e.into()),
@@ -258,7 +298,16 @@ pub async fn sync_cycle_snap(
         };
     }
 
-    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        datadir,
+        blockchain.clone(),
+        chain_id,
+        diagnostics,
+    )
+    .await?;
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
@@ -267,11 +316,14 @@ pub async fn sync_cycle_snap(
 }
 
 /// Main snap sync logic - downloads state via snap protocol
+#[allow(clippy::too_many_arguments)]
 pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
+    blockchain: Arc<Blockchain>,
+    chain_id: u64,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
     // snap-sync: launch tasks to fetch blocks and state in parallel
@@ -286,15 +338,26 @@ pub async fn snap_sync(
         .get_block_header_by_hash(*pivot_hash)?
         .ok_or(SyncError::CorruptDB)?;
 
-    while block_is_stale(&pivot_header) {
-        pivot_header = update_pivot(
-            pivot_header.number,
-            pivot_header.timestamp,
-            peers,
-            block_sync_state,
-            diagnostics,
-        )
-        .await?;
+    while block_is_stale(&pivot_header, chain_id) {
+        pivot_header = if chain_id == 56 || chain_id == 97 {
+            update_pivot_bsc(
+                &pivot_header,
+                peers,
+                &blockchain,
+                block_sync_state,
+                diagnostics,
+            )
+            .await?
+        } else {
+            update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+                diagnostics,
+            )
+            .await?
+        };
     }
     debug!(
         "Selected block {} as pivot for snap sync",
@@ -339,6 +402,8 @@ pub async fn snap_sync(
             account_state_snapshots_dir.as_ref(),
             &mut pivot_header,
             block_sync_state,
+            blockchain.clone(),
+            chain_id,
             diagnostics,
         )
         .await?;
@@ -388,15 +453,26 @@ pub async fn snap_sync(
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
-            while block_is_stale(&pivot_header) {
-                pivot_header = update_pivot(
-                    pivot_header.number,
-                    pivot_header.timestamp,
-                    peers,
-                    block_sync_state,
-                    diagnostics,
-                )
-                .await?;
+            while block_is_stale(&pivot_header, chain_id) {
+                pivot_header = if chain_id == 56 || chain_id == 97 {
+                    update_pivot_bsc(
+                        &pivot_header,
+                        peers,
+                        &blockchain,
+                        block_sync_state,
+                        diagnostics,
+                    )
+                    .await?
+                } else {
+                    update_pivot(
+                        pivot_header.number,
+                        pivot_header.timestamp,
+                        peers,
+                        block_sync_state,
+                        diagnostics,
+                    )
+                    .await?
+                };
             }
             // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
             // We just need to update the pivot and start again
@@ -404,7 +480,7 @@ pub async fn snap_sync(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
-                calculate_staleness_timestamp(pivot_header.timestamp),
+                calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
                 &mut state_leafs_healed,
                 &mut storage_accounts,
                 &mut code_hash_collector,
@@ -412,14 +488,14 @@ pub async fn snap_sync(
             .await?
             {
                 continue;
-            };
+            }
 
             info!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
                 storage_accounts.accounts_with_storage_root.len()
             );
             storage_range_request_attempts += 1;
-            if storage_range_request_attempts < 5 {
+            if storage_range_request_attempts < 250 {
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
@@ -427,6 +503,7 @@ pub async fn snap_sync(
                     chunk_index,
                     &mut pivot_header,
                     store.clone(),
+                    chain_id,
                 )
                 .await?;
             } else {
@@ -462,7 +539,7 @@ pub async fn snap_sync(
                 // because we don't know if the storage root is still valid
                 storage_accounts.healed_accounts.len(),
             );
-            if !block_is_stale(&pivot_header) {
+            if !block_is_stale(&pivot_header, chain_id) {
                 break;
             }
             info!("We stopped because of staleness, restarting loop");
@@ -498,21 +575,32 @@ pub async fn snap_sync(
     let mut healing_done = false;
     while !healing_done {
         // This if is an edge case for the skip snap sync scenario
-        if block_is_stale(&pivot_header) {
-            pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-                diagnostics,
-            )
-            .await?;
+        if block_is_stale(&pivot_header, chain_id) {
+            pivot_header = if chain_id == 56 || chain_id == 97 {
+                update_pivot_bsc(
+                    &pivot_header,
+                    peers,
+                    &blockchain,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await?
+            } else {
+                update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    peers,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await?
+            };
         }
         healing_done = heal_state_trie_wrap(
             pivot_header.state_root,
             store.clone(),
             peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
             &mut global_state_leafs_healed,
             &mut storage_accounts,
             &mut code_hash_collector,
@@ -527,7 +615,7 @@ pub async fn snap_sync(
             peers,
             store.clone(),
             HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
+            calculate_staleness_timestamp(pivot_header.timestamp, chain_id),
             &mut global_storage_leafs_healed,
         )
         .await?;
@@ -846,8 +934,103 @@ pub async fn update_pivot(
     }
 }
 
-pub fn block_is_stale(block_header: &BlockHeader) -> bool {
-    let threshold = calculate_staleness_timestamp(block_header.timestamp);
+/// Maximum age (in seconds) we accept for a header to be considered the
+/// current chain tip. BSC produces ~1.3 blocks/s; a 5-minute window safely
+/// includes recent heads while rejecting stale peer announcements.
+pub const BSC_HEAD_FRESHNESS_SECS: u64 = 300;
+
+/// Returns true if `header_timestamp` is within `BSC_HEAD_FRESHNESS_SECS` of now.
+/// Used to reject pivots from peers that are themselves behind the chain.
+pub fn bsc_head_is_fresh(header_timestamp: u64) -> bool {
+    let now = current_unix_time();
+    header_timestamp + BSC_HEAD_FRESHNESS_SECS >= now
+}
+
+/// Probe forward to discover the freshest known chain tip via exponential
+/// step + binary search, asking up to PEERS_PER_PROBE peers per probe so a
+/// single dead peer doesn't shrink the search horizon. Rejects probe
+/// responses whose `header.number` doesn't match the probed number, or whose
+/// timestamp is stale — peers occasionally serve a different cached header
+/// rather than failing, which previously led the probe past the real tip.
+pub async fn bsc_probe_forward_head(seed: BlockHeader, peers: &mut PeerHandler) -> BlockHeader {
+    const MAX_FORWARD_STEP: u64 = 1_000_000;
+    const EXP_ITER: usize = 25;
+    const BIN_ITER: usize = 15;
+    const PEERS_PER_PROBE: usize = 3;
+    let mut best_pivot = seed;
+    let mut low = best_pivot.number;
+    let mut step = 256u64;
+    let mut high: Option<u64> = None;
+    for _ in 0..EXP_ITER {
+        let probe_number = low + step;
+        let probe_header = probe_block_at(probe_number, peers, PEERS_PER_PROBE).await;
+        match probe_header {
+            Some(header) => {
+                if header.number > best_pivot.number {
+                    best_pivot = header;
+                }
+                low = best_pivot.number;
+                step = (step * 2).min(MAX_FORWARD_STEP);
+            }
+            None => {
+                high = Some(probe_number);
+                break;
+            }
+        }
+    }
+    if let Some(mut hi) = high {
+        let mut lo = low;
+        for _ in 0..BIN_ITER {
+            if hi.saturating_sub(lo) < 16 {
+                break;
+            }
+            let mid = lo + (hi - lo) / 2;
+            let probe_header = probe_block_at(mid, peers, PEERS_PER_PROBE).await;
+            match probe_header {
+                Some(header) => {
+                    if header.number > best_pivot.number {
+                        best_pivot = header;
+                    }
+                    lo = mid;
+                }
+                None => {
+                    hi = mid;
+                }
+            }
+        }
+    }
+    best_pivot
+}
+
+/// Issue a single-header request for `probe_number`, retrying across up to
+/// `peers_per_probe` peers. Only accepts the response if `header.number`
+/// matches the requested number — peers occasionally return an arbitrary
+/// cached header for out-of-range numbers instead of erroring, which would
+/// otherwise lead the probe past the real chain tip.
+async fn probe_block_at(
+    probe_number: u64,
+    peers: &mut PeerHandler,
+    peers_per_probe: usize,
+) -> Option<BlockHeader> {
+    for _ in 0..peers_per_probe {
+        if let Ok(Some(headers)) = peers
+            .request_block_headers_from_number(
+                probe_number,
+                1,
+                crate::peer_handler::BlockRequestOrder::OldToNew,
+            )
+            .await
+            && let Some(header) = headers.into_iter().next()
+            && header.number == probe_number
+        {
+            return Some(header);
+        }
+    }
+    None
+}
+
+pub fn block_is_stale(block_header: &BlockHeader, chain_id: u64) -> bool {
+    let threshold = calculate_staleness_timestamp(block_header.timestamp, chain_id);
     let now = current_unix_time();
     let is_stale = threshold < now;
     if is_stale {
@@ -864,8 +1047,117 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
     is_stale
 }
 
-pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+pub fn calculate_staleness_timestamp(timestamp: u64, chain_id: u64) -> u64 {
+    // BSC (chain_id 56/97) prunes pruned-mode peers at ~128 blocks of ~0.45s
+    // each, so we have ~57s before peers can no longer serve our requested
+    // state_root. Refresh at +55s — the prior +50s margin left state-heal
+    // cycles unable to make any progress within the window on IO-constrained
+    // nodes; +55s buys a bit more useful work per cycle while keeping a 2s
+    // safety buffer against the peer-prune horizon.
+    if chain_id == 56 || chain_id == 97 {
+        return timestamp + 55;
+    }
+    timestamp + (SNAP_LIMIT as u64 * SECONDS_PER_BLOCK)
+}
+
+pub async fn update_pivot_bsc(
+    current_pivot: &BlockHeader,
+    peers: &mut PeerHandler,
+    blockchain: &std::sync::Arc<ethrex_blockchain::Blockchain>,
+    block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<BlockHeader, SyncError> {
+    let mut best_pivot: Option<BlockHeader> = Some(current_pivot.clone());
+    // Cap candidate resolution — the set grows unboundedly as peers keep
+    // advertising new heads, and iterating all of them per refresh stalls
+    // update_pivot_bsc for minutes-to-hours. Most recent candidates are
+    // the freshest views anyway.
+    const MAX_CANDIDATES_TO_RESOLVE: usize = 20;
+    let all_candidates = blockchain.bsc_sync_head_candidates_snapshot();
+    let candidates = if all_candidates.len() > MAX_CANDIDATES_TO_RESOLVE {
+        all_candidates[all_candidates.len() - MAX_CANDIDATES_TO_RESOLVE..].to_vec()
+    } else {
+        all_candidates
+    };
+    for hash in candidates.iter() {
+        if let Ok(Some(headers)) = peers
+            .request_block_headers_from_hash(
+                *hash,
+                crate::peer_handler::BlockRequestOrder::NewToOld,
+            )
+            .await
+            && let Some(header) = headers.into_iter().next()
+            && bsc_head_is_fresh(header.timestamp)
+            && best_pivot.as_ref().is_none_or(|h| header.number > h.number)
+        {
+            best_pivot = Some(header);
+        }
+    }
+    if let Some(seed) = best_pivot.clone() {
+        best_pivot = Some(bsc_probe_forward_head(seed, peers).await);
+    }
+    let new_pivot = best_pivot.ok_or(SyncError::NoBlockHeaders)?;
+    if !bsc_head_is_fresh(new_pivot.timestamp) {
+        let age = current_unix_time().saturating_sub(new_pivot.timestamp);
+        warn!(
+            "BSC pivot refresh: best candidate is stale (block {} ts {} age {}s) — retrying after peers catch up",
+            new_pivot.number, new_pivot.timestamp, age
+        );
+        return Err(SyncError::NoBlockHeaders);
+    }
+    info!(
+        "BSC pivot refreshed: block {} -> {} (hash {:?})",
+        current_pivot.number,
+        new_pivot.number,
+        new_pivot.hash()
+    );
+    // Download the header chain from old pivot to new pivot, by NUMBER
+    // (BSC peers don't serve hash-based header ranges reliably).
+    let old_number = current_pivot.number;
+    let new_number = new_pivot.number;
+    let mut current = old_number + 1;
+    while current <= new_number {
+        let batch_size = (new_number - current + 1).min(1024);
+        if let Ok(Some(headers)) = peers
+            .request_block_headers_from_number(
+                current,
+                batch_size,
+                crate::peer_handler::BlockRequestOrder::OldToNew,
+            )
+            .await
+            && !headers.is_empty()
+        {
+            let last = headers.last().map(|h| h.number).unwrap_or(current);
+            block_sync_state
+                .process_incoming_headers(headers.into_iter())
+                .await?;
+            current = last + 1;
+            continue;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    METRICS
+        .sync_head_block
+        .store(new_pivot.number, Ordering::Relaxed);
+    *METRICS.sync_head_hash.lock().await = new_pivot.hash();
+    {
+        let mut diag = diagnostics.write().await;
+        diag.push_pivot_change(super::PivotChangeEvent {
+            timestamp: current_unix_time(),
+            old_pivot_number: current_pivot.number,
+            new_pivot_number: new_pivot.number,
+            outcome: "success".to_string(),
+            failure_reason: None,
+        });
+        diag.pivot_block_number = Some(new_pivot.number);
+        diag.pivot_timestamp = Some(new_pivot.timestamp);
+        let pivot_age = current_unix_time().saturating_sub(new_pivot.timestamp);
+        diag.pivot_age_seconds = Some(pivot_age);
+        METRICS
+            .pivot_timestamp
+            .store(new_pivot.timestamp, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(new_pivot)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {

@@ -22,6 +22,9 @@ pub trait StatusMessage {
     fn get_fork_id(&self) -> ForkId;
 
     fn get_genesis(&self) -> BlockHash;
+
+    /// Returns the remote peer's best (head) block hash.
+    fn get_best_hash(&self) -> BlockHash;
 }
 
 /// Shared status data for eth/69+ protocols (eth/69, eth/70, eth/71, ...).

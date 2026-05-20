@@ -7,12 +7,13 @@ use crate::{
     },
     hooks::hook::Hook,
     utils::*,
-    vm::VM,
+    vm::{VM, VMType},
 };
 
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
+    constants::SYSTEM_ADDRESS,
     types::{Code, Fork},
 };
 
@@ -33,11 +34,27 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
+        // BSC system transactions are consensus-engine-injected with gas_limit = i64::MAX
+        // and bypass EIP-7825, intrinsic gas, and block gas allowance checks.
+        // Identified by: sender == coinbase && to is a BSC system contract && gas_price == 0.
+        // Regular BSC user txs follow normal rules.
+        let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+        let is_bsc_system_tx = is_bsc
+            && sender_address == vm.env.coinbase
+            && vm.env.gas_price.is_zero()
+            && match vm.tx.to() {
+                ethrex_common::types::TxKind::Call(to) => {
+                    ethrex_common::constants::is_bsc_system_contract(&to)
+                }
+                _ => false,
+            };
+
         if vm.env.config.fork >= Fork::Prague {
             validate_min_gas_limit(vm)?;
             // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
             // Amsterdam removes this restriction (EIP-8037 reservoir model).
-            if vm.env.config.fork >= Fork::Osaka
+            if !is_bsc_system_tx
+                && vm.env.config.fork >= Fork::Osaka
                 && vm.env.config.fork < Fork::Amsterdam
                 && vm.tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
             {
@@ -76,7 +93,11 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        vm.add_intrinsic_gas()?;
+        // BSC system transactions don't pay intrinsic gas — only the contract's
+        // actual gas usage is charged. `is_bsc_system_tx` was computed above.
+        if !is_bsc_system_tx {
+            vm.add_intrinsic_gas()?;
+        }
 
         // (7) NONCE_IS_MAX
         vm.increment_account_nonce(sender_address)
@@ -199,6 +220,24 @@ impl Hook for DefaultHook {
 
         // Save pre-refund gas for EIP-7778 block accounting
         let gas_used_pre_refund = ctx_result.gas_used;
+
+        // BSC system transactions don't accrue EVM gas refunds in bsc-geth's
+        // canonical accounting: block header gas_used for the system tx equals
+        // the pre-refund execution cost (matching receipts on Chapel/mainnet).
+        // Zero out the accumulated refund so gas_spent == gas_used_pre_refund.
+        let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+        let is_bsc_system_tx = is_bsc
+            && vm.env.origin == vm.env.coinbase
+            && vm.env.gas_price.is_zero()
+            && match vm.tx.to() {
+                ethrex_common::types::TxKind::Call(to) => {
+                    ethrex_common::constants::is_bsc_system_contract(&to)
+                }
+                _ => false,
+            };
+        if is_bsc_system_tx {
+            vm.substate.refunded_gas = 0;
+        }
 
         // Note: compute_gas_refunded caps at gas_used / MAX_REFUND_QUOTIENT, where
         // gas_used already has the reservoir subtracted (line above). This matches
@@ -346,6 +385,15 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         .checked_mul(priority_fee_per_gas)
         .ok_or(InternalError::Overflow)?;
 
+    // On BSC, transaction fees are routed to SystemAddress during EVM execution
+    // rather than directly to the block producer (coinbase). The validator receives
+    // its reward later via a system call at the end of the block.
+    // Reference: bnb-chain/bsc core/state_transition.go:568-576.
+    let fee_recipient = match vm.vm_type {
+        VMType::Bsc => SYSTEM_ADDRESS,
+        _ => vm.env.coinbase,
+    };
+
     // Per EIP-7928: Coinbase must appear in BAL when there's a user transaction,
     // even if the priority fee is zero. System contract calls have gas_price = 0,
     // so we use this to distinguish them from user transactions.
@@ -355,9 +403,23 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         recorder.record_touched_address(vm.env.coinbase);
     }
 
-    // Only pay coinbase if there's actually a fee to pay.
+    // Only pay fee recipient if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
-        vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
+        vm.increase_account_balance(fee_recipient, coinbase_fee)?;
+    }
+
+    // BSC also routes the EIP-4844 blob base fee to SYSTEM_ADDRESS (Ethereum
+    // burns it instead). This is how the deposit() system call's msg.value
+    // ends up matching BSC's canonical total for blocks with blob txs.
+    if matches!(vm.vm_type, VMType::Bsc) {
+        let blob_fee = crate::utils::calculate_blob_gas_cost(
+            &vm.env.tx_blob_hashes,
+            vm.env.block_excess_blob_gas,
+            &vm.env.config,
+        )?;
+        if !blob_fee.is_zero() {
+            vm.increase_account_balance(SYSTEM_ADDRESS, blob_fee)?;
+        }
     }
 
     Ok(())
@@ -629,7 +691,20 @@ pub fn validate_gas_allowance(vm: &mut VM<'_>) -> Result<(), TxValidationError> 
     if vm.env.is_system_call {
         return Ok(());
     }
-    if vm.env.gas_limit > vm.env.block_gas_limit {
+    // BSC system transactions (sender == coinbase && to is system contract &&
+    // gas_price == 0) carry gas_limit = i64::MAX and bypass this check.
+    // Regular BSC user txs are still subject to it.
+    let is_bsc = vm.env.chain_id == U256::from(56) || vm.env.chain_id == U256::from(97);
+    let is_bsc_system_tx = is_bsc
+        && vm.env.origin == vm.env.coinbase
+        && vm.env.gas_price.is_zero()
+        && match vm.tx.to() {
+            ethrex_common::types::TxKind::Call(to) => {
+                ethrex_common::constants::is_bsc_system_contract(&to)
+            }
+            _ => false,
+        };
+    if !is_bsc_system_tx && vm.env.gas_limit > vm.env.block_gas_limit {
         return Err(TxValidationError::GasAllowanceExceeded {
             block_gas_limit: vm.env.block_gas_limit,
             tx_gas_limit: vm.env.gas_limit,

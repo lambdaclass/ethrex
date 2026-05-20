@@ -34,7 +34,7 @@ use tracing::{debug, error, info};
 // Re-export types used by submodules
 pub use snap_sync::{
     SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, update_pivot,
-    validate_bytecodes, validate_state_root, validate_storage_root,
+    update_pivot_bsc, validate_bytecodes, validate_state_root, validate_storage_root,
 };
 
 #[cfg(feature = "sync-test")]
@@ -333,6 +333,7 @@ impl SyncError {
             | SyncError::AccountStoragesSnapshotsDirNotFound
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
+            | SyncError::NoBlockHeaders
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -344,7 +345,8 @@ impl SyncError {
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
-            SyncError::Chain(_)
+            SyncError::PeerHandler(_) // Peer errors are recoverable — peers come and go
+            | SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
             | SyncError::Trie(_)

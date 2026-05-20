@@ -10,11 +10,12 @@ use std::time::Duration;
 // RESPONSE LIMITS
 // =============================================================================
 
-/// Maximum response size in bytes for snap protocol requests (512 KB).
+/// Maximum response size in bytes for snap protocol requests (2 MiB).
 ///
-/// This limits the amount of data a peer can return in a single response,
-/// preventing memory exhaustion and ensuring reasonable response times.
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+/// Matches bsc-geth/geth's `softResponseLimit` so peers can fill responses
+/// up to their own cap. Lower values (we were at 512 KiB) leave bandwidth
+/// on the table on every round-trip.
+pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum number of accounts/items to request in a single snap request.
 ///
@@ -47,10 +48,14 @@ pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64;
 pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 
 /// Number of storage accounts to process per batch during state healing.
-pub const STORAGE_BATCH_SIZE: usize = 300;
+/// geth/bsc-geth caps the response by `softResponseLimit` (bytes), not by
+/// account count, so we can request the max it'll process. Geth's handler
+/// uses 1024 as the practical upper bound.
+pub const STORAGE_BATCH_SIZE: usize = 1024;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 500;
+/// Same reasoning as STORAGE_BATCH_SIZE — bounded by response bytes, not count.
+pub const NODE_BATCH_SIZE: usize = 1024;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
@@ -63,7 +68,12 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Timeout for block header fetches. Headers are small (a few KB) and cheap
+/// to serve, so a slow reply signals an unresponsive peer. Keeping this short
+/// avoids pivot refresh stalling on dead peers for 15s each.
+pub const HEADER_REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Number of retry attempts when selecting a peer for a request.
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
@@ -72,7 +82,9 @@ pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 
 /// Maximum number of concurrent in-flight requests during storage healing.
-pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
+/// bsc-geth allows one concurrent heal request per connected peer (no global
+/// cap), so sized to allow full utilization with 100+ snap-capable peers.
+pub const MAX_IN_FLIGHT_REQUESTS: u32 = 256;
 
 /// Soft limit on the number of entries in a healing pending-parents queue.
 ///
@@ -142,7 +154,7 @@ pub const SECONDS_PER_BLOCK: u64 = 12;
 ///
 /// This is used to adjust timestamp-based pivot updates and to find "safe"
 /// blocks in the chain that are unlikely to be re-orged.
-pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.98;
 
 // =============================================================================
 // PROGRESS REPORTING

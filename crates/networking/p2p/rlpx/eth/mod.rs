@@ -1,5 +1,6 @@
 pub(crate) mod block_access_lists;
 pub mod blocks;
+pub mod bsc;
 pub mod eth68;
 mod eth69;
 mod eth70;

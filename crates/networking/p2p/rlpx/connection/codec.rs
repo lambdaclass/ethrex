@@ -229,14 +229,25 @@ impl Decoder for RLPxCodec {
             })?;
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
-        Ok(Some(rlpx::Message::decode(
-            msg_id,
-            msg_data,
-            *self
-                .eth_version
-                .read()
-                .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
-        )?))
+        let version = *self
+            .eth_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+        tracing::trace!(msg_id, ?version, data_len = msg_data.len(), first_bytes = ?&msg_data[..msg_data.len().min(32)], "Decoding RLPx message");
+        match rlpx::Message::decode(msg_id, msg_data, version) {
+            Ok(msg) => Ok(Some(msg)),
+            Err(err) => {
+                tracing::debug!(
+                    msg_id,
+                    ?version,
+                    data_len = msg_data.len(),
+                    first_bytes = ?&msg_data[..msg_data.len().min(64)],
+                    error = ?err,
+                    "Failed to decode RLPx message",
+                );
+                Err(err.into())
+            }
+        }
     }
 
     fn framed<S: AsyncRead + AsyncWrite + Sized>(self, io: S) -> Framed<S, Self>
@@ -252,13 +263,21 @@ impl Encoder<rlpx::Message> for RLPxCodec {
 
     fn encode(&mut self, message: rlpx::Message, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         let mut frame_data = vec![];
-        message.encode(
-            &mut frame_data,
-            *self
-                .eth_version
-                .read()
-                .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
-        )?;
+        let version = *self
+            .eth_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+        let msg_code = message.code(version);
+        message.encode(&mut frame_data, version)?;
+        if matches!(message, rlpx::Message::GetBlockHeaders(_)) {
+            tracing::debug!(
+                msg_code,
+                frame_len = frame_data.len(),
+                first_bytes = ?&frame_data[..frame_data.len().min(20)],
+                ?version,
+                "Encoding GetBlockHeaders"
+            );
+        }
 
         let mac_aes_cipher = Aes256Enc::new_from_slice(&self.mac_key.0)?;
 

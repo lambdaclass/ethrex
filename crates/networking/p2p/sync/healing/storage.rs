@@ -280,11 +280,16 @@ pub async fn heal_storage_trie(
         }
 
         if is_done {
+            // Await in-flight request tasks so `make_request`'s inc/dec
+            // stays balanced. Dropping the JoinSet aborts them mid-await
+            // and leaks peer reservation slots.
+            requests_task_joinset.join_all().await;
             db_joinset.join_all().await;
             return Ok(true);
         }
 
         if is_stale {
+            requests_task_joinset.join_all().await;
             db_joinset.join_all().await;
             state.healing_queue = HashMap::new();
             return Ok(false);
@@ -661,6 +666,15 @@ fn get_initial_downloads(
                 .expect("We should be able to open the store")?;
             let account = AccountState::decode(&rlp).expect("We should have a valid account");
             if account.storage_root == *EMPTY_TRIE_HASH {
+                return None;
+            }
+            // Skip accounts whose current storage_root is already present locally.
+            // `healed_accounts` is append-only across cycles, so without this
+            // filter each cycle would re-fetch every previously-healed root.
+            if store
+                .has_storage_root(*acc_path, account.storage_root)
+                .unwrap_or(false)
+            {
                 return None;
             }
 

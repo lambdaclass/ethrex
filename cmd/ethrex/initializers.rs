@@ -7,7 +7,7 @@ use crate::{
 };
 use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
-use ethrex_common::types::Genesis;
+use ethrex_common::types::{BlockHeader, Genesis};
 use ethrex_config::networks::Network;
 use ethrex_rpc::WebSocketConfig;
 
@@ -184,30 +184,13 @@ pub async fn init_rpc_api(
     local_node_record: NodeRecord,
     store: Store,
     blockchain: Arc<Blockchain>,
-    cancel_token: CancellationToken,
+    syncer: Arc<SyncManager>,
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
     if !is_memory_datadir(datadir) {
         init_datadir(datadir);
     }
-
-    let syncmode = if opts.dev {
-        &SyncMode::Full
-    } else {
-        &opts.syncmode
-    };
-
-    // Create SyncManager
-    let syncer = SyncManager::new(
-        peer_handler.clone(),
-        syncmode,
-        cancel_token,
-        blockchain.clone(),
-        store.clone(),
-        datadir.to_path_buf(),
-    )
-    .await;
 
     let ws_config = if opts.ws_enabled {
         Some(WebSocketConfig {
@@ -364,6 +347,8 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
     let udp_port = opts
         .discovery_port
+        .as_deref()
+        .unwrap_or(&opts.p2p_port)
         .parse()
         .expect("Failed to parse discovery port");
 
@@ -522,12 +507,18 @@ pub async fn init_l1(
     #[cfg(feature = "sync-test")]
     set_sync_block(&store).await;
 
+    let blockchain_type = if network.is_bsc() {
+        BlockchainType::Bsc
+    } else {
+        BlockchainType::L1
+    };
+
     let blockchain = init_blockchain(
         store.clone(),
         BlockchainOptions {
             max_mempool_size: opts.mempool_max_size,
             perf_logs_enabled: true,
-            r#type: BlockchainType::L1,
+            r#type: blockchain_type,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
             precompile_cache_enabled: !opts.no_precompile_cache,
@@ -568,6 +559,81 @@ pub async fn init_l1(
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
+    let syncmode = if opts.dev {
+        &SyncMode::Full
+    } else {
+        &opts.syncmode
+    };
+
+    let syncer = Arc::new(
+        SyncManager::new(
+            peer_handler.clone(),
+            syncmode,
+            cancel_token.clone(),
+            blockchain.clone(),
+            store.clone(),
+            datadir.to_path_buf(),
+        )
+        .await,
+    );
+
+    // BSC sync bridge: BSC uses Parlia consensus and has no Engine API, so
+    // sync must be driven by P2P rather than forkchoiceUpdated.  The bridge
+    // polls `blockchain.take_bsc_sync_head()` which is set by the P2P layer
+    // after each successful status exchange, then triggers the sync manager.
+    // A fallback timer also fires if no blocks have arrived for several seconds
+    // so that an initial snap/full sync can begin without waiting for a second
+    // peer status exchange.
+    if network.is_bsc() {
+        info!("Running in BSC mode — sync driven by P2P (no Engine API)");
+        let syncer_bridge = syncer.clone();
+        let blockchain_bridge = blockchain.clone();
+        let store_bridge = store.clone();
+        tracker.spawn(async move {
+            let mut pending_head: Option<ethrex_common::H256> = None;
+
+            // If we are already post-snap (full sync mode) and have blocks, trigger
+            // forward sync immediately without waiting for a new peer status hash.
+            if matches!(syncer_bridge.sync_mode(), SyncMode::Full) {
+                let latest = store_bridge.get_latest_block_number().await.unwrap_or(0);
+                if latest > 0 {
+                    info!(
+                        latest,
+                        "BSC bridge: post-snap full sync mode, triggering immediate forward sync"
+                    );
+                    // Use a sentinel hash — full sync ignores it and syncs by number.
+                    pending_head = Some(ethrex_common::H256::from_low_u64_be(1));
+                }
+            }
+
+            let notify = blockchain_bridge.bsc_sync_notify.clone();
+            loop {
+                // Check for a new head signalled by P2P (status exchange).
+                if let Some(new_head) = blockchain_bridge.take_bsc_sync_head() {
+                    pending_head = Some(new_head);
+                }
+
+                // If we have a target and the syncer is idle, kick off a sync cycle.
+                if let Some(head) = pending_head.take() {
+                    if !syncer_bridge.is_active() {
+                        info!(?head, "BSC sync bridge: triggering sync");
+                        syncer_bridge.sync_to_head(head);
+                    } else {
+                        // Syncer is busy — hold onto the head for the next iteration.
+                        pending_head = Some(head);
+                    }
+                }
+
+                // Event-driven: wake immediately on set_bsc_sync_head, with a
+                // timer fallback in case we missed a notification or need to
+                // re-check a pending-but-syncer-busy head.
+                let _ =
+                    tokio::time::timeout(std::time::Duration::from_millis(500), notify.notified())
+                        .await;
+            }
+        });
+    }
+
     init_rpc_api(
         &opts,
         &datadir,
@@ -576,7 +642,7 @@ pub async fn init_l1(
         local_node_record.clone(),
         store.clone(),
         blockchain.clone(),
-        cancel_token.clone(),
+        syncer,
         tracker.clone(),
         log_filter_handler,
     )
@@ -765,45 +831,54 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
+    // Walk back via parent_hash, collecting headers, until we hit a block
+    // whose state is on disk. Both the back-walk and the forward re-apply
+    // bypass the canonical-by-number map (CANONICAL_BLOCK_HASHES), since
+    // that map can have gaps (e.g., from earlier concurrent
+    // forkchoice_update races); headers are always stored under their
+    // hash, so following parent_hash traces the actual chain regardless
+    // of canonical-map completeness.
+    let mut chain_to_replay: Vec<BlockHeader> = Vec::new();
     let mut current_last_header = last_header;
-
-    // Find the last block with a known state root
     while !store.has_state_root(current_last_header.state_root)? {
         if current_last_header.number == 0 {
             return Err(eyre::eyre!(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
             ));
         }
+        let parent_hash = current_last_header.parent_hash;
         let parent_number = current_last_header.number - 1;
 
         debug!("Need to regenerate state for block {parent_number}");
 
-        let Some(parent_header) = store.get_block_header(parent_number)? else {
+        let Some(parent_header) = store.get_block_header_by_hash(parent_hash)? else {
             return Err(eyre::eyre!(
-                "Parent header for block {parent_number} not found"
+                "Parent header for block {parent_number} (hash {parent_hash:?}) not found"
             ));
         };
 
+        chain_to_replay.push(current_last_header);
         current_last_header = parent_header;
     }
 
     let last_state_number = current_last_header.number;
 
-    if last_state_number == head_block_number {
+    if chain_to_replay.is_empty() {
         debug!("State is already up to date");
         return Ok(());
     }
 
     info!("Regenerating state from block {last_state_number} to {head_block_number}");
 
-    // Re-apply blocks from the last known state root to the head block
-    for i in (last_state_number + 1)..=head_block_number {
-        debug!("Re-applying block {i} to regenerate state");
-
-        let block = store
-            .get_block_by_number(i)
-            .await?
-            .ok_or_else(|| eyre::eyre!("Block {i} not found"))?;
+    for header in chain_to_replay.into_iter().rev() {
+        let header_hash = header.hash();
+        debug!("Re-applying block {} to regenerate state", header.number);
+        let block = store.get_block_by_hash(header_hash).await?.ok_or_else(|| {
+            eyre::eyre!(
+                "Block {} (hash {header_hash:?}) not found in store",
+                header.number
+            )
+        })?;
 
         blockchain.add_block_pipeline(block, None)?;
     }

@@ -29,13 +29,13 @@ use std::{
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 // Re-export constants from snap::constants for backward compatibility
 pub use crate::snap::constants::{
-    HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK, MAX_RESPONSE_BYTES,
-    PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE, REQUEST_RETRY_ATTEMPTS,
-    SNAP_LIMIT,
+    HASH_MAX, HEADER_REQUEST_TIMEOUT, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK,
+    MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE,
+    REQUEST_RETRY_ATTEMPTS, SNAP_LIMIT,
 };
 
 // Re-export snap client types for backward compatibility
@@ -155,8 +155,23 @@ impl PeerHandler {
 
         while sync_head_number == 0 {
             if retries > MAX_RETRIES {
-                // sync_head is unknown to our peers
-                return Ok(None);
+                // sync_head hash is unknown to our peers — this can happen on
+                // fast-block-time chains like BSC where the hash becomes stale
+                // within seconds. Fall back: use a high estimated block number
+                // so the header download proceeds forward from our current head
+                // until it naturally reaches the chain tip.
+                //
+                // The download loop in snap_sync will stop when peers stop
+                // returning new headers, regardless of this target number.
+                debug!("sync_head hash not found by peers, using estimated target block number");
+                // Use start + a large chunk so the download begins immediately.
+                // The actual chain tip will be discovered during header download.
+                sync_head_number = start.saturating_add(500_000);
+                info!(
+                    estimated_target = sync_head_number,
+                    "Fallback: using estimated target block (sync_head hash was stale)"
+                );
+                break;
             }
             let peers = self
                 .peer_table
@@ -398,6 +413,52 @@ impl PeerHandler {
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// - No peer returned a valid response in the given time and retry limits
     ///   Since request_block_headers brought problems in cases of reorg seen in this pr https://github.com/lambdaclass/ethrex/pull/4028, we have this other function to request block headers only for full sync.
+    /// Request block headers starting from a block number.
+    pub async fn request_block_headers_from_number(
+        &mut self,
+        start: u64,
+        limit: u64,
+        order: BlockRequestOrder,
+    ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
+            id: request_id,
+            startblock: HashOrNumber::Number(start),
+            limit,
+            skip: 0,
+            reverse: matches!(order, BlockRequestOrder::NewToOld),
+        });
+        match self
+            .peer_table
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await?
+        {
+            None => Ok(None),
+            Some((peer_id, mut connection, permit)) => {
+                let response = connection
+                    .outgoing_request(request, HEADER_REQUEST_TIMEOUT)
+                    .await;
+                drop(permit);
+                match response {
+                    Ok(RLPxMessage::BlockHeaders(BlockHeaders {
+                        id: _,
+                        block_headers,
+                    })) if !block_headers.is_empty()
+                        && are_block_headers_chained(&block_headers, &order) =>
+                    {
+                        self.peer_table.record_success(peer_id)?;
+                        Ok(Some(block_headers))
+                    }
+                    _ => {
+                        // Penalize peer so get_best_peer scores it lower next time
+                        self.peer_table.record_failure(peer_id)?;
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn request_block_headers_from_hash(
         &mut self,
         start: H256,
@@ -411,11 +472,15 @@ impl PeerHandler {
             skip: 0,
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
-        match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
+        match self
+            .peer_table
+            .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await?
+        {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
                 let response = connection
-                    .outgoing_request(request, PEER_REPLY_TIMEOUT)
+                    .outgoing_request(request, HEADER_REQUEST_TIMEOUT)
                     .await;
                 drop(permit);
                 if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
@@ -428,6 +493,7 @@ impl PeerHandler {
                         debug!(
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
+                        self.peer_table.record_failure(peer_id)?;
                         return Ok(None);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
@@ -567,6 +633,177 @@ impl PeerHandler {
             }
         }
         Ok(None)
+    }
+
+    /// Downloads block bodies from a specific peer connection.
+    /// The caller must already hold a request reservation for this peer
+    /// (via `inc_requests` before spawning). Validates bodies against the
+    /// provided headers before returning.
+    async fn download_bodies_from_peer(
+        _peer_id: H256,
+        connection: &mut PeerConnection,
+        block_hashes: Vec<H256>,
+    ) -> Result<Vec<BlockBody>, PeerHandlerError> {
+        let block_hashes_len = block_hashes.len();
+        let request_id = rand::random();
+        let request = RLPxMessage::GetBlockBodies(GetBlockBodies {
+            id: request_id,
+            block_hashes,
+        });
+        if let Ok(RLPxMessage::BlockBodies(BlockBodies {
+            id: _,
+            block_bodies,
+        })) = connection
+            .outgoing_request(request, PEER_REPLY_TIMEOUT)
+            .await
+            && !block_bodies.is_empty()
+            && block_bodies.len() <= block_hashes_len
+        {
+            return Ok(block_bodies);
+        }
+        Err(PeerHandlerError::NoResponseFromPeer)
+    }
+
+    /// Requests block bodies for all given headers in parallel from multiple peers.
+    /// Headers are split into chunks of `MAX_BLOCK_BODIES_TO_REQUEST` and each chunk
+    /// is dispatched to a different peer. Failed chunks are retried with other peers.
+    /// Returns the block bodies in the same order as the input headers.
+    pub async fn request_block_bodies_parallel(
+        &mut self,
+        all_headers: &[BlockHeader],
+    ) -> Result<Vec<BlockBody>, PeerHandlerError> {
+        // Split into chunks tagged by their absolute start offset in all_headers.
+        // Using offsets (not chunk indices) lets partial-response remainders be
+        // re-queued and reassembled in the correct position.
+        let mut tasks_queue: VecDeque<(usize, Vec<BlockHeader>)> = all_headers
+            .chunks(MAX_BLOCK_BODIES_TO_REQUEST)
+            .enumerate()
+            .map(|(i, chunk)| (i * MAX_BLOCK_BODIES_TO_REQUEST, chunk.to_vec()))
+            .collect();
+
+        // Completed segments keyed by start offset — bodies cover exactly the
+        // range [start_offset, start_offset + bodies.len()) of all_headers.
+        let mut segments: Vec<(usize, Vec<BlockBody>)> = Vec::new();
+        let mut delivered_bodies = 0usize;
+        let total_bodies = all_headers.len();
+
+        // Channel for completed tasks to report back.
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<(
+            usize,
+            Vec<BlockBody>,
+            H256,
+            PeerConnection,
+            Vec<BlockHeader>,
+        )>(tasks_queue.len() + 1);
+
+        loop {
+            // Collect completed tasks (non-blocking)
+            while let Ok((start_offset, bodies, peer_id, _connection, chunk_headers)) =
+                rx.try_recv()
+            {
+                self.peer_table.dec_requests(peer_id)?;
+
+                if bodies.is_empty() {
+                    self.peer_table.record_failure(peer_id)?;
+                    debug!(
+                        "Failed to download body chunk @{start_offset} from peer {peer_id}, re-queuing"
+                    );
+                    tasks_queue.push_back((start_offset, chunk_headers));
+                    continue;
+                }
+
+                // Validate bodies against headers
+                let mut validated = Vec::new();
+                let mut valid = true;
+                for (header, body) in chunk_headers[..bodies.len()].iter().zip(bodies) {
+                    if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
+                        warn!(
+                            "Invalid block body error {e}, discarding peer {peer_id} and retrying chunk @{start_offset}..."
+                        );
+                        valid = false;
+                        self.peer_table.record_critical_failure(peer_id)?;
+                        break;
+                    }
+                    validated.push(body);
+                }
+
+                if !valid {
+                    tasks_queue.push_back((start_offset, chunk_headers));
+                    continue;
+                }
+
+                // If peer returned fewer bodies than requested, re-queue the remainder
+                // at its actual offset so reassembly stays ordered.
+                if validated.len() < chunk_headers.len() {
+                    let remaining_headers = chunk_headers[validated.len()..].to_vec();
+                    let remainder_offset = start_offset + validated.len();
+                    debug!(
+                        "Chunk @{start_offset}: got {}/{} bodies, re-queuing remainder @{remainder_offset}",
+                        validated.len(),
+                        chunk_headers.len()
+                    );
+                    tasks_queue.push_back((remainder_offset, remaining_headers));
+                }
+
+                self.peer_table.record_success(peer_id)?;
+                delivered_bodies += validated.len();
+                segments.push((start_offset, validated));
+            }
+
+            // Check if all bodies have been collected
+            if delivered_bodies >= total_bodies && tasks_queue.is_empty() {
+                break;
+            }
+
+            // Try to dispatch a task to a peer
+            let Some((peer_id, mut connection, permit)) = self
+                .peer_table
+                .get_best_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
+                .await?
+            else {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            };
+
+            let Some((start_offset, chunk_headers)) = tasks_queue.pop_front() else {
+                // All tasks dispatched but not all completed yet; wait for results
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                continue;
+            };
+
+            let task_tx = tx.clone();
+            let block_hashes: Vec<H256> = chunk_headers.iter().map(|h| h.hash()).collect();
+
+            tokio::spawn(async move {
+                let bodies =
+                    Self::download_bodies_from_peer(peer_id, &mut connection, block_hashes)
+                        .await
+                        .unwrap_or_default();
+                drop(permit);
+
+                task_tx
+                    .send((start_offset, bodies, peer_id, connection, chunk_headers))
+                    .await
+                    .inspect_err(|err| {
+                        error!("Failed to send body result through channel. Error: {err}")
+                    })
+            });
+        }
+
+        // Reassemble: sort segments by start offset and concatenate.
+        segments.sort_by_key(|(offset, _)| *offset);
+        let mut all_bodies = Vec::with_capacity(total_bodies);
+        for (_, bodies) in segments {
+            all_bodies.extend(bodies);
+        }
+
+        debug!(
+            "Parallel body download complete: {} bodies for {} headers",
+            all_bodies.len(),
+            all_headers.len()
+        );
+
+        Ok(all_bodies)
     }
 
     /// Requests block access lists from a peer that supports eth/71.

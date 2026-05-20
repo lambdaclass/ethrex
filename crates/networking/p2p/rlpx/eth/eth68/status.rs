@@ -129,4 +129,8 @@ impl StatusMessage for StatusMessage68 {
     fn get_genesis(&self) -> BlockHash {
         self.genesis
     }
+
+    fn get_best_hash(&self) -> BlockHash {
+        self.block_hash
+    }
 }

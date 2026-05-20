@@ -41,6 +41,20 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
 
+/// RAII guard that flushes the opcode tracer when `execute()` returns.
+/// Only fires `end_tx` if this invocation is the one that activated tracing —
+/// avoids clobbering the target tx's state when other (parallel) txs finish.
+struct TraceGuard {
+    active: bool,
+}
+impl Drop for TraceGuard {
+    fn drop(&mut self) {
+        if self.active {
+            crate::opcode_tracer::end_tx();
+        }
+    }
+}
+
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
@@ -49,6 +63,13 @@ pub enum VMType {
     L1,
     /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
+    /// BNB Smart Chain (BSC) execution.
+    ///
+    /// BSC uses the Parlia PoA consensus engine. Unlike L1, transaction fees are
+    /// credited to `SystemAddress` (`0xffffFFFf…fFFfE`) during EVM execution
+    /// rather than to `header.coinbase`. The validator (coinbase) later receives
+    /// its rewards via a system call at the end of the block.
+    Bsc,
 }
 
 /// Execution substate that tracks changes during transaction execution.
@@ -525,7 +546,7 @@ impl<'a> VM<'a> {
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
-        let mut substate = Substate::initialize(&env, tx)?;
+        let mut substate = Substate::initialize(&env, tx, vm_type)?;
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
@@ -764,6 +785,12 @@ impl<'a> VM<'a> {
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
+        let trace_active =
+            crate::opcode_tracer::begin_tx(self.tx.hash(), self.env.disable_balance_check);
+        let _trace_guard = TraceGuard {
+            active: trace_active,
+        };
+
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
             self.restore_cache_state()?;
@@ -862,6 +889,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.vm_type,
                 self.db.store.precompile_cache(),
                 self.crypto,
             );
@@ -893,6 +921,17 @@ impl<'a> VM<'a> {
 
         loop {
             let opcode = self.current_call_frame.next_opcode();
+
+            let trace_pre = if crate::opcode_tracer::is_active() {
+                Some((
+                    self.current_call_frame.pc,
+                    self.current_call_frame.gas_remaining,
+                    self.call_frames.len().saturating_add(1),
+                ))
+            } else {
+                None
+            };
+
             self.advance_pc(1)?;
 
             #[cfg(feature = "perf_opcode_timings")]
@@ -906,6 +945,44 @@ impl<'a> VM<'a> {
             {
                 let time = opcode_time_start.elapsed();
                 timings.update(opcode, time);
+            }
+
+            if let Some((pc_before, gas_before, depth_before)) = trace_pre {
+                let depth_after = self.call_frames.len().saturating_add(1);
+                let gas_after = if depth_after > depth_before {
+                    // CALL/CREATE pushed a child frame — parent's post-op gas is now on the stack.
+                    self.call_frames
+                        .last()
+                        .map(|f| f.gas_remaining)
+                        .unwrap_or(0)
+                } else {
+                    self.current_call_frame.gas_remaining
+                };
+                let gas_cost = gas_before.saturating_sub(gas_after);
+                crate::opcode_tracer::trace(
+                    pc_before,
+                    opcode,
+                    gas_before,
+                    gas_cost,
+                    depth_before,
+                    self.substate.refunded_gas,
+                );
+            }
+            // Diagnostic: count ALL opcode iterations when tracer is active,
+            // regardless of trace_pre. If this count exceeds the trace step
+            // count, child frames are running but not being traced.
+            #[allow(clippy::arithmetic_side_effects)]
+            if crate::opcode_tracer::is_active() {
+                use std::sync::atomic::{AtomicU64, Ordering};
+                static TOTAL: AtomicU64 = AtomicU64::new(0);
+                let v = TOTAL.fetch_add(1, Ordering::Relaxed) + 1;
+                if v % 100 == 0 || v < 5 {
+                    eprintln!(
+                        "[trace-counter] total_op_iter={} current_depth={}",
+                        v,
+                        self.call_frames.len() + 1
+                    );
+                }
             }
 
             let result = match op_result {
@@ -928,12 +1005,14 @@ impl<'a> VM<'a> {
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_precompile(
         code_address: H160,
         calldata: &Bytes,
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        vm_type: VMType,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
@@ -943,6 +1022,7 @@ impl<'a> VM<'a> {
                 calldata,
                 gas_remaining,
                 fork,
+                vm_type,
                 cache,
                 crypto,
             ),
@@ -1082,7 +1162,11 @@ impl<'a> VM<'a> {
 
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
-    pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+    pub fn initialize(
+        env: &Environment,
+        tx: &Transaction,
+        vm_type: VMType,
+    ) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
         let mut initial_accessed_addresses = FxHashSet::default();
         let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
@@ -1110,6 +1194,15 @@ impl Substate {
 
         // Add the address for the P256 verify precompile post-Osaka
         if env.config.fork >= Fork::Osaka {
+            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
+        }
+
+        // BSC-specific precompiles (0x64..=0x69, 0x100) pre-warmed so the
+        // first CALL pays the warm-access cost — matching bsc-geth.
+        if matches!(vm_type, VMType::Bsc) {
+            for i in 0x64u64..=0x69u64 {
+                initial_accessed_addresses.insert(Address::from_low_u64_be(i));
+            }
             initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }
 

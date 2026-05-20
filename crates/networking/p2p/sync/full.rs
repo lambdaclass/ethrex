@@ -3,7 +3,6 @@
 //! This module contains the logic for full synchronization mode where all blocks
 //! are fetched via p2p eth requests and executed to rebuild the state.
 
-use std::cmp::min;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +12,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     H256,
-    types::{Block, block_access_list::BlockAccessList},
+    types::{Block, BlockHeader, block_access_list::BlockAccessList},
 };
 use ethrex_storage::Store;
 use tokio::time::Instant;
@@ -21,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::MAX_HEADER_FETCH_ATTEMPTS;
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
@@ -53,74 +52,160 @@ pub async fn sync_cycle_full(
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
-    let mut start_block_number;
-    let mut end_block_number = 0;
+    let mut start_block_number = 0u64;
+    let mut end_block_number = 0u64;
     let mut headers = vec![];
     let mut single_batch = true;
 
-    let mut attempts = 0;
+    // BSC (fast block times): the sync_head hash from peer Status is always stale.
+    // Skip hash-based lookup entirely and go straight to forward sync by block number.
+    let chain_id = store.get_chain_config().chain_id;
+    let is_bsc = chain_id == 56 || chain_id == 97;
 
-    // Request and store all block headers from the advertised sync head
-    loop {
-        let Some(mut block_headers) = peers
-            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
-            .await?
-        else {
-            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
-                warn!(
-                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
-                );
+    if is_bsc {
+        // BSC: loop forward sync in batches until caught up or stalled.
+        // Each iteration fetches 128 headers, downloads bodies, and executes.
+        // This avoids waiting for a new peer sync_head between batches.
+        loop {
+            let latest = store.get_latest_block_number().await.unwrap_or(0);
+            if latest == 0 {
+                warn!("BSC forward sync: no local blocks, aborting");
                 return Ok(());
             }
-            attempts += 1;
-            warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
+            headers.clear();
+            start_block_number = 0;
+            end_block_number = 0;
+            if !request_forward_headers(
+                peers,
+                &store,
+                latest,
+                &mut start_block_number,
+                &mut end_block_number,
+                &mut headers,
+                blockchain.bsc_sync_notify.clone(),
+            )
+            .await?
+            {
+                info!("BSC forward sync: no new headers available, cycle done");
+                return Ok(());
+            }
+            end_block_number += 1;
+            start_block_number = start_block_number.max(1);
+
+            // Download bodies in parallel from multiple peers, then execute.
+            let batch_size = headers.len();
+            let bodies = peers.request_block_bodies_parallel(&headers).await?;
+            if bodies.len() != headers.len() {
+                return Err(SyncError::BodiesNotFound);
+            }
+            let blocks: Vec<Block> = headers
+                .drain(..)
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body })
+                .collect();
+            if blocks.is_empty() {
+                return Ok(());
+            }
+            info!(
+                "BSC: executing {} blocks ({}..{})",
+                blocks.len(),
+                blocks.first().map(|b| b.header.number).unwrap_or(0),
+                blocks.last().map(|b| b.header.number).unwrap_or(0),
             );
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
-        };
-        debug!("Sync Log 9: Received {} block headers", block_headers.len());
-        // Reset failure counter on success so it tracks consecutive failures
-        attempts = 0;
-
-        let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
-        let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
-
-        info!(
-            "Received {} block headers| First Number: {} Last Number: {}",
-            block_headers.len(),
-            first_header.number,
-            last_header.number,
-        );
-        end_block_number = end_block_number.max(first_header.number);
-        start_block_number = last_header.number;
-
-        sync_head = last_header.parent_hash;
-        if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
-            // Incoming chain merged with current chain
-            // Filter out already canonical blocks from batch
-            let mut first_canon_block = block_headers.len();
-            for (index, header) in block_headers.iter().enumerate() {
-                if store.is_canonical_sync(header.hash())? {
-                    first_canon_block = index;
-                    break;
-                }
-            }
-            block_headers.drain(first_canon_block..block_headers.len());
-            if let Some(last_header) = block_headers.last() {
-                start_block_number = last_header.number;
-            }
-            // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
-            if single_batch {
-                headers = block_headers.into_iter().rev().collect();
+            // Small batches (< SMALL_BATCH_THRESHOLD) are typically live-tip
+            // arrivals. Running them through `add_blocks_in_batch` defers the
+            // `forkchoice_update` until the whole batch finishes, pinning
+            // `eth_blockNumber` at the pre-batch value for up to ~2s and
+            // making ethrex appear to lag the chain head. For small batches,
+            // commit each block individually so the canonical head advances
+            // per block. Large batches keep using the batched path for
+            // throughput (amortized forkchoice + storage flush).
+            const SMALL_BATCH_THRESHOLD: usize = 16;
+            if blocks.len() < SMALL_BATCH_THRESHOLD {
+                execute_blocks_per_block_fc(blockchain.clone(), blocks, store.clone()).await?;
             } else {
-                store.add_fullsync_batch(block_headers).await?;
+                add_blocks_in_batch(
+                    blockchain.clone(),
+                    cancel_token.clone(),
+                    blocks,
+                    true,
+                    store.clone(),
+                    peers,
+                )
+                .await?;
             }
-            break;
+
+            if batch_size < *EXECUTE_BATCH_SIZE {
+                // Got fewer headers than a full batch — we're caught up
+                return Ok(());
+            }
+            // Otherwise loop to fetch next batch
         }
-        store.add_fullsync_batch(block_headers).await?;
-        single_batch = false;
-    }
+    } else {
+        let mut attempts = 0;
+
+        // Request and store all block headers from the advertised sync head
+        loop {
+            let Some(mut block_headers) = peers
+                .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+                .await?
+            else {
+                if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!(
+                        "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    );
+                    return Ok(());
+                }
+                attempts += 1;
+                warn!(
+                    "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            };
+            debug!("Sync Log 9: Received {} block headers", block_headers.len());
+            // Reset failure counter on success so it tracks consecutive failures
+            attempts = 0;
+
+            let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
+            let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
+
+            info!(
+                "Received {} block headers| First Number: {} Last Number: {}",
+                block_headers.len(),
+                first_header.number,
+                last_header.number,
+            );
+            end_block_number = end_block_number.max(first_header.number);
+            start_block_number = last_header.number;
+
+            sync_head = last_header.parent_hash;
+            if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
+                // Incoming chain merged with current chain
+                // Filter out already canonical blocks from batch
+                let mut first_canon_block = block_headers.len();
+                for (index, header) in block_headers.iter().enumerate() {
+                    if store.is_canonical_sync(header.hash())? {
+                        first_canon_block = index;
+                        break;
+                    }
+                }
+                block_headers.drain(first_canon_block..block_headers.len());
+                if let Some(last_header) = block_headers.last() {
+                    start_block_number = last_header.number;
+                }
+                // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
+                if single_batch {
+                    headers = block_headers.into_iter().rev().collect();
+                } else {
+                    store.add_fullsync_batch(block_headers).await?;
+                }
+                break;
+            }
+            store.add_fullsync_batch(block_headers).await?;
+            single_batch = false;
+        }
+    } // end else (non-BSC hash-based download)
     end_block_number += 1;
     start_block_number = start_block_number.max(1);
 
@@ -138,29 +223,26 @@ pub async fn sync_cycle_full(
         if single_batch {
             let final_batch = true;
             let mut batch_headers = headers;
-            let mut blocks = Vec::new();
-            while !batch_headers.is_empty() {
-                let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
-                let header_batch = &batch_headers[..end];
-                match download_peers.request_block_bodies(header_batch).await {
-                    Ok(Some(bodies)) => {
-                        debug!("Obtained: {} block bodies", bodies.len());
-                        let block_batch = batch_headers
-                            .drain(..bodies.len())
-                            .zip(bodies)
-                            .map(|(header, body)| Block { header, body });
-                        blocks.extend(block_batch);
-                    }
-                    Ok(None) => {
-                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
-                        return;
-                    }
-                    Err(e) => {
-                        let _ = body_tx.send(Err(e.into())).await;
-                        return;
-                    }
+            let bodies = match download_peers
+                .request_block_bodies_parallel(&batch_headers)
+                .await
+            {
+                Ok(bodies) => bodies,
+                Err(e) => {
+                    let _ = body_tx.send(Err(e.into())).await;
+                    return;
                 }
+            };
+            if bodies.len() != batch_headers.len() {
+                let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                return;
             }
+            debug!("Obtained: {} block bodies in parallel", bodies.len());
+            let blocks: Vec<Block> = batch_headers
+                .drain(..)
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body })
+                .collect();
             if !blocks.is_empty() {
                 let _ = body_tx.send(Ok((blocks, final_batch))).await;
             }
@@ -194,29 +276,27 @@ pub async fn sync_cycle_full(
                 }
             };
 
-            let mut blocks = Vec::new();
-            while !batch_headers.is_empty() {
-                let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
-                let header_batch = &batch_headers[..end];
-                match download_peers.request_block_bodies(header_batch).await {
-                    Ok(Some(bodies)) => {
-                        debug!("Obtained: {} block bodies", bodies.len());
-                        let block_batch = batch_headers
-                            .drain(..bodies.len())
-                            .zip(bodies)
-                            .map(|(header, body)| Block { header, body });
-                        blocks.extend(block_batch);
-                    }
-                    Ok(None) => {
-                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
-                        return;
-                    }
-                    Err(e) => {
-                        let _ = body_tx.send(Err(e.into())).await;
-                        return;
-                    }
+            // Download block bodies in parallel from multiple peers.
+            let bodies = match download_peers
+                .request_block_bodies_parallel(&batch_headers)
+                .await
+            {
+                Ok(bodies) => bodies,
+                Err(e) => {
+                    let _ = body_tx.send(Err(e.into())).await;
+                    return;
                 }
+            };
+            if bodies.len() != batch_headers.len() {
+                let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                return;
             }
+            debug!("Obtained: {} block bodies in parallel", bodies.len());
+            let blocks: Vec<Block> = batch_headers
+                .drain(..)
+                .zip(bodies)
+                .map(|(header, body)| Block { header, body })
+                .collect();
             if !blocks.is_empty() && body_tx.send(Ok((blocks, final_batch))).await.is_err() {
                 // Receiver dropped (execution loop stopped), stop downloading
                 return;
@@ -373,6 +453,92 @@ async fn add_blocks_in_batch(
     Ok(())
 }
 
+/// Max request failures before giving up on forward sync.
+const MAX_FORWARD_SYNC_FAILURES: u64 = 200;
+
+/// Max time to wait for peers.
+const FORWARD_SYNC_PEER_WAIT: Duration = Duration::from_secs(300);
+
+/// Requests block headers forward from `latest + 1` by block number.
+async fn request_forward_headers(
+    peers: &mut PeerHandler,
+    store: &Store,
+    latest: u64,
+    start_block_number: &mut u64,
+    end_block_number: &mut u64,
+    headers: &mut Vec<BlockHeader>,
+    new_head_notify: Arc<tokio::sync::Notify>,
+) -> Result<bool, SyncError> {
+    let mut failures = 0u64;
+    let wait_start = Instant::now();
+
+    loop {
+        let peer_count = peers.count_total_peers().await.unwrap_or(0);
+        if peer_count == 0 {
+            if wait_start.elapsed() > FORWARD_SYNC_PEER_WAIT {
+                warn!(
+                    "Forward sync: no peers after {:?}, giving up",
+                    FORWARD_SYNC_PEER_WAIT
+                );
+                return Ok(false);
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        }
+
+        let forward_start = store.get_latest_block_number().await.unwrap_or(latest) + 1;
+        info!(
+            forward_start,
+            peer_count, failures, "Forward sync: requesting headers by number"
+        );
+        // Headers are small (~500B each); 1024 fits well under the response
+        // limit. Using EXECUTE_BATCH_SIZE lets the outer loop keep iterating
+        // (via `batch_size >= EXECUTE_BATCH_SIZE`) until we drain what a peer
+        // can serve, instead of exiting after 128 blocks and waiting for the
+        // sync bridge to re-trigger on the next BlockRangeUpdate.
+        match peers
+            .request_block_headers_from_number(
+                forward_start,
+                *EXECUTE_BATCH_SIZE as u64,
+                BlockRequestOrder::OldToNew,
+            )
+            .await?
+        {
+            Some(forward_headers) if !forward_headers.is_empty() => {
+                let first = forward_headers.first().ok_or(SyncError::NoBlocks)?;
+                let last = forward_headers.last().ok_or(SyncError::NoBlocks)?;
+                info!(
+                    "Forward sync: received {} headers from block {} to {}",
+                    forward_headers.len(),
+                    first.number,
+                    last.number,
+                );
+                *start_block_number = first.number;
+                *end_block_number = last.number;
+                *headers = forward_headers;
+                return Ok(true);
+            }
+            _ => {
+                failures += 1;
+                if failures >= MAX_FORWARD_SYNC_FAILURES {
+                    warn!(failures, "Forward sync: too many failures, giving up");
+                    return Ok(false);
+                }
+                // Empty response means peer has no block after our latest —
+                // we're at tip. Wait on the notify (fired by
+                // `set_bsc_sync_head` on every NewBlockHashes announcement)
+                // instead of polling every 2s. The short fallback covers
+                // the case where the announcement is missed (dropped
+                // connection, peer switch) so we don't hang.
+                warn!(failures, "Forward sync: request failed, retrying...");
+                let _ =
+                    tokio::time::timeout(Duration::from_millis(500), new_head_notify.notified())
+                        .await;
+            }
+        }
+    }
+}
+
 /// Executes the given blocks and stores them
 /// If sync_head_found is true, they will be executed one by one
 /// If sync_head_found is false, they will be executed in a single batch,
@@ -467,4 +633,32 @@ async fn run_blocks_pipeline(
     })
     .await
     .map_err(|e| (ChainError::Custom(e.to_string()), None))?
+}
+
+/// Execute blocks one at a time, advancing the canonical head after each.
+/// Used for small BSC batches (live tip) so `eth_blockNumber` updates
+/// per-block instead of once per batch.
+async fn execute_blocks_per_block_fc(
+    blockchain: Arc<Blockchain>,
+    blocks: Vec<Block>,
+    store: Store,
+) -> Result<(), SyncError> {
+    for block in blocks {
+        let number = block.header.number;
+        let hash = block.hash();
+        let blockchain_ref = blockchain.clone();
+        tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
+            .await
+            .map_err(SyncError::JoinHandle)??;
+        // Route via advance_canonical_head so the no-op-on-old-block guard
+        // applies here too. Direct `forkchoice_update` would rewind the
+        // head if a newer NewBlock raced ahead via direct-fetch, deleting
+        // its canonical mapping (the same race this guard fixed in the
+        // direct-fetch path).
+        blockchain
+            .advance_canonical_head(number, hash)
+            .await
+            .map_err(SyncError::Chain)?;
+    }
+    Ok(())
 }

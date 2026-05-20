@@ -17,7 +17,9 @@ use crate::{
         },
     },
     snap::{async_fs, constants::*, encodable_to_proof, error::SnapError},
-    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
+    sync::{
+        AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot, update_pivot_bsc,
+    },
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -97,6 +99,8 @@ pub async fn request_account_range(
     account_state_snapshots_dir: &Path,
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
+    blockchain: std::sync::Arc<ethrex_blockchain::Blockchain>,
+    chain_id: u64,
     diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
 ) -> Result<(), SnapError> {
     METRICS
@@ -242,17 +246,29 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, chain_id) {
             info!("request_account_range became stale, updating pivot");
-            *pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-                diagnostics,
-            )
-            .await
-            .expect("Should be able to update pivot")
+            *pivot_header = if chain_id == 56 || chain_id == 97 {
+                update_pivot_bsc(
+                    pivot_header,
+                    peers,
+                    &blockchain,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await
+                .expect("Should be able to update pivot (bsc)")
+            } else {
+                update_pivot(
+                    pivot_header.number,
+                    pivot_header.timestamp,
+                    peers,
+                    block_sync_state,
+                    diagnostics,
+                )
+                .await
+                .expect("Should be able to update pivot")
+            };
         }
 
         tokio::spawn(request_account_range_worker(
@@ -509,6 +525,7 @@ pub async fn request_storage_ranges(
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
+    chain_id: u64,
 ) -> Result<u64, SnapError> {
     METRICS
         .current_step
@@ -545,19 +562,65 @@ pub async fn request_storage_ranges(
     // TODO: Turn this into a stable sort for binary search.
     accounts_by_root_hash.sort_unstable_by_key(|(_, accounts)| !accounts.len());
     let chunk_size = STORAGE_BATCH_SIZE;
-    let chunk_count = (accounts_by_root_hash.len() / chunk_size) + 1;
 
-    // list of tasks to be executed
-    // Types are (start_index, end_index, starting_hash)
-    // NOTE: end_index is NOT inclusive
-
+    // Partition into bulk-path tasks (fresh accounts with empty intervals) and
+    // per-interval tasks (big accounts marked in a prior call). The previous
+    // implementation queued every account from `start_hash: zero` and relied
+    // on the response handler's bulk-task big-account split path to re-queue
+    // per-interval tasks each call. That fails when peers cover a big account
+    // fully without hitting their response limit on it: the split path doesn't
+    // fire, no per-interval tasks get queued, intervals never drain, the
+    // account is stuck pending forever even after its data is on disk.
     let mut tasks_queue_not_started = VecDeque::<StorageTask>::new();
-    for i in 0..chunk_count {
-        let chunk_start = chunk_size * i;
-        let chunk_end = (chunk_start + chunk_size).min(accounts_by_root_hash.len());
+    let mut bulk_chunk_start: Option<usize> = None;
+    for i in 0..accounts_by_root_hash.len() {
+        let first_account = *accounts_by_root_hash[i].1.first().ok_or_else(|| {
+            SnapError::InternalError("Empty accounts vector while scheduling tasks".to_owned())
+        })?;
+        let intervals = &account_storage_roots
+            .accounts_with_storage_root
+            .get(&first_account)
+            .ok_or_else(|| {
+                SnapError::InternalError(
+                    "Could not find intervals for account while scheduling".to_owned(),
+                )
+            })?
+            .1;
+        if intervals.is_empty() {
+            let chunk_start = *bulk_chunk_start.get_or_insert(i);
+            if i + 1 - chunk_start >= chunk_size {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: chunk_start,
+                    end_index: i + 1,
+                    start_hash: H256::zero(),
+                    end_hash: None,
+                });
+                bulk_chunk_start = None;
+            }
+        } else {
+            if let Some(start) = bulk_chunk_start {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: start,
+                    end_index: i,
+                    start_hash: H256::zero(),
+                    end_hash: None,
+                });
+                bulk_chunk_start = None;
+            }
+            for &(start_hash, end_hash) in intervals.iter() {
+                tasks_queue_not_started.push_back(StorageTask {
+                    start_index: i,
+                    end_index: i + 1,
+                    start_hash,
+                    end_hash: Some(end_hash),
+                });
+            }
+        }
+    }
+    if let Some(start) = bulk_chunk_start {
         tasks_queue_not_started.push_back(StorageTask {
-            start_index: chunk_start,
-            end_index: chunk_end,
+            start_index: start,
+            end_index: accounts_by_root_hash.len(),
             start_hash: H256::zero(),
             end_hash: None,
         });
@@ -850,6 +913,46 @@ pub async fn request_storage_ranges(
                         debug!("Split big storage account into {chunk_count} chunks.");
                     }
                 }
+            } else if let Some(hash_end) = hash_end {
+                // Per-interval task completed: the peer covered
+                // [start_hash, hash_end] fully and verify_range reported
+                // should_continue=false, so the worker returns
+                // remaining_start == remaining_end and the guard above does
+                // not fire. Drop the matching interval here so the account
+                // can finalize across calls; otherwise the partition logic
+                // at function entry would re-queue the same range forever.
+                let mut acc_hash: H256 = H256::zero();
+                for account in accounts_by_root_hash[start_index].1.iter() {
+                    if let Some((_, old_intervals)) = account_storage_roots
+                        .accounts_with_storage_root
+                        .get(account)
+                        && !old_intervals.is_empty()
+                    {
+                        acc_hash = *account;
+                    }
+                }
+                // acc_hash stays zero when a sibling per-interval task for the
+                // same account already drained the last interval and finalized
+                // it earlier in this call's loop — there's nothing left to do.
+                if !acc_hash.is_zero() {
+                    let (_, old_intervals) = account_storage_roots
+                            .accounts_with_storage_root
+                            .get_mut(&acc_hash)
+                            .ok_or(SnapError::InternalError("Tried to get the old download intervals for an account but did not find them".to_owned()))?;
+                    let pos = old_intervals
+                        .iter()
+                        .position(|(_old_start, end)| end == &hash_end)
+                        .ok_or(SnapError::InternalError(
+                            "Could not find an old interval that we were tracking".to_owned(),
+                        ))?;
+                    old_intervals.remove(pos);
+                    if old_intervals.is_empty() {
+                        for account in accounts_by_root_hash[start_index].1.iter() {
+                            accounts_done.insert(*account, vec![]);
+                            account_storage_roots.healed_accounts.insert(*account);
+                        }
+                    }
+                }
             }
 
             if account_storages.is_empty() {
@@ -916,7 +1019,7 @@ pub async fn request_storage_ranges(
             }
         }
 
-        if block_is_stale(pivot_header) {
+        if block_is_stale(pivot_header, chain_id) {
             info!("request_storage_ranges became stale, breaking");
             break;
         }

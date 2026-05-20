@@ -70,7 +70,7 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 
 /// Commit threshold for batch (full sync) mode. Each batch layer holds ~1024
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
-const BATCH_COMMIT_THRESHOLD: usize = 4;
+const BATCH_COMMIT_THRESHOLD: usize = 10;
 
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
@@ -2809,6 +2809,31 @@ impl Store {
             .compute_hash(&NativeCrypto)
             .finalize(&NativeCrypto);
         Ok(state_root == root_hash)
+    }
+
+    /// Whether the given storage trie's root node is already committed locally.
+    ///
+    /// Returns `true` when the node stored at the storage trie's root path
+    /// hashes to `storage_root`. Because `commit_node` only persists a parent
+    /// after all its children are persisted, a present-and-matching root
+    /// implies the entire subtree is also present — safe to skip during
+    /// healing.
+    pub fn has_storage_root(
+        &self,
+        account_hash: H256,
+        storage_root: H256,
+    ) -> Result<bool, StoreError> {
+        if storage_root == *EMPTY_TRIE_HASH {
+            return Ok(true);
+        }
+        let trie = self.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+        let Some(root) = trie.db().get(Nibbles::default())? else {
+            return Ok(false);
+        };
+        let root_hash = ethrex_trie::Node::decode(&root)?
+            .compute_hash(&NativeCrypto)
+            .finalize(&NativeCrypto);
+        Ok(storage_root == root_hash)
     }
 
     /// Takes a block hash and returns an iterator to its ancestors. Block headers are returned

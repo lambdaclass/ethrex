@@ -10,6 +10,39 @@ pub const SYSTEM_ADDRESS: H160 = H160([
     0xFF, 0xFF, 0xFF, 0xFE,
 ]);
 
+/// Returns `true` if the given address is a BSC system contract — one that
+/// may only be invoked by the coinbase via a gas-price-zero system transaction.
+///
+/// Reference: bnb-chain/bsc `core/systemcontracts/const.go` `SystemContracts`.
+pub fn is_bsc_system_contract(address: &H160) -> bool {
+    let bytes = address.as_bytes();
+    if bytes[..18] != [0u8; 18] {
+        return false;
+    }
+    let tail = u16::from_be_bytes([bytes[18], bytes[19]]);
+    matches!(
+        tail,
+        0x1000 // ValidatorContract
+        | 0x1001 // SlashContract
+        | 0x1002 // SystemRewardContract
+        | 0x1003 // LightClientContract
+        | 0x1004 // TokenHubContract
+        | 0x1005 // RelayerIncentivizeContract
+        | 0x1006 // RelayerHubContract
+        | 0x1007 // GovHubContract
+        | 0x1008 // TokenManagerContract
+        | 0x2000 // CrossChainContract
+        | 0x2001 // StakingContract
+        | 0x2002 // StakeHubContract
+        | 0x2003 // StakeCreditContract
+        | 0x2004 // GovernorContract
+        | 0x2005 // GovTokenContract
+        | 0x2006 // TimelockContract
+        | 0x2007 // TokenRecoverPortalContract
+        | 0x2008 // Reserved
+    )
+}
+
 // = Keccak256(RLP([])) as of EIP-3675
 pub static DEFAULT_OMMERS_HASH: LazyLock<H256> = LazyLock::new(|| {
     H256::from_slice(

@@ -505,7 +505,7 @@ pub async fn start_api(
     jwt_secret: Bytes,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
-    syncer: SyncManager,
+    syncer: Arc<SyncManager>,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
@@ -513,6 +513,15 @@ pub async fn start_api(
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
 ) -> Result<(), RpcErr> {
+    // BSC uses embedded Parlia consensus — no external consensus client is expected.
+    let chain_id = storage.get_chain_config().chain_id;
+    let bsc = ethrex_bsc::genesis::is_bsc_chain(chain_id);
+    if bsc {
+        tracing::info!(
+            "BSC mode detected (chain_id={chain_id}), skipping consensus layer health check"
+        );
+    }
+
     // TODO: Refactor how filters are handled,
     // filters are used by the filters endpoints (eth_newFilter, eth_getFilterChanges, ...etc)
     let active_filters = Arc::new(Mutex::new(HashMap::new()));
@@ -521,7 +530,7 @@ pub async fn start_api(
         storage,
         blockchain,
         active_filters: active_filters.clone(),
-        syncer: Some(Arc::new(syncer)),
+        syncer: Some(syncer),
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
@@ -575,14 +584,16 @@ pub async fn start_api(
 
     let (timer_sender, mut timer_receiver) = tokio::sync::watch::channel(());
 
-    tokio::spawn(async move {
-        loop {
-            let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
-            if result.is_err() {
-                warn!("No messages from the consensus layer. Is the consensus client running?");
+    if !bsc {
+        tokio::spawn(async move {
+            loop {
+                let result = timeout(Duration::from_secs(30), timer_receiver.changed()).await;
+                if result.is_err() {
+                    warn!("No messages from the consensus layer. Is the consensus client running?");
+                }
             }
-        }
-    });
+        });
+    }
 
     let authrpc_handler = move |ctx, auth, body| async move {
         let _ = timer_sender.send(());
@@ -978,16 +989,28 @@ pub async fn map_http_requests(req: &RpcRequest, context: RpcApiContext) -> Resu
     }
 }
 
-/// Handle requests from consensus client
+/// Handle requests from consensus client.
+///
+/// On BSC networks (chain_id 56 or 97), the engine_ namespace is disabled
+/// since BSC uses Parlia consensus rather than a beacon chain CL.
 pub async fn map_authrpc_requests(
     req: &RpcRequest,
     context: RpcApiContext,
 ) -> Result<Value, RpcErr> {
     match req.namespace() {
+        Ok(RpcNamespace::Engine) if is_bsc_network(&context) => {
+            Err(RpcErr::MethodNotFound(req.method.clone()))
+        }
         Ok(RpcNamespace::Engine) => map_engine_requests(req, context).await,
         Ok(RpcNamespace::Eth) => map_eth_requests(req, context).await,
         _ => Err(RpcErr::MethodNotFound(req.method.clone())),
     }
+}
+
+/// Returns true if the node is running on a BSC network (mainnet or Chapel testnet).
+fn is_bsc_network(context: &RpcApiContext) -> bool {
+    let chain_id = context.storage.get_chain_config().chain_id;
+    ethrex_bsc::genesis::is_bsc_chain(chain_id)
 }
 
 /// Routes `eth_*` namespace requests to their handlers.

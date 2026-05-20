@@ -386,13 +386,15 @@ impl RLPDecode for BlockBody {
         let (transactions, decoder) = decoder.decode_field("transactions")?;
         let (ommers, decoder) = decoder.decode_field("ommers")?;
         let (withdrawals, decoder) = decoder.decode_optional_field();
+        // BSC block bodies may contain trailing optional fields (e.g. sidecars)
+        // that we don't decode. Use finish_unchecked to tolerate them.
         Ok((
             BlockBody {
                 transactions,
                 ommers,
                 withdrawals,
             },
-            decoder.finish()?,
+            decoder.finish_unchecked(),
         ))
     }
 }
@@ -653,28 +655,50 @@ pub fn validate_block_header(
     header: &BlockHeader,
     parent_header: &BlockHeader,
     elasticity_multiplier: u64,
+    chain_id: u64,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.gas_used > header.gas_limit {
         return Err(InvalidBlockHeaderError::GasUsedGreaterThanGasLimit);
     }
 
-    let expected_base_fee_per_gas = if let Some(base_fee) = calculate_base_fee_per_gas(
-        header.gas_limit,
-        parent_header.gas_limit,
-        parent_header.gas_used,
-        parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
-        elasticity_multiplier,
-    ) {
-        base_fee
+    // BSC (Parlia) does not follow EIP-1559 base fee economics. Base fee is
+    // always 0 post-London — Parlia's consensus enforces this, not the
+    // EIP-1559 formula. Ethereum's `max(delta, 1)` anti-stagnation floor
+    // would incorrectly bump BSC's base fee to 1 when a parent block uses
+    // more gas than target.
+    let is_bsc = chain_id == 56 || chain_id == 97;
+    if is_bsc {
+        if !check_gas_limit(header.gas_limit, parent_header.gas_limit) {
+            return Err(InvalidBlockHeaderError::GasLimitTooFarFromParent);
+        }
+        if header.base_fee_per_gas.unwrap_or_default() != 0 {
+            return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
+        }
     } else {
-        return Err(InvalidBlockHeaderError::GasLimitTooFarFromParent);
-    };
+        let expected_base_fee_per_gas = if let Some(base_fee) = calculate_base_fee_per_gas(
+            header.gas_limit,
+            parent_header.gas_limit,
+            parent_header.gas_used,
+            parent_header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
+            elasticity_multiplier,
+        ) {
+            base_fee
+        } else {
+            return Err(InvalidBlockHeaderError::GasLimitTooFarFromParent);
+        };
 
-    if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {
-        return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
+        if expected_base_fee_per_gas != header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE) {
+            return Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect);
+        }
     }
 
-    if header.timestamp <= parent_header.timestamp {
+    // BSC allows timestamp == parent (3s block time with potential equal timestamps).
+    // Ethereum requires strictly greater.
+    if chain_id == 56 || chain_id == 97 {
+        if header.timestamp < parent_header.timestamp {
+            return Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent);
+        }
+    } else if header.timestamp <= parent_header.timestamp {
         return Err(InvalidBlockHeaderError::TimestampNotGreaterThanParent);
     }
 
@@ -682,15 +706,22 @@ pub fn validate_block_header(
         return Err(InvalidBlockHeaderError::BlockNumberNotOneGreater);
     }
 
-    if header.extra_data.len() > 32 {
+    // Ethereum limits extra_data to 32 bytes. BSC (Parlia) uses extra_data for
+    // validator lists, attestations, and seals (hundreds of bytes). Skip the
+    // check for BSC; their consensus engine enforces its own format requirements.
+    // TODO: use Network/ChainSpec abstraction instead of chain_id match
+    if header.extra_data.len() > 32 && chain_id != 56 && chain_id != 97 {
         return Err(InvalidBlockHeaderError::ExtraDataTooLong);
     }
 
-    if !header.difficulty.is_zero() {
+    // BSC (Parlia) uses non-zero difficulty to encode in-turn/out-of-turn
+    // proposer info, and non-zero nonce as a vote mechanism.
+    let is_bsc = chain_id == 56 || chain_id == 97;
+    if !is_bsc && !header.difficulty.is_zero() {
         return Err(InvalidBlockHeaderError::DifficultyNotZero);
     }
 
-    if header.nonce != 0 {
+    if !is_bsc && header.nonce != 0 {
         return Err(InvalidBlockHeaderError::NonceNotZero);
     }
 
@@ -815,6 +846,14 @@ fn validate_excess_blob_gas(
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
+    // BSC (BEP-657, Mendel fork) uses a different excess-blob-gas formula
+    // that accounts for blob-eligible vs non-eligible blocks. Skip the
+    // Ethereum-standard validation for BSC until BEP-657 is implemented.
+    // TODO: implement BSC-specific excess_blob_gas calculation (BEP-657).
+    if chain_config.chain_id == 56 || chain_config.chain_id == 97 {
+        return Ok(());
+    }
+
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
@@ -981,9 +1020,42 @@ mod test {
             requests_hash: Some(*EMPTY_KECCACK_HASH),
             ..Default::default()
         };
-        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER, 1).is_ok());
         assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
         assert_eq!(block.encode_to_vec().len(), block.length());
+    }
+
+    /// BSC Chapel testnet block 102,850,849 — parent used more gas than target
+    /// which triggers EIP-1559's `max(delta, 1)` floor on Ethereum (expected=1),
+    /// but BSC's Parlia consensus keeps base fee at 0. Validation must pass.
+    #[test]
+    fn test_validate_block_header_bsc_base_fee_zero_with_parent_above_target() {
+        let parent_block = BlockHeader {
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            number: 102_850_848,
+            gas_limit: 98_543_555,
+            gas_used: 72_083_911,
+            base_fee_per_gas: Some(0),
+            ..Default::default()
+        };
+        let block = BlockHeader {
+            parent_hash: parent_block.hash(),
+            ommers_hash: *DEFAULT_OMMERS_HASH,
+            number: 102_850_849,
+            gas_limit: 98_639_787,
+            gas_used: 0,
+            timestamp: 1,
+            base_fee_per_gas: Some(0),
+            ..Default::default()
+        };
+        // Chapel testnet chain id = 97. Must pass despite EIP-1559 math giving 1.
+        assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER, 97).is_ok());
+        // Same scenario on Ethereum (chain_id=1) must fail — sanity check that
+        // the bypass is BSC-only.
+        assert!(matches!(
+            validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER, 1),
+            Err(InvalidBlockHeaderError::BaseFeePerGasIncorrect)
+        ));
     }
 
     #[test]

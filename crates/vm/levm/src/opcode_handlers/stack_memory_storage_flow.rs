@@ -236,10 +236,9 @@ impl OpcodeHandler for OpSLoadHandler {
             }
         };
 
+        let was_cold = vm.substate.add_accessed_slot(address, key);
         vm.current_call_frame
-            .increase_consumed_gas(gas_cost::sload(
-                vm.substate.add_accessed_slot(address, key),
-            )?)?;
+            .increase_consumed_gas(gas_cost::sload(was_cold)?)?;
 
         // Record to BAL AFTER gas check passes per EIP-7928
         vm.record_storage_slot_to_bal(address, storage_slot_key);
@@ -354,6 +353,22 @@ impl OpcodeHandler for OpSStoreHandler {
                         delta += RESTORE_SLOT_COST;
                     }
                 }
+            }
+
+            // Diagnostic: log SSTORE refund deltas only when the opcode tracer is
+            // active (gates this to the target tx hash), so we can correlate with
+            // bsc-geth refund accounting on a single failing tx.
+            #[allow(clippy::arithmetic_side_effects, clippy::as_conversions)]
+            if delta != 0 && crate::opcode_tracer::is_active() {
+                eprintln!(
+                    "[sstore] delta={} (orig=0x{:x}, cur=0x{:x}, new=0x{:x}, prev_refund={}, new_refund={})",
+                    delta,
+                    original_value,
+                    current_value,
+                    value,
+                    vm.substate.refunded_gas,
+                    vm.substate.refunded_gas as i64 + delta
+                );
             }
 
             // Update refunded gas after checking for overflow or underflow.

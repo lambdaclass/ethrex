@@ -144,7 +144,7 @@ type BlockExecutionPipelineResult = (
 //TODO: Implement a struct Chain or BlockChain to encapsulate
 //functionality and canonical chain state and config
 
-/// Specifies whether the blockchain operates as L1 (mainnet/testnet) or L2 (rollup).
+/// Specifies whether the blockchain operates as L1 (mainnet/testnet), L2 (rollup), or BSC.
 #[derive(Debug, Clone, Default)]
 pub enum BlockchainType {
     /// Standard Ethereum L1 blockchain.
@@ -152,6 +152,8 @@ pub enum BlockchainType {
     L1,
     /// Layer 2 rollup with additional fee configuration.
     L2(L2Config),
+    /// BNB Smart Chain with Parlia consensus.
+    Bsc,
 }
 
 /// Configuration for L2 rollup operation.
@@ -207,6 +209,40 @@ pub struct Blockchain {
     /// Maps payload IDs to either completed payloads or in-progress build tasks.
     /// Kept around in case consensus requests the same payload twice.
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
+    /// Parlia consensus engine for BSC chains.
+    /// Present only when `options.type == BlockchainType::Bsc`.
+    pub parlia_engine: Option<Arc<ethrex_bsc::consensus::engine::ParliaEngine>>,
+    /// Sync target for BSC chains (set by P2P after status exchange).
+    ///
+    /// BSC has no Engine API so the sync bridge polls this field instead
+    /// of waiting for a forkchoiceUpdated call.
+    pub bsc_sync_head: std::sync::Mutex<Option<H256>>,
+    /// Notify-based wakeup for the BSC sync bridge. `set_bsc_sync_head` fires
+    /// it so the bridge reacts to each NewBlockHashes / BlockRangeUpdate
+    /// immediately instead of polling on a fixed interval.
+    pub bsc_sync_notify: Arc<tokio::sync::Notify>,
+    /// Set of all peer-head hashes we've seen. Used to select the highest pivot.
+    pub bsc_sync_head_candidates: std::sync::Mutex<std::collections::HashSet<H256>>,
+    bsc_pivot_header: std::sync::Mutex<Option<ethrex_common::types::BlockHeader>>,
+    /// Serializes concurrent `add_block_pipeline` calls from the BSC NewBlock
+    /// handler. Without it, multiple peer announcements of distinct blocks
+    /// spawn parallel pipelines that contend on the shared `merkle_pool` and
+    /// deadlock when workers can't all get pool slots. Matches the design of
+    /// `start_block_executor` in `rpc.rs` which serializes RPC-driven imports.
+    pub bsc_import_lock: std::sync::Mutex<()>,
+    /// Block hashes currently being fetched from peers (cross-peer dedup).
+    /// A hash is inserted when a peer connection decides to fetch it via
+    /// `GetBlockHeaders`/`GetBlockBodies` in response to a `NewBlockHashes`
+    /// announcement, and removed once the fetch completes (success, failure,
+    /// or timeout sweep). Prevents N peers that all announced the same hash
+    /// from each issuing redundant fetches.
+    pub fetching_blocks: std::sync::Mutex<std::collections::HashSet<H256>>,
+    /// Peers that have recently outraced the announcer in a hedged direct
+    /// fetch. The hedge always includes the announcer (which usually wins
+    /// because it has a propagation head start), so this LRU only collects
+    /// peers proven to beat that head start — exactly the set worth
+    /// prioritizing for the slow-announcer cases. Front = most recent.
+    pub bsc_block_winners_lru: std::sync::Mutex<std::collections::VecDeque<H256>>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
@@ -339,6 +375,14 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
+            parlia_engine: None,
+            bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_sync_notify: Arc::new(tokio::sync::Notify::new()),
+            bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
+            bsc_pivot_header: std::sync::Mutex::new(None),
+            bsc_import_lock: std::sync::Mutex::new(()),
+            fetching_blocks: std::sync::Mutex::new(std::collections::HashSet::new()),
+            bsc_block_winners_lru: std::sync::Mutex::new(std::collections::VecDeque::new()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -350,6 +394,14 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
+            parlia_engine: None,
+            bsc_sync_head: std::sync::Mutex::new(None),
+            bsc_sync_notify: Arc::new(tokio::sync::Notify::new()),
+            bsc_sync_head_candidates: std::sync::Mutex::new(std::collections::HashSet::new()),
+            bsc_pivot_header: std::sync::Mutex::new(None),
+            bsc_import_lock: std::sync::Mutex::new(()),
+            fetching_blocks: std::sync::Mutex::new(std::collections::HashSet::new()),
+            bsc_block_winners_lru: std::sync::Mutex::new(std::collections::VecDeque::new()),
             merkle_pool: Self::build_merkle_pool(),
         }
     }
@@ -371,10 +423,17 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
 
-        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header.clone())?;
         let mut vm = self.new_evm(vm_db)?;
 
         let (execution_result, bal) = vm.execute_block(block)?;
+
+        // For BSC: system transactions (drain SYSTEM_ADDRESS + deposit/slash/etc.)
+        // are included IN the block body as the last transactions. They are
+        // executed via the normal tx pipeline in `execute_block` above, with the
+        // LEVM backend handling the drain+credit pre-work for each system tx.
+        // No separate system-call phase is needed here during validation.
+
         let account_updates = vm.get_state_transitions()?;
 
         // Validate execution went alright
@@ -388,7 +447,9 @@ impl Blockchain {
             return Err(e.into());
         }
         validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
-        validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        if !matches!(self.options.r#type, BlockchainType::Bsc) {
+            validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
+        }
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
                 &block.header,
@@ -1281,6 +1342,10 @@ impl Blockchain {
                     };
                     Evm::new_from_db_for_l2(logger.clone(), *l2_config, Arc::new(NativeCrypto))
                 }
+                // BSC uses the same EVM execution path as L1 for now.
+                BlockchainType::Bsc => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
             };
 
             // Re-execute block with logger
@@ -1830,11 +1895,83 @@ impl Blockchain {
         result
     }
 
+    /// Snapshot of the BSC direct-fetch winners LRU (most-recent first).
+    /// Used by the hedge candidate-selection logic to bias toward peers
+    /// that have proven they can outrace the announcer.
+    pub fn bsc_block_winners_snapshot(&self) -> Vec<H256> {
+        self.bsc_block_winners_lru
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    /// Record that `peer_id` outraced the announcer in a hedged direct fetch.
+    /// Bounded to `MAX` entries (most recent kept).
+    pub fn bsc_record_block_winner(&self, peer_id: H256) {
+        const MAX: usize = 8;
+        let mut lru = self
+            .bsc_block_winners_lru
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        // Remove existing entry to bring it to the front (LRU semantics).
+        lru.retain(|p| *p != peer_id);
+        lru.push_front(peer_id);
+        while lru.len() > MAX {
+            lru.pop_back();
+        }
+    }
+
+    /// Advance the canonical head pointer to a block we've already stored.
+    /// Used by the BSC direct-fetch path so `eth_blockNumber` reflects the
+    /// import without depending on a separate `forkchoice_update` cadence.
+    ///
+    /// No-ops when `number` is at or below the current canonical head: BSC
+    /// peers broadcast blocks out of order (we may receive N+1 before N), and
+    /// `forkchoice_update` semantically rewinds the head — which would delete
+    /// canonical mappings for legitimate higher blocks already on disk and
+    /// punch holes BLOCKHASH lookups can't recover from.
+    pub async fn advance_canonical_head(
+        &self,
+        number: BlockNumber,
+        hash: H256,
+    ) -> Result<(), ChainError> {
+        let latest = self.storage.get_latest_block_number().await?;
+        if number <= latest {
+            return Ok(());
+        }
+        self.storage
+            .forkchoice_update(vec![(number, hash)], number, hash, None, None)
+            .await
+            .map_err(Into::into)
+    }
+
     pub fn add_block_pipeline(
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
+        // BSC has multiple concurrent entry points (NewBlock peer-broadcast
+        // handler + forward sync's per-block pipeline path). Serialize them
+        // on the shared `merkle_pool` — concurrent pipelines starve for pool
+        // slots and deadlock. L1/L2 paths are already serialized upstream
+        // (RPC `start_block_executor`, L2 sequencer) so skip the guard there.
+        let _guard = matches!(self.options.r#type, BlockchainType::Bsc).then(|| {
+            self.bsc_import_lock
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+        });
+        // Early dedup: the sync bridge and the direct-fetch path race at tip.
+        // Skip only if BOTH header and state are already on hand — otherwise
+        // startup `regenerate_head_state` (which re-applies blocks whose
+        // headers are stored but whose state layers were never flushed)
+        // would short-circuit and silently do nothing.
+        if let Some(stored_header) = self.storage.get_block_header_by_hash(block.hash())? {
+            if self.storage.has_state_root(stored_header.state_root)? {
+                return Ok(());
+            }
+        }
         let (_, result) = self.add_block_pipeline_inner(block, bal)?;
         result
     }
@@ -1846,6 +1983,16 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
+        let _guard = matches!(self.options.r#type, BlockchainType::Bsc).then(|| {
+            self.bsc_import_lock
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+        });
+        if let Some(stored_header) = self.storage.get_block_header_by_hash(block.hash())? {
+            if self.storage.has_state_root(stored_header.state_root)? {
+                return Ok(None);
+            }
+        }
         let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
         result?;
         Ok(produced_bal)
@@ -1893,6 +2040,10 @@ impl Blockchain {
                     })?,
                     Arc::new(NativeCrypto),
                 ),
+                // BSC uses the same EVM execution path as L1 for now.
+                BlockchainType::Bsc => {
+                    Evm::new_from_db_for_l1(logger.clone(), Arc::new(NativeCrypto))
+                }
             };
             (vm, Some(logger))
         } else {
@@ -2610,6 +2761,53 @@ impl Blockchain {
         self.is_synced.load(Ordering::Relaxed)
     }
 
+    /// Sets a sync target for BSC chains (called by P2P after status exchange).
+    ///
+    /// Only the most-recent peer head is kept; the previous value is overwritten.
+    pub fn set_bsc_sync_head(&self, head: H256) {
+        if let Ok(mut target) = self.bsc_sync_head.lock() {
+            *target = Some(head);
+        }
+        if let Ok(mut set) = self.bsc_sync_head_candidates.lock() {
+            if set.insert(head) {
+                info!(
+                    "BSC sync head candidate added: {head:?} (total: {})",
+                    set.len()
+                );
+            }
+        }
+        // Wake the sync bridge loop so it picks up the new head immediately
+        // instead of waiting out its timeout.
+        self.bsc_sync_notify.notify_one();
+    }
+
+    /// Returns a snapshot of all known peer-head candidates. Does not clear the set.
+    pub fn bsc_sync_head_candidates_snapshot(&self) -> Vec<H256> {
+        self.bsc_sync_head_candidates
+            .lock()
+            .map(|set| set.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Takes the BSC sync target (returns and clears it atomically).
+    pub fn take_bsc_sync_head(&self) -> Option<H256> {
+        self.bsc_sync_head.lock().ok()?.take()
+    }
+
+    /// Stores a BSC pivot header obtained from a peer's status exchange.
+    /// The snap sync can use this directly instead of guessing block numbers.
+    pub fn set_bsc_pivot_header(&self, header: ethrex_common::types::BlockHeader) {
+        if let Ok(mut target) = self.bsc_pivot_header.lock() {
+            info!(number = header.number, "BSC pivot header set from peer");
+            *target = Some(header);
+        }
+    }
+
+    /// Takes the BSC pivot header (returns and clears it atomically).
+    pub fn take_bsc_pivot_header(&self) -> Option<ethrex_common::types::BlockHeader> {
+        self.bsc_pivot_header.lock().ok()?.take()
+    }
+
     pub fn get_p2p_transaction_by_hash(&self, hash: &H256) -> Result<P2PTransaction, StoreError> {
         let Some(tx) = self.mempool.get_transaction_by_hash(*hash)? else {
             return Err(StoreError::Custom(format!(
@@ -3145,6 +3343,7 @@ pub fn new_evm(blockchain_type: &BlockchainType, vm_db: StoreVmDatabase) -> Resu
 
             Evm::new_for_l2(vm_db, fee_config, Arc::new(NativeCrypto))?
         }
+        BlockchainType::Bsc => Evm::new_for_bsc(vm_db, Arc::new(NativeCrypto)),
     };
     Ok(evm)
 }
@@ -3158,6 +3357,10 @@ pub fn validate_state_root(
     if new_state_root == block_header.state_root {
         Ok(())
     } else {
+        println!(
+            "STATE ROOT MISMATCH block={} got={:?} expected={:?}",
+            block_header.number, new_state_root, block_header.state_root
+        );
         Err(ChainError::InvalidBlock(
             InvalidBlockError::StateRootMismatch,
         ))
@@ -3223,6 +3426,113 @@ fn branchify(node: Node) -> Box<BranchNode> {
             Box::new(BranchNode::new(choices))
         }
     }
+}
+
+/// Execute BSC (Parlia) system calls after all user transactions in a block.
+///
+/// This function must be called BEFORE [`Evm::get_state_transitions`] so that
+/// the state changes produced by system calls are captured in the account
+/// update diff, and therefore included in the state root computation.
+///
+/// # Execution order
+///
+/// Matches `consensus/parlia/parlia.go` `Finalize`:
+///
+/// 1. `slash()` — if `spoiled_validator` is `Some` (out-of-turn block).
+/// 2. `deposit()` — every block; transfers `SYSTEM_ADDRESS` balance to the
+///    `ValidatorContract` as the block reward.
+/// 3. `distributeFinalityReward()` — every 200 blocks (TODO: needs snapshot).
+/// 4. `updateValidatorSetV2()` — breathe blocks only (TODO: needs snapshot).
+fn execute_bsc_system_calls(
+    block: &Block,
+    parent_header: &BlockHeader,
+    vm: &mut Evm,
+) -> Result<(), ChainError> {
+    use ethrex_bsc::system_calls::{apply_system_contract_upgrades, build_bsc_system_messages};
+    use ethrex_common::constants::SYSTEM_ADDRESS;
+
+    let coinbase = block.header.coinbase;
+    let block_number = block.header.number;
+    let block_timestamp = block.header.timestamp;
+    let parent_timestamp = parent_header.timestamp;
+
+    // Task 3.10: apply system contract code upgrades at fork boundaries.
+    apply_system_contract_upgrades(block_number, block_timestamp)
+        .map_err(|e| ChainError::Custom(format!("BSC system contract upgrade: {e}")))?;
+
+    // Read and drain the SYSTEM_ADDRESS balance — this is the accumulated gas
+    // fees from all user transactions in the block. Per BSC `parlia.go`
+    // `distributeIncoming`: drain SYSTEM_ADDRESS, credit the coinbase, then
+    // the `deposit()` system call transfers it from coinbase to the validator
+    // contract via `msg.value`.
+    let deposit_value = vm
+        .get_account_balance(SYSTEM_ADDRESS)
+        .map_err(|e| ChainError::Custom(format!("BSC read SYSTEM_ADDRESS balance: {e}")))?;
+
+    if deposit_value > U256::zero() {
+        vm.set_account_balance(SYSTEM_ADDRESS, U256::zero())
+            .map_err(|e| ChainError::Custom(format!("BSC zero SYSTEM_ADDRESS balance: {e}")))?;
+        let current_coinbase_balance = vm
+            .get_account_balance(coinbase)
+            .map_err(|e| ChainError::Custom(format!("BSC read coinbase balance: {e}")))?;
+        vm.set_account_balance(coinbase, current_coinbase_balance + deposit_value)
+            .map_err(|e| ChainError::Custom(format!("BSC credit coinbase: {e}")))?;
+    }
+
+    // Build the ordered list of system messages for this block.
+    // TODO: pass actual `spoiled_validator` once Parlia snapshot tracking is
+    // implemented.  For now we always pass `None`, which skips the `slash()`
+    // call; that is safe for checkpoint sync where we only validate recent blocks.
+    let messages = build_bsc_system_messages(
+        coinbase,
+        parent_timestamp,
+        block_timestamp,
+        block_number,
+        deposit_value,
+        None, // spoiled_validator — TODO: derive from Parlia snapshot
+    );
+
+    for msg in messages {
+        debug!(
+            block_number,
+            from = ?msg.from,
+            to = ?msg.to,
+            value = ?msg.value,
+            data_len = msg.data.len(),
+            "Executing BSC system call"
+        );
+
+        match vm.execute_bsc_system_call(
+            &block.header,
+            msg.to,
+            msg.from,
+            bytes::Bytes::from(msg.data),
+            msg.value,
+            msg.gas_limit,
+        ) {
+            Ok(report) if report.is_success() => {
+                // System call succeeded; state changes are already applied to vm.db.
+            }
+            Ok(report) => {
+                // A reverting system call is non-fatal — log it and continue.
+                // The BSC reference client does the same: it logs but does not
+                // abort block processing if a system tx reverts.
+                warn!(
+                    block_number,
+                    to = ?msg.to,
+                    "BSC system call reverted: {:?}", report.output
+                );
+            }
+            Err(e) => {
+                return Err(ChainError::Custom(format!(
+                    "BSC system call to {:?} failed: {e}",
+                    msg.to
+                )));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieNode>), TrieError> {

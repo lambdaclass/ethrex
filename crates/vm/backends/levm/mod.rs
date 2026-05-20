@@ -176,6 +176,9 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // BSC allows txs to have gas_limit > block.gas_limit — actual gas usage
+        // is capped at block-remaining anyway. Skip the prospective block-gas check.
+        let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
 
         // EIP-7928 BlockAccessIndex is uint32. Block validity forbids >= 2^32 txs
         // long before we'd reach this point, but guard the invariant explicitly
@@ -205,6 +208,10 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        // Per-tx gas trace, dumped via warn! if final block gas mismatches the header.
+        // Only used for diagnosing post-execution gas-mismatch errors; otherwise discarded.
+        let mut per_tx_gas_trace: Vec<(usize, ethrex_common::H256, u64, u64, bool, bool)> =
+            Vec::new();
         let transactions_with_sender =
             block
                 .body
@@ -214,14 +221,36 @@ impl LEVM {
                 })?;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            // BSC: consensus-engine-injected system txs (sender == coinbase &&
+            // to is a BSC system contract && gas_price == 0) carry gas_limit =
+            // i64::MAX and bypass the block gas cap.
+            let is_bsc_system_tx = is_bsc
+                && tx_sender == block.header.coinbase
+                && tx.gas_price().is_zero()
+                && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
+
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
-            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
-            // state) can legally exceed the block gas limit as long as
-            // max(sum_regular, sum_state) stays within it. Block-level overflow is
-            // detected post-execution.
-            if !is_amsterdam {
+            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas can
+            // legally exceed the block gas limit; overflow detected post-execution.
+            // BSC system txs bypass the pre-check (gas_limit = i64::MAX).
+            if !is_amsterdam && !is_bsc_system_tx {
                 check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            }
+
+            // BSC Finalize pre-work: before executing a system tx, drain the
+            // SYSTEM_ADDRESS balance (accumulated tx fees) and credit it to the
+            // coinbase. The subsequent system tx (deposit()) will then spend
+            // msg.value from the newly-credited coinbase to the validator contract.
+            // Mirrors bsc-chain/bsc consensus/parlia/parlia.go `distributeIncoming`.
+            if is_bsc_system_tx {
+                let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
+                if !system_bal.is_zero() {
+                    let sys_acc = db.get_account_mut(SYSTEM_ADDRESS)?;
+                    sys_acc.info.balance = U256::zero();
+                    let cb_acc = db.get_account_mut(block.header.coinbase)?;
+                    cb_acc.info.balance = cb_acc.info.balance.saturating_add(system_bal);
+                }
             }
 
             // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
@@ -251,6 +280,14 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
+            per_tx_gas_trace.push((
+                tx_idx,
+                tx.hash(),
+                report.gas_used,
+                report.gas_spent,
+                is_bsc_system_tx,
+                matches!(report.result, TxResult::Success),
+            ));
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
@@ -299,6 +336,33 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        // Diagnostic: if our computed block gas doesn't match the header, dump the
+        // per-tx breakdown so we can compare with canonical receipts and isolate
+        // which tx (or txs) is gas-divergent. Only fires on actual mismatch so
+        // logs stay quiet during normal sync.
+        if block_gas_used != block.header.gas_used {
+            ::tracing::warn!(
+                block_number = block.header.number,
+                block_hash = ?block.hash(),
+                our_block_gas_used = block_gas_used,
+                header_gas_used = block.header.gas_used,
+                tx_count = per_tx_gas_trace.len(),
+                "Block gas mismatch — per-tx breakdown follows"
+            );
+            for (idx, hash, gas_used, gas_spent, is_sys, success) in &per_tx_gas_trace {
+                ::tracing::warn!(
+                    block_number = block.header.number,
+                    tx_idx = idx,
+                    tx_hash = ?hash,
+                    gas_used,
+                    gas_spent,
+                    is_bsc_system_tx = is_sys,
+                    success,
+                    "tx gas"
+                );
+            }
+        }
+
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
         // Per-tx checks are skipped for Amsterdam because block gas is computed
         // from pre-refund values; overflow can only be detected after execution.
@@ -332,7 +396,9 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            // BSC uses Parlia PoA — EIP requests (deposits, withdrawals, consolidations)
+            // are Ethereum PoS-specific and do not apply to BSC.
+            VMType::L2(_) | VMType::Bsc => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -364,6 +430,7 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        let is_bsc = chain_config.chain_id == 56 || chain_config.chain_id == 97;
 
         // EIP-7928 BlockAccessIndex invariant — see `execute_block` for rationale.
         debug_assert!(
@@ -467,7 +534,8 @@ impl LEVM {
                 VMType::L1 => {
                     extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?
                 }
-                VMType::L2(_) => Default::default(),
+                // BSC uses Parlia PoA — EIP requests do not apply.
+                VMType::L2(_) | VMType::Bsc => Default::default(),
             };
 
             if let Some(withdrawals) = &block.body.withdrawals {
@@ -569,19 +637,42 @@ impl LEVM {
         // EIP-8037 (Amsterdam+): track regular and state gas separately for block-level max()
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        // Per-tx gas trace, dumped via warn! if final block gas mismatches the header.
+        let mut per_tx_gas_trace: Vec<(usize, ethrex_common::H256, u64, u64, bool, bool)> =
+            Vec::new();
         // Starts at 2 to account for the two precompile calls done in `Self::prepare_block`.
         // The value itself can be safely changed.
         let mut tx_since_last_flush = 2;
 
         for (tx_idx, (tx, tx_sender)) in transactions_with_sender.into_iter().enumerate() {
+            // BSC: consensus-engine-injected system txs (sender == coinbase &&
+            // to is a BSC system contract && gas_price == 0) carry gas_limit =
+            // i64::MAX and bypass the block gas cap.
+            let is_bsc_system_tx = is_bsc
+                && tx_sender == block.header.coinbase
+                && tx.gas_price().is_zero()
+                && matches!(tx.to(), ethrex_common::types::TxKind::Call(to) if ethrex_common::constants::is_bsc_system_contract(&to));
+
             // Pre-tx gas limit guard:
             // Pre-Amsterdam: reject tx if cumulative post-refund gas + tx.gas > block limit.
-            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas (regular +
-            // state) can legally exceed the block gas limit as long as
-            // max(sum_regular, sum_state) stays within it. Block-level overflow is
-            // detected post-execution.
-            if !is_amsterdam {
+            // Amsterdam+: skip — EIP-8037's 2D gas model means cumulative gas can
+            // legally exceed the block gas limit; overflow detected post-execution.
+            // BSC system txs bypass the pre-check (gas_limit = i64::MAX).
+            if !is_amsterdam && !is_bsc_system_tx {
                 check_gas_limit(cumulative_gas_used, tx.gas_limit(), block.header.gas_limit)?;
+            }
+
+            // BSC Finalize pre-work (pipeline path): drain SYSTEM_ADDRESS and
+            // credit coinbase before the system tx executes. See execute_block
+            // for detailed comment.
+            if is_bsc_system_tx {
+                let system_bal = db.get_account(SYSTEM_ADDRESS)?.info.balance;
+                if !system_bal.is_zero() {
+                    let sys_acc = db.get_account_mut(SYSTEM_ADDRESS)?;
+                    sys_acc.info.balance = U256::zero();
+                    let cb_acc = db.get_account_mut(block.header.coinbase)?;
+                    cb_acc.info.balance = cb_acc.info.balance.saturating_add(system_bal);
+                }
             }
 
             // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check.
@@ -620,6 +711,14 @@ impl LEVM {
                 crypto,
             )?;
 
+            per_tx_gas_trace.push((
+                tx_idx,
+                tx.hash(),
+                report.gas_used,
+                report.gas_spent,
+                is_bsc_system_tx,
+                matches!(report.result, TxResult::Success),
+            ));
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
@@ -670,6 +769,33 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        // Diagnostic: if our computed block gas doesn't match the header, dump the
+        // per-tx breakdown so we can compare with canonical receipts and isolate
+        // which tx (or txs) is gas-divergent. Only fires on actual mismatch so
+        // logs stay quiet during normal sync.
+        if block_gas_used != block.header.gas_used {
+            ::tracing::warn!(
+                block_number = block.header.number,
+                block_hash = ?block.hash(),
+                our_block_gas_used = block_gas_used,
+                header_gas_used = block.header.gas_used,
+                tx_count = per_tx_gas_trace.len(),
+                "Block gas mismatch — per-tx breakdown follows"
+            );
+            for (idx, hash, gas_used, gas_spent, is_sys, success) in &per_tx_gas_trace {
+                ::tracing::warn!(
+                    block_number = block.header.number,
+                    tx_idx = idx,
+                    tx_hash = ?hash,
+                    gas_used,
+                    gas_spent,
+                    is_bsc_system_tx = is_sys,
+                    success,
+                    "tx gas"
+                );
+            }
+        }
+
         // EIP-7778 (Amsterdam+): block-level gas overflow check.
         // Per-tx checks are skipped for Amsterdam because block gas is computed
         // from pre-refund values; overflow can only be detected after execution.
@@ -715,7 +841,8 @@ impl LEVM {
         // in L2 execution, but its implementation behaves differently based on this.
         let requests = match vm_type {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
-            VMType::L2(_) => Default::default(),
+            // BSC uses Parlia PoA — EIP requests do not apply.
+            VMType::L2(_) | VMType::Bsc => Default::default(),
         };
 
         if let Some(withdrawals) = &block.body.withdrawals {
@@ -2550,12 +2677,19 @@ impl LEVM {
         let block_header = &block.header;
         let fork = chain_config.fork(block_header.timestamp);
 
-        // TODO: I don't like deciding the behavior based on the VMType here.
-        if let VMType::L2(_) = vm_type {
+        // L2: skip both — they don't apply in the L2 sequencer path.
+        if matches!(vm_type, VMType::L2(_)) {
             return Ok(());
         }
 
-        if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
+        // BSC: EIP-4788 (beacon root) doesn't apply — parent_beacon_block_root is
+        // zero on BSC blocks. EIP-2935 (block hash history) DOES apply on BSC:
+        // it writes the parent block hash into HISTORY_STORAGE_ADDRESS on every
+        // block, and this state change is reflected in the canonical state root.
+        if !matches!(vm_type, VMType::Bsc)
+            && block_header.parent_beacon_block_root.is_some()
+            && fork >= Fork::Cancun
+        {
             Self::beacon_root_contract_call(block_header, db, vm_type, crypto)?;
         }
 
@@ -2662,6 +2796,73 @@ pub fn generic_system_contract_levm(
     Ok(report)
 }
 
+/// Execute a BSC (Parlia) system call against a system contract.
+///
+/// Unlike L1 system calls, BSC system transactions originate from the block coinbase
+/// (not from `SYSTEM_ADDRESS`), use gas price 0, and may carry a non-zero `msg.value`
+/// (used by `deposit()` to transfer accumulated gas fees to the validator contract).
+///
+/// The `from` account state is restored after the call so that EVM call-mechanism
+/// side-effects (nonce increment, gas deduction) on the coinbase are not persisted.
+///
+/// Reference: `consensus/parlia/parlia.go` `applyTransaction`.
+#[allow(clippy::too_many_arguments)]
+pub fn bsc_system_call_levm(
+    block_header: &BlockHeader,
+    calldata: Bytes,
+    value: U256,
+    db: &mut GeneralizedDatabase,
+    contract_address: Address,
+    from: Address,
+    gas_limit: u64,
+    vm_type: VMType,
+    crypto: &dyn Crypto,
+) -> Result<ExecutionReport, EvmError> {
+    let chain_config = db.store.get_chain_config()?;
+    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+
+    // Back up the `from` account state so that nonce/balance side-effects of
+    // the EVM call mechanism itself are not visible after the system call.
+    let from_backup = db.current_accounts_state.get(&from).cloned();
+
+    let env = Environment {
+        origin: from,
+        gas_limit: gas_limit + TX_BASE_COST,
+        block_number: block_header.number,
+        coinbase: block_header.coinbase,
+        timestamp: block_header.timestamp,
+        prev_randao: Some(block_header.prev_randao),
+        base_fee_per_gas: U256::zero(),
+        gas_price: U256::zero(),
+        block_gas_limit: i64::MAX as u64,
+        config,
+        ..Default::default()
+    };
+
+    let tx = &Transaction::EIP1559Transaction(EIP1559Transaction {
+        to: TxKind::Call(contract_address),
+        value,
+        data: calldata,
+        ..Default::default()
+    });
+
+    let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
+        .and_then(|mut vm| vm.execute())
+        .map_err(EvmError::from);
+
+    let report = result?;
+
+    // Restore the caller (coinbase) account to its pre-call state so that
+    // BSC system transactions do not appear to charge gas from the coinbase.
+    if let Some(from_account) = from_backup {
+        db.current_accounts_state.insert(from, from_account);
+    } else {
+        db.current_accounts_state.remove(&from);
+    }
+
+    Ok(report)
+}
+
 #[allow(unreachable_code)]
 #[allow(unused_variables)]
 pub fn extract_all_requests_levm(
@@ -2681,6 +2882,14 @@ pub fn extract_all_requests_levm(
     let fork = chain_config.fork(header.timestamp);
 
     if fork < Fork::Prague {
+        return Ok(Default::default());
+    }
+
+    // BSC doesn't implement EIP-6110/EIP-7002/EIP-7251 (consensus-layer validator
+    // deposits/withdrawals/consolidations). BSC activates Prague EVM opcodes but
+    // not the PoS request-extraction semantics, so the predeploy contracts for
+    // these EIPs aren't on-chain.
+    if chain_config.chain_id == 56 || chain_config.chain_id == 97 {
         return Ok(Default::default());
     }
 

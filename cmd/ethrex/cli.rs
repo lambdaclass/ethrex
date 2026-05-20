@@ -300,13 +300,12 @@ pub struct Options {
     pub p2p_port: String,
     #[arg(
         long = "discovery.port",
-        default_value = "30303",
         value_name = "PORT",
-        help = "UDP port for P2P discovery.",
+        help = "UDP port for P2P discovery. Defaults to the P2P port if not set.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_DISCOVERY_PORT"
     )]
-    pub discovery_port: String,
+    pub discovery_port: Option<String>,
     #[arg(
         long = "p2p.discv4",
         default_value_t = true,
@@ -401,7 +400,7 @@ impl Options {
             authrpc_addr: "localhost".to_string(),
             authrpc_jwtsecret: "jwt.hex".to_string(),
             p2p_port: "30303".into(),
-            discovery_port: "30303".into(),
+            discovery_port: None,
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
@@ -423,7 +422,7 @@ impl Options {
             authrpc_port: "8551".into(),
             authrpc_jwtsecret: "jwt.hex".into(),
             p2p_port: "30303".into(),
-            discovery_port: "30303".into(),
+            discovery_port: None,
             discv4_enabled: true,
             discv5_enabled: true,
             mempool_max_size: 10_000,
@@ -451,7 +450,7 @@ impl Default for Options {
             p2p_addr: None,
             nat_extip: None,
             p2p_port: Default::default(),
-            discovery_port: Default::default(),
+            discovery_port: None,
             discv4_enabled: true,
             discv5_enabled: true,
             network: Default::default(),
@@ -539,6 +538,19 @@ pub enum Subcommand {
             help = "Last block number to export"
         )]
         last: Option<u64>,
+    },
+    #[command(
+        name = "inspect-state",
+        about = "Report head block, its state_root, and whether the state trie is reachable on disk"
+    )]
+    InspectState {
+        #[arg(long = "walk-back", default_value_t = 10000)]
+        walk_back: u64,
+        /// Path to a file with one candidate state_root per line (hex, with or without 0x).
+        /// Each line may be `<state_root>` or `<block_number> <state_root>`. Blocks whose
+        /// state_root is present on disk are printed.
+        #[arg(long = "check-roots-file")]
+        check_roots_file: Option<PathBuf>,
     },
     #[command(
         name = "compute-state-root",
@@ -672,6 +684,94 @@ impl Subcommand {
             }
             Subcommand::Export { path, first, last } => {
                 export_blocks(&path, &effective_datadir, first, last).await
+            }
+            Subcommand::InspectState {
+                walk_back,
+                check_roots_file,
+            } => {
+                let store = load_store(&effective_datadir).await?;
+                let head = store.get_latest_block_number().await?;
+                let Some(head_header) = store.get_block_header(head)? else {
+                    println!("Head header missing for {head}");
+                    return Ok(());
+                };
+                let head_root = head_header.state_root;
+                let head_ok = store.has_state_root(head_root)?;
+                println!("Head: {head}  state_root: {head_root:#x}  has_state_root: {head_ok}");
+
+                // Report what (if anything) is actually at the state-trie root path.
+                // state_root = keccak256(raw_bytes_at_empty_nibbles).
+                let trie = store.open_state_trie(head_root)?;
+                match trie.db().get(ethrex_trie::Nibbles::default())? {
+                    Some(bytes) => {
+                        let hash = ethrex_common::utils::keccak(&bytes);
+                        println!("Root node present: {} bytes, hash={hash:#x}", bytes.len());
+                    }
+                    None => println!("Root node MISSING at account_trie_nodes[empty]"),
+                }
+
+                if let Some(path) = check_roots_file {
+                    let contents = std::fs::read_to_string(&path)
+                        .map_err(|e| eyre::eyre!("read {path:?}: {e}"))?;
+                    let mut checked = 0usize;
+                    let mut found = 0usize;
+                    for (i, line) in contents.lines().enumerate() {
+                        let line = line.trim();
+                        if line.is_empty() || line.starts_with('#') {
+                            continue;
+                        }
+                        let mut parts = line.split_whitespace();
+                        let first = parts.next().unwrap_or("");
+                        let second = parts.next();
+                        let (label, root_hex) = match second {
+                            Some(r) => (first.to_string(), r),
+                            None => (format!("line:{}", i + 1), first),
+                        };
+                        let cleaned = root_hex.trim().trim_start_matches("0x");
+                        let Ok(root) = ethrex_common::H256::from_str(cleaned) else {
+                            println!("{label}: invalid state_root {root_hex}");
+                            continue;
+                        };
+                        checked += 1;
+                        if store.has_state_root(root)? {
+                            found += 1;
+                            println!("FOUND  {label}: {root:#x}");
+                        }
+                    }
+                    println!("Checked {checked} roots from file, {found} on disk.");
+                    return Ok(());
+                }
+
+                if head_ok {
+                    return Ok(());
+                }
+                let mut found_state_at: Option<u64> = None;
+                let mut first_missing_header: Option<u64> = None;
+                let limit = head.saturating_sub(walk_back);
+                for n in (limit..head).rev() {
+                    match store.get_block_header(n)? {
+                        Some(h) => {
+                            if store.has_state_root(h.state_root)? {
+                                found_state_at = Some(n);
+                                println!(
+                                    "Found state_root on disk at block {n}: {:#x}",
+                                    h.state_root
+                                );
+                                break;
+                            }
+                        }
+                        None => {
+                            first_missing_header = Some(n);
+                            break;
+                        }
+                    }
+                }
+                if found_state_at.is_none() {
+                    println!("No state_root on disk for any block in [{limit}..{head}]");
+                }
+                if let Some(n) = first_missing_header {
+                    println!("First missing header walking back: {n}");
+                }
             }
             Subcommand::ComputeStateRoot { genesis_path } => {
                 let genesis = Network::from(genesis_path).get_genesis()?;

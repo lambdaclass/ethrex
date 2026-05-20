@@ -3,7 +3,10 @@ use crate::rlpx::{
     utils::{snappy_compress, snappy_decompress},
 };
 use bytes::BufMut;
-use ethrex_common::types::{BlockBody, BlockHash, BlockHeader, BlockNumber};
+use ethrex_common::{
+    U256,
+    types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber},
+};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::RLPEncode,
@@ -65,6 +68,67 @@ impl RLPDecode for HashOrNumber {
 
         let (number, rest) = u64::decode_unfinished(buf)?;
         Ok((Self::Number(number), rest))
+    }
+}
+
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblockhashes-0x01
+// Deprecated in eth/68 but BSC peers still broadcast it to announce new tips.
+#[derive(Debug, Clone)]
+pub struct NewBlockHashes {
+    pub hashes_and_numbers: Vec<(BlockHash, BlockNumber)>,
+}
+
+impl RLPxMessage for NewBlockHashes {
+    const CODE: u8 = 0x01;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        self.hashes_and_numbers.encode(&mut encoded_data);
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let (hashes_and_numbers, _): (Vec<(BlockHash, BlockNumber)>, _) =
+            <Vec<(BlockHash, BlockNumber)> as RLPDecode>::decode_unfinished(&decompressed_data)?;
+        Ok(Self { hashes_and_numbers })
+    }
+}
+
+// https://github.com/ethereum/devp2p/blob/master/caps/eth.md#newblock-0x07
+// Deprecated in eth/68 but BSC peers still broadcast it, carrying the full block
+// inline. Importing directly removes the header+body round-trips needed when
+// reacting to NewBlockHashes.
+#[derive(Debug, Clone)]
+pub struct NewBlockAnnouncement {
+    pub block: Block,
+    /// Pre-Merge total difficulty field. BSC keeps sending it but we ignore it.
+    pub total_difficulty: U256,
+}
+
+impl RLPxMessage for NewBlockAnnouncement {
+    const CODE: u8 = 0x07;
+    fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
+        let mut encoded_data = vec![];
+        Encoder::new(&mut encoded_data)
+            .encode_field(&self.block)
+            .encode_field(&self.total_difficulty)
+            .finish();
+        let msg_data = snappy_compress(encoded_data)?;
+        buf.put_slice(&msg_data);
+        Ok(())
+    }
+
+    fn decode(msg_data: &[u8]) -> Result<Self, RLPDecodeError> {
+        let decompressed_data = snappy_decompress(msg_data)?;
+        let decoder = Decoder::new(&decompressed_data)?;
+        let (block, decoder): (Block, _) = decoder.decode_field("block")?;
+        let (total_difficulty, _): (U256, _) = decoder.decode_field("total_difficulty")?;
+        Ok(Self {
+            block,
+            total_difficulty,
+        })
     }
 }
 
@@ -178,7 +242,7 @@ impl RLPxMessage for GetBlockHeaders {
         let mut encoded_data = vec![];
         let limit = self.limit;
         let skip = self.skip;
-        let reverse = self.reverse as u8;
+        let reverse = self.reverse;
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&(self.startblock, limit, skip, reverse))

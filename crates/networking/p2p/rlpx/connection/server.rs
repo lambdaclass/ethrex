@@ -16,7 +16,8 @@ use crate::{
         error::PeerConnectionError,
         eth::{
             block_access_lists::{BlockAccessLists, GetBlockAccessLists},
-            blocks::{BlockBodies, BlockHeaders},
+            blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, HashOrNumber},
+            bsc::UpgradeStatusMsg,
             receipts::{
                 GetReceipts68, GetReceipts70, Receipts68, Receipts69, Receipts70,
                 SOFT_RESPONSE_LIMIT,
@@ -60,7 +61,7 @@ use spawned_rt::tasks::BroadcastStream;
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex as StdMutex, OnceLock, RwLock},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -70,7 +71,7 @@ use tokio::{
 };
 use tokio_stream::StreamExt;
 use tokio_util::codec::Framed;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 const PING_INTERVAL: Duration = Duration::from_secs(10);
 const BLOCK_RANGE_UPDATE_INTERVAL: Duration = Duration::from_secs(60);
@@ -114,6 +115,38 @@ pub struct L2Message {
 #[cfg(feature = "l2")]
 impl spawned_concurrency::message::Message for L2Message {
     type Result = ();
+}
+
+/// Diagnostic: per-block-hash, the time and message-source at which we first
+/// heard about that block. Inserted on NewBlockHashes / NewBlockAnnouncement,
+/// removed on import. Lets the import logs report `first_heard_ms` so we can
+/// compare the two ingest paths and see which one the import actually rode in
+/// on.
+type FirstHeardMap = HashMap<H256, (Instant, &'static str)>;
+static BSC_FIRST_HEARD: OnceLock<StdMutex<FirstHeardMap>> = OnceLock::new();
+
+fn bsc_first_heard_map() -> &'static StdMutex<FirstHeardMap> {
+    BSC_FIRST_HEARD.get_or_init(|| StdMutex::new(FirstHeardMap::new()))
+}
+
+fn bsc_record_first_heard(hash: H256, source: &'static str) {
+    let mut map = bsc_first_heard_map()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    // Crude bound: if the table grows past 4096 entries (i.e., 4096
+    // announcements never followed by an import), wipe it. Avoids leaking
+    // memory across long uptime without a separate sweeper.
+    if map.len() > 4096 {
+        map.clear();
+    }
+    map.entry(hash).or_insert_with(|| (Instant::now(), source));
+}
+
+fn bsc_take_first_heard(hash: H256) -> Option<(Instant, &'static str)> {
+    bsc_first_heard_map()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&hash)
 }
 
 #[derive(Clone, Debug)]
@@ -210,6 +243,7 @@ pub struct Established {
     pub(crate) capabilities: Vec<Capability>,
     pub(crate) negotiated_eth_capability: Option<Capability>,
     pub(crate) negotiated_snap_capability: Option<Capability>,
+    pub(crate) negotiated_bsc_capability: Option<Capability>,
     pub(crate) last_block_range_update_block: u64,
     /// Maps request ID to (original announcement, actually requested hashes, request time).
     /// The announcement is kept for response validation; the hashes track in-flight state.
@@ -394,7 +428,8 @@ impl PeerConnectionServer {
                 message=%msg.message,
                 "Received incoming message",
             );
-            let result = handle_incoming_message(established_state, msg.message).await;
+            let self_handle = ctx.actor_ref();
+            let result = handle_incoming_message(established_state, msg.message, self_handle).await;
             Self::process_cast_error(&self.state, result, ctx);
         } else {
             debug!("Connection not yet established");
@@ -659,8 +694,15 @@ where
     }
     exchange_hello_messages(state, &mut stream).await?;
 
-    // Update eth capability version to the negotiated version for further message decoding
+    // Update eth capability version to the negotiated version for further message decoding.
+    // BSC advertises a `bsc` capability for peer discovery, but does NOT use it
+    // for message offset calculations. BSC messages (BscCapMsg, VotesMsg, UpgradeStatusMsg)
+    // are sent within the eth message code range. Use V68Bsc which has the SAME
+    // offsets as V68 but with a BSC-specific catch-all for unknown eth-range codes.
     let version = match &state.negotiated_eth_capability {
+        Some(cap) if cap == &Capability::eth(68) && state.negotiated_bsc_capability.is_some() => {
+            EthCapVersion::V68Bsc
+        }
         Some(cap) if cap == &Capability::eth(68) => EthCapVersion::V68,
         Some(cap) if cap == &Capability::eth(69) => EthCapVersion::V69,
         Some(cap) if cap == &Capability::eth(70) => EthCapVersion::V70,
@@ -672,6 +714,26 @@ where
         .map_err(|err| PeerConnectionError::InternalError(err.to_string()))? = version;
 
     init_capabilities(state, &mut stream).await?;
+
+    // Cap non-snap peers. Snap-capable peers are precious (BSC has few),
+    // so once non-snap fills MAX_NON_SNAP_PEERS we reject incoming non-snap
+    // peers and free slots for the discoverer to find snap-capable ones.
+    const MAX_NON_SNAP_PEERS: usize = 30;
+    let peer_has_snap = SUPPORTED_SNAP_CAPABILITIES
+        .iter()
+        .any(|cap| state.capabilities.contains(cap));
+    if !peer_has_snap {
+        let total = state.peer_table.peer_count().await?;
+        let snap_count = state
+            .peer_table
+            .peer_count_by_capabilities(SUPPORTED_SNAP_CAPABILITIES.to_vec())
+            .await?;
+        let non_snap_count = total.saturating_sub(snap_count);
+        if non_snap_count >= MAX_NON_SNAP_PEERS {
+            debug!(peer=%state.node, "Rejecting non-snap peer: cap of {MAX_NON_SNAP_PEERS} reached.");
+            return Err(PeerConnectionError::TooManyPeers);
+        }
+    }
 
     let mut connection = PeerConnection {
         handle: ctx.actor_ref(),
@@ -842,42 +904,120 @@ where
         };
         trace!(peer=%state.node, "Sending status");
         send(state, status).await?;
-        // The next immediate message in the ETH protocol is the
-        // status, reference here:
-        // https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
-        let msg = match receive(stream).await {
-            Some(msg) => msg?,
-            None => return Err(PeerConnectionError::Disconnected),
-        };
-        match msg {
-            Message::Status68(msg_data) => {
-                trace!(peer=%state.node, "Received Status(68)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Status69(msg_data) => {
-                trace!(peer=%state.node, "Received Status(69)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Status70(msg_data) => {
-                trace!(peer=%state.node, "Received Status(70)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Status71(msg_data) => {
-                trace!(peer=%state.node, "Received Status(71)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
-            }
-            Message::Disconnect(disconnect) => {
-                return Err(PeerConnectionError::HandshakeError(format!(
-                    "Peer disconnected due to: {}",
-                    disconnect.reason()
-                )));
-            }
-            _ => {
-                return Err(PeerConnectionError::HandshakeError(
-                    "Expected a Status message".to_string(),
-                ));
+
+        // BSC peers (chain ID 56 = mainnet, 97 = Chapel testnet) expect an
+        // UpgradeStatusMsg (0x0b) immediately after the eth status message.
+        // Reference: https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/handshake.go
+        let chain_id = state.storage.get_chain_config().chain_id;
+        if chain_id == 56 || chain_id == 97 {
+            trace!(peer=%state.node, "Sending BSC UpgradeStatus");
+            send(
+                state,
+                Message::UpgradeStatus(UpgradeStatusMsg {
+                    disable_peer_tx_broadcast: false,
+                }),
+            )
+            .await?;
+        }
+        // The next immediate message in the ETH protocol is the status.
+        // BSC peers may send an UpgradeStatusMsg before or after their Status —
+        // consume it if it arrives first, then read the actual Status.
+        // Reference: https://github.com/ethereum/devp2p/blob/master/caps/eth.md#status-0x00
+        let mut received_upgrade_status = false;
+        let mut status_received = false;
+        for _ in 0..5 {
+            let msg = match receive(stream).await {
+                Some(msg) => msg?,
+                None => return Err(PeerConnectionError::Disconnected),
+            };
+            match msg {
+                Message::Status68(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(68)");
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    debug!(
+                        peer=%state.node,
+                        %chain_id,
+                        ?remote_head,
+                        "Status(68) validated, checking BSC sync head"
+                    );
+                    // BSC mainnet (56) and Chapel testnet (97) have no Engine API;
+                    // notify the sync bridge so it can trigger sync toward this peer's head.
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
+                    status_received = true;
+                    break;
+                }
+                Message::Status69(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(69)");
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
+                    status_received = true;
+                    break;
+                }
+                Message::Status70(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(70)");
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
+                    status_received = true;
+                    break;
+                }
+                Message::Status71(msg_data) => {
+                    trace!(peer=%state.node, "Received Status(71)");
+                    let remote_head =
+                        backend::validate_status(msg_data, &state.storage, &eth).await?;
+                    let chain_id = state.storage.get_chain_config().chain_id;
+                    if (chain_id == 56 || chain_id == 97) && !remote_head.is_zero() {
+                        state.blockchain.set_bsc_sync_head(remote_head);
+                    }
+                    status_received = true;
+                    break;
+                }
+                Message::UpgradeStatus(upgrade) => {
+                    trace!(
+                        peer=%state.node,
+                        disable_tx_broadcast=%upgrade.disable_peer_tx_broadcast,
+                        "Received BSC UpgradeStatus"
+                    );
+                    received_upgrade_status = true;
+                    // Continue loop to read the actual Status message
+                }
+                Message::BscIgnored => {
+                    trace!(peer=%state.node, "Ignoring bsc sub-protocol message during handshake");
+                    // Continue loop — BSC peers send BscCapMsg before Status
+                }
+                Message::Disconnect(disconnect) => {
+                    return Err(PeerConnectionError::HandshakeError(format!(
+                        "Peer disconnected due to: {}",
+                        disconnect.reason()
+                    )));
+                }
+                _ => {
+                    return Err(PeerConnectionError::HandshakeError(
+                        "Expected a Status message".to_string(),
+                    ));
+                }
             }
         }
+        if !status_received {
+            return Err(PeerConnectionError::HandshakeError(
+                "Did not receive Status message after 5 attempts".to_string(),
+            ));
+        }
+        let _ = received_upgrade_status;
+
+        // BSC pivot header fetching is done by the snap sync module
+        // after the peer connection is fully established, using PeerHandler.
     }
     Ok(())
 }
@@ -950,9 +1090,6 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
-    // This allow is because in l2 we mut the capabilities
-    // to include the l2 cap
-    #[allow(unused_mut)]
     let mut supported_capabilities: Vec<Capability> = [
         &SUPPORTED_ETH_CAPABILITIES[..],
         &SUPPORTED_SNAP_CAPABILITIES[..],
@@ -961,6 +1098,12 @@ where
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
+    }
+    // BSC chains (mainnet 56 / Chapel 97) require the bsc capability in the Hello message.
+    // Without it, BSC peers classify us as a non-BSC peer and disconnect to free peer slots.
+    let chain_id_for_hello = state.storage.get_chain_config().chain_id;
+    if chain_id_for_hello == 56 || chain_id_for_hello == 97 {
+        supported_capabilities.push(Capability::bsc(1));
     }
     let hello_msg = Message::Hello(p2p::HelloMessage::new(
         supported_capabilities,
@@ -980,6 +1123,7 @@ where
         Message::Hello(hello_message) => {
             let mut negotiated_eth_version = 0;
             let mut negotiated_snap_version = 0;
+            let mut negotiated_bsc_version = 0u8;
 
             trace!(
                 peer=%state.node,
@@ -1004,6 +1148,16 @@ where
                             negotiated_snap_version = cap.version;
                         }
                     }
+                    // We only advertise bsc/1. Accept only bsc/1 from the peer
+                    // to ensure both sides agree on the same message count (2).
+                    // bsc/2 and bsc/3 have 4 messages which would shift offsets.
+                    "bsc"
+                        if (chain_id_for_hello == 56 || chain_id_for_hello == 97)
+                            && cap.version == 1
+                            && negotiated_bsc_version == 0 =>
+                    {
+                        negotiated_bsc_version = 1;
+                    }
                     #[cfg(feature = "l2")]
                     "based" if state.l2_state.is_supported() => {
                         state.l2_state.set_established()?;
@@ -1023,6 +1177,11 @@ where
             if negotiated_snap_version != 0 {
                 debug!("Negotatied snap version: snap/{}", negotiated_snap_version);
                 state.negotiated_snap_capability = Some(Capability::snap(negotiated_snap_version));
+            }
+
+            if negotiated_bsc_version != 0 {
+                debug!("Negotiated bsc version: bsc/{}", negotiated_bsc_version);
+                state.negotiated_bsc_capability = Some(Capability::bsc(negotiated_bsc_version));
             }
 
             state.node.version = Some(hello_message.client_id);
@@ -1086,6 +1245,7 @@ fn check_serve_request_rate(state: &mut Established) -> bool {
 async fn handle_incoming_message(
     state: &mut Established,
     message: Message,
+    self_handle: ActorRef<PeerConnectionServer>,
 ) -> Result<(), PeerConnectionError> {
     #[cfg(feature = "metrics")]
     {
@@ -1145,22 +1305,22 @@ async fn handle_incoming_message(
         }
         Message::Status68(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::Status69(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::Status70(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::Status71(msg_data) => {
             if let Some(eth) = &state.negotiated_eth_capability {
-                backend::validate_status(msg_data, &state.storage, eth).await?
+                let _ = backend::validate_status(msg_data, &state.storage, eth).await?;
             };
         }
         Message::GetAccountRange(req) => {
@@ -1317,6 +1477,178 @@ async fn handle_incoming_message(
                 Message::Receipts70(Receipts70::new(id, last_block_incomplete, all_receipts));
             send(state, response).await?;
         }
+        Message::NewBlockHashes(announce) => {
+            // BSC peers broadcast NewBlockHashes on every new tip. Forward the
+            // highest-numbered hash to the BSC sync bridge (fallback) AND
+            // directly fetch each announced block from this peer in parallel.
+            // The direct fetch cuts the batch-wait incurred by forward_sync
+            // (~0.5-2s) and gets blocks executed near-immediately.
+            let handler_entry = std::time::Instant::now();
+            let chain_id = state.storage.get_chain_config().chain_id;
+            if chain_id == 56 || chain_id == 97 {
+                // Record first-heard time for every announced hash, so the
+                // import logs can later report first-heard-to-imported.
+                for (hash, _) in &announce.hashes_and_numbers {
+                    if !hash.is_zero() {
+                        bsc_record_first_heard(*hash, "hashes");
+                    }
+                }
+                if let Some((hash, _)) = announce.hashes_and_numbers.iter().max_by_key(|(_, n)| *n)
+                    && !hash.is_zero()
+                {
+                    state.blockchain.set_bsc_sync_head(*hash);
+                }
+                // Direct-fetch only when close to tip. When catching up,
+                // forward sync stores headers ahead of state.
+                const DIRECT_FETCH_AHEAD_LIMIT: u64 = 8;
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                for (hash, number) in &announce.hashes_and_numbers {
+                    if hash.is_zero() {
+                        continue;
+                    }
+                    if *number > latest + DIRECT_FETCH_AHEAD_LIMIT {
+                        continue;
+                    }
+                    // Dedup: already have this block?
+                    let already_stored = state
+                        .storage
+                        .get_block_header_by_hash(*hash)
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    if already_stored {
+                        continue;
+                    }
+                    // Cross-peer dedup: another peer already fetching this hash?
+                    let inserted = state
+                        .blockchain
+                        .fetching_blocks
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner())
+                        .insert(*hash);
+                    if !inserted {
+                        continue;
+                    }
+                    // Spawn a task that fetches header + body in parallel from
+                    // THIS peer, then hands the assembled block to the import
+                    // pipeline. On any failure, we just release the in-flight
+                    // mark — the sync bridge (primed via set_bsc_sync_head
+                    // above) will pick up the block.
+                    let hash = *hash;
+                    let blockchain = state.blockchain.clone();
+                    let peer_handle = self_handle.clone();
+                    let peer_table = state.peer_table.clone();
+                    tokio::spawn(async move {
+                        let primary = PeerConnection {
+                            handle: peer_handle,
+                        };
+                        let outcome = fetch_and_import_bsc_block(
+                            primary,
+                            peer_table,
+                            hash,
+                            blockchain.clone(),
+                            handler_entry,
+                        )
+                        .await;
+                        if let Err(e) = outcome {
+                            debug!(%hash, "BSC direct fetch/import failed: {e}");
+                        }
+                        blockchain
+                            .fetching_blocks
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .remove(&hash);
+                    });
+                }
+            }
+        }
+        Message::NewBlockAnnouncement(announce) => {
+            let nb_handler_entry = std::time::Instant::now();
+            // BSC peers broadcast full blocks inline. Importing directly
+            // removes the header+body round-trips a sync cycle would need,
+            // getting us to tip with near-zero lag.
+            //
+            // Peer-claimed fields (`number`, `parent_hash`, etc.) are NOT
+            // trusted — real validation happens inside `add_block_pipeline`.
+            // The `number == latest + 1` gate is a performance heuristic only:
+            // it filters the two common "wasted CPU" cases cheaply:
+            //   - old blocks re-broadcast by slow peers
+            //   - far-future speculative claims
+            // A peer that lies about `number` just ends up at `add_block_pipeline`
+            // where full validation rejects the block (same as without the gate).
+            //
+            // Future blocks (number > latest + 1) are already handled by
+            // NewBlockHashes and BlockRangeUpdate triggering the sync cycle;
+            // no need to propagate an unverified hash from NewBlock here.
+            let chain_id = state.storage.get_chain_config().chain_id;
+            if chain_id == 56 || chain_id == 97 {
+                let block = announce.block;
+                let block_hash = block.hash();
+                let block_number = block.header.number;
+                bsc_record_first_heard(block_hash, "newblock");
+                // Skip if we already have this block stored (likely: multiple
+                // peers announced the same block). `add_block_pipeline` has
+                // no early duplicate check and would re-execute.
+                let already_have = state
+                    .storage
+                    .get_block_header_by_hash(block_hash)
+                    .ok()
+                    .flatten()
+                    .is_some();
+                if !already_have {
+                    // Always hand to add_block_pipeline — it validates,
+                    // handles reorgs (side-chain blocks at `number == latest`
+                    // can still become canonical), and auto-queues to the
+                    // pending store when the parent is missing. Out-of-order
+                    // arrivals are handled transparently. `add_block_pipeline`
+                    // internally serializes BSC callers on `bsc_import_lock`.
+                    let blockchain = state.blockchain.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let pipeline_start = std::time::Instant::now();
+                        let pipeline_ok = blockchain.add_block_pipeline(block, None).is_ok();
+                        let pipeline_done = std::time::Instant::now();
+                        if pipeline_ok {
+                            // Match the direct-fetch path: advance the
+                            // canonical head so RPC reflects the new tip
+                            // and forward_sync skips this block on its
+                            // next pass.
+                            tokio::runtime::Handle::current().block_on(async {
+                                let _ = blockchain
+                                    .advance_canonical_head(block_number, block_hash)
+                                    .await;
+                            });
+                            let head_done = std::time::Instant::now();
+                            let (first_heard_ms, first_source) = bsc_take_first_heard(block_hash)
+                                .map(|(t, s)| (head_done.duration_since(t).as_millis() as u64, s))
+                                .unwrap_or((0, "unknown"));
+                            info!(
+                                block = block_number,
+                                dispatch_ms =
+                                    pipeline_start.duration_since(nb_handler_entry).as_millis()
+                                        as u64,
+                                pipeline_ms =
+                                    pipeline_done.duration_since(pipeline_start).as_millis() as u64,
+                                forkchoice_ms =
+                                    head_done.duration_since(pipeline_done).as_millis() as u64,
+                                first_heard_ms,
+                                first_source,
+                                "BSC newblock import"
+                            );
+                        }
+                    });
+                }
+                // Wake the sync bridge only when this block claims to advance
+                // beyond our current tip — re-broadcasts of old blocks must
+                // not pollute `bsc_sync_head` with a stale target.
+                let latest = state.storage.get_latest_block_number().await.unwrap_or(0);
+                if block_number > latest {
+                    state.blockchain.set_bsc_sync_head(block_hash);
+                }
+                // Else: ignore. Other triggers (NewBlockHashes,
+                // BlockRangeUpdate) will drive the sync bridge if we're
+                // actually behind.
+            }
+        }
         Message::BlockRangeUpdate(update) => {
             trace!(
                 peer=%state.node,
@@ -1335,6 +1667,12 @@ async fn handle_incoming_message(
                 return Err(PeerConnectionError::DisconnectSent(
                     DisconnectReason::SubprotocolError,
                 ));
+            }
+            // On BSC chains, BlockRangeUpdate carries the peer's current tip hash.
+            // Feed it into the sync-head candidate set for fresher pivot selection.
+            let chain_id = state.storage.get_chain_config().chain_id;
+            if (chain_id == 56 || chain_id == 97) && !update.latest_block_hash.is_zero() {
+                state.blockchain.set_bsc_sync_head(update.latest_block_hash);
             }
         }
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
@@ -1491,6 +1829,23 @@ async fn handle_incoming_message(
                 return Err(PeerConnectionError::ExpectedRequestId(format!("{message}")));
             }
         }
+        // BSC-specific: UpgradeStatusMsg (0x0b) is sent by BSC peers immediately
+        // after the eth status exchange. We consume it without disconnecting.
+        // The disable_peer_tx_broadcast flag is ignored for now.
+        // Reference: https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/handshake.go
+        Message::UpgradeStatus(msg) => {
+            trace!(
+                peer=%state.node,
+                disable_peer_tx_broadcast=%msg.disable_peer_tx_broadcast,
+                "Received BSC UpgradeStatus",
+            );
+        }
+        // bsc sub-protocol messages (BscCapMsg / VotesMsg) — silently consumed.
+        // We advertise bsc/1 to keep BSC peers connected but do not implement the
+        // bsc sub-protocol beyond accepting the connection.
+        Message::BscIgnored => {
+            trace!(peer=%state.node, "Received bsc sub-protocol message (ignored)");
+        }
         // TODO: Add new message types and handlers as they are implemented
         message => return Err(PeerConnectionError::MessageNotHandled(format!("{message}"))),
     };
@@ -1614,5 +1969,172 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
             .insert(request_id, (announcement, chunk.to_vec(), Instant::now()));
     }
 
+    Ok(())
+}
+
+/// Fetch a single block by hash for the BSC `NewBlockHashes` fast-path and
+/// submit it to `add_block_pipeline`.
+///
+/// `primary` is the announcing peer; we also pull the top-N highest-scored
+/// eth-capable peers from the peer table and race the fetches across all of
+/// them. The first peer to deliver a valid (header, body) pair wins; the
+/// rest are dropped (their orphan responses are tolerated by the existing
+/// `current_requests` plumbing). Errors are non-fatal — the sync bridge
+/// fallback covers any block that drops on the floor.
+async fn fetch_and_import_bsc_block(
+    primary: PeerConnection,
+    peer_table: PeerTable,
+    hash: H256,
+    blockchain: Arc<Blockchain>,
+    handler_entry: std::time::Instant,
+) -> Result<(), String> {
+    use ethrex_common::types::Block;
+    const FETCH_TIMEOUT: Duration = Duration::from_secs(3);
+    /// Hedge across top-N highest-scored peers (plus the announcer).
+    /// 5 brings P(all-slow) below ~0.5% under the observed RTT
+    /// distribution while keeping bandwidth bounded.
+    const FANOUT: usize = 5;
+
+    // Build the candidate list: announcer (slot 0, no peer_id known here)
+    // + LRU "proven-fast" peers + top-scored peers, deduped, up to FANOUT.
+    // peer_ids[i] is None for the announcer and Some(_) for everyone else,
+    // so we can record only non-announcer winners back into the LRU.
+    let mut peer_ids: Vec<Option<H256>> = vec![None];
+    let mut peers: Vec<PeerConnection> = vec![primary];
+    let mut excluded: Vec<H256> = Vec::new();
+
+    // LRU pass: insert any LRU peer that's still connected and eth-capable.
+    // Note: we drop the permits immediately because NewBlock broadcast doesn't
+    // need to reserve a slot for a response — it's fire-and-forget.
+    let lru_ids = blockchain.bsc_block_winners_snapshot();
+    if !lru_ids.is_empty() {
+        let connected = peer_table
+            .get_peers_with_capabilities()
+            .await
+            .unwrap_or_default();
+        let connected_map: std::collections::HashMap<H256, PeerConnection> = connected
+            .into_iter()
+            .filter(|(_, _, caps)| caps.iter().any(|c| SUPPORTED_ETH_CAPABILITIES.contains(c)))
+            .map(|(id, conn, _)| (id, conn))
+            .collect();
+        for id in lru_ids {
+            if peers.len() >= FANOUT {
+                break;
+            }
+            if let Some(conn) = connected_map.get(&id) {
+                peers.push(conn.clone());
+                peer_ids.push(Some(id));
+                excluded.push(id);
+            }
+        }
+    }
+
+    // Fill remaining slots with top-scored peers (excluding LRU peers we
+    // already added). Drop permits immediately — broadcast is fire-and-forget.
+    while peers.len() < FANOUT {
+        match peer_table
+            .get_best_peer_excluding(SUPPORTED_ETH_CAPABILITIES.to_vec(), excluded.clone())
+            .await
+        {
+            Ok(Some((id, conn, permit))) => {
+                drop(permit);
+                excluded.push(id);
+                peers.push(conn);
+                peer_ids.push(Some(id));
+            }
+            _ => break,
+        }
+    }
+
+    let fetch_start = std::time::Instant::now();
+    let mut set = tokio::task::JoinSet::new();
+    for (i, conn) in peers.into_iter().enumerate() {
+        set.spawn(async move {
+            let header_req = Message::GetBlockHeaders(GetBlockHeaders {
+                id: rand::random(),
+                startblock: HashOrNumber::Hash(hash),
+                limit: 1,
+                skip: 0,
+                reverse: false,
+            });
+            let body_req = Message::GetBlockBodies(GetBlockBodies {
+                id: rand::random(),
+                block_hashes: vec![hash],
+            });
+            let mut hdr_conn = conn.clone();
+            let mut body_conn = conn;
+            let (h, b) = tokio::join!(
+                hdr_conn.outgoing_request(header_req, FETCH_TIMEOUT),
+                body_conn.outgoing_request(body_req, FETCH_TIMEOUT),
+            );
+            let header = match h.map_err(|e| format!("header: {e}"))? {
+                Message::BlockHeaders(BlockHeaders { block_headers, .. }) => block_headers
+                    .into_iter()
+                    .find(|h| h.hash() == hash)
+                    .ok_or_else(|| "header hash mismatch".to_string())?,
+                other => return Err(format!("unexpected header response: {other}")),
+            };
+            let body = match b.map_err(|e| format!("body: {e}"))? {
+                Message::BlockBodies(BlockBodies { block_bodies, .. }) => block_bodies
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| "empty body response".to_string())?,
+                other => return Err(format!("unexpected body response: {other}")),
+            };
+            Ok::<_, String>((i, header, body))
+        });
+    }
+
+    // Take the first peer to deliver a valid pair; abort the rest.
+    let mut last_err = String::from("no peers");
+    let (winner_i, header, body) = loop {
+        match set.join_next().await {
+            Some(Ok(Ok(v))) => break v,
+            Some(Ok(Err(e))) => last_err = e,
+            Some(Err(e)) => last_err = format!("join: {e}"),
+            None => return Err(format!("all peers failed: {last_err}")),
+        }
+    };
+    set.abort_all();
+    let fetch_ms = fetch_start.elapsed().as_millis() as u64;
+
+    // Record non-announcer winners to the LRU. The announcer (winner_i == 0)
+    // wins most races by default (propagation head start), so recording it
+    // adds no signal — the LRU's purpose is to surface peers that can
+    // actually outrace the announcer for the slow-announcer cases.
+    if let Some(Some(winner_id)) = peer_ids.get(winner_i).copied() {
+        blockchain.bsc_record_block_winner(winner_id);
+    }
+
+    let block = Block { header, body };
+    let number = block.header.number;
+    let block_hash = block.hash();
+    let blockchain_ref = blockchain.clone();
+    let pipeline_start = std::time::Instant::now();
+    tokio::task::spawn_blocking(move || blockchain_ref.add_block_pipeline(block, None))
+        .await
+        .map_err(|e| format!("join: {e}"))?
+        .map_err(|e| format!("pipeline: {e}"))?;
+    let pipeline_done = std::time::Instant::now();
+    blockchain
+        .advance_canonical_head(number, block_hash)
+        .await
+        .map_err(|e| format!("forkchoice: {e}"))?;
+    let head_done = std::time::Instant::now();
+    let select_ms = fetch_start.duration_since(handler_entry).as_millis() as u64;
+    let (first_heard_ms, first_source) = bsc_take_first_heard(hash)
+        .map(|(t, s)| (head_done.duration_since(t).as_millis() as u64, s))
+        .unwrap_or((0, "unknown"));
+    info!(
+        block = number,
+        winner = winner_i,
+        select_ms,
+        fetch_ms,
+        pipeline_ms = pipeline_done.duration_since(pipeline_start).as_millis() as u64,
+        forkchoice_ms = head_done.duration_since(pipeline_done).as_millis() as u64,
+        first_heard_ms,
+        first_source,
+        "BSC direct-fetch import"
+    );
     Ok(())
 }

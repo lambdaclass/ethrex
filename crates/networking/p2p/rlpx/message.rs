@@ -8,7 +8,11 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::block_access_lists::{BlockAccessLists, GetBlockAccessLists};
-use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
+use super::eth::blocks::{
+    BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, NewBlockAnnouncement,
+    NewBlockHashes,
+};
+use super::eth::bsc::UpgradeStatusMsg;
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
 };
@@ -38,18 +42,44 @@ const BASED_CAPABILITY_OFFSET_ETH_69: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_70: u8 = 0x31;
 const BASED_CAPABILITY_OFFSET_ETH_71: u8 = 0x33;
 
+// When the bsc capability is negotiated alongside eth/68, capabilities are sorted
+// alphabetically: bsc < eth < snap.  The bsc sub-protocol message count depends on
+// version: bsc/1 = 2 messages, bsc/2 = 4, bsc/3 = 4.
+// BSC peers advertise bsc/1,2,3 and we negotiate bsc/1, but go-ethereum computes
+// offsets using the MAXIMUM message count across all versions of the protocol
+// advertised by the peer (not just the negotiated version).  The peer advertises
+// bsc/3 which has 4 messages, so the offset shift is always 4.
+// bsc:  0x10-0x13  (4 message slots reserved)
+// eth:  0x14       (was 0x10)
+// snap: 0x25       (was 0x21)
+// based:0x34       (was 0x30)
+const BSC_PROTOCOL_LENGTH: u8 = 2;
+const ETH_CAPABILITY_OFFSET_WITH_BSC: u8 = ETH_CAPABILITY_OFFSET + BSC_PROTOCOL_LENGTH; // 0x12
+const SNAP_CAPABILITY_OFFSET_ETH_68_BSC: u8 = SNAP_CAPABILITY_OFFSET_ETH_68 + BSC_PROTOCOL_LENGTH; // 0x23
+const BASED_CAPABILITY_OFFSET_ETH_68_BSC: u8 = BASED_CAPABILITY_OFFSET_ETH_68 + BSC_PROTOCOL_LENGTH; // 0x32
+
 #[derive(Debug, Clone, Copy, Default)]
 pub enum EthCapVersion {
     #[default]
     V68,
     V69,
     V70,
+    /// eth/68 + bsc/1 negotiated (BSC mainnet chain ID 56, or Chapel testnet chain ID 97).
+    /// Alphabetical capability ordering shifts all offsets by BSC_PROTOCOL_LENGTH (2).
+    V68Bsc,
     V71,
 }
 
 impl EthCapVersion {
     pub const fn eth_capability_offset(&self) -> u8 {
-        ETH_CAPABILITY_OFFSET
+        match self {
+            // When bsc is negotiated, it sits before eth alphabetically.
+            // bsc occupies 0x10-0x11 (2 messages), eth starts at 0x12.
+            // BSC DOES shift offsets. bsc/1 = 2 message slots at 0x10-0x11.
+            // eth starts at 0x12 when bsc is negotiated.
+            EthCapVersion::V68Bsc => ETH_CAPABILITY_OFFSET_WITH_BSC,
+            _ => ETH_CAPABILITY_OFFSET,
+        }
     }
 
     pub const fn snap_capability_offset(&self) -> u8 {
@@ -57,6 +87,7 @@ impl EthCapVersion {
             EthCapVersion::V68 => SNAP_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => SNAP_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => SNAP_CAPABILITY_OFFSET_ETH_70,
+            EthCapVersion::V68Bsc => SNAP_CAPABILITY_OFFSET_ETH_68_BSC,
             EthCapVersion::V71 => SNAP_CAPABILITY_OFFSET_ETH_71,
         }
     }
@@ -66,8 +97,19 @@ impl EthCapVersion {
             EthCapVersion::V68 => BASED_CAPABILITY_OFFSET_ETH_68,
             EthCapVersion::V69 => BASED_CAPABILITY_OFFSET_ETH_69,
             EthCapVersion::V70 => BASED_CAPABILITY_OFFSET_ETH_70,
+            EthCapVersion::V68Bsc => BASED_CAPABILITY_OFFSET_ETH_68_BSC,
             EthCapVersion::V71 => BASED_CAPABILITY_OFFSET_ETH_71,
         }
+    }
+
+    /// Returns the offset at which bsc sub-protocol messages start.
+    /// Only meaningful when bsc has been negotiated (i.e. V68Bsc).
+    /// bsc is sorted alphabetically before eth, so it occupies the first block
+    /// after the p2p reserved range (0x10).
+    pub const fn bsc_capability_offset(&self) -> u8 {
+        // bsc always starts right after p2p (at 0x10), regardless of eth version,
+        // because "bsc" < "eth" alphabetically.
+        ETH_CAPABILITY_OFFSET
     }
 }
 
@@ -107,6 +149,21 @@ pub enum Message {
     BlockRangeUpdate(BlockRangeUpdate),
     GetBlockAccessLists(GetBlockAccessLists),
     BlockAccessLists(BlockAccessLists),
+    // BSC-specific extension messages
+    // https://github.com/bnb-chain/bsc/blob/master/eth/protocols/eth/protocol.go
+    UpgradeStatus(UpgradeStatusMsg),
+    // bsc sub-protocol messages (BscCapMsg/VotesMsg) — received when bsc/1 is negotiated.
+    // We don't implement the bsc sub-protocol beyond accepting the connection; all
+    // messages are silently consumed to avoid a MalformedData disconnect.
+    BscIgnored,
+    // NewBlockHashes (0x01) — deprecated in eth/68 but BSC peers still send it.
+    // We decode to extract the freshest hash so the BSC sync bridge can trigger
+    // immediately instead of waiting for the next periodic BlockRangeUpdate.
+    NewBlockHashes(NewBlockHashes),
+    // NewBlock (0x07) — carries a full block inline. Importing directly bypasses
+    // the header+body round-trips that a NewBlockHashes announcement would
+    // otherwise need.
+    NewBlockAnnouncement(NewBlockAnnouncement),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -162,6 +219,9 @@ impl Message {
             Message::BlockRangeUpdate(_) => {
                 eth_version.eth_capability_offset() + BlockRangeUpdate::CODE
             }
+            Message::UpgradeStatus(_) => {
+                eth_version.eth_capability_offset() + UpgradeStatusMsg::CODE
+            }
             Message::GetBlockAccessLists(_) => {
                 eth_version.eth_capability_offset() + GetBlockAccessLists::CODE
             }
@@ -192,6 +252,17 @@ impl Message {
                     }
                 }
             }
+
+            // bsc sub-protocol — we never send this; code is only here for exhaustiveness.
+            Message::BscIgnored => eth_version.bsc_capability_offset(),
+            // NewBlockHashes is receive-only for us.
+            Message::NewBlockHashes(_) => {
+                eth_version.eth_capability_offset() + NewBlockHashes::CODE
+            }
+            // NewBlock is receive-only for us.
+            Message::NewBlockAnnouncement(_) => {
+                eth_version.eth_capability_offset() + NewBlockAnnouncement::CODE
+            }
         }
     }
     pub fn decode(
@@ -199,7 +270,8 @@ impl Message {
         data: &[u8],
         eth_version: EthCapVersion,
     ) -> Result<Message, RLPDecodeError> {
-        if msg_id < eth_version.eth_capability_offset() {
+        if msg_id < ETH_CAPABILITY_OFFSET {
+            // p2p reserved range (0x00-0x0F): always the same regardless of negotiated caps.
             match msg_id {
                 HelloMessage::CODE => Ok(Message::Hello(HelloMessage::decode(data)?)),
                 DisconnectMessage::CODE => {
@@ -209,10 +281,18 @@ impl Message {
                 PongMessage::CODE => Ok(Message::Pong(PongMessage::decode(data)?)),
                 _ => Err(RLPDecodeError::MalformedData),
             }
+        } else if matches!(eth_version, EthCapVersion::V68Bsc)
+            && msg_id < eth_version.eth_capability_offset()
+        {
+            // bsc sub-protocol range (0x10-0x11 for bsc/1).
+            // Silently consume BscCapMsg and VotesMsg.
+            Ok(Message::BscIgnored)
         } else if msg_id < eth_version.snap_capability_offset() {
             // eth capability
             match msg_id - eth_version.eth_capability_offset() {
-                StatusMessage68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                StatusMessage68::CODE
+                    if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) =>
+                {
                     Ok(Message::Status68(StatusMessage68::decode(data)?))
                 }
                 StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
@@ -240,7 +320,9 @@ impl Message {
                 PooledTransactions::CODE => Ok(Message::PooledTransactions(
                     PooledTransactions::decode(data)?,
                 )),
-                GetReceipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                GetReceipts68::CODE
+                    if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) =>
+                {
                     Ok(Message::GetReceipts68(GetReceipts68::decode(data)?))
                 }
                 // eth/71 (EIP-8159) builds on eth/69, not eth/70 — it uses the
@@ -253,7 +335,9 @@ impl Message {
                 GetReceipts70::CODE if matches!(eth_version, EthCapVersion::V70) => {
                     Ok(Message::GetReceipts70(GetReceipts70::decode(data)?))
                 }
-                Receipts68::CODE if matches!(eth_version, EthCapVersion::V68) => {
+                Receipts68::CODE
+                    if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) =>
+                {
                     Ok(Message::Receipts68(Receipts68::decode(data)?))
                 }
                 Receipts69::CODE
@@ -267,11 +351,27 @@ impl Message {
                 BlockRangeUpdate::CODE => {
                     Ok(Message::BlockRangeUpdate(BlockRangeUpdate::decode(data)?))
                 }
+                UpgradeStatusMsg::CODE => {
+                    Ok(Message::UpgradeStatus(UpgradeStatusMsg::decode(data)?))
+                }
                 GetBlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => Ok(
                     Message::GetBlockAccessLists(GetBlockAccessLists::decode(data)?),
                 ),
                 BlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => {
                     Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
+                }
+                // NewBlockHashes (0x01) — deprecated in eth/68 but BSC peers still send it.
+                // Decode to extract the freshest announced hash so the BSC sync bridge
+                // can trigger on each block broadcast instead of waiting for periodic
+                // BlockRangeUpdate messages.
+                0x01 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
+                    NewBlockHashes::decode(data).map(Message::NewBlockHashes)
+                }
+                // NewBlock (0x07) — deprecated in eth/68 but BSC peers still send it,
+                // carrying the full block inline. Decode so the handler can
+                // add_block_pipeline directly (zero extra round-trips).
+                0x07 if matches!(eth_version, EthCapVersion::V68 | EthCapVersion::V68Bsc) => {
+                    NewBlockAnnouncement::decode(data).map(Message::NewBlockAnnouncement)
                 }
                 _ => Err(RLPDecodeError::MalformedData),
             }
@@ -344,6 +444,13 @@ impl Message {
             Message::Receipts69(msg) => msg.encode(buf),
             Message::Receipts70(msg) => msg.encode(buf),
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
+            Message::UpgradeStatus(msg) => msg.encode(buf),
+            // We never send BscIgnored; this arm is only here for exhaustiveness.
+            Message::BscIgnored => Ok(()),
+            // We never send NewBlockHashes; receive-only.
+            Message::NewBlockHashes(msg) => msg.encode(buf),
+            // We never send NewBlock; receive-only.
+            Message::NewBlockAnnouncement(msg) => msg.encode(buf),
             Message::GetBlockAccessLists(msg) => msg.encode(buf),
             Message::BlockAccessLists(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
@@ -397,7 +504,11 @@ impl Message {
             | Message::Status71(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
-            | Message::BlockRangeUpdate(_) => None,
+            | Message::BlockRangeUpdate(_)
+            | Message::UpgradeStatus(_)
+            | Message::BscIgnored
+            | Message::NewBlockHashes(_)
+            | Message::NewBlockAnnouncement(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
         }
@@ -431,6 +542,10 @@ impl Message {
             Message::Receipts69(_) => "Receipts",
             Message::Receipts70(_) => "Receipts",
             Message::BlockRangeUpdate(_) => "BlockRangeUpdate",
+            Message::UpgradeStatus(_) => "UpgradeStatus",
+            Message::BscIgnored => "BscIgnored",
+            Message::NewBlockHashes(_) => "NewBlockHashes",
+            Message::NewBlockAnnouncement(_) => "NewBlock",
             Message::GetBlockAccessLists(_) => "GetBlockAccessLists",
             Message::BlockAccessLists(_) => "BlockAccessLists",
             Message::GetAccountRange(_) => "GetAccountRange",
@@ -476,6 +591,10 @@ impl Display for Message {
             Message::Receipts69(_) => "eth:Receipts(69)".fmt(f),
             Message::Receipts70(_) => "eth:Receipts(70)".fmt(f),
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
+            Message::UpgradeStatus(_) => "bsc:UpgradeStatus".fmt(f),
+            Message::BscIgnored => "bsc:Ignored".fmt(f),
+            Message::NewBlockHashes(_) => "eth:NewBlockHashes".fmt(f),
+            Message::NewBlockAnnouncement(_) => "eth:NewBlock".fmt(f),
             Message::GetBlockAccessLists(_) => "eth:GetBlockAccessLists".fmt(f),
             Message::BlockAccessLists(_) => "eth:BlockAccessLists".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
