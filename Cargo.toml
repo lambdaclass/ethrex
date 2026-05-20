@@ -55,6 +55,17 @@ debug = 2
 inherits = "release"
 debug-assertions = true
 
+# Used by the ef_tests targets: keeps release-grade opt-level for the hot EVM /
+# trie / RLP paths but drops thin-LTO, raises codegen-units, and uses
+# line-tables-only debuginfo so cargo test rebuilds finish in a fraction of the
+# time of release-with-debug.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+incremental = true
+
 [workspace.dependencies]
 ethrex-blockchain = { path = "./crates/blockchain", default-features = false }
 ethrex-common = { path = "./crates/common", default-features = false }

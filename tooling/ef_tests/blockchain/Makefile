@@ -75,16 +75,16 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(ZKEVM_ARTIFACT)
 
 test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
-	cargo test --profile release-with-debug
+	cargo test --profile release-fast
 
 test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
-	cargo test --profile release-with-debug --features sp1
+	cargo test --profile release-fast --features sp1
 
 test-stateless: zkevm-vectors
-	cargo test --profile release-with-debug --features stateless
+	cargo test --profile release-fast --features stateless
 
 test-stateless-zkevm: zkevm-vectors
-	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
+	cargo test --profile release-fast --features stateless -- eip8025_optional_proofs
 
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm

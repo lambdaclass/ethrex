@@ -107,5 +107,14 @@ codegen-units = 1
 inherits = "release"
 debug = 2
 
+# See workspace root Cargo.toml for rationale: release-grade opt-level without
+# thin-LTO so ef_tests rebuilds are fast.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+incremental = true
+
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }

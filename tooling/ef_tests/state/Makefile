@@ -63,21 +63,21 @@ refresh-evm-ef-tests: clean-evm-ef-tests download-evm-ef-tests ## Cleans and re-
 
 run-evm-ef-tests: ## 🏃‍♂️ Run EF Tests
 	if [ "$(QUIET)" = "true" ]; then \
-		time cargo test --quiet --test all --profile release-with-debug -- $(flags) --summary;\
+		time cargo test --quiet --test all --profile release-fast -- $(flags) --summary;\
 	elif [ "$(DEBUG)" = "true" ]; then \
 		time cargo test --test all -- $(flags);\
 	else \
-		time cargo test --test all --profile release-with-debug -- $(flags);\
+		time cargo test --test all --profile release-fast -- $(flags);\
 	fi
 
 run-evm-ef-tests-ci: $(VECTORS_DIR) ## 🏃‍♂️ Run EF Tests only with LEVM and without spinner, for CI.
-	time cargo test -p ef_tests-state --test all --profile release-with-debug -- --summary
+	time cargo test -p ef_tests-state --test all --profile release-fast -- --summary
 
 test-levm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--summary"
 
 test-levm-nostd-crypto: $(VECTORS_DIR) ## 🧪 Run EF state tests with no_std crypto fallbacks
-	cargo test --test all --profile release-with-debug --no-default-features --features nostd-crypto -- --summary
+	cargo test --test all --profile release-fast --no-default-features --features nostd-crypto -- --summary
 
 test-revm: $(VECTORS_DIR)
 	$(MAKE) run-evm-ef-tests flags="--revm"
@@ -116,14 +116,14 @@ samply-run-ef-tests-revm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 		-o levm_perfgraphs/samply/ef_tests/revm/prof_$$dir.json \
-		cargo test --profile release-with-debug -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
+		cargo test --profile release-fast -p ef_tests-state --test all -- --summary --revm --tests $$dir;\
 	done
 
 samply-run-ef-tests-levm:
 	@for dir in $(SUBDIRS); do\
 		CARGO_PROFILE_RELEASE_DEBUG=true samply record --save-only \
 		-o levm_perfgraphs/samply/ef_tests/state/prof_$$dir.json \
-		cargo test --profile release-with-debug -p ef_tests-state --test all -- --summary --tests $$dir;\
+		cargo test --profile release-fast -p ef_tests-state --test all -- --summary --tests $$dir;\
 	done
 
 ################
