@@ -233,6 +233,14 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// If true (default), Amsterdam+ validation runs transactions in parallel
+    /// using the header BAL to seed per-tx databases. Set to false (via
+    /// `--no-bal-parallel-exec`) to fall back to sequential execution.
+    pub bal_parallel_exec_enabled: bool,
+    /// If true (default), Amsterdam+ validation spawns a warmer thread that
+    /// prefetches accounts, storage slots, and codes listed in the header BAL.
+    /// Set to false (via `--no-bal-prefetch`) to skip prefetching on the BAL path.
+    pub bal_prefetch_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -244,6 +252,8 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            bal_parallel_exec_enabled: true,
+            bal_prefetch_enabled: true,
         }
     }
 }
@@ -471,6 +481,8 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled;
+        let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
@@ -503,9 +515,13 @@ impl Blockchain {
                         // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
                         if let Some(bal) = bal {
-                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) =
-                                LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
+                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
+                            // Skipped when --no-bal-prefetch is set; we don't fall back to
+                            // speculative warm_block here because tx replay would be wasted
+                            // work when the header BAL already drives execution.
+                            if bal_prefetch_enabled
+                                && let Err(e) =
+                                    LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
                             {
                                 debug!("BAL warming failed (non-fatal): {e}");
                             }
@@ -540,7 +556,13 @@ impl Blockchain {
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
+                        let result = vm.execute_block_pipeline(
+                            block,
+                            tx,
+                            queue_length_ref,
+                            bal,
+                            bal_parallel_exec_enabled,
+                        );
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 

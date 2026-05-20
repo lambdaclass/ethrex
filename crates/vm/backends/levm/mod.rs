@@ -360,6 +360,7 @@ impl LEVM {
     /// `merkleizer` is `Some` on the streaming (non-BAL) path; the BAL validation path
     /// passes `None` because the caller merkleizes optimistically from the input BAL and
     /// the EVM-side `bal_to_account_updates` send is then redundant work.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,
@@ -368,6 +369,7 @@ impl LEVM {
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
+        bal_parallel_exec_enabled: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -389,14 +391,16 @@ impl LEVM {
         #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
         // `eip-8025` does not call `execute_block_pipeline` it uses
         // `execute_block` instead. Adding dummy let to avoid unused warnings.
-        let _ = header_bal;
+        let _ = (header_bal, bal_parallel_exec_enabled);
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution.
         // The `is_amsterdam` gate is required: `execute_block_parallel` (and the
         // optimistic merkleization it feeds) is only correct on Amsterdam+; a
         // pre-Amsterdam call here in release would skip the inner debug_assert.
+        // `--no-bal-parallel-exec` opts out and falls through to the sequential pipeline below.
         if let Some(bal) = header_bal
             && is_amsterdam
+            && bal_parallel_exec_enabled
         {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.

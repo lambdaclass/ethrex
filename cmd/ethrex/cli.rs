@@ -167,6 +167,22 @@ pub struct Options {
     )]
     pub no_precompile_cache: bool,
     #[arg(
+        long = "no-bal-parallel-exec",
+        action = ArgAction::SetTrue,
+        help = "Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PARALLEL_EXEC"
+    )]
+    pub no_bal_parallel_exec: bool,
+    #[arg(
+        long = "no-bal-prefetch",
+        action = ArgAction::SetTrue,
+        help = "Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PREFETCH"
+    )]
+    pub no_bal_prefetch: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -473,6 +489,8 @@ impl Default for Options {
             precompute_witnesses: false,
             no_migrate: false,
             no_precompile_cache: false,
+            no_bal_parallel_exec: false,
+            no_bal_prefetch: false,
         }
     }
 }
@@ -684,6 +702,8 @@ impl Subcommand {
                         r#type: blockchain_type,
                         perf_logs_enabled: true,
                         precompile_cache_enabled: !opts.no_precompile_cache,
+                        bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
+                        bal_prefetch_enabled: !opts.no_bal_prefetch,
                         ..Default::default()
                     },
                     export_bal.as_deref(),
