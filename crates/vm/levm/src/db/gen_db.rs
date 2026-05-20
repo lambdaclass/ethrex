@@ -6,11 +6,11 @@ use ethrex_common::U256;
 use ethrex_common::types::Account;
 use ethrex_common::types::Code;
 use ethrex_common::types::CodeMetadata;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_common::types::block_access_list::SlotChange;
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, BlockAccessList, BlockAccessListRecorder,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::types::block_access_list::SlotChange;
 use ethrex_common::utils::ZERO_U256;
 
 use super::Database;
