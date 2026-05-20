@@ -978,6 +978,10 @@ pub async fn import_blocks_bench(
 
     let mut exported_bals = Vec::new();
     let mut total_blocks_imported = 0;
+    // Shared across chains: a directory import processes multiple chain files
+    // sequentially and the preloaded BAL list spans all Amsterdam+ blocks across
+    // all chains, so the cursor must persist between chains.
+    let mut bal_index = 0usize;
     for blocks in chains {
         let size = blocks.len();
         let mut numbers_and_hashes = blocks
@@ -986,7 +990,6 @@ pub async fn import_blocks_bench(
             .collect::<Vec<_>>();
         // Execute block by block
         let mut last_progress_log = Instant::now();
-        let mut bal_index = 0usize;
         for (index, block) in blocks.into_iter().enumerate() {
             let hash = block.hash();
             let number = block.header.number;
