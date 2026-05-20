@@ -4,6 +4,7 @@ members = [
   "ef_tests/blockchain",
   "ef_tests/state",
   "ef_tests/state_v2",
+  "engine_bench",
   "hive_report",
   "load_test",
   "loc",
@@ -91,6 +92,10 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
 
 rocksdb = "0.24.0"
+libssz = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-types = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-merkle = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-derive = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 
 [profile.dev]
 debug = 2

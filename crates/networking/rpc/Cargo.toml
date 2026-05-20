@@ -43,9 +43,14 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
 
-# EIP-8025 dependencies (optional)
-libssz-merkle = { workspace = true, optional = true }
-libssz-types = { workspace = true, optional = true }
+# EIP-8025 dependencies
+libssz = { workspace = true }
+# libssz-merkle provides the `HashTreeRoot` trait used by the SSZ derives
+# in engine_rest/types/. The libssz-derive macros expand to impls that
+# reference this trait, so it must be a direct unconditional dep.
+libssz-merkle = { workspace = true }
+libssz-derive = { workspace = true }
+libssz-types = { workspace = true }
 
 # Clients
 envy = "0.4.2"
@@ -54,8 +59,13 @@ secp256k1.workspace = true
 uuid.workspace = true
 hex-literal = "0.4.1"
 
+http-body-util = "0.1"
+
 [dev-dependencies]
 hex-literal = "0.4.1"
+tower = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
 
 [lib]
 path = "./lib.rs"
@@ -67,3 +77,7 @@ redundant_clone = "warn"
 [features]
 jemalloc_profiling = ["dep:jemalloc_pprof"]
 eip-8025 = ["ethrex-blockchain/eip-8025", "ethrex-common/eip-8025"]
+
+[[bench]]
+name = "engine_transport"
+harness = false

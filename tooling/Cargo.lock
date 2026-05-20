@@ -3043,6 +3043,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c34f04666d835ff5d62e058c3995147c06f42fe86ff053337632bca83e42702d"
 
 [[package]]
+name = "engine_bench"
+version = "4.0.0"
+dependencies = [
+ "bytes",
+ "clap 4.6.0",
+ "csv",
+ "ethereum-types",
+ "ethrex-common 12.0.0",
+ "ethrex-rpc",
+ "eyre",
+ "hex",
+ "jsonwebtoken",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
+ "rand 0.8.5",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+]
+
+[[package]]
 name = "enum-map"
 version = "2.7.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3307,6 +3332,10 @@ dependencies = [
  "indexmap 2.14.0",
  "lazy_static",
  "libc",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
  "lru 0.16.3",
  "once_cell",
  "rayon",
@@ -3716,7 +3745,12 @@ dependencies = [
  "ethrex-vm",
  "hex",
  "hex-literal",
+ "http-body-util",
  "jsonwebtoken",
+ "libssz",
+ "libssz-derive",
+ "libssz-merkle",
+ "libssz-types",
  "rand 0.8.5",
  "reqwest 0.12.28",
  "secp256k1 0.30.0",
@@ -5461,6 +5495,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3db8d6ba2cec9eacc40e6e8ccc98931840301f1006e95647ceb2dd5c3aa06f7c"
 dependencies = [
  "libsecp256k1-core",
+]
+
+[[package]]
+name = "libssz"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "smallvec",
+]
+
+[[package]]
+name = "libssz-derive"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "libssz-merkle"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "libssz",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "libssz-types"
+version = "0.2.1"
+source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+dependencies = [
+ "libssz",
+ "libssz-merkle",
+ "smallvec",
 ]
 
 [[package]]

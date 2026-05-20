@@ -141,7 +141,7 @@ impl RpcHandler for NewPayloadV3Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            Some(self.expected_blob_versioned_hashes.clone()),
             None,
         )
         .await?;
@@ -224,7 +224,7 @@ impl RpcHandler for NewPayloadV4Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            Some(self.expected_blob_versioned_hashes.clone()),
             None,
         )
         .await?;
@@ -334,7 +334,7 @@ impl RpcHandler for NewPayloadV5Request {
             &self.payload,
             context,
             block,
-            self.expected_blob_versioned_hashes.clone(),
+            Some(self.expected_blob_versioned_hashes.clone()),
             bal,
         )
         .await?;
@@ -893,7 +893,7 @@ async fn validate_ancestors(
     Ok(None)
 }
 
-async fn handle_new_payload_v1_v2(
+pub(crate) async fn handle_new_payload_v1_v2(
     payload: &ExecutionPayload,
     block: Block,
     context: RpcApiContext,
@@ -927,35 +927,37 @@ async fn handle_new_payload_v1_v2(
     Ok(payload_status)
 }
 
-async fn handle_new_payload_v3(
+pub(crate) async fn handle_new_payload_v3(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
-    expected_blob_versioned_hashes: Vec<H256>,
+    expected_blob_versioned_hashes: Option<Vec<H256>>,
     bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
-    // V3 specific: validate blob hashes
-    let blob_versioned_hashes: Vec<H256> = block
-        .body
-        .transactions
-        .iter()
-        .flat_map(|tx| tx.blob_versioned_hashes())
-        .collect();
+    // V3 specific: validate blob hashes (skipped when None, e.g. REST callers)
+    if let Some(expected) = expected_blob_versioned_hashes {
+        let blob_versioned_hashes: Vec<H256> = block
+            .body
+            .transactions
+            .iter()
+            .flat_map(|tx| tx.blob_versioned_hashes())
+            .collect();
 
-    if expected_blob_versioned_hashes != blob_versioned_hashes {
-        return Ok(PayloadStatus::invalid_with_err(
-            "Invalid blob_versioned_hashes",
-        ));
+        if expected != blob_versioned_hashes {
+            return Ok(PayloadStatus::invalid_with_err(
+                "Invalid blob_versioned_hashes",
+            ));
+        }
     }
 
     handle_new_payload_v1_v2(payload, block, context, bal).await
 }
 
-async fn handle_new_payload_v4(
+pub(crate) async fn handle_new_payload_v4(
     payload: &ExecutionPayload,
     context: RpcApiContext,
     block: Block,
-    expected_blob_versioned_hashes: Vec<H256>,
+    expected_blob_versioned_hashes: Option<Vec<H256>>,
     bal: Option<BlockAccessList>,
 ) -> Result<PayloadStatus, RpcErr> {
     if let Some(bal) = &bal

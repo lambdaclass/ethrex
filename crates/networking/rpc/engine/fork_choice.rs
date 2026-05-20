@@ -207,7 +207,7 @@ fn parse(
     Ok((forkchoice_state, payload_attributes))
 }
 
-async fn handle_forkchoice(
+pub(crate) async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
     context: RpcApiContext,
     version: usize,
