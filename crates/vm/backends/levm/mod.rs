@@ -49,7 +49,7 @@ use ethrex_levm::constants::{
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::gen_db::{
-    LazyBalCursor, code_from_bal, seed_one_address_info_from_bal, seed_one_storage_slot_from_bal,
+    LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
 };
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
@@ -922,9 +922,9 @@ impl LEVM {
                 .get_account_mut(addr)
                 .map_err(|e| EvmError::Custom(format!("seed storage mut: {e}")))?;
             for sc in &acct_changes.storage_changes {
-                let key = ethrex_common::utils::u256_to_h256(sc.slot);
-                if let Some(value) = seed_one_storage_slot_from_bal(bal, acct_idx, key, max_idx) {
-                    acc.storage.insert(key, value);
+                if let Some(value) = post_value_at_or_before(sc, max_idx) {
+                    acc.storage
+                        .insert(ethrex_common::utils::u256_to_h256(sc.slot), value);
                 }
             }
         }
