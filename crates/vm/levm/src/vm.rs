@@ -568,10 +568,7 @@ impl<'a> VM<'a> {
                 STATE_BYTES_PER_AUTH_BASE * cpsb,
             )
         } else {
-            // Pre-Amsterdam: use the legacy fixed cost_per_state_byte (1174) for code
-            // deposit state gas. The per-auth and per-account constants are unused
-            // (EIP-8037 state gas accounting is Amsterdam-only).
-            (1174, 0, 0, 0, 0)
+            (0, 0, 0, 0, 0)
         };
 
         let mut vm = Self {
@@ -801,7 +798,7 @@ impl<'a> VM<'a> {
         // Empty bytecode would only execute STOP; skip the dispatch loop.
         // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
         // fail past this point and has no inner calls, so there's nothing to roll back.
-        if self.is_simple_transfer_fast_path() {
+        if !matches!(self.vm_type, VMType::Polygon(_)) && self.is_simple_transfer_fast_path() {
             #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
             let gas_used = self
                 .current_call_frame
