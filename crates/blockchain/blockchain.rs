@@ -515,15 +515,28 @@ impl Blockchain {
                         // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
                         if let Some(bal) = bal {
-                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
-                            // Skipped when --no-bal-prefetch is set; we don't fall back to
-                            // speculative warm_block here because tx replay would be wasted
-                            // work when the header BAL already drives execution.
-                            if bal_prefetch_enabled
-                                && let Err(e) =
+                            if bal_prefetch_enabled {
+                                // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
+                                if let Err(e) =
                                     LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
-                            {
-                                debug!("BAL warming failed (non-fatal): {e}");
+                                {
+                                    debug!("BAL warming failed (non-fatal): {e}");
+                                }
+                            } else if !bal_parallel_exec_enabled {
+                                // --no-bal-prefetch combined with --no-bal-parallel-exec:
+                                // mirror the pre-Amsterdam setup where a parallel speculative
+                                // warmer races ahead of the serial executor. With parallel
+                                // exec still on, we skip warming instead — two parallel passes
+                                // over the same txs would just fight for cores.
+                                if let Err(e) = LEVM::warm_block(
+                                    block,
+                                    caching_store,
+                                    vm_type,
+                                    &NativeCrypto,
+                                    cancelled_ref,
+                                ) {
+                                    debug!("Block warming failed (non-fatal): {e}");
+                                }
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
