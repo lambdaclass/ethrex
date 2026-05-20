@@ -568,7 +568,10 @@ impl<'a> VM<'a> {
                 STATE_BYTES_PER_AUTH_BASE * cpsb,
             )
         } else {
-            (0, 0, 0, 0, 0)
+            // Pre-Amsterdam: use the legacy fixed cost_per_state_byte (1174) for code
+            // deposit state gas. The per-auth and per-account constants are unused
+            // (EIP-8037 state gas accounting is Amsterdam-only).
+            (1174, 0, 0, 0, 0)
         };
 
         let mut vm = Self {
