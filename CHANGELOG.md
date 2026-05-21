@@ -10,9 +10,9 @@
 
 - Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
 
-### 2026-04-29
+### 2026-05-21
 
-- Use fixed-width RECEIPTS keys and cursor iteration with early stop for eth_getTransactionReceipt; fix prefix iterator scan in get_transaction_location [#6548](https://github.com/lambdaclass/ethrex/pull/6548)
+- Two-CF receipts migration: copy old RLP-keyed receipts to `receipts_v2` with fixed-width keys; old CF auto-dropped on restart [#6598](https://github.com/lambdaclass/ethrex/pull/6598)
 
 ### 2026-04-27
 

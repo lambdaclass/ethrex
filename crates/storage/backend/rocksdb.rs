@@ -198,19 +198,29 @@ impl RocksDBBackend {
         )
         .map_err(|e| StoreError::Custom(format!("Failed to open RocksDB with all CFs: {}", e)))?;
 
-        // Clean up obsolete column families
+        Ok(Self { db: Arc::new(db) })
+    }
+
+    /// Drops column families that exist on disk but are no longer listed in
+    /// `TABLES`. Must be called **after** migrations so that migration code
+    /// can still read from legacy CFs (e.g. `receipts` during v1→v2).
+    pub fn drop_obsolete_cfs(&self, path: impl AsRef<Path>) {
+        let opts = Options::default();
+        let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
+            .unwrap_or_default();
+
         for cf_name in &existing_cfs {
             if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
                 warn!("Dropping obsolete column family: {}", cf_name);
-                let _ = db
+                let _ = self
+                    .db
                     .drop_cf(cf_name)
                     .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
                     .inspect_err(|e|
-                        // Log error but don't fail initialization - the database is still usable
+                        // Log error but don't fail — the database is still usable
                         warn!("Failed to drop column family '{}': {}", cf_name, e));
             }
         }
-        Ok(Self { db: Arc::new(db) })
     }
 }
 

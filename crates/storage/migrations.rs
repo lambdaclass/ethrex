@@ -101,9 +101,8 @@ fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError
 ///
 /// This two-CF approach copies entries from the old `receipts` CF to
 /// `receipts_v2` with the new key format. The old `receipts` CF is **not**
-/// deleted here — it will be dropped automatically by the auto-cleanup in
-/// `RocksDBBackend::open()` on the next startup (since `RECEIPTS` is no
-/// longer listed in `TABLES`).
+/// deleted here — `Store::new()` calls `drop_obsolete_cfs()` right after
+/// this migration returns, which drops it in the same startup.
 ///
 /// Crash safety: if interrupted, metadata still says v1, so the migration
 /// restarts from scratch on next boot. Duplicate puts to `receipts_v2` are
@@ -151,7 +150,6 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
         tx.put_batch(RECEIPTS_V2, batch)?;
         tx.commit()?;
         migrated += count;
-        tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
     }
 
     tracing::info!("Migration v1→v2 complete: migrated {migrated} RECEIPTS entries total");
@@ -247,11 +245,11 @@ mod tests {
             let decoded = Receipt::decode(value.as_ref()).unwrap();
             assert_eq!(decoded, receipts[i as usize]);
 
-            // Old keys should still be in RECEIPTS (CF drop happens at startup, not during migration)
+            // Old keys should still be in RECEIPTS (drop_obsolete_cfs runs after migration)
             let old_key = (block_hash, i).encode_to_vec();
             assert!(
                 txn.get(RECEIPTS, &old_key).unwrap().is_some(),
-                "old key should still exist in RECEIPTS (dropped at startup)"
+                "old key should still exist in RECEIPTS (dropped after migration)"
             );
         }
     }

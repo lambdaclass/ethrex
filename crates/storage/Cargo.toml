@@ -26,17 +26,17 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru.workspace = true
-libc = "0.2"
-tracing-subscriber = { workspace = true }
+libc = { version = "0.2", optional = true }
+tracing-subscriber = { workspace = true, optional = true }
 
 [features]
 default = []
 rocksdb = ["dep:rocksdb"]
+migration-tools = ["dep:libc", "dep:tracing-subscriber"]
 
 [dev-dependencies]
 tempfile.workspace = true
 tokio = { workspace = true, features = ["full"] }
-
 
 [lib]
 path = "./lib.rs"
@@ -44,12 +44,12 @@ path = "./lib.rs"
 [[bin]]
 name = "seed_migration_test"
 path = "seed_migration_test.rs"
-required-features = ["rocksdb"]
+required-features = ["rocksdb", "migration-tools"]
 
 [[bin]]
 name = "bench_migration"
 path = "bench_migration.rs"
-required-features = ["rocksdb"]
+required-features = ["rocksdb", "migration-tools"]
 
 [lints.clippy]
 unwrap_used = "deny"

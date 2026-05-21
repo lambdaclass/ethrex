@@ -268,11 +268,9 @@ impl RpcHandler for GetRawReceipts {
             Some(block_number) => block_number,
             _ => return Ok(Value::Null),
         };
-        let header = storage.get_block_header(block_number)?;
-        let body = storage.get_block_body(block_number).await?;
-        let (header, _body) = match (header, body) {
-            (Some(header), Some(body)) => (header, body),
-            _ => return Ok(Value::Null),
+        let header = match storage.get_block_header(block_number)? {
+            Some(header) => header,
+            None => return Ok(Value::Null),
         };
         let receipts: Vec<String> = get_all_block_receipts(header, storage)
             .await?
@@ -369,6 +367,8 @@ pub async fn get_all_block_rpc_receipts(
     let all_receipts = storage
         .get_receipts_for_block_from_index(&block_hash, 0, Some(fetch_count))
         .await?;
+    // Return 500 on receipt count mismatch — this indicates data corruption
+    // (missing receipts for a block that exists).
     if all_receipts.len() != fetch_count {
         return Err(RpcErr::Internal(format!(
             "Expected {} receipts, got {}",
@@ -383,7 +383,6 @@ pub async fn get_all_block_rpc_receipts(
         .iter()
         .zip(all_receipts.iter())
         .enumerate()
-        .take(fetch_count)
     {
         let index = index as u64;
         let gas_used = receipt.cumulative_gas_used - last_cumulative_gas_used;

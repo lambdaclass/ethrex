@@ -7,47 +7,13 @@
 /// keys and small synthetic receipt values into the "receipts" column family,
 /// then exits. After running, reset metadata.json to {"schema_version": 1}
 /// and start ethrex to trigger the migration.
+use ethrex_storage::api::tables::{RECEIPTS, TABLES};
 use rocksdb::{
     BlockBasedOptions, Cache, ColumnFamilyDescriptor, DBWithThreadMode, MultiThreaded, Options,
     WriteBatch,
 };
+use std::collections::HashSet;
 use std::time::Instant;
-
-/// All column families that ethrex expects. We must open them all even though
-/// we only write to "receipts", otherwise RocksDB will refuse to open.
-const ALL_CFS: &[&str] = &[
-    "default",
-    "chain_data",
-    "account_codes",
-    "account_code_metadata",
-    "bodies",
-    "block_numbers",
-    "canonical_block_hashes",
-    "headers",
-    "pending_blocks",
-    "transaction_locations",
-    "receipts",
-    "receipts_v2",
-    "snap_state",
-    "invalid_ancestors",
-    "account_trie_nodes",
-    "storage_trie_nodes",
-    "fullsync_headers",
-    "account_flatkeyvalue",
-    "storage_flatkeyvalue",
-    "misc_values",
-    "execution_witnesses",
-];
-
-const COMPRESSIBLE: &[&str] = &[
-    "block_numbers",
-    "headers",
-    "bodies",
-    "receipts",
-    "receipts_v2",
-    "transaction_locations",
-    "fullsync_headers",
-];
 
 /// RLP-encode a (H256, u64) tuple the same way ethrex_rlp does.
 /// Layout: RLP list header + 32-byte hash (with RLP string header) + u64 (with RLP string header)
@@ -147,62 +113,29 @@ fn main() {
 
     // DB options matching ethrex's RocksDBBackend::open()
     let mut opts = Options::default();
-    opts.create_if_missing(true); // Create DB if it doesn't exist
+    opts.create_if_missing(true);
     opts.create_missing_column_families(true);
     opts.set_max_open_files(512);
     opts.set_max_file_opening_threads(16);
     opts.set_max_background_jobs(8);
-    opts.set_level_zero_file_num_compaction_trigger(2);
-    opts.set_level_zero_slowdown_writes_trigger(10);
-    opts.set_level_zero_stop_writes_trigger(16);
-    opts.set_target_file_size_base(512 * 1024 * 1024);
-    opts.set_max_bytes_for_level_base(2 * 1024 * 1024 * 1024);
-    opts.set_max_bytes_for_level_multiplier(10.0);
-    opts.set_level_compaction_dynamic_level_bytes(true);
-    opts.set_db_write_buffer_size(1024 * 1024 * 1024);
-    opts.set_write_buffer_size(128 * 1024 * 1024);
-    opts.set_max_write_buffer_number(4);
-    opts.set_min_write_buffer_number_to_merge(2);
-    opts.set_wal_recovery_mode(rocksdb::DBRecoveryMode::PointInTime);
-    opts.set_max_total_wal_size(2 * 1024 * 1024 * 1024);
-    opts.set_wal_bytes_per_sync(32 * 1024 * 1024);
-    opts.set_bytes_per_sync(32 * 1024 * 1024);
-    opts.set_use_fsync(false);
-    opts.set_enable_pipelined_write(true);
-    opts.set_allow_concurrent_memtable_write(true);
-    opts.set_enable_write_thread_adaptive_yield(true);
-    opts.set_compaction_readahead_size(4 * 1024 * 1024);
-    opts.set_advise_random_on_open(false);
     opts.set_compression_type(rocksdb::DBCompressionType::None);
 
     let block_cache = Cache::new_lru_cache(2 * 1024 * 1024 * 1024); // 2GB for seeding
 
-    // Discover existing CFs so we don't miss any
+    // Build CF list from the crate's TABLES constant, plus the legacy RECEIPTS CF
+    // that we need to seed old-format entries into.
     let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, db_path)
         .unwrap_or_else(|_| vec!["default".to_string()]);
 
-    let mut all_cfs: Vec<String> = existing_cfs;
-    for cf in ALL_CFS {
-        let s = cf.to_string();
-        if !all_cfs.contains(&s) {
-            all_cfs.push(s);
-        }
-    }
+    let mut all_cfs: HashSet<String> = existing_cfs.into_iter().collect();
+    all_cfs.extend(TABLES.iter().map(|t| t.to_string()));
+    all_cfs.insert(RECEIPTS.to_string());
+    all_cfs.insert("default".to_string());
 
     let cf_descriptors: Vec<ColumnFamilyDescriptor> = all_cfs
         .iter()
         .map(|cf_name| {
             let mut cf_opts = Options::default();
-            cf_opts.set_level_zero_file_num_compaction_trigger(4);
-            cf_opts.set_level_zero_slowdown_writes_trigger(20);
-            cf_opts.set_level_zero_stop_writes_trigger(36);
-
-            if COMPRESSIBLE.contains(&cf_name.as_str()) {
-                cf_opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
-            } else {
-                cf_opts.set_compression_type(rocksdb::DBCompressionType::None);
-            }
-
             cf_opts.set_write_buffer_size(128 * 1024 * 1024);
             cf_opts.set_max_write_buffer_number(3);
             cf_opts.set_target_file_size_base(256 * 1024 * 1024);

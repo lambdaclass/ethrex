@@ -31,7 +31,9 @@ pub const ACCOUNT_CODES: &str = "account_codes";
 pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
 
 /// Receipts column family (legacy, pre-v2): [`Vec<u8>`] => [`Vec<u8>`]
-/// Kept only for migration reads; dropped automatically on next startup.
+/// Used only for migration reads (v1→v2). Not listed in `TABLES`, so
+/// `drop_obsolete_cfs()` removes it right after migration completes
+/// (same startup).
 pub const RECEIPTS: &str = "receipts";
 
 /// Receipts v2 column family: [`Vec<u8>`] => [`Vec<u8>`]
@@ -112,7 +114,7 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
 pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 
-pub const TABLES: [&str; 21] = [
+pub const TABLES: [&str; 20] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -122,7 +124,6 @@ pub const TABLES: [&str; 21] = [
     HEADERS,
     PENDING_BLOCKS,
     TRANSACTION_LOCATIONS,
-    RECEIPTS,
     RECEIPTS_V2,
     SNAP_STATE,
     INVALID_CHAINS,

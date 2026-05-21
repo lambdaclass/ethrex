@@ -1102,7 +1102,11 @@ impl Store {
         tokio::task::spawn_blocking(move || {
             let txn = backend.begin_read()?;
             let prefix = block_hash.as_bytes().to_vec();
-            let iter = txn.prefix_iterator(RECEIPTS_V2, &prefix)?;
+            // Seek directly to block_hash || start_index to avoid O(start_index) scan.
+            // Keys are big-endian u64, so lexicographic order matches numeric order.
+            let mut seek_key = prefix.clone();
+            seek_key.extend_from_slice(&start_index.to_be_bytes());
+            let iter = txn.prefix_iterator(RECEIPTS_V2, &seek_key)?;
             let mut receipts = Vec::new();
             for result in iter {
                 let (k, v) = result?;
@@ -1111,16 +1115,6 @@ impl Store {
                 }
                 if k.len() != 40 {
                     continue;
-                }
-                // Skip entries before start_index (for eth/70 partial requests)
-                if start_index > 0 {
-                    let idx_bytes: [u8; 8] = k[32..40]
-                        .try_into()
-                        .expect("slice is exactly 8 bytes (checked k.len() == 40)");
-                    let idx = u64::from_be_bytes(idx_bytes);
-                    if idx < start_index {
-                        continue;
-                    }
                 }
                 receipts.push(Receipt::decode(v.as_ref())?);
                 if let Some(max) = max_count
@@ -1532,10 +1526,13 @@ impl Store {
                 }
                 #[cfg(feature = "rocksdb")]
                 Some(v) if v < STORE_SCHEMA_VERSION => {
-                    // Open backend, run migrations, then proceed with the same Arc
-                    let backend: Arc<dyn crate::api::StorageBackend> =
-                        Arc::new(RocksDBBackend::open(&path)?);
-                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    // Open backend, run migrations, then drop obsolete CFs.
+                    // Cleanup must happen AFTER migrations so legacy CFs (e.g.
+                    // `receipts`) are still readable during the migration.
+                    let rocksdb = Arc::new(RocksDBBackend::open(&path)?);
+                    crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
+                    rocksdb.drop_obsolete_cfs(&path);
+                    let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
                     return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
                 }
                 Some(_) => {
@@ -1550,7 +1547,9 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let backend = Arc::new(RocksDBBackend::open(path)?);
+                let rocksdb = RocksDBBackend::open(&path)?;
+                rocksdb.drop_obsolete_cfs(&path);
+                let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
