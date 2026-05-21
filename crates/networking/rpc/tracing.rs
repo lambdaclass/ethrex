@@ -378,3 +378,88 @@ impl RpcHandler for TraceBlockByNumberRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "callTracer", "tracerConfig": {"onlyTopCall": true}}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        assert!(TraceTransactionRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        assert!(TraceTransactionRequest::parse(&params).is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_noop() {
+        let t: TracerType = serde_json::from_value(json!("noopTracer")).unwrap();
+        assert!(matches!(t, TracerType::NoopTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        assert!(serde_json::from_value::<TracerType>(json!("unknownTracer")).is_err());
+    }
+
+    // --- TraceConfig deserialization tests ---
+
+    #[test]
+    fn deserialize_trace_config_defaults() {
+        let cfg: TraceConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(matches!(cfg.tracer, TracerType::CallTracer));
+        assert!(cfg.timeout.is_none());
+        assert!(cfg.reexec.is_none());
+    }
+
+    // --- PrestateTracerConfig validation tests ---
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    // --- noopTracer parse test ---
+
+    #[test]
+    fn parse_trace_tx_noop_tracer() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "noopTracer"}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::NoopTracer));
+    }
+}
