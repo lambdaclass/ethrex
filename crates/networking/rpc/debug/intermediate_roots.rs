@@ -63,3 +63,48 @@ impl RpcHandler for IntermediateRootsRequest {
         Ok(serde_json::to_value(roots)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RpcHandler;
+    use serde_json::json;
+
+    #[test]
+    fn parse_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = IntermediateRootsRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(1));
+        assert_eq!(req.timeout, DEFAULT_TIMEOUT);
+        assert_eq!(req.reexec, DEFAULT_REEXEC);
+    }
+
+    #[test]
+    fn parse_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"timeout": "10s", "reexec": 256}),
+        ]);
+        let req = IntermediateRootsRequest::parse(&params).unwrap();
+        assert_eq!(req.timeout, Duration::from_secs(10));
+        assert_eq!(req.reexec, 256);
+    }
+
+    #[test]
+    fn parse_no_params() {
+        assert!(IntermediateRootsRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_empty_params() {
+        assert!(IntermediateRootsRequest::parse(&Some(vec![])).is_err());
+    }
+
+    #[test]
+    fn parse_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        assert!(IntermediateRootsRequest::parse(&params).is_err());
+    }
+}
