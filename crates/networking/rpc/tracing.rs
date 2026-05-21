@@ -489,3 +489,275 @@ fn collect_four_byte_selectors(frame: &CallTraceFrame, selectors: &mut HashMap<S
         collect_four_byte_selectors(sub_call, selectors);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "callTracer", "tracerConfig": {"onlyTopCall": true}}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        let result = TraceTransactionRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        let result = TraceTransactionRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_default_tracer_is_call_tracer() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    // --- TraceBlockByNumberRequest parse tests ---
+
+    #[test]
+    fn parse_trace_block_by_number_latest() {
+        let params = Some(vec![json!("latest")]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.block,
+            BlockIdentifier::Tag(crate::types::block_identifier::BlockTag::Latest)
+        ));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_hex() {
+        let params = Some(vec![json!("0xa")]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, BlockIdentifier::Number(10)));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_with_config() {
+        let params = Some(vec![
+            json!("0x1"),
+            json!({"tracer": "prestateTracer"}),
+        ]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.trace_config.tracer,
+            TracerType::PrestateTracer
+        ));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_no_params() {
+        let result = TraceBlockByNumberRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_call_tracer() {
+        let t: TracerType = serde_json::from_value(json!("callTracer")).unwrap();
+        assert!(matches!(t, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_prestate_tracer() {
+        let t: TracerType = serde_json::from_value(json!("prestateTracer")).unwrap();
+        assert!(matches!(t, TracerType::PrestateTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_opcode_tracer() {
+        let t: TracerType = serde_json::from_value(json!("opcodeTracer")).unwrap();
+        assert!(matches!(t, TracerType::OpcodeTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_mux_tracer() {
+        let t: TracerType = serde_json::from_value(json!("muxTracer")).unwrap();
+        assert!(matches!(t, TracerType::MuxTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        let result = serde_json::from_value::<TracerType>(json!("unknownTracer"));
+        assert!(result.is_err());
+    }
+
+    // --- TraceConfig deserialization tests ---
+
+    #[test]
+    fn deserialize_trace_config_defaults() {
+        let cfg: TraceConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(matches!(cfg.tracer, TracerType::CallTracer));
+        assert!(cfg.tracer_config.is_none());
+        assert!(cfg.timeout.is_none());
+        assert!(cfg.reexec.is_none());
+    }
+
+    #[test]
+    fn deserialize_trace_config_with_timeout() {
+        let cfg: TraceConfig =
+            serde_json::from_value(json!({"timeout": "10s"})).unwrap();
+        assert_eq!(cfg.timeout, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn deserialize_trace_config_with_reexec() {
+        let cfg: TraceConfig =
+            serde_json::from_value(json!({"reexec": 256})).unwrap();
+        assert_eq!(cfg.reexec, Some(256));
+    }
+
+    // --- PrestateTracerConfig validation tests ---
+
+    #[test]
+    fn prestate_config_default_is_valid() {
+        let cfg = PrestateTracerConfig::default();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn prestate_config_diff_mode_only_is_valid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: false,
+        };
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn prestate_config_include_empty_only_is_valid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: false,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    // --- collect_four_byte_selectors tests ---
+
+    #[test]
+    fn four_byte_selectors_empty_input() {
+        let frame = CallTraceFrame {
+            input: Bytes::new(),
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert!(selectors.is_empty());
+    }
+
+    #[test]
+    fn four_byte_selectors_short_input_ignored() {
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c]),
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert!(selectors.is_empty());
+    }
+
+    #[test]
+    fn four_byte_selectors_single_call() {
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x00, 0x01]),
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert_eq!(selectors.len(), 1);
+        assert_eq!(selectors["0xa9059cbb-6"], 1);
+    }
+
+    #[test]
+    fn four_byte_selectors_nested_calls() {
+        let child = CallTraceFrame {
+            input: Bytes::from_static(&[0x23, 0xb8, 0x72, 0xdd, 0x01, 0x02, 0x03]),
+            ..Default::default()
+        };
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
+            calls: vec![child],
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert_eq!(selectors.len(), 2);
+        assert_eq!(selectors["0xa9059cbb-5"], 1);
+        assert_eq!(selectors["0x23b872dd-7"], 1);
+    }
+
+    #[test]
+    fn four_byte_selectors_duplicate_calls_counted() {
+        let child = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
+            ..Default::default()
+        };
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
+            calls: vec![child],
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert_eq!(selectors.len(), 1);
+        assert_eq!(selectors["0xa9059cbb-5"], 2);
+    }
+
+    // --- MuxTracer parse tests ---
+
+    #[test]
+    fn parse_trace_tx_mux_tracer() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({
+                "tracer": "muxTracer",
+                "tracerConfig": {
+                    "callTracer": {},
+                    "noopTracer": {}
+                }
+            }),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::MuxTracer));
+        assert!(req.trace_config.tracer_config.is_some());
+    }
+}
