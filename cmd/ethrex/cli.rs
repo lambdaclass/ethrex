@@ -184,6 +184,15 @@ pub struct Options {
     )]
     pub mempool_max_size: usize,
     #[arg(
+        long = "mempool.private",
+        default_value_t = false,
+        action = ArgAction::SetTrue,
+        help = "Node-level config (not a protocol/EIP behavior): keep RPC-submitted transactions private. They enter the mempool and may be included in blocks built locally, but are not propagated to peers. P2P-received transactions are unaffected.",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRIVATE"
+    )]
+    pub mempool_private: bool,
+    #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
         value_name = "ADDRESS",
@@ -464,6 +473,7 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_private: false,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

@@ -33,6 +33,11 @@ struct MempoolInner {
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
     in_flight_txs: FxHashSet<H256>,
+    /// Hashes of transactions admitted with `--mempool.private` set: they
+    /// MUST NOT be propagated to peers via any P2P path (broadcast,
+    /// new-peer pooled-hash dump, or `GetPooledTransactions` responses).
+    /// Cleared on transaction removal alongside `broadcast_pool`.
+    private_pool: FxHashSet<H256>,
     /// Maps blob versioned hashes to transaction hashes that include them and a position inside
     /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
@@ -68,6 +73,7 @@ impl MempoolInner {
 
         self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
         self.broadcast_pool.remove(hash);
+        self.private_pool.remove(hash);
 
         Ok(())
     }
@@ -142,12 +148,35 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Add transaction to the pool without doing validity checks
+    /// Add transaction to the pool without doing validity checks. The
+    /// transaction's hash is queued for P2P broadcast.
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
+    ) -> Result<(), StoreError> {
+        self.add_transaction_inner(hash, sender, transaction, true)
+    }
+
+    /// Add transaction to the pool without queueing it for P2P broadcast.
+    /// Used by the private-mempool path: the tx is available to the local
+    /// payload builder but never gossiped to peers.
+    pub fn add_transaction_no_broadcast(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+    ) -> Result<(), StoreError> {
+        self.add_transaction_inner(hash, sender, transaction, false)
+    }
+
+    fn add_transaction_inner(
+        &self,
+        hash: H256,
+        sender: Address,
+        transaction: MempoolTransaction,
+        broadcast: bool,
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         // Prune the order queue if it has grown too much
@@ -165,7 +194,11 @@ impl Mempool {
             .txs_by_sender_nonce
             .insert((sender, transaction.nonce()), hash);
         inner.transaction_pool.insert(hash, transaction);
-        inner.broadcast_pool.insert(hash);
+        if broadcast {
+            inner.broadcast_pool.insert(hash);
+        } else {
+            inner.private_pool.insert(hash);
+        }
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);
         self.tx_added.notify_waiters();
@@ -450,6 +483,28 @@ impl Mempool {
     pub fn contains_tx(&self, tx_hash: H256) -> Result<bool, MempoolError> {
         let contains = self.read()?.transaction_pool.contains_key(&tx_hash);
         Ok(contains)
+    }
+
+    /// Returns `true` if the transaction was admitted with `--mempool.private`
+    /// set (via [`Self::add_transaction_no_broadcast`]). Callers on the P2P
+    /// path MUST consult this before serving the tx to peers — the private
+    /// pool intentionally bypasses gossip, the new-peer pooled-hash dump,
+    /// and `GetPooledTransactions` responses.
+    pub fn is_private(&self, hash: H256) -> Result<bool, StoreError> {
+        Ok(self.read()?.private_pool.contains(&hash))
+    }
+
+    /// Returns all broadcast-eligible txs under a single read lock. Excludes
+    /// privileged txs and any tx in the private pool. Used by the new-peer
+    /// pooled-hashes dump so the caller takes one lock instead of one per tx.
+    pub fn get_txs_for_new_peer_dump(&self) -> Result<Vec<MempoolTransaction>, StoreError> {
+        let inner = self.read()?;
+        Ok(inner
+            .transaction_pool
+            .iter()
+            .filter(|(hash, tx)| !inner.private_pool.contains(hash) && !tx.is_privileged())
+            .map(|(_, tx)| tx.clone())
+            .collect())
     }
 
     pub fn find_tx_to_replace(
