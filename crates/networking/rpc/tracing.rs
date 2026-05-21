@@ -483,3 +483,103 @@ impl RpcHandler for TraceCallRequest {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        assert!(TraceTransactionRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        assert!(TraceTransactionRequest::parse(&params).is_err());
+    }
+
+    // --- TraceCallRequest parse tests ---
+
+    #[test]
+    fn parse_trace_call_minimal() {
+        let params = Some(vec![json!({
+            "from": "0x0000000000000000000000000000000000000001",
+            "to": "0x0000000000000000000000000000000000000002"
+        })]);
+        let req = TraceCallRequest::parse(&params).unwrap();
+        assert!(req.block.is_none());
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_call_with_block() {
+        let params = Some(vec![
+            json!({"from": "0x0000000000000000000000000000000000000001"}),
+            json!("latest"),
+        ]);
+        let req = TraceCallRequest::parse(&params).unwrap();
+        assert!(req.block.is_some());
+    }
+
+    #[test]
+    fn parse_trace_call_with_config() {
+        let params = Some(vec![
+            json!({"from": "0x0000000000000000000000000000000000000001"}),
+            json!("latest"),
+            json!({"tracer": "prestateTracer"}),
+        ]);
+        let req = TraceCallRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.trace_config.tracer,
+            TracerType::PrestateTracer
+        ));
+    }
+
+    #[test]
+    fn parse_trace_call_no_params() {
+        assert!(TraceCallRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_trace_call_empty_params() {
+        assert!(TraceCallRequest::parse(&Some(vec![])).is_err());
+    }
+
+    #[test]
+    fn parse_trace_call_too_many_params() {
+        let params = Some(vec![json!({}), json!("latest"), json!({}), json!("extra")]);
+        assert!(TraceCallRequest::parse(&params).is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        assert!(serde_json::from_value::<TracerType>(json!("unknownTracer")).is_err());
+    }
+
+    // --- PrestateTracerConfig validation ---
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
+    }
+}
