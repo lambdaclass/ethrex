@@ -405,3 +405,195 @@ impl RpcHandler for TraceBlockByHashRequest {
         trace_block(block, &self.trace_config, &context).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "callTracer", "tracerConfig": {"onlyTopCall": true}}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        let result = TraceTransactionRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        let result = TraceTransactionRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_tx_default_tracer_is_call_tracer() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::CallTracer));
+    }
+
+    // --- TraceBlockByNumberRequest parse tests ---
+
+    #[test]
+    fn parse_trace_block_by_number_latest() {
+        let params = Some(vec![json!("latest")]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.block,
+            BlockIdentifier::Tag(crate::types::block_identifier::BlockTag::Latest)
+        ));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_hex() {
+        let params = Some(vec![json!("0xa")]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, BlockIdentifier::Number(10)));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_with_config() {
+        let params = Some(vec![
+            json!("0x1"),
+            json!({"tracer": "prestateTracer"}),
+        ]);
+        let req = TraceBlockByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.trace_config.tracer,
+            TracerType::PrestateTracer
+        ));
+    }
+
+    #[test]
+    fn parse_trace_block_by_number_no_params() {
+        let result = TraceBlockByNumberRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    // --- TraceBlockByHashRequest parse tests ---
+
+    #[test]
+    fn parse_trace_block_by_hash_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000abc"
+        )]);
+        let req = TraceBlockByHashRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(0xabc));
+    }
+
+    #[test]
+    fn parse_trace_block_by_hash_with_config() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000abc"),
+            json!({"tracer": "opcodeTracer"}),
+        ]);
+        let req = TraceBlockByHashRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(0xabc));
+        assert!(matches!(req.trace_config.tracer, TracerType::OpcodeTracer));
+    }
+
+    #[test]
+    fn parse_trace_block_by_hash_no_params() {
+        let result = TraceBlockByHashRequest::parse(&None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_block_by_hash_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!({}), json!("extra")]);
+        let result = TraceBlockByHashRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_call_tracer() {
+        let t: TracerType = serde_json::from_value(json!("callTracer")).unwrap();
+        assert!(matches!(t, TracerType::CallTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_prestate_tracer() {
+        let t: TracerType = serde_json::from_value(json!("prestateTracer")).unwrap();
+        assert!(matches!(t, TracerType::PrestateTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_opcode_tracer() {
+        let t: TracerType = serde_json::from_value(json!("opcodeTracer")).unwrap();
+        assert!(matches!(t, TracerType::OpcodeTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        let result = serde_json::from_value::<TracerType>(json!("unknownTracer"));
+        assert!(result.is_err());
+    }
+
+    // --- TraceConfig deserialization tests ---
+
+    #[test]
+    fn deserialize_trace_config_defaults() {
+        let cfg: TraceConfig = serde_json::from_value(json!({})).unwrap();
+        assert!(matches!(cfg.tracer, TracerType::CallTracer));
+        assert!(cfg.tracer_config.is_none());
+        assert!(cfg.timeout.is_none());
+        assert!(cfg.reexec.is_none());
+    }
+
+    #[test]
+    fn deserialize_trace_config_with_timeout() {
+        let cfg: TraceConfig =
+            serde_json::from_value(json!({"timeout": "10s"})).unwrap();
+        assert_eq!(cfg.timeout, Some(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn deserialize_trace_config_with_reexec() {
+        let cfg: TraceConfig =
+            serde_json::from_value(json!({"reexec": 256})).unwrap();
+        assert_eq!(cfg.reexec, Some(256));
+    }
+
+    // --- PrestateTracerConfig validation tests ---
+
+    #[test]
+    fn prestate_config_default_is_valid() {
+        let cfg = PrestateTracerConfig::default();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
+    }
+}
