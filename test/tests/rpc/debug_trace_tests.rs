@@ -21,8 +21,7 @@ use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use serde_json::{Value, json};
 
-const TEST_PRIVATE_KEY: &str =
-    "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
+const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
 const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
 const TEST_GAS_LIMIT: u64 = 100_000;
 
@@ -117,7 +116,9 @@ async fn build_and_execute_block(
     }
     let block = build_block(store, blockchain, parent_header).await;
     assert_eq!(block.body.transactions.len(), transactions.len());
-    blockchain.add_block(block.clone()).expect("block should be valid");
+    blockchain
+        .add_block(block.clone())
+        .expect("block should be valid");
     store
         .forkchoice_update(vec![], block.header.number, block.hash(), None, None)
         .await
@@ -167,12 +168,7 @@ async fn trace_block_rlp() {
     // RLP-encode the executed block and pass it as hex to debug_traceBlock.
     let rlp_hex = format!("0x{}", hex::encode(env.block.encode_to_vec()));
 
-    let result = rpc_call(
-        &env.store,
-        "debug_traceBlock",
-        vec![json!(rlp_hex)],
-    )
-    .await;
+    let result = rpc_call(&env.store, "debug_traceBlock", vec![json!(rlp_hex)]).await;
 
     // Response is an array of {txHash, result} objects (callTracer by default).
     let arr = result.as_array().expect("response should be an array");

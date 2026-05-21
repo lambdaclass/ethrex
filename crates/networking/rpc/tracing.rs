@@ -11,7 +11,9 @@ use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{rpc::RpcApiContext, rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
+use crate::{
+    rpc::RpcApiContext, rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr,
+};
 
 /// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: u32 = 128;
@@ -270,9 +272,9 @@ impl RpcHandler for TraceBlockRequest {
         }
         // First param is hex-encoded RLP block
         let hex_str: String = serde_json::from_value(params[0].clone())?;
-        let hex_str = hex_str
-            .strip_prefix("0x")
-            .ok_or(RpcErr::BadParams("Block data must be 0x-prefixed".to_owned()))?;
+        let hex_str = hex_str.strip_prefix("0x").ok_or(RpcErr::BadParams(
+            "Block data must be 0x-prefixed".to_owned(),
+        ))?;
         let rlp_bytes =
             hex::decode(hex_str).map_err(|e| RpcErr::BadParams(format!("Invalid hex: {e}")))?;
         let block = Block::decode(&rlp_bytes)
@@ -338,12 +340,11 @@ async fn trace_block(
             Ok(serde_json::to_value(block_trace)?)
         }
         TracerType::PrestateTracer => {
-            let config: PrestateTracerConfig =
-                if let Some(value) = &trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
-                } else {
-                    PrestateTracerConfig::default()
-                };
+            let config: PrestateTracerConfig = if let Some(value) = &trace_config.tracer_config {
+                serde_json::from_value(value.clone())?
+            } else {
+                PrestateTracerConfig::default()
+            };
             config.validate()?;
             let prestate_traces = context
                 .blockchain
