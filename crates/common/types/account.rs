@@ -34,7 +34,7 @@ pub struct Code {
     pub hash: H256,
     pub bytecode: Bytes,
     // Jump targets stored as a bit vector: bit i is set iff position i is a valid JUMPDEST
-    // The size is exactly the bytecode length
+    // The size is ceil(bytecode.len() / 8) bytes
     pub jump_targets: Vec<u8>,
 }
 
