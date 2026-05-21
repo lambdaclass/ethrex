@@ -532,7 +532,10 @@ mod tests {
             json!({"tracer": "flatCallTracer"}),
         ]);
         let req = TraceTransactionRequest::parse(&params).unwrap();
-        assert!(matches!(req.trace_config.tracer, TracerType::FlatCallTracer));
+        assert!(matches!(
+            req.trace_config.tracer,
+            TracerType::FlatCallTracer
+        ));
     }
 
     // --- flatten_call_trace tests ---
