@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use ethrex_common::H256;
@@ -9,7 +10,7 @@ use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
+use crate::{rpc::RpcApiContext, rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
 
 /// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: u32 = 128;
@@ -59,6 +60,9 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
+    /// Multiplexer tracer that runs multiple sub-tracers on the same transaction
+    /// and returns a map of `tracerName -> result`.
+    MuxTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -209,6 +213,30 @@ impl RpcHandler for TraceTransactionRequest {
                     emit,
                 })?)
             }
+            TracerType::MuxTracer => {
+                let mux_config: HashMap<String, Value> =
+                    if let Some(value) = &self.trace_config.tracer_config {
+                        serde_json::from_value(value.clone())?
+                    } else {
+                        return Err(RpcErr::BadParams(
+                            "muxTracer requires tracerConfig".to_owned(),
+                        ));
+                    };
+                let mut results = serde_json::Map::new();
+                for (tracer_name, sub_config) in &mux_config {
+                    let result = run_tx_sub_tracer(
+                        tracer_name,
+                        sub_config,
+                        self.tx_hash,
+                        reexec,
+                        timeout,
+                        &context,
+                    )
+                    .await?;
+                    results.insert(tracer_name.clone(), result);
+                }
+                Ok(Value::Object(results))
+            }
         }
     }
 }
@@ -355,6 +383,109 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
+            TracerType::MuxTracer => {
+                Err(RpcErr::Internal(
+                    "muxTracer is not supported for block tracing".to_owned(),
+                ))
+            }
         }
+    }
+}
+
+/// Runs a single sub-tracer for a transaction as part of a muxTracer request.
+async fn run_tx_sub_tracer(
+    tracer_name: &str,
+    sub_config: &Value,
+    tx_hash: H256,
+    reexec: u32,
+    timeout: Duration,
+    context: &RpcApiContext,
+) -> Result<Value, RpcErr> {
+    match tracer_name {
+        "callTracer" => {
+            let config: CallTracerConfig = serde_json::from_value(sub_config.clone())?;
+            let call_trace = context
+                .blockchain
+                .trace_transaction_calls(
+                    tx_hash,
+                    reexec,
+                    timeout,
+                    config.only_top_call,
+                    config.with_log,
+                )
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            let top_frame = call_trace
+                .into_iter()
+                .next()
+                .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+            Ok(serde_json::to_value(top_frame)?)
+        }
+        "prestateTracer" => {
+            let config: PrestateTracerConfig = serde_json::from_value(sub_config.clone())?;
+            config.validate()?;
+            let result = context
+                .blockchain
+                .trace_transaction_prestate(
+                    tx_hash,
+                    reexec,
+                    timeout,
+                    config.diff_mode,
+                    config.include_empty,
+                )
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            match result {
+                PrestateResult::Prestate(trace) => Ok(serde_json::to_value(trace)?),
+                PrestateResult::Diff(diff) => Ok(serde_json::to_value(diff)?),
+            }
+        }
+        "opcodeTracer" => {
+            let cfg: OpcodeTracerConfig = serde_json::from_value(sub_config.clone())?;
+            let emit = StructLoggerEmit {
+                mem_size: cfg.enable_memory,
+                return_data: cfg.enable_return_data,
+                refund: false,
+            };
+            let result = context
+                .blockchain
+                .trace_transaction_opcodes(tx_hash, reexec, timeout, cfg)
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            Ok(serde_json::to_value(StructLoggerResult {
+                result: &result,
+                emit,
+            })?)
+        }
+        "4byteTracer" => {
+            let call_trace = context
+                .blockchain
+                .trace_transaction_calls(tx_hash, reexec, timeout, false, false)
+                .await
+                .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            let top_frame = call_trace
+                .into_iter()
+                .next()
+                .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+            let mut selectors = HashMap::new();
+            collect_four_byte_selectors(&top_frame, &mut selectors);
+            Ok(serde_json::to_value(selectors)?)
+        }
+        "noopTracer" => Ok(serde_json::to_value(serde_json::Map::new())?),
+        unknown => Err(RpcErr::BadParams(format!(
+            "unknown sub-tracer: {unknown}"
+        ))),
+    }
+}
+
+/// Recursively collects 4-byte function selectors and calldata sizes from a call trace tree.
+fn collect_four_byte_selectors(frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
+    if frame.input.len() >= 4 {
+        let selector = hex::encode(&frame.input[..4]);
+        let key = format!("0x{selector}-{}", frame.input.len());
+        *selectors.entry(key).or_insert(0) += 1;
+    }
+    for sub_call in &frame.calls {
+        collect_four_byte_selectors(sub_call, selectors);
     }
 }
