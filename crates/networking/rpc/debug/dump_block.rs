@@ -80,3 +80,38 @@ impl RpcHandler for DumpBlockRequest {
         })?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RpcHandler;
+    use serde_json::json;
+
+    #[test]
+    fn parse_block_number() {
+        let params = Some(vec![json!("0xa")]);
+        let req = DumpBlockRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, BlockIdentifier::Number(10)));
+    }
+
+    #[test]
+    fn parse_latest_tag() {
+        let params = Some(vec![json!("latest")]);
+        let req = DumpBlockRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.block,
+            BlockIdentifier::Tag(crate::types::block_identifier::BlockTag::Latest)
+        ));
+    }
+
+    #[test]
+    fn parse_no_params() {
+        assert!(DumpBlockRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_too_many_params() {
+        let params = Some(vec![json!("0x1"), json!("extra")]);
+        assert!(DumpBlockRequest::parse(&params).is_err());
+    }
+}
