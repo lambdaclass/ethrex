@@ -1,5 +1,6 @@
 use std::{
-    collections::{BTreeMap, VecDeque, hash_map::Entry},
+    cmp::Reverse,
+    collections::{BTreeMap, BinaryHeap, hash_map::Entry},
     sync::RwLock,
 };
 
@@ -24,6 +25,16 @@ use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::warn;
 
+/// Numerator of the heap-size pruning factor. The eviction heap is rebuilt
+/// from the live `transaction_pool` once it grows past this multiple of
+/// `max_mempool_size`. The factor is expressed as
+/// `MEMPOOL_PRUNE_THRESHOLD_NUM / MEMPOOL_PRUNE_THRESHOLD_DEN` so the integer
+/// arithmetic stays exact and no magic floats appear in the code.
+const MEMPOOL_PRUNE_THRESHOLD_NUM: usize = 3;
+/// Denominator of the heap-size pruning factor. Together with
+/// `MEMPOOL_PRUNE_THRESHOLD_NUM` it encodes the 1.5x threshold.
+const MEMPOOL_PRUNE_THRESHOLD_DEN: usize = 2;
+
 #[derive(Debug, Default)]
 struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
@@ -37,22 +48,31 @@ struct MempoolInner {
     /// blob bundle where blob and its adjacent data is available.
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
-    txs_order: VecDeque<H256>,
+    /// Min-heap (via `Reverse`) of `(gas_tip_cap, hash)` used to pick the
+    /// lowest-tip-cap transaction to evict when the mempool is full. The
+    /// key is the raw `Transaction::gas_tip_cap()` projected to `u64`, NOT
+    /// the base-fee-adjusted effective tip — admission decisions stay stable
+    /// as base fee oscillates. Entries are removed lazily — a popped hash
+    /// that is no longer in `transaction_pool` is treated as a tombstone
+    /// and skipped.
+    txs_by_tip: BinaryHeap<Reverse<(u64, H256)>>,
     max_mempool_size: usize,
-    // Max number of transactions to let the mempool order queue grow before pruning it
+    /// Max number of entries to let the eviction heap grow before rebuilding
+    /// it from `transaction_pool` to drop tombstones.
     mempool_prune_threshold: usize,
 }
 
 impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
-            txs_order: VecDeque::with_capacity(max_mempool_size * 2),
+            txs_by_tip: BinaryHeap::with_capacity(max_mempool_size * 2),
             transaction_pool: FxHashMap::with_capacity_and_hasher(
                 max_mempool_size,
                 Default::default(),
             ),
             max_mempool_size,
-            mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
+            mempool_prune_threshold: max_mempool_size * MEMPOOL_PRUNE_THRESHOLD_NUM
+                / MEMPOOL_PRUNE_THRESHOLD_DEN,
             ..Default::default()
         }
     }
@@ -92,22 +112,59 @@ impl MempoolInner {
         }
     }
 
-    /// Remove the oldest transaction in the pool
-    fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
-        // Remove elements from the order queue until one is present in the pool
+    /// Evict the lowest-tip transaction(s) from the pool until it is below
+    /// `max_mempool_size`. Uses lazy deletion: heap entries whose hash is no
+    /// longer in `transaction_pool` are skipped without rebuilding the heap.
+    fn evict_lowest_tip_transaction(&mut self) -> Result<(), StoreError> {
         while self.transaction_pool.len() >= self.max_mempool_size {
-            if let Some(oldest_hash) = self.txs_order.pop_front() {
-                self.remove_transaction_with_lock(&oldest_hash)?;
-            } else {
+            let Some(Reverse((_tip, hash))) = self.txs_by_tip.pop() else {
                 warn!(
                     "Mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
                 );
                 break;
+            };
+            // Skip tombstones — entries whose tx has already been removed.
+            if !self.transaction_pool.contains_key(&hash) {
+                continue;
             }
+            self.remove_transaction_with_lock(&hash)?;
         }
 
         Ok(())
     }
+
+    /// Returns the live minimum tip cap currently in the heap (skipping
+    /// tombstones), or `None` if the pool is empty. Used by `add_transaction`
+    /// to decide whether an incoming tx is cheap enough that admitting it
+    /// would mean evicting a strictly higher-tip tx — which would invert
+    /// the goal of tip-based eviction.
+    fn live_min_tip(&mut self) -> Option<u64> {
+        while let Some(Reverse((tip, hash))) = self.txs_by_tip.peek() {
+            if self.transaction_pool.contains_key(hash) {
+                return Some(*tip);
+            }
+            // Tombstone at the heap root — drop and look at the next entry.
+            self.txs_by_tip.pop();
+        }
+        None
+    }
+
+    /// Rebuild the eviction heap from the live `transaction_pool`, dropping
+    /// all tombstones. Used when too many lazy-deleted entries accumulate.
+    fn rebuild_tip_heap(&mut self) {
+        let mut heap = BinaryHeap::with_capacity(self.max_mempool_size * 2);
+        for (hash, tx) in self.transaction_pool.iter() {
+            heap.push(Reverse((tip_key(tx.transaction()), *hash)));
+        }
+        self.txs_by_tip = heap;
+    }
+}
+
+/// Project a transaction's raw tip cap (`gas_tip_cap`) into a `u64` heap key.
+/// Tips above `u64::MAX` saturate so astronomically-large fees rank highest
+/// (and are therefore evicted last by the min-heap).
+fn tip_key(tx: &Transaction) -> u64 {
+    u64::try_from(tx.gas_tip_cap()).unwrap_or(u64::MAX)
 }
 
 #[derive(Debug, Default)]
@@ -148,19 +205,33 @@ impl Mempool {
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
-        // Prune the order queue if it has grown too much
-        if inner.txs_order.len() > inner.mempool_prune_threshold {
-            // NOTE: we do this to avoid borrow checker errors
-            let txpool = core::mem::take(&mut inner.transaction_pool);
-            inner.txs_order.retain(|tx| txpool.contains_key(tx));
-            inner.transaction_pool = txpool;
+        // Rebuild the eviction heap if tombstones have accumulated past the
+        // configured threshold (heap-size > max_mempool_size *
+        // MEMPOOL_PRUNE_THRESHOLD_NUM / MEMPOOL_PRUNE_THRESHOLD_DEN).
+        if inner.txs_by_tip.len() > inner.mempool_prune_threshold {
+            inner.rebuild_tip_heap();
         }
+        let tip = tip_key(transaction.transaction());
         if inner.transaction_pool.len() >= inner.max_mempool_size {
-            inner.remove_oldest_transaction()?;
+            // The pool is at capacity. Admitting the incoming tx forces an
+            // eviction; admitting a tx with a tip lower than (or equal to)
+            // the current heap minimum would mean dropping a strictly
+            // higher-tip tx to make room for a strictly lower-tip one,
+            // inverting the goal of tip-based eviction. Reject the
+            // incoming tx instead.
+            if let Some(min_pool_tip) = inner.live_min_tip()
+                && tip <= min_pool_tip
+            {
+                return Err(MempoolError::PoolFullAndUnderpriced {
+                    incoming_tip: tip,
+                    min_pool_tip,
+                });
+            }
+            inner.evict_lowest_tip_transaction()?;
         }
-        inner.txs_order.push_back(hash);
+        inner.txs_by_tip.push(Reverse((tip, hash)));
         inner
             .txs_by_sender_nonce
             .insert((sender, transaction.nonce()), hash);
@@ -598,4 +669,296 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, TxKind};
+
+    /// Build a unique EIP-1559 transaction parametrized by its priority fee.
+    /// `nonce` is used to keep the transaction (and therefore its hash) unique
+    /// across calls so we exercise distinct mempool entries.
+    fn make_tx(tip: u64, nonce: u64) -> (H256, Address, MempoolTransaction) {
+        let inner = EIP1559Transaction {
+            nonce,
+            max_priority_fee_per_gas: tip,
+            // Keep `max_fee_per_gas >= max_priority_fee_per_gas` so the tx is
+            // structurally valid even though we bypass mempool admission here.
+            max_fee_per_gas: tip,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            ..Default::default()
+        };
+        let tx = Transaction::EIP1559Transaction(inner);
+        let sender = Address::random();
+        let hash = H256::random();
+        (hash, sender, MempoolTransaction::new(tx, sender))
+    }
+
+    fn pool_size(mempool: &Mempool) -> usize {
+        mempool.read().expect("read lock").transaction_pool.len()
+    }
+
+    fn heap_size(mempool: &Mempool) -> usize {
+        mempool.read().expect("read lock").txs_by_tip.len()
+    }
+
+    #[test]
+    fn evicts_lowest_tip_when_pool_is_full() {
+        let max = 4;
+        let mempool = Mempool::new(max);
+
+        // Fill the pool with tips 10, 20, 30, 40.
+        let mut handles = Vec::new();
+        for (i, tip) in [10u64, 20, 30, 40].iter().enumerate() {
+            let (hash, sender, tx) = make_tx(*tip, i as u64);
+            mempool.add_transaction(hash, sender, tx).unwrap();
+            handles.push((hash, *tip));
+        }
+        assert_eq!(pool_size(&mempool), max);
+
+        // Insert one more with a clearly higher tip; the tip=10 entry should go.
+        let (hash, sender, tx) = make_tx(100, 100);
+        mempool.add_transaction(hash, sender, tx).unwrap();
+
+        assert_eq!(pool_size(&mempool), max);
+        // tip=10 hash must be gone, tip=100 newcomer must be present.
+        let low_hash = handles[0].0;
+        assert!(!mempool.contains_tx(low_hash).unwrap());
+        assert!(mempool.contains_tx(hash).unwrap());
+        // The other original entries (tips 20, 30, 40) are still in.
+        for (h, _) in handles.iter().skip(1) {
+            assert!(mempool.contains_tx(*h).unwrap());
+        }
+    }
+
+    #[test]
+    fn high_tip_newcomer_is_kept_over_existing_low_tip() {
+        let max = 2;
+        let mempool = Mempool::new(max);
+
+        let (low_hash, low_sender, low_tx) = make_tx(1, 0);
+        let (mid_hash, mid_sender, mid_tx) = make_tx(5, 1);
+        mempool
+            .add_transaction(low_hash, low_sender, low_tx)
+            .unwrap();
+        mempool
+            .add_transaction(mid_hash, mid_sender, mid_tx)
+            .unwrap();
+
+        // Pool is full; insert a high-tip newcomer.
+        let (hi_hash, hi_sender, hi_tx) = make_tx(1_000, 2);
+        mempool.add_transaction(hi_hash, hi_sender, hi_tx).unwrap();
+
+        // The newcomer must NOT be the one evicted.
+        assert!(mempool.contains_tx(hi_hash).unwrap());
+        // The lowest-tip prior entry must be evicted.
+        assert!(!mempool.contains_tx(low_hash).unwrap());
+        assert!(mempool.contains_tx(mid_hash).unwrap());
+        assert_eq!(pool_size(&mempool), max);
+    }
+
+    #[test]
+    fn lazy_deletion_skips_dead_heap_entries() {
+        let max = 3;
+        let mempool = Mempool::new(max);
+
+        // Add three txs with tips 50, 60, 70.
+        let (low_hash, low_sender, low_tx) = make_tx(50, 0);
+        let (mid_hash, mid_sender, mid_tx) = make_tx(60, 1);
+        let (hi_hash, hi_sender, hi_tx) = make_tx(70, 2);
+        mempool
+            .add_transaction(low_hash, low_sender, low_tx)
+            .unwrap();
+        mempool
+            .add_transaction(mid_hash, mid_sender, mid_tx)
+            .unwrap();
+        mempool.add_transaction(hi_hash, hi_sender, hi_tx).unwrap();
+
+        // Remove the lowest-tip tx normally — its heap entry becomes a tombstone.
+        mempool.remove_transaction(&low_hash).unwrap();
+        // Heap still contains the stale entry; the pool does not.
+        assert_eq!(pool_size(&mempool), 2);
+        assert_eq!(heap_size(&mempool), 3);
+
+        // Fill back to capacity with a tip greater than 60 but less than 70.
+        let (replacement_hash, replacement_sender, replacement_tx) = make_tx(65, 3);
+        mempool
+            .add_transaction(replacement_hash, replacement_sender, replacement_tx)
+            .unwrap();
+        assert_eq!(pool_size(&mempool), 3);
+
+        // Now adding one more forces eviction. The lazy-deleted (tip=50) entry
+        // must be skipped, and tip=60 (the actual lowest live entry) must go.
+        let (newcomer_hash, newcomer_sender, newcomer_tx) = make_tx(80, 4);
+        mempool
+            .add_transaction(newcomer_hash, newcomer_sender, newcomer_tx)
+            .unwrap();
+
+        assert_eq!(pool_size(&mempool), 3);
+        assert!(!mempool.contains_tx(mid_hash).unwrap());
+        assert!(mempool.contains_tx(newcomer_hash).unwrap());
+        assert!(mempool.contains_tx(replacement_hash).unwrap());
+        assert!(mempool.contains_tx(hi_hash).unwrap());
+    }
+
+    #[test]
+    fn heap_prune_rebuilds_when_threshold_exceeded() {
+        let max = 4;
+        let mempool = Mempool::new(max);
+
+        // Fill the pool, then immediately remove every entry. Heap accumulates
+        // `max` tombstones (heap_size = 4, pool_size = 0).
+        let mut hashes = Vec::new();
+        for i in 0..max {
+            let (hash, sender, tx) = make_tx(10 + i as u64, i as u64);
+            mempool.add_transaction(hash, sender, tx).unwrap();
+            hashes.push(hash);
+        }
+        for hash in &hashes {
+            mempool.remove_transaction(hash).unwrap();
+        }
+        assert_eq!(pool_size(&mempool), 0);
+        assert_eq!(heap_size(&mempool), max);
+
+        // Push more tombstones by inserting + removing more txs. Once the heap
+        // grows past `MEMPOOL_PRUNE_THRESHOLD_NUM * max / MEMPOOL_PRUNE_THRESHOLD_DEN`
+        // (= 6 for max=4), the next `add_transaction` must rebuild the heap.
+        let threshold = max * MEMPOOL_PRUNE_THRESHOLD_NUM / MEMPOOL_PRUNE_THRESHOLD_DEN;
+        let mut more_hashes = Vec::new();
+        while heap_size(&mempool) <= threshold {
+            let nonce = (max + more_hashes.len()) as u64;
+            let (hash, sender, tx) = make_tx(100, nonce);
+            mempool.add_transaction(hash, sender, tx).unwrap();
+            more_hashes.push(hash);
+            mempool.remove_transaction(&hash).unwrap();
+        }
+        assert_eq!(pool_size(&mempool), 0);
+        assert!(heap_size(&mempool) > threshold);
+
+        // The next insertion triggers the rebuild branch and drops all tombstones.
+        let (hash, sender, tx) = make_tx(42, 9999);
+        mempool.add_transaction(hash, sender, tx).unwrap();
+        // After rebuild + insert, the heap should contain exactly the live txs.
+        assert_eq!(pool_size(&mempool), 1);
+        assert_eq!(heap_size(&mempool), 1);
+    }
+
+    #[test]
+    fn underpriced_newcomer_is_rejected_when_pool_is_full() {
+        // A pool at capacity filled with tip-100 entries must reject an
+        // incoming tip-1 tx outright instead of evicting a tip-100 entry to
+        // admit the cheaper one — that would invert tip-based eviction.
+        let max = 3;
+        let mempool = Mempool::new(max);
+        for i in 0..max {
+            let (hash, sender, tx) = make_tx(100, i as u64);
+            mempool.add_transaction(hash, sender, tx).unwrap();
+        }
+        assert_eq!(pool_size(&mempool), max);
+
+        let (low_hash, low_sender, low_tx) = make_tx(1, 99);
+        let err = mempool
+            .add_transaction(low_hash, low_sender, low_tx)
+            .expect_err("underpriced newcomer must be rejected");
+        assert!(
+            matches!(
+                err,
+                MempoolError::PoolFullAndUnderpriced {
+                    incoming_tip: 1,
+                    min_pool_tip: 100,
+                }
+            ),
+            "unexpected error: {err:?}",
+        );
+        // The pool should still hold its original three tip-100 entries.
+        assert_eq!(pool_size(&mempool), max);
+    }
+
+    #[test]
+    fn equal_tip_newcomer_is_rejected_when_pool_is_full() {
+        // Equal-tip case: incoming tip == min_pool_tip must be rejected,
+        // not tie-break in favor of eviction (which would needlessly churn
+        // the pool).
+        let max = 2;
+        let mempool = Mempool::new(max);
+        for i in 0..max {
+            let (hash, sender, tx) = make_tx(50, i as u64);
+            mempool.add_transaction(hash, sender, tx).unwrap();
+        }
+        let (eq_hash, eq_sender, eq_tx) = make_tx(50, 9);
+        let err = mempool
+            .add_transaction(eq_hash, eq_sender, eq_tx)
+            .expect_err("equal-tip newcomer must be rejected");
+        assert!(matches!(err, MempoolError::PoolFullAndUnderpriced { .. }));
+        assert_eq!(pool_size(&mempool), max);
+    }
+
+    #[test]
+    fn same_sender_replacement_clears_heap_tombstone() {
+        // Replacement flow: same (sender, nonce) tx replaces the old one in
+        // the pool. The old heap entry becomes a tombstone (lazy deletion).
+        // Verify that subsequent eviction correctly skips the tombstone and
+        // doesn't double-evict the live entry.
+        let max = 4;
+        let mempool = Mempool::new(max);
+        let sender = Address::random();
+
+        // Seed with one tx at nonce 0, tip=10.
+        let old_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce: 0,
+            max_priority_fee_per_gas: 10,
+            max_fee_per_gas: 10,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            ..Default::default()
+        });
+        let old_hash = old_tx.hash();
+        let old_mempool_tx = MempoolTransaction::new(old_tx, sender);
+        mempool
+            .add_transaction(old_hash, sender, old_mempool_tx)
+            .unwrap();
+        // Remove the old tx (simulating `find_tx_to_replace` -> `remove`
+        // in the production flow). This leaves a tombstone in the heap.
+        mempool.remove_transaction(&old_hash).unwrap();
+
+        // Replacement at the same nonce with a higher tip.
+        let new_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce: 0,
+            max_priority_fee_per_gas: 100,
+            max_fee_per_gas: 100,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::from_low_u64_be(1)),
+            ..Default::default()
+        });
+        let new_hash = new_tx.hash();
+        let new_mempool_tx = MempoolTransaction::new(new_tx, sender);
+        mempool
+            .add_transaction(new_hash, sender, new_mempool_tx)
+            .unwrap();
+
+        // Pool should hold exactly the new tx; the heap may carry the old
+        // tombstone but live_min_tip skips it.
+        assert_eq!(pool_size(&mempool), 1);
+
+        // Fill the rest of the pool with low-tip txs to provoke eviction
+        // pressure on the next admit; the heap tombstone must NOT count as
+        // a real entry for either pool size or min-tip selection.
+        for i in 1..max {
+            let inner = EIP1559Transaction {
+                nonce: i as u64,
+                max_priority_fee_per_gas: 5,
+                max_fee_per_gas: 5,
+                gas_limit: 21_000,
+                to: TxKind::Call(Address::from_low_u64_be(1)),
+                ..Default::default()
+            };
+            let tx = Transaction::EIP1559Transaction(inner);
+            let h = tx.hash();
+            let mtx = MempoolTransaction::new(tx, sender);
+            mempool.add_transaction(h, sender, mtx).unwrap();
+        }
+        assert_eq!(pool_size(&mempool), max);
+    }
 }

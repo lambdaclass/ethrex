@@ -119,6 +119,13 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error(
+        "Mempool full and incoming tip cap ({incoming_tip} wei) is not higher than the lowest in-pool tip cap ({min_pool_tip} wei); rejecting incoming tx"
+    )]
+    PoolFullAndUnderpriced {
+        incoming_tip: u64,
+        min_pool_tip: u64,
+    },
 }
 
 #[derive(Debug)]
