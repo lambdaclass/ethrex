@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
 use ethrex_common::H256;
@@ -59,6 +60,11 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
+    /// Records 4-byte function selectors and calldata sizes for every call.
+    /// Returns a map of `"0xSELECTOR-SIZE" -> count`.
+    /// Selected via `"tracer": "4byteTracer"`.
+    #[serde(rename = "4byteTracer")]
+    FourByteTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -209,6 +215,26 @@ impl RpcHandler for TraceTransactionRequest {
                     emit,
                 })?)
             }
+            TracerType::FourByteTracer => {
+                let call_trace = context
+                    .blockchain
+                    .trace_transaction_calls(
+                        self.tx_hash,
+                        reexec,
+                        timeout,
+                        false, // need all subcalls
+                        false,
+                    )
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let top_frame = call_trace
+                    .into_iter()
+                    .next()
+                    .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                let mut selectors = HashMap::new();
+                collect_four_byte_selectors(&top_frame, &mut selectors);
+                Ok(serde_json::to_value(selectors)?)
+            }
         }
     }
 }
@@ -355,6 +381,38 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
+            TracerType::FourByteTracer => {
+                let call_traces = context
+                    .blockchain
+                    .trace_block_calls(block, reexec, timeout, false, false)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let block_trace: BlockTrace<HashMap<String, u64>> = call_traces
+                    .into_iter()
+                    .map(|(hash, trace)| {
+                        let frame = trace
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
+                        let mut selectors = HashMap::new();
+                        collect_four_byte_selectors(&frame, &mut selectors);
+                        Ok((hash, selectors).into())
+                    })
+                    .collect::<Result<_, RpcErr>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
         }
+    }
+}
+
+/// Recursively collects 4-byte function selectors and calldata sizes from a call trace tree.
+fn collect_four_byte_selectors(frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
+    if frame.input.len() >= 4 {
+        let selector = hex::encode(&frame.input[..4]);
+        let key = format!("0x{selector}-{}", frame.input.len());
+        *selectors.entry(key).or_insert(0) += 1;
+    }
+    for sub_call in &frame.calls {
+        collect_four_byte_selectors(sub_call, selectors);
     }
 }
