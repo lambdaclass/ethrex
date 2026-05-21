@@ -279,6 +279,12 @@ impl Store {
     /// returns once the worker calls `recv()` on the next loop iteration.
     /// `TrieMessage::Ping` carries no work, so the send completing is itself
     /// the idle signal.
+    ///
+    /// Caller's responsibility: hold off other senders to `trie_update_worker_tx`
+    /// while this is in flight. Under concurrent producers the rendezvous
+    /// guarantee degrades to "the prior message has been drained", not
+    /// "persistence is idle going forward" — a racing `Update` from another
+    /// thread can be in-flight by the time this returns.
     pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
         let tx = self.trie_update_worker_tx.clone();
         tokio::task::spawn_blocking(move || tx.send(TrieMessage::Ping))

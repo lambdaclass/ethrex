@@ -518,13 +518,13 @@ pub enum Subcommand {
         #[arg(
             long = "export-bal",
             value_name = "FILE",
-            help = "Export BALs produced during sequential execution to a single RLP file (concatenated, one per block)"
+            help = "Export BALs produced during sequential execution to a single RLP file (concatenated, one per block). All BALs are buffered in memory before writing; suitable for benchmark-sized runs, not 100k+ block exports."
         )]
         export_bal: Option<String>,
         #[arg(
             long = "with-bal",
             value_name = "FILE",
-            help = "Load BALs from a single RLP file and use the parallel execution path",
+            help = "Load BALs from a single RLP file and use the parallel execution path. The entire file is decoded into memory upfront; suitable for benchmark-sized runs, not 100k+ blocks.",
             conflicts_with = "export_bal"
         )]
         with_bal: Option<String>,
@@ -926,31 +926,12 @@ pub async fn import_blocks_bench(
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
-    let path_metadata = metadata(path).expect("Failed to read path");
+    let path_metadata =
+        metadata(path).unwrap_or_else(|e| panic!("failed to stat path {path:?}: {e}"));
 
     if let Some(bal_path) = export_bal_path {
         info!(path = %bal_path, "Will export BALs to file");
     }
-
-    // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark
-    let preloaded_bals = if let Some(bal_path) = with_bal_path {
-        info!(path = %bal_path, "Loading BALs from file (parallel path)");
-        use ethrex_common::types::block_access_list::BlockAccessList;
-        use ethrex_rlp::decode::RLPDecode as _;
-        let data = std::fs::read(bal_path).expect("Failed to read BAL file");
-        let mut remaining = data.as_slice();
-        let mut bals = Vec::new();
-        while !remaining.is_empty() {
-            let (bal, rest) =
-                BlockAccessList::decode_unfinished(remaining).expect("Failed to decode BAL");
-            bals.push(bal);
-            remaining = rest;
-        }
-        info!(count = bals.len(), "Loaded BALs into memory");
-        Some(bals)
-    } else {
-        None
-    };
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
@@ -974,6 +955,42 @@ pub async fn import_blocks_bench(
     } else {
         info!(path = %path, "Importing blocks from file");
         vec![utils::read_chain_file(path)]
+    };
+
+    // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark.
+    // Done after chain loading so we can validate the count matches the number of
+    // Amsterdam+ blocks across all chains and fail fast on truncated BAL files.
+    let preloaded_bals = if let Some(bal_path) = with_bal_path {
+        info!(path = %bal_path, "Loading BALs from file (parallel path)");
+        use ethrex_common::types::block_access_list::BlockAccessList;
+        use ethrex_rlp::decode::RLPDecode as _;
+        let data = std::fs::read(bal_path)
+            .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
+        let mut remaining = data.as_slice();
+        let mut bals = Vec::new();
+        while !remaining.is_empty() {
+            let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
+                .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
+            bals.push(bal);
+            remaining = rest;
+        }
+        let amsterdam_blocks = chains
+            .iter()
+            .flatten()
+            .filter(|b| b.header.block_access_list_hash.is_some())
+            .count();
+        assert_eq!(
+            bals.len(),
+            amsterdam_blocks,
+            "--with-bal file at {bal_path:?} has {} entries but chain has {} Amsterdam+ blocks (block_access_list_hash set). \
+             Mismatched BAL files would silently fall through to sequential execution and produce misleading benchmark numbers.",
+            bals.len(),
+            amsterdam_blocks,
+        );
+        info!(count = bals.len(), "Loaded BALs into memory");
+        Some(bals)
+    } else {
+        None
     };
 
     let mut exported_bals = Vec::new();
@@ -1079,7 +1096,8 @@ pub async fn import_blocks_bench(
         for bal in &exported_bals {
             bal.encode(&mut buf);
         }
-        std::fs::write(bal_path, &buf).expect("Failed to write BAL file");
+        std::fs::write(bal_path, &buf)
+            .unwrap_or_else(|e| panic!("failed to write BAL file at {bal_path:?}: {e}"));
         info!(count = exported_bals.len(), "Exported BALs to file");
     }
 
