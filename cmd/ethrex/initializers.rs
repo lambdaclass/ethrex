@@ -960,7 +960,9 @@ pub async fn regenerate_head_state(
             )
         })?;
 
-        blockchain.add_block_pipeline(block, None)?;
+        blockchain.add_block_pipeline(block, None).map_err(|e| {
+            eyre::eyre!("Failed to re-apply block {} (hash {header_hash:?}): {e}", header.number)
+        })?;
     }
 
     info!("Finished regenerating state");

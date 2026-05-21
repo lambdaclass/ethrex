@@ -984,6 +984,7 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.env.config.eip7883,
+                self.env.config.pip88,
                 self.db.store.precompile_cache(),
                 self.crypto,
             )?;

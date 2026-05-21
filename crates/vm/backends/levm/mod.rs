@@ -313,6 +313,16 @@ impl LEVM {
             receipts.push(receipt);
         }
 
+        if block.header.number == 87218600 {
+            eprintln!(
+                "BLOCK_GAS_FINAL block={} block_gas_used={} expected={} receipts={} cumulative={}",
+                block.header.number,
+                block_gas_used,
+                block.header.gas_used,
+                receipts.len(),
+                cumulative_gas_used,
+            );
+        }
         ::tracing::debug!(
             "BLOCK_GAS_TOTAL block={} block_gas_used={} expected={} receipts={}",
             block.header.number,
@@ -2282,8 +2292,10 @@ impl LEVM {
         let mut config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         // Polygon: Bor activates EIP-7883 (MODEXP gas increase) at Lisovo fork,
         // which doesn't map to our L1 fork enum. Force-enable it.
-        if matches!(vm_type, VMType::Polygon(_)) {
+        if let VMType::Polygon(pfc) = &vm_type {
             config.eip7883 = true;
+            // PIP-88: Chicago cold-storage and precompile gas repricing.
+            config.pip88 = pfc.pip88;
         }
         // EVM coinbase: used for COINBASE opcode and EIP-3651 warm set.
         // On Polygon, header.coinbase is always 0x0. Bor sets Context.Coinbase to the

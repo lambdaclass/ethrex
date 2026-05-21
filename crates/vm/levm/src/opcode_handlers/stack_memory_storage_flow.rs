@@ -239,6 +239,7 @@ impl OpcodeHandler for OpSLoadHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sload(
                 vm.substate.add_accessed_slot(address, key),
+                vm.env.config.pip88,
             )?)?;
 
         // Record to BAL AFTER gas check passes per EIP-7928
@@ -300,6 +301,7 @@ impl OpcodeHandler for OpSStoreHandler {
                 value,
                 storage_slot_was_cold,
                 fork,
+                vm.env.config.pip88,
             )?)?;
 
         if needs_state_gas {
@@ -315,10 +317,13 @@ impl OpcodeHandler for OpSStoreHandler {
             && original_value.is_zero();
 
         if value != current_value {
-            // EIP-2929
-            const REMOVE_SLOT_COST: i64 = 4800;
+            // EIP-2929 / PIP-88: SSTORE refund deltas.
+            // PIP-88 changes the clears refund from 4800 to 3960 (= 5000 - 2940 + 1900)
+            // and the dirty→original refund from 2800 to 1960 (= 2060 - 100).
+            let pip88 = vm.env.config.pip88;
+            let remove_slot_cost: i64 = if pip88 { 3960 } else { 4800 };
+            let restore_slot_cost: i64 = if pip88 { 1960 } else { 2800 };
             const RESTORE_EMPTY_SLOT_COST: i64 = 19900;
-            const RESTORE_SLOT_COST: i64 = 2800;
 
             // The operations on `delta` cannot overflow.
             let mut delta = 0i64;
@@ -328,14 +333,14 @@ impl OpcodeHandler for OpSStoreHandler {
             )]
             if current_value == original_value {
                 if !original_value.is_zero() && value.is_zero() {
-                    delta += REMOVE_SLOT_COST;
+                    delta += remove_slot_cost;
                 }
             } else {
                 if !original_value.is_zero() {
                     if current_value.is_zero() {
-                        delta -= REMOVE_SLOT_COST;
+                        delta -= remove_slot_cost;
                     } else if value.is_zero() {
-                        delta += REMOVE_SLOT_COST;
+                        delta += remove_slot_cost;
                     }
                 }
 
@@ -346,12 +351,12 @@ impl OpcodeHandler for OpSStoreHandler {
                         // The state gas portion is refunded via the reservoir (clamp-and-spill),
                         // NOT through the regular refund counter.
                         if fork >= Fork::Amsterdam {
-                            delta += RESTORE_SLOT_COST; // 2800 instead of 19900
+                            delta += restore_slot_cost;
                         } else {
                             delta += RESTORE_EMPTY_SLOT_COST;
                         }
                     } else {
-                        delta += RESTORE_SLOT_COST;
+                        delta += restore_slot_cost;
                     }
                 }
             }

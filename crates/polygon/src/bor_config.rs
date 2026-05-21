@@ -117,6 +117,8 @@ pub struct BorConfig {
     pub lisovo_block: Option<u64>,
     /// LisovoPro fork block.
     pub lisovo_pro_block: Option<u64>,
+    /// Chicago fork block (PIP-88: cold-storage and precompile gas repricing).
+    pub chicago_block: Option<u64>,
     /// Giugliano fork block.
     pub giugliano_block: Option<u64>,
 }
@@ -225,6 +227,10 @@ impl BorConfig {
 
     pub fn is_lisovo_pro_active(&self, block_number: BlockNumber) -> bool {
         is_fork_active(self.lisovo_pro_block, block_number)
+    }
+
+    pub fn is_chicago_active(&self, block_number: BlockNumber) -> bool {
+        is_fork_active(self.chicago_block, block_number)
     }
 
     pub fn is_giugliano_active(&self, block_number: BlockNumber) -> bool {
@@ -507,6 +513,7 @@ mod tests {
             dandeli_block: None,
             lisovo_block: None,
             lisovo_pro_block: None,
+            chicago_block: None,
             giugliano_block: None,
             istanbul_block: None,
             berlin_block: None,

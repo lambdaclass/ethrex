@@ -57,6 +57,7 @@ pub fn execution_program(
                     burnt_contract: bor_config.get_burnt_contract(block.header.number),
                     coinbase: bor_config.get_coinbase(block.header.number),
                     author,
+                    pip88: bor_config.is_chicago_active(block.header.number),
                 };
                 Ok(Evm::new_for_polygon(db.clone(), fee_config, crypto.clone()))
             } else {

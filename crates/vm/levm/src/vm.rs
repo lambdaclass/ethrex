@@ -533,15 +533,10 @@ impl<'a> VM<'a> {
 
         if matches!(vm_type, VMType::Polygon(_)) {
             // Polygon: add P256Verify (0x100) to warm set.
+            // Bor's Lisovo set: 0x01-0x11 + 0x100 (all precompiles including KZG and BLS).
             substate
                 .accessed_addresses
                 .insert(Address::from_low_u64_be(0x100));
-            // Remove ONLY address 0x0a (KZG point evaluation) from warm set.
-            // Bor's Cancun-equivalent fork warms 1-9 but NOT 0x0a (KZG is not
-            // active on Polygon). BLS addresses 0x0b-0x11 stay warm.
-            substate
-                .accessed_addresses
-                .remove(&Address::from_low_u64_be(0x0a));
         }
 
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
@@ -906,6 +901,7 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.env.config.eip7883,
+                self.env.config.pip88,
                 self.db.store.precompile_cache(),
                 self.crypto,
             );
@@ -979,6 +975,7 @@ impl<'a> VM<'a> {
         gas_remaining: &mut u64,
         fork: Fork,
         eip7883: bool,
+        pip88: bool,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
@@ -989,6 +986,7 @@ impl<'a> VM<'a> {
                 gas_remaining,
                 fork,
                 eip7883,
+                pip88,
                 cache,
                 crypto,
             ),

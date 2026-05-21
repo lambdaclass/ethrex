@@ -109,6 +109,12 @@ pub const SSTORE_COLD_DYNAMIC: u64 = 2100;
 pub const SSTORE_DEFAULT_DYNAMIC: u64 = 100;
 pub const SSTORE_STORAGE_CREATION: u64 = 20000;
 pub const SSTORE_STORAGE_MODIFICATION: u64 = 2900;
+
+// PIP-88 (Polygon Chicago): cold-storage repricing.
+// Splits EIP-2929's single COLD_SLOAD_COST into independent SLOAD and SSTORE costs.
+pub const PIP88_SLOAD_COLD_DYNAMIC: u64 = 5460; // 2100 * 2.6
+pub const PIP88_SSTORE_COLD_DYNAMIC: u64 = 2940; // 2100 * 1.4
+pub const PIP88_SSTORE_STORAGE_MODIFICATION: u64 = 2060; // 5000 - 2940
 pub const SSTORE_STIPEND: i64 = 2300;
 
 pub const BALANCE_STATIC: u64 = DEFAULT_STATIC;
@@ -422,10 +428,14 @@ fn mem_expansion_behavior(
         .ok_or(OutOfGas.into())
 }
 
-pub fn sload(storage_slot_was_cold: bool) -> Result<u64, VMError> {
+pub fn sload(storage_slot_was_cold: bool, pip88: bool) -> Result<u64, VMError> {
     let static_gas = SLOAD_STATIC;
     let dynamic_cost = if storage_slot_was_cold {
-        SLOAD_COLD_DYNAMIC
+        if pip88 {
+            PIP88_SLOAD_COLD_DYNAMIC
+        } else {
+            SLOAD_COLD_DYNAMIC
+        }
     } else {
         SLOAD_WARM_DYNAMIC
     };
@@ -438,8 +448,14 @@ pub fn sstore(
     new_value: U256,
     storage_slot_was_cold: bool,
     fork: Fork,
+    pip88: bool,
 ) -> Result<u64, VMError> {
     let static_gas = SSTORE_STATIC;
+    let modification_cost = if pip88 {
+        PIP88_SSTORE_STORAGE_MODIFICATION
+    } else {
+        SSTORE_STORAGE_MODIFICATION
+    };
 
     let mut base_dynamic_gas = if new_value == current_value {
         SSTORE_DEFAULT_DYNAMIC
@@ -448,21 +464,25 @@ pub fn sstore(
             // For Amsterdam+, new slot creation uses MODIFICATION cost in regular gas;
             // the state cost (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte) is charged separately.
             if fork >= Fork::Amsterdam {
-                SSTORE_STORAGE_MODIFICATION
+                modification_cost
             } else {
                 SSTORE_STORAGE_CREATION
             }
         } else {
-            SSTORE_STORAGE_MODIFICATION
+            modification_cost
         }
     } else {
         SSTORE_DEFAULT_DYNAMIC
     };
     // https://eips.ethereum.org/EIPS/eip-2929
+    // PIP-88 splits the cold surcharge: SSTORE uses ColdSstoreCostPIP88 (2940) instead of 2100.
+    let cold_dynamic = if pip88 {
+        PIP88_SSTORE_COLD_DYNAMIC
+    } else {
+        SSTORE_COLD_DYNAMIC
+    };
     if storage_slot_was_cold {
-        base_dynamic_gas = base_dynamic_gas
-            .checked_add(SSTORE_COLD_DYNAMIC)
-            .ok_or(OutOfGas)?;
+        base_dynamic_gas = base_dynamic_gas.checked_add(cold_dynamic).ok_or(OutOfGas)?;
     }
     static_gas
         .checked_add(base_dynamic_gas)

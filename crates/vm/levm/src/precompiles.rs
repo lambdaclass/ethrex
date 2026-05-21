@@ -270,7 +270,7 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         let addr = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
         return match addr {
             1..=9 => true,                       // Basic + Istanbul
-            0x0a => false,                       // KZG: not available on Polygon
+            0x0a => fork >= Fork::Prague,        // KZG: activated at Lisovo (maps to Prague)
             0x0b..=0x11 => fork >= Fork::Prague, // BLS: active since Prague
             0x100 => true,                       // P256Verify: always active
             _ => false,
@@ -324,6 +324,7 @@ pub fn execute_precompile(
     gas_remaining: &mut u64,
     fork: Fork,
     eip7883: bool,
+    pip88: bool,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
@@ -399,6 +400,17 @@ pub fn execute_precompile(
         timings.update(address, time);
     }
 
+    // PIP-88 (Polygon Chicago): charge additional gas for repriced precompiles.
+    // The precompile has already charged the old (lower) cost. Charge the delta.
+    if pip88 && result.is_ok() {
+        let delta = pip88_precompile_gas_delta(address, calldata);
+        if delta > 0 {
+            *gas_remaining = gas_remaining
+                .checked_sub(delta)
+                .ok_or(PrecompileError::NotEnoughGas)?;
+        }
+    }
+
     // Cache result on success (skip identity)
     if address != IDENTITY.address
         && let Some(cache) = cache
@@ -409,6 +421,78 @@ pub fn execute_precompile(
     }
 
     result
+}
+
+/// Returns the additional gas to charge for PIP-88 repriced precompiles.
+/// This is the delta between the PIP-88 cost and the standard cost.
+fn pip88_precompile_gas_delta(address: Address, calldata: &Bytes) -> u64 {
+    use crate::gas_cost::*;
+    let addr_low = address.0[19];
+    match addr_low {
+        // BN256 Add: 540 - 150 = 390
+        0x06 => 390,
+        // BN256 ScalarMul: 12600 - 6000 = 6600
+        0x07 => 6600,
+        // BN256 Pairing: base + per_point * k
+        // Old: 45000 + 34000 * k, New: 67500 + 51000 * k, Delta: 22500 + 17000 * k
+        0x08 => {
+            let k = if calldata.len() >= 192 {
+                (calldata.len() / 192) as u64
+            } else {
+                0
+            };
+            22500 + 17000 * k
+        }
+        // Blake2F: (rounds * 22) - (rounds * 1) = rounds * 21
+        0x09 => {
+            if calldata.len() >= 4 {
+                let rounds = u32::from_be_bytes([calldata[0], calldata[1], calldata[2], calldata[3]]) as u64;
+                rounds * 21 // PIP88_GFROUND (22) - standard GFROUND (1)
+            } else {
+                0
+            }
+        }
+        // BLS12-381 G1Add: 1050 - 375 = 675 (but only 500 cost initially)
+        0x0b => 1050_u64.saturating_sub(BLS12_381_G1ADD_COST),
+        // BLS12-381 G1MSM: complex (per-k discount table). Approximate: charge delta on base mul cost.
+        // PIP88 G1MUL = 73200 vs standard 12000. The MSM function uses discount tables.
+        // For simplicity, recompute: new_cost - old_cost
+        0x0c => {
+            if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G1_MSM_PAIR_LENGTH) {
+                return 0;
+            }
+            let k = calldata.len() / BLS12_381_G1_MSM_PAIR_LENGTH;
+            let old = bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, G1_MUL_COST).unwrap_or(0);
+            let new = bls12_msm(k, &BLS12_381_G1_K_DISCOUNT, 73200).unwrap_or(0);
+            new.saturating_sub(old)
+        }
+        // BLS12-381 G2Add: 1620 - 600 = 1020
+        0x0d => 1620_u64.saturating_sub(BLS12_381_G2ADD_COST),
+        // BLS12-381 G2MSM
+        0x0e => {
+            if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_G2_MSM_PAIR_LENGTH) {
+                return 0;
+            }
+            let k = calldata.len() / BLS12_381_G2_MSM_PAIR_LENGTH;
+            let old = bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, G2_MUL_COST).unwrap_or(0);
+            let new = bls12_msm(k, &BLS12_381_G2_K_DISCOUNT, 144000).unwrap_or(0);
+            new.saturating_sub(old)
+        }
+        // BLS12-381 Pairing: base + per_pair * k
+        // Old: 37700 + 32600 * k, New: 109330 + 94540 * k
+        0x0f => {
+            if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH) {
+                return 0;
+            }
+            let k = (calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH) as u64;
+            (109330 + 94540 * k).saturating_sub(37700 + 32600 * k)
+        }
+        // BLS12-381 MapG1: 15400 - 5500 = 9900
+        0x10 => 15400_u64.saturating_sub(BLS12_381_MAP_FP_TO_G1_COST),
+        // BLS12-381 MapG2: 66640 - 23800 = 42840
+        0x11 => 66640_u64.saturating_sub(BLS12_381_MAP_FP2_TO_G2_COST),
+        _ => 0,
+    }
 }
 
 /// Consumes gas and if it's higher than the gas limit returns an error.

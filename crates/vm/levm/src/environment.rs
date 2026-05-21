@@ -65,6 +65,10 @@ pub struct EVMConfig {
     /// EIP-7883 MODEXP gas increase (activated at Osaka on L1, Lisovo on Polygon).
     /// Polygon activates this at a different fork than L1, so we can't rely on the fork enum.
     pub eip7883: bool,
+    /// PIP-88: Cold-storage and precompile gas repricing (Polygon Chicago hard fork).
+    /// Reprices cold SLOAD (2100→5460), cold SSTORE surcharge (2100→2940),
+    /// and several precompiles (BN256, BLS12-381, Blake2F).
+    pub pip88: bool,
 }
 
 impl EVMConfig {
@@ -73,6 +77,7 @@ impl EVMConfig {
             fork,
             blob_schedule,
             eip7883: fork >= Fork::Osaka,
+            pip88: false,
         }
     }
 
@@ -137,6 +142,7 @@ impl Default for EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
             eip7883: fork >= Fork::Osaka,
+            pip88: false,
         }
     }
 }

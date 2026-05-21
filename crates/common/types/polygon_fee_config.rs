@@ -21,4 +21,7 @@ pub struct PolygonFeeConfig {
     /// Used as the EVM coinbase (COINBASE opcode) instead of header.coinbase (which is 0x0 on Polygon).
     /// Bor sets `Context.Coinbase = Author(header)` — we must match this for correct execution.
     pub author: Address,
+    /// PIP-88: Chicago cold-storage and precompile gas repricing.
+    /// Set to true when the block is at or past the Chicago fork activation.
+    pub pip88: bool,
 }
