@@ -20,8 +20,7 @@ use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use serde_json::{Value, json};
 
-const TEST_PRIVATE_KEY: &str =
-    "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
+const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
 const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
 const TEST_GAS_LIMIT: u64 = 100_000;
 
@@ -116,7 +115,9 @@ async fn build_and_execute_block(
     }
     let block = build_block(store, blockchain, parent_header).await;
     assert_eq!(block.body.transactions.len(), transactions.len());
-    blockchain.add_block(block.clone()).expect("block should be valid");
+    blockchain
+        .add_block(block.clone())
+        .expect("block should be valid");
     store
         .forkchoice_update(vec![], block.header.number, block.hash(), None, None)
         .await
@@ -156,9 +157,12 @@ async fn setup_single_transfer_block() -> TestEnv {
     let tx = create_transfer_tx(chain_id, 0, recipient, value, &signer).await;
     let tx_hash = tx.hash();
     let block = build_and_execute_block(&store, &blockchain, &genesis_header, vec![tx]).await;
-    TestEnv { store, block, tx_hash }
+    TestEnv {
+        store,
+        block,
+        tx_hash,
+    }
 }
-
 
 #[tokio::test]
 async fn trace_block_by_hash() {

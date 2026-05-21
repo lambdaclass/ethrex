@@ -10,7 +10,9 @@ use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{rpc::RpcApiContext, rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr};
+use crate::{
+    rpc::RpcApiContext, rpc::RpcHandler, types::block_identifier::BlockIdentifier, utils::RpcErr,
+};
 
 /// Default max amount of blocks to re-excute if it is not given
 const DEFAULT_REEXEC: u32 = 128;
@@ -261,12 +263,11 @@ async fn trace_block(
             Ok(serde_json::to_value(block_trace)?)
         }
         TracerType::PrestateTracer => {
-            let config: PrestateTracerConfig =
-                if let Some(value) = &trace_config.tracer_config {
-                    serde_json::from_value(value.clone())?
-                } else {
-                    PrestateTracerConfig::default()
-                };
+            let config: PrestateTracerConfig = if let Some(value) = &trace_config.tracer_config {
+                serde_json::from_value(value.clone())?
+            } else {
+                PrestateTracerConfig::default()
+            };
             config.validate()?;
             let prestate_traces = context
                 .blockchain
@@ -477,10 +478,7 @@ mod tests {
 
     #[test]
     fn parse_trace_block_by_number_with_config() {
-        let params = Some(vec![
-            json!("0x1"),
-            json!({"tracer": "prestateTracer"}),
-        ]);
+        let params = Some(vec![json!("0x1"), json!({"tracer": "prestateTracer"})]);
         let req = TraceBlockByNumberRequest::parse(&params).unwrap();
         assert!(matches!(
             req.trace_config.tracer,
@@ -568,15 +566,13 @@ mod tests {
 
     #[test]
     fn deserialize_trace_config_with_timeout() {
-        let cfg: TraceConfig =
-            serde_json::from_value(json!({"timeout": "10s"})).unwrap();
+        let cfg: TraceConfig = serde_json::from_value(json!({"timeout": "10s"})).unwrap();
         assert_eq!(cfg.timeout, Some(Duration::from_secs(10)));
     }
 
     #[test]
     fn deserialize_trace_config_with_reexec() {
-        let cfg: TraceConfig =
-            serde_json::from_value(json!({"reexec": 256})).unwrap();
+        let cfg: TraceConfig = serde_json::from_value(json!({"reexec": 256})).unwrap();
         assert_eq!(cfg.reexec, Some(256));
     }
 
