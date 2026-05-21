@@ -606,20 +606,34 @@ impl RpcHandler for SendRawTransactionRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let hash = if let SendRawTransactionRequest::EIP4844(wrapped_blob_tx) = self {
-            context
-                .blockchain
-                .add_blob_transaction_to_pool(
-                    wrapped_blob_tx.tx.clone(),
-                    wrapped_blob_tx.blobs_bundle.clone(),
-                )
-                .await
-        } else {
-            context
-                .blockchain
-                .add_transaction_to_pool(self.to_transaction())
-                .await
-        }?;
+        // RPC-submitted transactions are tagged as `TxOrigin::Local` so they may
+        // bypass admission gates (such as the min-tip floor) intended to protect
+        // against P2P spam. See `Blockchain::add_local_transaction_to_pool`.
+        let hash = match self {
+            #[cfg(feature = "c-kzg")]
+            SendRawTransactionRequest::EIP4844(wrapped_blob_tx) => {
+                context
+                    .blockchain
+                    .add_local_blob_transaction_to_pool(
+                        wrapped_blob_tx.tx.clone(),
+                        wrapped_blob_tx.blobs_bundle.clone(),
+                    )
+                    .await?
+            }
+            #[cfg(not(feature = "c-kzg"))]
+            SendRawTransactionRequest::EIP4844(_) => {
+                return Err(RpcErr::Internal(
+                    "EIP-4844 transactions require the c-kzg feature to be enabled at build time"
+                        .to_string(),
+                ));
+            }
+            _ => {
+                context
+                    .blockchain
+                    .add_local_transaction_to_pool(self.to_transaction())
+                    .await?
+            }
+        };
         serde_json::to_value(format!("{hash:#x}"))
             .map_err(|error| RpcErr::Internal(error.to_string()))
     }

@@ -91,7 +91,7 @@ use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
-use mempool::Mempool;
+use mempool::{Mempool, TxOrigin};
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
@@ -2346,12 +2346,39 @@ impl Blockchain {
         Ok(())
     }
 
-    /// Add a blob transaction and its blobs bundle to the mempool checking that the transaction is valid
+    /// Add a P2P-received blob transaction and its blobs bundle to the mempool.
+    ///
+    /// The transaction is validated as `TxOrigin::External`, so it is subject to
+    /// all admission policies (including operator-configurable floors).
     #[cfg(feature = "c-kzg")]
     pub async fn add_blob_transaction_to_pool(
         &self,
         transaction: EIP4844Transaction,
         blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_with_origin(transaction, blobs_bundle, TxOrigin::External)
+            .await
+    }
+
+    /// Add a locally-submitted blob transaction (e.g. via `eth_sendRawTransaction`)
+    /// to the mempool. The transaction is validated as `TxOrigin::Local`, so it may
+    /// bypass operator-friendly admission gates.
+    #[cfg(feature = "c-kzg")]
+    pub async fn add_local_blob_transaction_to_pool(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+    ) -> Result<H256, MempoolError> {
+        self.add_blob_transaction_to_pool_with_origin(transaction, blobs_bundle, TxOrigin::Local)
+            .await
+    }
+
+    #[cfg(feature = "c-kzg")]
+    async fn add_blob_transaction_to_pool_with_origin(
+        &self,
+        transaction: EIP4844Transaction,
+        blobs_bundle: BlobsBundle,
+        origin: TxOrigin,
     ) -> Result<H256, MempoolError> {
         let fork = self.current_fork().await?;
 
@@ -2383,7 +2410,10 @@ impl Blockchain {
         let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
-        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+        if let Some(tx_to_replace) = self
+            .validate_transaction(&transaction, sender, origin)
+            .await?
+        {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
@@ -2395,10 +2425,33 @@ impl Blockchain {
         Ok(hash)
     }
 
-    /// Add a transaction to the mempool checking that the transaction is valid
+    /// Add a P2P-received transaction to the mempool.
+    ///
+    /// The transaction is validated as `TxOrigin::External`, so it is subject to
+    /// all admission policies (including operator-configurable floors).
     pub async fn add_transaction_to_pool(
         &self,
         transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        self.add_transaction_to_pool_with_origin(transaction, TxOrigin::External)
+            .await
+    }
+
+    /// Add a locally-submitted transaction (e.g. via `eth_sendRawTransaction`) to
+    /// the mempool. The transaction is validated as `TxOrigin::Local`, so it may
+    /// bypass operator-friendly admission gates.
+    pub async fn add_local_transaction_to_pool(
+        &self,
+        transaction: Transaction,
+    ) -> Result<H256, MempoolError> {
+        self.add_transaction_to_pool_with_origin(transaction, TxOrigin::Local)
+            .await
+    }
+
+    async fn add_transaction_to_pool_with_origin(
+        &self,
+        transaction: Transaction,
+        origin: TxOrigin,
     ) -> Result<H256, MempoolError> {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
@@ -2422,7 +2475,10 @@ impl Blockchain {
         }
         let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
-        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+        if let Some(tx_to_replace) = self
+            .validate_transaction(&transaction, sender, origin)
+            .await?
+        {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
@@ -2477,12 +2533,27 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the hash of the transaction to replace in case the nonce already exists
+    /// Returns the hash of the transaction to replace in case the nonce already exists.
+    ///
+    /// `origin` records whether the transaction came in via RPC (`TxOrigin::Local`)
+    /// or P2P (`TxOrigin::External`). The plumbing exists so future admission
+    /// gates can apply origin-aware exemptions (e.g. PR #6604's min-tip floor
+    /// will skip local txs by default).
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
+        _origin: TxOrigin,
     ) -> Result<Option<H256>, MempoolError> {
+        // TODO(#6604): when the min-tip floor lands (PR #6604 adds
+        // `BlockchainOptions::min_tip_wei` and a `gas_tip_cap < min_tip_wei`
+        // rejection), drop the underscore from `_origin` and wrap the floor
+        // check with `if origin != TxOrigin::Local { ... }` so
+        // `TxOrigin::Local` transactions bypass the floor. The opt-out
+        // operator flag (e.g. `--mempool.nolocals`) should land in the same
+        // PR that wires the exemption — adding it now would expose a no-op
+        // operator knob.
+
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
