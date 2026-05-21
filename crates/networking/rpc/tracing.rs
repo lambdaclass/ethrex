@@ -503,3 +503,143 @@ fn flatten_recursive(
         flatten_recursive(sub_call, &child_address, result);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_flat_call() {
+        let t: TracerType = serde_json::from_value(json!("flatCallTracer")).unwrap();
+        assert!(matches!(t, TracerType::FlatCallTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        assert!(serde_json::from_value::<TracerType>(json!("unknownTracer")).is_err());
+    }
+
+    // --- flatCallTracer parse test ---
+
+    #[test]
+    fn parse_trace_tx_flat_call_tracer() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "flatCallTracer"}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::FlatCallTracer));
+    }
+
+    // --- flatten_call_trace tests ---
+
+    #[test]
+    fn flatten_single_frame() {
+        let frame = CallTraceFrame {
+            call_type: CallType::CALL,
+            from: Address::zero(),
+            to: Address::from_low_u64_be(1),
+            gas: 21000,
+            gas_used: 21000,
+            input: Bytes::new(),
+            output: Bytes::new(),
+            ..Default::default()
+        };
+        let flat = flatten_call_trace(&frame);
+        assert_eq!(flat.len(), 1);
+        assert_eq!(flat[0].trace_address, Vec::<usize>::new());
+        assert_eq!(flat[0].subtraces, 0);
+        assert_eq!(flat[0].frame_type, "call");
+        assert!(flat[0].action.call_type.as_deref() == Some("call"));
+    }
+
+    #[test]
+    fn flatten_nested_frames() {
+        let grandchild = CallTraceFrame {
+            call_type: CallType::STATICCALL,
+            from: Address::from_low_u64_be(2),
+            to: Address::from_low_u64_be(3),
+            gas: 5000,
+            gas_used: 3000,
+            input: Bytes::new(),
+            output: Bytes::new(),
+            ..Default::default()
+        };
+        let child = CallTraceFrame {
+            call_type: CallType::DELEGATECALL,
+            from: Address::from_low_u64_be(1),
+            to: Address::from_low_u64_be(2),
+            gas: 10000,
+            gas_used: 8000,
+            input: Bytes::new(),
+            output: Bytes::new(),
+            calls: vec![grandchild],
+            ..Default::default()
+        };
+        let root = CallTraceFrame {
+            call_type: CallType::CALL,
+            from: Address::zero(),
+            to: Address::from_low_u64_be(1),
+            gas: 21000,
+            gas_used: 15000,
+            input: Bytes::new(),
+            output: Bytes::new(),
+            calls: vec![child],
+            ..Default::default()
+        };
+        let flat = flatten_call_trace(&root);
+        assert_eq!(flat.len(), 3);
+        // Root
+        assert_eq!(flat[0].trace_address, Vec::<usize>::new());
+        assert_eq!(flat[0].subtraces, 1);
+        // Child
+        assert_eq!(flat[1].trace_address, vec![0]);
+        assert_eq!(flat[1].subtraces, 1);
+        assert!(flat[1].action.call_type.as_deref() == Some("delegatecall"));
+        // Grandchild
+        assert_eq!(flat[2].trace_address, vec![0, 0]);
+        assert_eq!(flat[2].subtraces, 0);
+        assert!(flat[2].action.call_type.as_deref() == Some("staticcall"));
+    }
+
+    #[test]
+    fn flatten_create_frame_type() {
+        let frame = CallTraceFrame {
+            call_type: CallType::CREATE,
+            from: Address::zero(),
+            gas: 50000,
+            gas_used: 32000,
+            input: Bytes::new(),
+            output: Bytes::new(),
+            ..Default::default()
+        };
+        let flat = flatten_call_trace(&frame);
+        assert_eq!(flat[0].frame_type, "create");
+        assert!(flat[0].action.creation_method.as_deref() == Some("create"));
+        assert!(flat[0].action.call_type.is_none());
+        // `to` should be None for create frames
+        assert!(flat[0].action.to.is_none());
+    }
+
+    #[test]
+    fn flatten_error_frame_has_no_result() {
+        let frame = CallTraceFrame {
+            call_type: CallType::CALL,
+            from: Address::zero(),
+            to: Address::from_low_u64_be(1),
+            gas: 21000,
+            gas_used: 0,
+            input: Bytes::new(),
+            output: Bytes::new(),
+            error: Some("out of gas".to_string()),
+            ..Default::default()
+        };
+        let flat = flatten_call_trace(&frame);
+        assert!(flat[0].result.is_none());
+        assert_eq!(flat[0].error.as_deref(), Some("out of gas"));
+    }
+}
