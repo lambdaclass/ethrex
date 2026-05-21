@@ -91,6 +91,18 @@ Node options:
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
+      --mempool.price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).
+
+          [env: ETHREX_MEMPOOL_PRICE_BUMP=]
+          [default: 10]
+
+      --mempool.blob-price-bump <PERCENT>
+          Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.
+
+          [env: ETHREX_MEMPOOL_BLOB_PRICE_BUMP=]
+          [default: 100]
+
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
 

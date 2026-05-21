@@ -119,6 +119,10 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error(
+        "Attempted to replace a pooled transaction with one of a different type (e.g. blob vs. non-blob)"
+    )]
+    ReplacementTypeMismatch,
 }
 
 #[derive(Debug)]

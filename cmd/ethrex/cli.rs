@@ -10,7 +10,8 @@ use std::{
 
 use clap::{ArgAction, Parser as ClapParser, Subcommand as ClapSubcommand};
 use ethrex_blockchain::{
-    BlockchainOptions, BlockchainType, L2Config,
+    BlockchainOptions, BlockchainType, DEFAULT_BLOB_PRICE_BUMP_PERCENT, DEFAULT_PRICE_BUMP_PERCENT,
+    L2Config,
     error::{ChainError, InvalidBlockError},
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
@@ -183,6 +184,24 @@ pub struct Options {
         env = "ETHREX_MEMPOOL_MAX_SIZE"
     )]
     pub mempool_max_size: usize,
+    #[arg(
+        help = "Minimum fee bump (in percent) required to replace a non-blob pooled transaction at the same (sender, nonce).",
+        long = "mempool.price-bump",
+        default_value_t = DEFAULT_PRICE_BUMP_PERCENT,
+        value_name = "PERCENT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_PRICE_BUMP"
+    )]
+    pub mempool_price_bump: u64,
+    #[arg(
+        help = "Minimum fee bump (in percent) required to replace an EIP-4844 blob pooled transaction.",
+        long = "mempool.blob-price-bump",
+        default_value_t = DEFAULT_BLOB_PRICE_BUMP_PERCENT,
+        value_name = "PERCENT",
+        help_heading = "Node options",
+        env = "ETHREX_MEMPOOL_BLOB_PRICE_BUMP"
+    )]
+    pub mempool_blob_price_bump: u64,
     #[arg(
         long = "http.addr",
         default_value = "127.0.0.1",
@@ -464,6 +483,8 @@ impl Default for Options {
             dev: Default::default(),
             force: false,
             mempool_max_size: Default::default(),
+            mempool_price_bump: DEFAULT_PRICE_BUMP_PERCENT,
+            mempool_blob_price_bump: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
             tx_broadcasting_time_interval: Default::default(),
             target_peers: Default::default(),
             lookup_interval: Default::default(),

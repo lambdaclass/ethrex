@@ -457,38 +457,75 @@ impl Mempool {
         sender: Address,
         nonce: u64,
         tx: &Transaction,
+        price_bump_percent: u64,
+        blob_price_bump_percent: u64,
     ) -> Result<Option<H256>, MempoolError> {
         let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
             return Ok(None);
         };
-        let is_a_replacement_tx = {
-            // EIP-1559 values
-            let old_tx_max_fee_per_gas = tx_in_pool.max_fee_per_gas().unwrap_or_default();
-            let old_tx_max_priority_fee_per_gas = tx_in_pool.max_priority_fee().unwrap_or_default();
-            let new_tx_max_fee_per_gas = tx.max_fee_per_gas().unwrap_or_default();
-            let new_tx_max_priority_fee_per_gas = tx.max_priority_fee().unwrap_or_default();
 
-            // Legacy tx values
-            let old_tx_gas_price = tx_in_pool.gas_price();
-            let new_tx_gas_price = tx.gas_price();
+        // Reject type-change replacements. Peer clients keep blob and
+        // non-blob transactions in separate sub-pools precisely so a
+        // cheap-to-replicate non-blob tx can't displace a blob tx (with
+        // its expensive sidecar) or vice versa. ethrex has a single pool,
+        // so the same guarantee has to be enforced here.
+        if std::mem::discriminant(tx) != std::mem::discriminant(tx_in_pool.transaction()) {
+            return Err(MempoolError::ReplacementTypeMismatch);
+        }
 
-            // EIP-4844 values
-            let old_tx_max_fee_per_blob = tx_in_pool.max_fee_per_blob_gas();
-            let new_tx_max_fee_per_blob = tx.max_fee_per_blob_gas();
+        // Blob replacements use a stricter bump (default 100%) because blob
+        // sidecars are expensive to re-propagate; all other tx types use the
+        // base bump (default 10%).
+        let bump = if matches!(tx, Transaction::EIP4844Transaction(_)) {
+            blob_price_bump_percent
+        } else {
+            price_bump_percent
+        };
 
-            let eip4844_higher_fees = if let (Some(old_blob_fee), Some(new_blob_fee)) =
-                (old_tx_max_fee_per_blob, new_tx_max_fee_per_blob)
-            {
-                new_blob_fee > old_blob_fee
-            } else {
-                true // We are marking it as always true if the tx is not eip-4844
-            };
-
-            let eip1559_higher_fees = new_tx_max_fee_per_gas > old_tx_max_fee_per_gas
-                && new_tx_max_priority_fee_per_gas > old_tx_max_priority_fee_per_gas;
-            let legacy_higher_fees = new_tx_gas_price > old_tx_gas_price;
-
-            eip4844_higher_fees && (eip1559_higher_fees || legacy_higher_fees)
+        // The new tx must bump every applicable fee field on its own tx type
+        // by at least `bump` percent compared to the in-pool tx at the same
+        // (sender, nonce). Each peer EL client enforces this independently per
+        // field.
+        let is_a_replacement_tx = match tx {
+            Transaction::LegacyTransaction(_) => {
+                is_bumped_u256(tx_in_pool.gas_price(), tx.gas_price(), bump)
+            }
+            Transaction::EIP4844Transaction(_) => {
+                let bumped_fee = is_bumped_u64(
+                    tx_in_pool.max_fee_per_gas().unwrap_or_default(),
+                    tx.max_fee_per_gas().unwrap_or_default(),
+                    bump,
+                );
+                let bumped_tip = is_bumped_u64(
+                    tx_in_pool.max_priority_fee().unwrap_or_default(),
+                    tx.max_priority_fee().unwrap_or_default(),
+                    bump,
+                );
+                let bumped_blob = is_bumped_u256(
+                    tx_in_pool.max_fee_per_blob_gas().unwrap_or_default(),
+                    tx.max_fee_per_blob_gas().unwrap_or_default(),
+                    bump,
+                );
+                bumped_fee && bumped_tip && bumped_blob
+            }
+            // EIP-2930 / EIP-1559 / EIP-7702 / FeeToken / Privileged: 1559-style
+            // pair of fee fields. (PrivilegedL2 transactions short-circuit
+            // before `validate_transaction` ever reaches `find_tx_to_replace`,
+            // so the Privileged variant of this arm is unreachable in practice;
+            // the other variants do hit it.)
+            _ => {
+                let bumped_fee = is_bumped_u64(
+                    tx_in_pool.max_fee_per_gas().unwrap_or_default(),
+                    tx.max_fee_per_gas().unwrap_or_default(),
+                    bump,
+                );
+                let bumped_tip = is_bumped_u64(
+                    tx_in_pool.max_priority_fee().unwrap_or_default(),
+                    tx.max_priority_fee().unwrap_or_default(),
+                    bump,
+                );
+                bumped_fee && bumped_tip
+            }
         };
 
         if !is_a_replacement_tx {
@@ -497,6 +534,33 @@ impl Mempool {
 
         Ok(Some(tx_in_pool.hash()))
     }
+}
+
+/// Returns true iff `new >= floor(existing * (100 + bump_percent) / 100)`.
+/// Uses `u128` intermediates with checked arithmetic so an overflow on the
+/// threshold computation is treated as "reject" rather than silently
+/// admitting an under-priced replacement. A `bump_percent` of 0 collapses to
+/// `new >= existing`.
+fn is_bumped_u64(existing: u64, new: u64, bump_percent: u64) -> bool {
+    let multiplier = 100u128 + bump_percent as u128;
+    let Some(threshold) = (existing as u128).checked_mul(multiplier).map(|v| v / 100) else {
+        return false;
+    };
+    (new as u128) >= threshold
+}
+
+/// U256 variant of [`is_bumped_u64`]. Used for `gas_price` (legacy) and
+/// `max_fee_per_blob_gas` (EIP-4844). Same overflow → reject semantic via
+/// `checked_mul`.
+fn is_bumped_u256(existing: U256, new: U256, bump_percent: u64) -> bool {
+    let multiplier = U256::from(100u64 + bump_percent);
+    let Some(threshold) = existing
+        .checked_mul(multiplier)
+        .map(|v| v / U256::from(100u64))
+    else {
+        return false;
+    };
+    new >= threshold
 }
 
 /// Filter applied by the payload builder when querying pending transactions
@@ -598,4 +662,249 @@ pub fn transaction_intrinsic_gas(
         .ok_or(MempoolError::TxGasOverflowError)?;
 
     Ok(gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::{EIP1559Transaction, EIP4844Transaction};
+
+    // --- helpers --------------------------------------------------------
+
+    fn add_to_pool(pool: &Mempool, sender: Address, tx: Transaction) -> H256 {
+        let mtx = MempoolTransaction::new(tx, sender);
+        let hash = mtx.hash();
+        pool.add_transaction(hash, sender, mtx).unwrap();
+        hash
+    }
+
+    fn eip1559(nonce: u64, max_fee: u64, max_priority: u64) -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction {
+            nonce,
+            max_fee_per_gas: max_fee,
+            max_priority_fee_per_gas: max_priority,
+            ..Default::default()
+        })
+    }
+
+    fn eip4844(nonce: u64, max_fee: u64, max_priority: u64, blob_fee: u64) -> Transaction {
+        Transaction::EIP4844Transaction(EIP4844Transaction {
+            nonce,
+            max_fee_per_gas: max_fee,
+            max_priority_fee_per_gas: max_priority,
+            max_fee_per_blob_gas: U256::from(blob_fee),
+            ..Default::default()
+        })
+    }
+
+    // --- is_bumped_u64 -------------------------------------------------
+
+    #[test]
+    fn is_bumped_u64_exact_10_percent_accepted() {
+        assert!(is_bumped_u64(100, 110, 10));
+    }
+
+    #[test]
+    fn is_bumped_u64_just_below_10_percent_rejected() {
+        assert!(!is_bumped_u64(100, 109, 10));
+    }
+
+    #[test]
+    fn is_bumped_u64_zero_bump_allows_equal() {
+        assert!(is_bumped_u64(100, 100, 0));
+    }
+
+    #[test]
+    fn is_bumped_u64_zero_existing_always_accepted() {
+        assert!(is_bumped_u64(0, 0, 100));
+        assert!(is_bumped_u64(0, 1, 100));
+    }
+
+    #[test]
+    fn is_bumped_u64_huge_existing_rejects_under_floor() {
+        // At `existing = u64::MAX` the 100%-bumped threshold is ~3.69e19,
+        // which doesn't fit in u64. Any new value (capped at u64::MAX,
+        // ~1.84e19) is strictly below threshold and must be rejected.
+        // The previous saturating-mul implementation silently *admitted*
+        // this case because it saturated the threshold to u64::MAX/100;
+        // the new checked-arithmetic implementation rejects, which is
+        // the correct semantic.
+        assert!(!is_bumped_u64(u64::MAX, u64::MAX, 100));
+        // And the helper does not panic on extreme inputs.
+        let _ = is_bumped_u64(u64::MAX, 0, u64::MAX);
+    }
+
+    // --- is_bumped_u256 ------------------------------------------------
+
+    #[test]
+    fn is_bumped_u256_blob_100_percent_accepted() {
+        assert!(is_bumped_u256(U256::from(50u64), U256::from(100u64), 100));
+    }
+
+    #[test]
+    fn is_bumped_u256_blob_99_percent_rejected() {
+        assert!(!is_bumped_u256(U256::from(100u64), U256::from(199u64), 100));
+    }
+
+    // --- find_tx_to_replace ---------------------------------------------
+
+    #[test]
+    fn replacement_1_wei_bump_rejected_at_10_percent() {
+        // Spec scenario: "Strict-greater-than but below 10% bump rejected"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let old = eip1559(0, 1_000, 100);
+        add_to_pool(&pool, sender, old);
+
+        let new = eip1559(0, 1_001, 100); // +1 wei on max_fee, no bump on tip
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn replacement_full_10_percent_bump_on_both_axes_accepted() {
+        // Spec scenario: "10% bump on both axes accepted"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let old = eip1559(0, 1_000, 100);
+        let old_hash = add_to_pool(&pool, sender, old);
+
+        let new = eip1559(0, 1_100, 110);
+        let found = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap()
+            .expect("replacement should be admitted");
+        assert_eq!(found, old_hash);
+    }
+
+    #[test]
+    fn replacement_asymmetric_bump_rejected() {
+        // Spec scenario: "10% bump on only one axis rejected"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let old = eip1559(0, 1_000, 100);
+        add_to_pool(&pool, sender, old);
+
+        let new = eip1559(0, 1_100, 105); // 10% on fee cap, 5% on tip
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn blob_replacement_50_percent_bump_rejected() {
+        // Spec scenario: "Blob 50% bump rejected"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(2);
+        let old = eip4844(0, 1_000, 100, 50);
+        add_to_pool(&pool, sender, old);
+
+        // 50% bump on all three fields, but blob threshold is 100%.
+        let new = eip4844(0, 1_500, 150, 75);
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::UnderpricedReplacement));
+    }
+
+    #[test]
+    fn blob_replacement_100_percent_bump_on_three_axes_accepted() {
+        // Spec scenario: "Blob 100% bump on three axes accepted"
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(2);
+        let old = eip4844(0, 1_000, 100, 50);
+        let old_hash = add_to_pool(&pool, sender, old);
+
+        let new = eip4844(0, 2_000, 200, 100);
+        let found = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap()
+            .expect("blob replacement should be admitted");
+        assert_eq!(found, old_hash);
+    }
+
+    #[test]
+    fn no_existing_tx_returns_none() {
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(1);
+        let new = eip1559(0, 1_000, 100);
+        let res = pool.find_tx_to_replace(sender, 0, &new, 10, 100).unwrap();
+        assert!(res.is_none());
+    }
+
+    // --- type-change rejection -----------------------------------------
+
+    #[test]
+    fn blob_cannot_be_replaced_by_non_blob() {
+        // An EIP-4844 tx with a blob sidecar must not be displaced by a
+        // cheaper non-blob tx at the same (sender, nonce), regardless of
+        // the fee bump.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(3);
+        add_to_pool(&pool, sender, eip4844(0, 1_000, 100, 50));
+
+        let new = eip1559(0, u64::MAX, u64::MAX); // very high non-blob fees
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
+    }
+
+    #[test]
+    fn non_blob_cannot_be_replaced_by_blob() {
+        // The inverse: a 1559 tx in the pool can't be replaced by a 4844
+        // tx that suddenly demands sidecar handling.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(3);
+        add_to_pool(&pool, sender, eip1559(0, 1_000, 100));
+
+        let new = eip4844(0, 2_000, 200, 100);
+        let err = pool
+            .find_tx_to_replace(sender, 0, &new, 10, 100)
+            .unwrap_err();
+        assert!(matches!(err, MempoolError::ReplacementTypeMismatch));
+    }
+
+    // --- legacy path ---------------------------------------------------
+
+    #[test]
+    fn legacy_replacement_requires_10_percent_bump() {
+        // The legacy branch was missing test coverage. Pin it.
+        let pool = Mempool::new(64);
+        let sender = Address::from_low_u64_be(4);
+
+        let old = Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(1_000u64),
+            ..Default::default()
+        });
+        add_to_pool(&pool, sender, old);
+
+        // 1-wei bump rejected.
+        let too_small = Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(1_001u64),
+            ..Default::default()
+        });
+        assert!(matches!(
+            pool.find_tx_to_replace(sender, 0, &too_small, 10, 100)
+                .unwrap_err(),
+            MempoolError::UnderpricedReplacement
+        ));
+
+        // 10% bump accepted.
+        let ok = Transaction::LegacyTransaction(ethrex_common::types::LegacyTransaction {
+            nonce: 0,
+            gas_price: U256::from(1_100u64),
+            ..Default::default()
+        });
+        let found = pool
+            .find_tx_to_replace(sender, 0, &ok, 10, 100)
+            .unwrap()
+            .expect("legacy replacement at 10% bump should be admitted");
+        assert!(!found.is_zero());
+    }
 }

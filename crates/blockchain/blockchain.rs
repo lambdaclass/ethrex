@@ -230,6 +230,15 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Minimum fee-field bump (in percent) required to replace a non-blob
+    /// transaction at the same `(sender, nonce)`. Matches the 10%
+    /// default of every peer EL client.
+    pub price_bump_percent: u64,
+    /// Minimum fee-field bump (in percent) required to replace an EIP-4844
+    /// blob transaction at the same `(sender, nonce)`. Matches the 100%
+    /// default of every peer EL client. Blob replacements are deliberately
+    /// expensive because blob sidecars are large to re-propagate.
+    pub blob_price_bump_percent: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -241,9 +250,20 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            price_bump_percent: DEFAULT_PRICE_BUMP_PERCENT,
+            blob_price_bump_percent: DEFAULT_BLOB_PRICE_BUMP_PERCENT,
         }
     }
 }
+
+/// Default 10% bump required for non-blob RBF replacements (matches geth
+/// `PriceBump`, reth `default_price_bump`, nethermind `PriceBump`,
+/// erigon `PriceBump`, besu `DEFAULT_PRICE_BUMP`).
+pub const DEFAULT_PRICE_BUMP_PERCENT: u64 = 10;
+/// Default 100% bump required for blob RBF replacements (matches geth
+/// `blobpool.PriceBump`, reth `replace_blob_tx_price_bump`, nethermind
+/// blob comparison, erigon `BlobPriceBump`, besu `DEFAULT_BLOB_PRICE_BUMP`).
+pub const DEFAULT_BLOB_PRICE_BUMP_PERCENT: u64 = 100;
 
 #[derive(Debug, Clone)]
 pub struct BatchBlockProcessingFailure {
@@ -2579,7 +2599,13 @@ impl Blockchain {
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
-        let tx_to_replace_hash = self.mempool.find_tx_to_replace(sender, nonce, tx)?;
+        let tx_to_replace_hash = self.mempool.find_tx_to_replace(
+            sender,
+            nonce,
+            tx,
+            self.options.price_bump_percent,
+            self.options.blob_price_bump_percent,
+        )?;
 
         if tx
             .chain_id()
