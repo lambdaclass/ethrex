@@ -1141,8 +1141,9 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
 ///
 /// Handles debugging and introspection methods:
 /// - Raw data: `debug_getRawHeader`, `debug_getRawBlock`, `debug_getRawTransaction`, `debug_getRawReceipts`
-/// - Execution witness: `debug_executionWitness` (for stateless validation)
+/// - Execution witness: `debug_executionWitness`, `debug_executionWitnessByBlockHash`
 /// - Tracing: `debug_traceTransaction`, `debug_traceBlockByNumber`
+/// - Chain info: `debug_chainConfig`, `debug_getBlockAccessList`, `debug_getBadBlocks`
 pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
     match req.method.as_str() {
         "debug_getRawHeader" => GetRawHeaderRequest::call(req, context).await,
