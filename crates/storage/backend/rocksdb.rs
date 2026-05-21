@@ -206,8 +206,8 @@ impl RocksDBBackend {
     /// can still read from legacy CFs (e.g. `receipts` during v1→v2).
     pub fn drop_obsolete_cfs(&self, path: impl AsRef<Path>) {
         let opts = Options::default();
-        let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
-            .unwrap_or_default();
+        let existing_cfs =
+            DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref()).unwrap_or_default();
 
         for cf_name in &existing_cfs {
             if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
