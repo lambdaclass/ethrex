@@ -104,3 +104,49 @@ impl RpcHandler for StorageRangeAtRequest {
         })?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RpcHandler;
+    use serde_json::json;
+
+    #[test]
+    fn parse_valid_params() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!(0),
+            json!("0x0000000000000000000000000000000000000001"),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            json!(128),
+        ]);
+        let req = StorageRangeAtRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(1));
+        assert_eq!(req.tx_index, 0);
+        assert_eq!(req.max_result, 128);
+    }
+
+    #[test]
+    fn parse_no_params() {
+        assert!(StorageRangeAtRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_wrong_param_count() {
+        let params = Some(vec![json!("0x01"), json!(0)]);
+        assert!(StorageRangeAtRequest::parse(&params).is_err());
+    }
+
+    #[test]
+    fn parse_too_many_params() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!(0),
+            json!("0x0000000000000000000000000000000000000001"),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            json!(128),
+            json!("extra"),
+        ]);
+        assert!(StorageRangeAtRequest::parse(&params).is_err());
+    }
+}
