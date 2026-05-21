@@ -242,7 +242,9 @@ impl RpcHandler for NewPayloadV4Request {
         // EIP-7928 fork-boundary detector: V4 doesn't carry block_access_list_hash
         // in its header schema. If the payload's block_hash matches what a V5-style
         // header (with block_access_list_hash injected) would produce, the sender
-        // used the wrong API version — reject with -32602. Real value-mismatch
+        // used the wrong API version; reject with -32602 (InvalidParams) to match
+        // the EELS fixture test_invalid_pre_fork_block_with_bal_hash_field
+        // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine]. Real value-mismatch
         // tests don't match this alternate and fall through to PayloadStatus.INVALID.
         if block.hash() != self.payload.block_hash {
             let mut alt_header = block.header.clone();
@@ -369,18 +371,25 @@ impl RpcHandler for NewPayloadV5Request {
 
         let chain_config = context.storage.get_chain_config();
 
-        // Pre-Amsterdam timestamps must use V4, not V5 (-32602 per engine-API spec).
+        // Pre-Amsterdam timestamps must use V4, not V5. Per engine-API spec
+        // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
+        // if the timestamp of the payload does not fall within the time frame of
+        // the Amsterdam activation." Symmetric with the V4+Amsterdam case above.
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
-            return Err(RpcErr::WrongParam(
-                "engine_newPayloadV5 requires Amsterdam timestamp".to_string(),
-            ));
+            return Err(RpcErr::UnsupportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
         }
 
         // EIP-7928 fork-boundary detector: V5 requires block_access_list_hash in
         // the header. If the payload's block_hash matches what a V4-style header
         // (without the field) would produce, the sender used the wrong API
-        // version — reject with -32602. Real value-mismatch tests don't match
-        // this alternate and fall through to PayloadStatus.INVALID.
+        // version; reject with -32602 (InvalidParams) to match the EELS fixture
+        // test_invalid_post_fork_block_without_bal_hash_field
+        // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine]. Real
+        // value-mismatch tests don't match this alternate and fall through to
+        // PayloadStatus.INVALID.
         if block.hash() != self.payload.block_hash {
             let mut alt_header = block.header.clone();
             alt_header.block_access_list_hash = None;
