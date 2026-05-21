@@ -193,7 +193,10 @@ pub struct OpcodeStep {
     pub stack: Option<Vec<U256>>,
     /// `Some(chunks)` when memory capture is enabled; `None` when disabled (field omitted).
     pub memory: Option<Vec<MemoryChunk>>,
-    /// `Some(map)` at SLOAD/SSTORE steps when storage capture is enabled (single entry); `None` otherwise.
+    /// `Some(map)` at SLOAD/SSTORE steps when storage capture is enabled; `None`
+    /// otherwise. The map is a cumulative snapshot of every slot touched by an
+    /// SLOAD/SSTORE so far in the transaction — matching geth's structLogger.
+    /// The tracer maintains this in `LevmOpcodeTracer::cumulative_storage`.
     pub storage: Option<BTreeMap<H256, H256>>,
     pub error: Option<String>,
 }
