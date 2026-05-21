@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -5,13 +7,14 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
+use ethrex_metrics::rpc::{RpcOutcome, record_newpayload_v4_metrics, record_rpc_outcome};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::error::RLPDecodeError;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use crate::rpc::{RpcApiContext, RpcHandler};
+use crate::rpc::{RpcApiContext, RpcHandler, get_error_kind};
 use crate::types::payload::{
     ExecutionPayload, ExecutionPayloadBody, ExecutionPayloadBodyV2, ExecutionPayloadResponse,
     PayloadStatus,
@@ -189,6 +192,32 @@ impl RpcHandler for NewPayloadV4Request {
             execution_requests: serde_json::from_value(params[3].clone())
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
         })
+    }
+
+    /// Custom call implementation that tracks block number and latency metrics.
+    /// This overrides the default to capture the full request duration including parsing.
+    async fn call(req: &RpcRequest, context: RpcApiContext) -> Result<Value, RpcErr> {
+        let start_time = Instant::now();
+
+        // Parse the request to get block number for metrics
+        let request = Self::parse(&req.params)?;
+        let block_number = request.payload.block_number;
+
+        // Execute the handler
+        let result = request.handle(context).await;
+
+        // Record latency with block number for correlation in Grafana
+        let latency_ms = start_time.elapsed().as_secs_f64() * 1000.0;
+        record_newpayload_v4_metrics(block_number, latency_ms);
+
+        // Record standard RPC outcome metrics
+        let outcome = match &result {
+            Ok(_) => RpcOutcome::Success,
+            Err(err) => RpcOutcome::Error(get_error_kind(err)),
+        };
+        record_rpc_outcome("engine", "engine_newPayloadV4", outcome);
+
+        result
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
