@@ -150,6 +150,7 @@ fn create_payload_block(genesis_block: &Block, store: &Store) -> (Block, u64) {
         version: 3,
         elasticity_multiplier: 1,
         gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        target_gas_limit: None,
     };
     let id = payload_args.id();
     let block = create_payload(&payload_args, store, Bytes::new()).unwrap();

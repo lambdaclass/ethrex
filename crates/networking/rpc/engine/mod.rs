@@ -66,6 +66,11 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
     }
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        Ok(json!(CAPABILITIES))
+        // Per execution-apis PR #764, advertise both JSON-RPC method names and
+        // the SSZ REST endpoint identifiers we support so the CL can pick the
+        // binary transport per endpoint.
+        let mut all: Vec<&str> = CAPABILITIES.to_vec();
+        all.extend_from_slice(crate::engine_rest::SSZ_REST_CAPABILITIES);
+        Ok(json!(all))
     }
 }

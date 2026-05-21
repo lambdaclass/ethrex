@@ -4,6 +4,7 @@ members = [
   "ef_tests/blockchain",
   "ef_tests/state",
   "ef_tests/state_v2",
+  "engine_rest_bench",
   "hive_report",
   "load_test",
   "loc",

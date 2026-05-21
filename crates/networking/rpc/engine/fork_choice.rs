@@ -207,7 +207,7 @@ fn parse(
     Ok((forkchoice_state, payload_attributes))
 }
 
-async fn handle_forkchoice(
+pub(crate) async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
     context: RpcApiContext,
     version: usize,
@@ -382,7 +382,7 @@ async fn handle_forkchoice(
     }
 }
 
-fn validate_attributes_v1(
+pub(crate) fn validate_attributes_v1(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -392,7 +392,7 @@ fn validate_attributes_v1(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v2(
+pub(crate) fn validate_attributes_v2(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -402,7 +402,7 @@ fn validate_attributes_v2(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v2_pre_shanghai(
+pub(crate) fn validate_attributes_v2_pre_shanghai(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -412,7 +412,7 @@ fn validate_attributes_v2_pre_shanghai(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v3(
+pub(crate) fn validate_attributes_v3(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
     context: &RpcApiContext,
@@ -448,7 +448,7 @@ fn validate_timestamp(
     Ok(())
 }
 
-async fn build_payload(
+pub(crate) async fn build_payload(
     attributes: &PayloadAttributesV3,
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
@@ -465,6 +465,7 @@ async fn build_payload(
         version,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
+        target_gas_limit: None,
     };
     let payload_id = args
         .id()
@@ -514,7 +515,7 @@ fn parse_v4(
     Ok((forkchoice_state, payload_attributes))
 }
 
-fn validate_attributes_v4(
+pub(crate) fn validate_attributes_v4(
     attributes: &PayloadAttributesV4,
     head_block: &BlockHeader,
     context: &RpcApiContext,
@@ -551,7 +552,7 @@ fn validate_timestamp_v4(
     Ok(())
 }
 
-async fn build_payload_v4(
+pub(crate) async fn build_payload_v4(
     attributes: &PayloadAttributesV4,
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
@@ -567,6 +568,9 @@ async fn build_payload_v4(
         version: 4,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
         gas_ceil: context.gas_ceil,
+        // Collapse the EIP-7783 0-sentinel to `None`; see the field doc on
+        // `PayloadAttributesV4::target_gas_limit`.
+        target_gas_limit: attributes.target_gas_limit.filter(|&v| v != 0),
     };
     let payload_id = args
         .id()

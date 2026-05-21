@@ -1,0 +1,27 @@
+[package]
+name = "engine_rest_bench"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dev-dependencies]
+ethrex-common.workspace = true
+ethrex-rpc.workspace = true
+ethrex-storage.workspace = true
+bytes.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+futures.workspace = true
+libssz = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+libssz-types = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "engine_transport"
+harness = false

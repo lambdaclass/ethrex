@@ -159,6 +159,7 @@ impl BlockProducer {
             version,
             elasticity_multiplier: self.elasticity_multiplier,
             gas_ceil: self.block_gas_limit,
+            target_gas_limit: None,
         };
         let payload = create_payload(&args, &self.store, Bytes::new())?;
 

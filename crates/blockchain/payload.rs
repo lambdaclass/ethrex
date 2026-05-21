@@ -95,6 +95,10 @@ pub struct BuildPayloadArgs {
     pub version: u8,
     pub elasticity_multiplier: u64,
     pub gas_ceil: u64,
+    /// CL-provided target gas limit (EIP-7783, Amsterdam). When `Some`, takes
+    /// precedence over `gas_ceil` for `calc_gas_limit`. `None` falls back to
+    /// the builder's `gas_ceil`.
+    pub target_gas_limit: Option<u64>,
 }
 
 #[derive(Debug, Error)]
@@ -117,6 +121,9 @@ impl BuildPayloadArgs {
         if let Some(beacon_root) = self.beacon_root {
             hasher.update(beacon_root);
         }
+        if let Some(target_gas_limit) = self.target_gas_limit {
+            hasher.update(target_gas_limit.to_be_bytes());
+        }
         let res = &mut hasher.finalize()[..8];
         res[0] = self.version;
         Ok(u64::from_be_bytes(res.try_into().map_err(|_| {
@@ -137,7 +144,8 @@ pub fn create_payload(
         .ok_or_else(|| ChainError::ParentNotFound)?;
     let chain_config = storage.get_chain_config();
     let fork = chain_config.fork(args.timestamp);
-    let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
+    let desired_gas_limit = args.target_gas_limit.unwrap_or(args.gas_ceil);
+    let gas_limit = calc_gas_limit(parent_block.gas_limit, desired_gas_limit);
     let excess_blob_gas = chain_config
         .get_fork_blob_schedule(args.timestamp)
         .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork));
@@ -1070,5 +1078,41 @@ impl Ord for HeadTransaction {
 impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_args() -> BuildPayloadArgs {
+        BuildPayloadArgs {
+            parent: BlockHash::zero(),
+            timestamp: 1_700_000_000,
+            fee_recipient: Address::zero(),
+            random: H256::zero(),
+            withdrawals: None,
+            beacon_root: None,
+            slot_number: Some(42),
+            version: 4,
+            elasticity_multiplier: 2,
+            gas_ceil: 30_000_000,
+            target_gas_limit: None,
+        }
+    }
+
+    #[test]
+    fn payload_id_includes_target_gas_limit() {
+        let a = base_args();
+        let mut b = base_args();
+        b.target_gas_limit = Some(36_000_000);
+        assert_ne!(a.id().unwrap(), b.id().unwrap());
+    }
+
+    #[test]
+    fn payload_id_stable_when_target_unchanged() {
+        let a = base_args();
+        let b = base_args();
+        assert_eq!(a.id().unwrap(), b.id().unwrap());
     }
 }

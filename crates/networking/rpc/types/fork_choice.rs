@@ -35,6 +35,12 @@ pub struct PayloadAttributesV4 {
     pub parent_beacon_block_root: Option<H256>,
     #[serde(with = "serde_utils::u64::hex_str")]
     pub slot_number: u64,
+    /// EIP-7783 target gas limit. JSON-RPC clients that don't set this leave
+    /// it as `None`; the SSZ wire transport always supplies a `u64`. Per the
+    /// EIP, `0` is the "unset" sentinel — `build_payload_v4` collapses both
+    /// `Some(0)` (JSON) and `0` (SSZ) to the builder's `gas_ceil`.
+    #[serde(default, with = "serde_utils::u64::hex_str_opt")]
+    pub target_gas_limit: Option<u64>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
