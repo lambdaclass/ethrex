@@ -450,13 +450,16 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
-                let result = if make_witness {
-                    blockchain.add_block_pipeline_with_witness(block, bal.as_ref())
-                } else {
-                    blockchain
-                        .add_block_pipeline(block, bal.as_ref())
-                        .map(|()| None)
-                };
+                let result = (|| {
+                    if make_witness {
+                        let witness =
+                            blockchain.add_block_pipeline_with_witness(block, bal.as_ref())?;
+                        Ok(Some(witness))
+                    } else {
+                        blockchain.add_block_pipeline(block, bal.as_ref())?;
+                        Ok(None)
+                    }
+                })();
                 let _ = notify
                     .send(result)
                     .inspect_err(|_| tracing::error!("failed to notify caller"));

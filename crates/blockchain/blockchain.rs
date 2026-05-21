@@ -1865,10 +1865,14 @@ impl Blockchain {
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
-    ) -> Result<Option<ExecutionWitness>, ChainError> {
+    ) -> Result<ExecutionWitness, ChainError> {
         let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
         result?;
-        Ok(witness)
+        witness.ok_or_else(|| {
+            ChainError::WitnessGeneration(
+                "forced witness collection completed without producing a witness".to_string(),
+            )
+        })
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
