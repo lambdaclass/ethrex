@@ -213,7 +213,17 @@ impl RpcHandler for TraceTransactionRequest {
                     emit,
                 })?)
             }
-            TracerType::NoopTracer => Ok(serde_json::json!({})),
+            TracerType::NoopTracer => {
+                // Like geth, noopTracer still executes the transaction (validating
+                // it exists and that parent state can be rebuilt) but discards the
+                // trace result, returning an empty object.
+                context
+                    .blockchain
+                    .trace_transaction_calls(self.tx_hash, reexec, timeout, true, false)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                Ok(serde_json::json!({}))
+            }
         }
     }
 }
@@ -361,17 +371,16 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 Ok(serde_json::to_value(block_trace)?)
             }
             TracerType::NoopTracer => {
-                // Return one empty object per transaction in the block, matching
-                // geth's behaviour where noopTracer produces {} for each tx.
-                let tx_hashes: Vec<H256> = block
-                    .body
-                    .transactions
-                    .iter()
-                    .map(|tx| tx.hash())
-                    .collect();
-                let block_trace: BlockTrace<Value> = tx_hashes
+                // Like geth, noopTracer still re-executes every transaction in
+                // the block but discards the trace data, returning {} per tx.
+                let call_traces = context
+                    .blockchain
+                    .trace_block_calls(block, reexec, timeout, true, false)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let block_trace: BlockTrace<Value> = call_traces
                     .into_iter()
-                    .map(|hash| (hash, serde_json::json!({})).into())
+                    .map(|(hash, _)| (hash, serde_json::json!({})).into())
                     .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
