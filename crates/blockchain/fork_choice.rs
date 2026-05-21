@@ -4,10 +4,12 @@ use ethrex_common::{
 };
 use ethrex_metrics::metrics;
 use ethrex_storage::{Store, error::StoreError};
-use tracing::{error, warn};
+use std::collections::HashMap;
+use tracing::{error, info, warn};
 
 use crate::{
-    error::{self, InvalidForkChoice},
+    Blockchain,
+    error::{self, ChainError, InvalidForkChoice},
     is_canonical,
 };
 
@@ -255,4 +257,230 @@ async fn find_link_with_canonical_chain(
     }
 
     Ok(None)
+}
+
+// ===========================================================================
+// Deep-reorg apply path (issue #6685, PR 3 orchestration).
+// ===========================================================================
+
+/// Wrapper around [`apply_fork_choice`] that handles the deep-reorg case:
+/// when the head's state is not reachable from the on-disk trie (the link
+/// block's state has been flushed past the layer-cache edge), build an
+/// in-memory overlay from the journal, replay the side chain against it,
+/// and atomically reconcile on the first new-chain commit.
+///
+/// For shallow reorgs and no-op cases the call falls through to
+/// `apply_fork_choice` and behaves identically. The 128-block
+/// [`REORG_DEPTH_LIMIT`] cap is left in place; PR 4 lifts it.
+pub async fn apply_fork_choice_with_deep_reorg(
+    blockchain: &Blockchain,
+    head_hash: H256,
+    safe_hash: H256,
+    finalized_hash: H256,
+) -> Result<BlockHeader, InvalidForkChoice> {
+    // Short-circuit when a previous deep-reorg apply is still in flight. The CL
+    // retries on SYNCING; once the in-progress reorg completes, the next FCU
+    // is processed normally.
+    if blockchain.is_reorg_in_progress() {
+        return Err(InvalidForkChoice::Syncing);
+    }
+
+    let store = blockchain.store();
+    match apply_fork_choice(store, head_hash, safe_hash, finalized_hash).await {
+        Ok(header) => Ok(header),
+        Err(InvalidForkChoice::StateNotReachable) => {
+            info!(%head_hash, "head state not reachable from disk; attempting deep-reorg apply");
+            reorg_apply_deep(blockchain, head_hash, safe_hash, finalized_hash).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Drives the deep-reorg apply pass:
+///
+/// 1. Walk back through `HEADERS` to find the pivot ; the deepest block on
+///    the OLD canonical chain that is also an ancestor of the new head.
+/// 2. Look up the cache edge `D` from `STATE_HISTORY` (the highest journal
+///    entry's block number).
+/// 3. Build the OLD canonical chain's hash chain in `[pivot+1, D]` so the
+///    overlay constructor can verify each journal entry's `block_hash`.
+/// 4. Install the overlay; layer cache is reset and reads cascade through it.
+/// 5. Execute the side-chain blocks `[pivot+1 .. head]` (inclusive of head)
+///    in chain order via `Blockchain::add_block`. The first such block's
+///    commit triggers the Section 9 reconciliation that folds overlay +
+///    layer_T into a single atomic disk write.
+/// 6. Update `CANONICAL_BLOCK_HASHES` via `forkchoice_update`.
+async fn reorg_apply_deep(
+    blockchain: &Blockchain,
+    head_hash: H256,
+    safe_hash: H256,
+    finalized_hash: H256,
+) -> Result<BlockHeader, InvalidForkChoice> {
+    // Mark the reorg in progress for the duration of this call. The guard
+    // clears the flag on every exit path (success, error, panic via
+    // unwinding). Concurrent FCUs see the flag set and short-circuit to
+    // SYNCING (see `apply_fork_choice_with_deep_reorg`).
+    let _reorg_guard = blockchain.enter_reorg();
+
+    let store = blockchain.store();
+
+    let head = store
+        .get_block_header_by_hash(head_hash)?
+        .ok_or(InvalidForkChoice::Syncing)?;
+
+    // Branch is head's non-canonical ancestors, in descending order. The
+    // deepest entry's `(number-1)` is the pivot. Head itself is NOT in the
+    // branch and must be appended to the replay list below.
+    let new_canonical_blocks = find_link_with_canonical_chain(store, &head)
+        .await?
+        .ok_or(InvalidForkChoice::UnlinkedHead)?;
+
+    let pivot_number = match new_canonical_blocks.last() {
+        Some((n, _)) => n.saturating_sub(1),
+        None => head.number.saturating_sub(1),
+    };
+
+    // Overlay range is `[pivot+1, edge]` where `edge` is the highest committed
+    // block (= highest journal entry).
+    let edge = store
+        .highest_state_history_block_number()?
+        .ok_or(InvalidForkChoice::StateNotReachable)?;
+    let to_block = pivot_number.saturating_add(1);
+    if edge < to_block {
+        // Pivot is above the cache edge ; `apply_fork_choice` should have
+        // succeeded as a shallow reorg. Bail.
+        warn!(
+            edge,
+            to_block, "deep-reorg path entered but pivot is above cache edge"
+        );
+        return Err(InvalidForkChoice::StateNotReachable);
+    }
+
+    // Pre-build the OLD canonical chain's hash lookup for journal verification.
+    // This must reflect the chain BEFORE we update CANONICAL_BLOCK_HASHES below.
+    let mut canonical_hashes: HashMap<BlockNumber, H256> = HashMap::new();
+    for n in to_block..=edge {
+        if let Some(hash) = store.get_canonical_block_hash_sync(n)? {
+            canonical_hashes.insert(n, hash);
+        }
+    }
+
+    // Install the overlay. On failure the existing cache stays intact.
+    store
+        .install_overlay_for_reorg(edge, to_block, |n| canonical_hashes.get(&n).copied())
+        .map_err(|e| {
+            error!(error = %e, "deep-reorg: overlay install failed");
+            InvalidForkChoice::StateNotReachable
+        })?;
+
+    // From this point on, any error must reset the layer cache to a fresh
+    // empty state; a half-installed overlay + partial new-chain layers would
+    // leak into subsequent FCU evaluations. The guard fires `abort_reorg`
+    // on drop unless `disarm()` is called below after success.
+    let mut abort_guard = AbortReorgGuard::new(store);
+
+    // Execute side-chain blocks in chain order (oldest first), including head.
+    // `find_link_with_canonical_chain` returns the branch in descending order
+    // and EXCLUDES head; we reverse the branch and append head so reorg replay
+    // covers `[pivot+1 .. head]`.
+    let replay_iter = new_canonical_blocks
+        .iter()
+        .rev()
+        .copied()
+        .chain(std::iter::once((head.number, head_hash)));
+
+    for (number, block_hash) in replay_iter {
+        let block = match store.get_block_by_hash(block_hash).await? {
+            Some(b) => b,
+            None => {
+                warn!(%number, %block_hash, "deep-reorg: side-chain block body missing");
+                return Err(InvalidForkChoice::UnlinkedHead);
+            }
+        };
+        if let Err(e) = blockchain.add_block(block) {
+            error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
+            return Err(map_chain_error_for_fcu(e));
+        }
+    }
+
+    let safe_res = if !safe_hash.is_zero() {
+        store.get_block_header_by_hash(safe_hash)?
+    } else {
+        None
+    };
+    let finalized_res = if !finalized_hash.is_zero() {
+        store.get_block_header_by_hash(finalized_hash)?
+    } else {
+        None
+    };
+
+    store
+        .forkchoice_update(
+            new_canonical_blocks,
+            head.number,
+            head_hash,
+            safe_res.map(|h| h.number),
+            finalized_res.map(|h| h.number),
+        )
+        .await?;
+
+    // forkchoice_update succeeded; new chain is canonical. Disarm the abort
+    // guard so the cache (now correct) is preserved on return.
+    abort_guard.disarm();
+
+    metrics!(
+        use ethrex_metrics::blocks::METRICS_BLOCKS;
+        METRICS_BLOCKS.set_head_height(head.number);
+    );
+
+    info!(
+        head_number = head.number,
+        pivot_number,
+        side_chain_len = head.number.saturating_sub(pivot_number),
+        "deep-reorg apply succeeded"
+    );
+
+    Ok(head)
+}
+
+/// RAII guard that calls [`Store::abort_reorg`] on drop, resetting the layer
+/// cache to a fresh empty state, unless [`disarm`](Self::disarm) is called
+/// first.
+///
+/// Armed by [`reorg_apply_deep`] immediately after `install_overlay_for_reorg`
+/// succeeds, so any subsequent failure (side-chain execution error, missing
+/// block body, fork-choice update error, panic via unwinding) leaves the
+/// store recoverable for the next FCU.
+struct AbortReorgGuard<'a> {
+    store: &'a Store,
+    armed: bool,
+}
+
+impl<'a> AbortReorgGuard<'a> {
+    fn new(store: &'a Store) -> Self {
+        Self { store, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for AbortReorgGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed
+            && let Err(e) = self.store.abort_reorg()
+        {
+            error!(error = %e, "AbortReorgGuard: abort_reorg failed during cleanup");
+        }
+    }
+}
+
+/// Maps a [`ChainError`] from a side-chain block execution to the closest
+/// [`InvalidForkChoice`] variant. Side-chain execution failures during deep
+/// reorg almost always indicate the new chain is invalid; we collapse them
+/// to `StateNotReachable` (engine API responds `SYNCING`). A follow-up could
+/// walk back to emit `InvalidAncestor` with the last-valid-hash.
+fn map_chain_error_for_fcu(_: ChainError) -> InvalidForkChoice {
+    InvalidForkChoice::StateNotReachable
 }

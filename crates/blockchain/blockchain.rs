@@ -201,6 +201,12 @@ pub struct Blockchain {
     /// Set to true after initial sync completes, never reset to false.
     /// Does not reflect whether an ongoing sync is in progress.
     is_synced: AtomicBool,
+    /// Set while a deep-reorg apply pass is in flight (issue #6685). Concurrent
+    /// FCUs from the engine API short-circuit to SYNCING while this is set,
+    /// and journal pruning in `forkchoice_update_inner` defers until the apply
+    /// pass clears it. Managed via [`enter_reorg`](Self::enter_reorg) which
+    /// returns a [`ReorgGuard`] RAII that clears the flag on drop.
+    reorg_in_progress: AtomicBool,
     /// Configuration options for blockchain behavior.
     pub options: BlockchainOptions,
     /// Cache of recently built payloads.
@@ -211,6 +217,21 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
+}
+
+/// RAII guard that clears [`Blockchain::reorg_in_progress`] on drop. Returned by
+/// [`Blockchain::enter_reorg`]. Ensures the flag is reset on every exit path of
+/// the apply pass, including panics that unwind through the guard.
+pub struct ReorgGuard<'a> {
+    blockchain: &'a Blockchain,
+}
+
+impl Drop for ReorgGuard<'_> {
+    fn drop(&mut self) {
+        self.blockchain
+            .reorg_in_progress
+            .store(false, Ordering::Release);
+    }
 }
 
 /// Configuration options for the blockchain.
@@ -339,6 +360,7 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
@@ -350,10 +372,33 @@ impl Blockchain {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
+            reorg_in_progress: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
             merkle_pool: Self::build_merkle_pool(),
         }
+    }
+
+    /// Returns a reference to the underlying [`Store`]. Used by the deep-reorg
+    /// orchestrator to drive the storage-side primitives.
+    pub fn store(&self) -> &Store {
+        &self.storage
+    }
+
+    /// Returns `true` while a deep-reorg apply pass is in flight. Set by
+    /// [`enter_reorg`](Self::enter_reorg); the engine API's FCU handler should
+    /// short-circuit to SYNCING when this is `true`.
+    pub fn is_reorg_in_progress(&self) -> bool {
+        self.reorg_in_progress.load(Ordering::Acquire)
+    }
+
+    /// Marks the start of a deep-reorg apply pass and returns a RAII guard that
+    /// clears the flag on drop (success, error, or panic). At most one apply
+    /// pass should be running at a time; callers must check
+    /// [`is_reorg_in_progress`](Self::is_reorg_in_progress) before invoking.
+    pub fn enter_reorg(&self) -> ReorgGuard<'_> {
+        self.reorg_in_progress.store(true, Ordering::Release);
+        ReorgGuard { blockchain: self }
     }
 
     /// Executes a block withing a new vm instance and state
@@ -3262,4 +3307,51 @@ fn collect_trie(index: u8, mut trie: Trie) -> Result<(Box<BranchNode>, Vec<TrieN
         return Err(TrieError::InvalidInput);
     };
     Ok((root, nodes))
+}
+
+#[cfg(test)]
+mod reorg_guard_tests {
+    use super::*;
+    use ethrex_storage::{EngineType, Store};
+
+    fn make_blockchain() -> Blockchain {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path(), EngineType::InMemory).unwrap();
+        Blockchain::default_with_store(store)
+    }
+
+    /// `enter_reorg` SHALL set the flag; the returned guard SHALL clear it on drop.
+    #[test]
+    fn reorg_guard_sets_and_clears_flag() {
+        let blockchain = make_blockchain();
+        assert!(!blockchain.is_reorg_in_progress(), "flag starts false");
+
+        {
+            let _guard = blockchain.enter_reorg();
+            assert!(
+                blockchain.is_reorg_in_progress(),
+                "flag must be set while guard is alive"
+            );
+        }
+        assert!(
+            !blockchain.is_reorg_in_progress(),
+            "flag must clear when guard drops"
+        );
+    }
+
+    /// The guard SHALL clear the flag even when its scope ends via panic unwinding.
+    #[test]
+    fn reorg_guard_clears_flag_on_panic() {
+        let blockchain = make_blockchain();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = blockchain.enter_reorg();
+            assert!(blockchain.is_reorg_in_progress());
+            panic!("simulated apply failure");
+        }));
+        assert!(result.is_err(), "panic must propagate out of the scope");
+        assert!(
+            !blockchain.is_reorg_in_progress(),
+            "flag must be cleared after a panicking guard scope"
+        );
+    }
 }
