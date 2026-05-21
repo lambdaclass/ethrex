@@ -70,6 +70,16 @@ pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
 }
 
+/// Parse a duration string like `3h`, `30m`, `45s` into a [`Duration`].
+///
+/// Delegates to [`ethrex_common::serde_utils::parse_duration`], which accepts
+/// concatenations of unit-suffixed values (`h`, `m`, `s`, `ms`, `us`/`µs`,
+/// `ns`). For example `1h30m` parses to 1 hour 30 minutes.
+pub fn parse_duration(s: &str) -> eyre::Result<std::time::Duration> {
+    ethrex_common::serde_utils::parse_duration(s.to_string())
+        .ok_or_else(|| eyre::eyre!("invalid duration {s:?}"))
+}
+
 pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
     let trimmed = s.trim();
     if trimmed.is_empty() {

@@ -50,6 +50,27 @@ pub const MIN_GAS_LIMIT: u64 = 5000;
 // https://eips.ethereum.org/EIPS/eip-7825
 pub const POST_OSAKA_GAS_LIMIT_CAP: u64 = 16777216;
 
+// === Mempool sweep defaults ===
+
+use std::time::Duration;
+
+/// Default maximum age of a mempool transaction before the periodic sweep
+/// evicts it. Transactions older than this are dropped regardless of pool
+/// occupancy.
+pub const DEFAULT_MEMPOOL_LIFETIME: Duration = Duration::from_secs(3 * 60 * 60);
+
+/// Default maximum gap allowed between a sender's top pending nonce and
+/// their on-chain nonce before the dormancy sweep considers them stalled.
+pub const DEFAULT_MAX_NONCE_GAP: u64 = 64;
+
+/// Default dormancy window for the nonce-gap sweep. A sender must have made
+/// no on-chain progress for at least this long (i.e. all their pool entries
+/// are older than this) before they are eligible for eviction.
+pub const DEFAULT_DORMANCY: Duration = Duration::from_secs(3 * 60 * 60);
+
+/// How often the periodic mempool sweep runs.
+pub const MEMPOOL_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
+
 // === EIP-7981 / EIP-7976 constants (Amsterdam+) ===
 // access_list_bytes * STANDARD_TOKEN_COST(4) * TOTAL_COST_FLOOR_PER_TOKEN(16) = access_list_bytes * 64
 // Per address entry: 20 bytes * 64 = 1280
