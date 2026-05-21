@@ -228,6 +228,7 @@ pub async fn init_l2(
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        delegated_sender_cap: opts.node_opts.mempool_delegated_sender_cap,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());

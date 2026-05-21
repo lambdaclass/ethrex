@@ -119,6 +119,10 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error(
+        "Sender is an EIP-7702 delegated EOA and already has the maximum number of pending transactions in the mempool (cap: {0})"
+    )]
+    MaxDelegatedPendingTxsExceeded(u64),
 }
 
 #[derive(Debug)]

@@ -51,7 +51,10 @@ pub mod tracing;
 pub mod vm;
 
 use ::tracing::{debug, error, info, instrument, warn};
-use constants::{AMSTERDAM_MAX_INITCODE_SIZE, MAX_INITCODE_SIZE, POST_OSAKA_GAS_LIMIT_CAP};
+use constants::{
+    AMSTERDAM_MAX_INITCODE_SIZE, DEFAULT_DELEGATED_SENDER_CAP, MAX_INITCODE_SIZE,
+    POST_OSAKA_GAS_LIMIT_CAP,
+};
 use error::MempoolError;
 use error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::{EMPTY_TRIE_HASH, MIN_BASE_FEE_PER_BLOB_GAS};
@@ -65,7 +68,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
+    ChainConfig, Code, EIP7702_DELEGATION_CODE_LEN, Receipt, Transaction,
+    WrappedEIP4844Transaction, is_eip7702_delegation, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -230,6 +234,13 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Maximum number of pending transactions an EIP-7702 delegated EOA may
+    /// keep in the mempool. Defaults to [`DEFAULT_DELEGATED_SENDER_CAP`].
+    ///
+    /// Delegated EOAs are held to a tighter cap than regular senders because
+    /// their delegate contract can be invoked to act on behalf of multiple
+    /// identities, amplifying the spam surface of a single signer.
+    pub delegated_sender_cap: u64,
 }
 
 impl Default for BlockchainOptions {
@@ -241,6 +252,7 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            delegated_sender_cap: DEFAULT_DELEGATED_SENDER_CAP,
         }
     }
 }
@@ -2386,12 +2398,17 @@ impl Blockchain {
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
+        let effective_cap = self.effective_per_sender_cap(sender).await?;
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            effective_cap,
+        )?;
         Ok(hash)
     }
 
@@ -2425,10 +2442,15 @@ impl Blockchain {
         if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
+        let effective_cap = self.effective_per_sender_cap(sender).await?;
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            effective_cap,
+        )?;
 
         Ok(hash)
     }
@@ -2560,7 +2582,7 @@ impl Blockchain {
 
         let maybe_sender_acc_info = self.storage.get_account_info(header_no, sender).await?;
 
-        if let Some(sender_acc_info) = maybe_sender_acc_info {
+        let sender_code_hash = if let Some(sender_acc_info) = &maybe_sender_acc_info {
             if nonce < sender_acc_info.nonce || nonce == u64::MAX {
                 return Err(MempoolError::NonceTooLow);
             }
@@ -2572,10 +2594,11 @@ impl Blockchain {
             if tx_cost > sender_acc_info.balance {
                 return Err(MempoolError::NotEnoughBalance);
             }
+            sender_acc_info.code_hash
         } else {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
-        }
+        };
 
         // Check the nonce of pendings TXs in the mempool from the same sender
         // If it exists check if the new tx has higher fees
@@ -2588,7 +2611,70 @@ impl Blockchain {
             return Err(MempoolError::InvalidChainId(config.chain_id));
         }
 
+        // EIP-7702 delegated EOAs are capped at a tighter number of pending
+        // transactions because their delegate contract can be invoked to act
+        // on behalf of multiple identities. Replacements (`tx_to_replace_hash`
+        // is `Some`) bypass the cap: they swap a slot rather than consuming a
+        // new one.
+        //
+        // TODO: once an atomic version of the per-sender pending-tx cap lands
+        // (mirroring the count + insert pair under the mempool write lock),
+        // move the effective-cap computation to be passed into
+        // `Mempool::add_transaction` and enforce the check there to close the
+        // TOCTOU window between this read and insertion.
+        if tx_to_replace_hash.is_none() && self.is_sender_delegated(sender_code_hash)? {
+            let cap = self.options.delegated_sender_cap;
+            let pending = self.mempool.pending_tx_count_for_sender(sender)?;
+            if pending >= cap {
+                return Err(MempoolError::MaxDelegatedPendingTxsExceeded(cap));
+            }
+        }
+
         Ok(tx_to_replace_hash)
+    }
+
+    /// Computes the effective per-sender pending-tx cap for `sender`. Returns
+    /// `options.delegated_sender_cap` when the sender is an EIP-7702 delegated
+    /// EOA, otherwise `u64::MAX` (no cap). Used by the mempool entry points
+    /// to enforce the cap atomically inside [`Mempool::add_transaction`] under
+    /// the write lock — closing the TOCTOU window between
+    /// [`Self::validate_transaction`]'s read-lock check and the eventual
+    /// insertion.
+    pub async fn effective_per_sender_cap(&self, sender: Address) -> Result<u64, MempoolError> {
+        let header_no = self.storage.get_latest_block_number().await?;
+        let Some(sender_info) = self.storage.get_account_info(header_no, sender).await? else {
+            return Ok(u64::MAX);
+        };
+        if self.is_sender_delegated(sender_info.code_hash)? {
+            Ok(self.options.delegated_sender_cap)
+        } else {
+            Ok(u64::MAX)
+        }
+    }
+
+    /// Returns `true` when the account identified by `code_hash` is an
+    /// EIP-7702 delegated EOA (its code is exactly `0xef0100 || address`).
+    ///
+    /// Uses a length pre-check via [`Store::get_code_metadata`] so that the
+    /// full bytecode is only fetched when the code length matches the
+    /// delegation designation (23 bytes).
+    fn is_sender_delegated(&self, code_hash: H256) -> Result<bool, MempoolError> {
+        let Some(metadata) = self.storage.get_code_metadata(code_hash)? else {
+            return Ok(false);
+        };
+        if metadata.length != EIP7702_DELEGATION_CODE_LEN as u64 {
+            return Ok(false);
+        }
+        let Some(code) = self.storage.get_account_code(code_hash)? else {
+            // The metadata table claimed the code exists at the expected
+            // length but the code table is missing it — surface this as a
+            // store error rather than silently treating the sender as
+            // non-delegated.
+            return Err(MempoolError::StoreError(StoreError::Custom(format!(
+                "code metadata present for {code_hash:?} but bytecode missing"
+            ))));
+        };
+        Ok(is_eip7702_delegation(&code.bytecode))
     }
 
     /// Marks the node's chain as up to date with the current chain
