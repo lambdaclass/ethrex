@@ -1,0 +1,461 @@
+//! End-to-end tests for the opcode tracer, pinning the geth-RPC `structLogger`
+//! wire shape used by `debug_traceTransaction`.
+//!
+//! Each test runs a small bytecode through `LEVM::trace_tx_opcodes`, wraps the
+//! resulting [`OpcodeTraceResult`](ethrex_common::tracing::OpcodeTraceResult)
+//! with [`StructLoggerResult`](ethrex_common::tracing::StructLoggerResult), and
+//! asserts on the resulting JSON shape. Behaviour is verified at the wire-format
+//! boundary, not on internal Rust types.
+//!
+//! Per-step content matches what geth and besu emit from `debug_traceTransaction`:
+//! `op` is a string mnemonic (e.g. `"PUSH1"`), no `opName` field, `gas`/`gasCost`/
+//! `refund` are decimal JSON numbers, `stack` is a JSON array of `"0xN"` hex strings
+//! or `null` when capture is disabled. Verified live against geth + besu on a
+//! kurtosis localnet. The strict EIP-3155 shape (numeric `op` + `opName` + hex
+//! gas) is served by a separate `Eip3155Step` newtype and is not covered here.
+
+use super::test_db::TestDatabase;
+use bytes::Bytes;
+use ethrex_common::tracing::{StructLoggerEmit, StructLoggerResult};
+use ethrex_common::{
+    Address, U256,
+    types::{Account, BlockHeader, Code, EIP1559Transaction, Transaction, TxKind},
+};
+use ethrex_crypto::NativeCrypto;
+use ethrex_levm::db::gen_db::GeneralizedDatabase;
+use ethrex_levm::tracing::OpcodeTracerConfig;
+use ethrex_levm::vm::VMType;
+use ethrex_vm::backends::levm::LEVM;
+use once_cell::sync::OnceCell;
+use rustc_hash::FxHashMap;
+use serde_json::Value;
+use std::sync::Arc;
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+fn default_header() -> BlockHeader {
+    BlockHeader {
+        coinbase: Address::from_low_u64_be(0xCCC),
+        base_fee_per_gas: Some(1),
+        gas_limit: 30_000_000,
+        ..Default::default()
+    }
+}
+
+fn make_tx(contract: Address, sender: Address) -> Transaction {
+    Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 1,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 10,
+        gas_limit: 100_000,
+        to: TxKind::Call(contract),
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: vec![],
+        signature_y_parity: false,
+        signature_r: U256::one(),
+        signature_s: U256::one(),
+        inner_hash: OnceCell::new(),
+        sender_cache: {
+            let cell = OnceCell::new();
+            let _ = cell.set(sender);
+            cell
+        },
+        cached_canonical: OnceCell::new(),
+    })
+}
+
+/// Runs `bytecode` under a contract account with `cfg` and returns the trace
+/// serialized in the geth-RPC `structLogger` wire shape as a `serde_json::Value`.
+fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto),
+            1,
+            FxHashMap::default(),
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
+    let header = default_header();
+    let tx = make_tx(contract_addr, sender_addr);
+
+    let emit = StructLoggerEmit {
+        mem_size: cfg.enable_memory,
+        return_data: cfg.enable_return_data,
+        refund: false,
+    };
+    let result = LEVM::trace_tx_opcodes(&mut db, &header, &tx, cfg, VMType::L1, &NativeCrypto)
+        .expect("trace should succeed");
+    serde_json::to_value(StructLoggerResult {
+        result: &result,
+        emit,
+    })
+    .expect("serialize")
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+/// `PUSH1 0x01 PUSH1 0x02 ADD STOP`
+///
+/// Pins the structLogger wrapper (`failed`/`gas`/`returnValue`/`structLogs`)
+/// and the per-step fields emitted under geth's *default* tracer config:
+/// `pc, op, gas, gasCost, depth, stack` — and nothing else. With memory/returnData
+/// capture off (the geth default), `memSize`, `returnData`, and `refund` are suppressed
+/// to match geth's empirical wire output byte-for-byte.
+#[test]
+fn opcode_tracer_basic_execution() {
+    let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00];
+    let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
+
+    assert_eq!(j["failed"], Value::Bool(false));
+    assert!(j["gas"].is_number(), "wrapper gas is a number");
+    assert_eq!(j["returnValue"], Value::String("0x".to_string()));
+
+    let steps = j["structLogs"].as_array().expect("structLogs is array");
+    assert_eq!(steps.len(), 4, "PUSH1 PUSH1 ADD STOP");
+
+    // PUSH1 0x01 — first step, empty stack pre-execution.
+    assert_eq!(steps[0]["pc"], Value::Number(0.into()));
+    assert_eq!(steps[0]["op"].as_str(), Some("PUSH1"));
+    assert!(steps[0]["gas"].is_number(), "gas is a number");
+    assert_eq!(steps[0]["gasCost"].as_u64(), Some(3));
+    assert_eq!(steps[0]["depth"].as_u64(), Some(1));
+    assert_eq!(steps[0]["stack"], Value::Array(vec![]));
+
+    // Fields suppressed under default config (geth-compat).
+    assert!(
+        steps[0].get("memSize").is_none(),
+        "memSize must be absent when memory capture is disabled"
+    );
+    assert!(
+        steps[0].get("returnData").is_none(),
+        "returnData must be absent when return-data capture is disabled"
+    );
+    assert!(
+        steps[0].get("refund").is_none(),
+        "refund must be absent under geth-compat emit defaults"
+    );
+    assert!(
+        steps[0].get("opName").is_none(),
+        "structLogger shape: no separate opName field"
+    );
+
+    // ADD — third step, stack bottom-first [0x1, 0x2] pre-execution.
+    assert_eq!(steps[2]["op"].as_str(), Some("ADD"));
+    let add_stack = steps[2]["stack"].as_array().expect("stack array");
+    assert_eq!(add_stack[0], Value::String("0x1".to_string()));
+    assert_eq!(add_stack[1], Value::String("0x2".to_string()));
+
+    // STOP — final step, stack collapsed to [0x3].
+    assert_eq!(steps[3]["op"].as_str(), Some("STOP"));
+    let stop_stack = steps[3]["stack"].as_array().expect("stack array");
+    assert_eq!(stop_stack, &vec![Value::String("0x3".to_string())]);
+}
+
+/// `PUSH1 0x2a PUSH1 0x01 SSTORE STOP`
+///
+/// Single-SSTORE case: the SSTORE step embeds the (single) slot that's been
+/// touched so far. Non-SLOAD/SSTORE steps omit the field entirely (matching
+/// geth's structLogger).
+#[test]
+fn opcode_tracer_sstore_storage_emission() {
+    let bytecode = vec![0x60, 0x2a, 0x60, 0x01, 0x55, 0x00];
+    let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
+    let steps = j["structLogs"].as_array().expect("structLogs");
+    assert_eq!(steps.len(), 4);
+
+    // PUSH1 / PUSH1 — no storage field.
+    assert!(steps[0].get("storage").is_none());
+    assert!(steps[1].get("storage").is_none());
+
+    // SSTORE — single accumulated entry, key=0x01, value=0x2a.
+    let sstore = &steps[2];
+    assert_eq!(sstore["op"].as_str(), Some("SSTORE"));
+    let storage = sstore["storage"].as_object().expect("storage object");
+    assert_eq!(storage.len(), 1, "only one slot touched so far");
+    let key = format!("0x{:0>64}", "1");
+    let val = format!("0x{:0>64}", "2a");
+    assert_eq!(
+        storage.get(&key).and_then(Value::as_str),
+        Some(val.as_str())
+    );
+
+    // STOP — no storage field.
+    assert!(steps[3].get("storage").is_none());
+}
+
+/// Prefills slot 0x01 with value 0x42, then runs `PUSH1 0 PUSH1 1 SSTORE STOP`
+/// which clears that slot. The clearing triggers a refund (post-London: 4800 gas
+/// per EIP-3529), which under geth's structLogger timing must appear on the
+/// SSTORE step itself rather than only on the subsequent STOP.
+///
+/// Regression for #6672: previously LEVM's `pre_step_capture` snapshotted the
+/// refund counter before the SSTORE handler applied the credit, so the refund
+/// showed up one step late vs geth.
+#[test]
+fn opcode_tracer_sstore_refund_on_clearing_step() {
+    // Bytecode: PUSH1 0 PUSH1 1 SSTORE STOP
+    let bytecode = vec![0x60, 0x00, 0x60, 0x01, 0x55, 0x00];
+    let contract_addr = Address::from_low_u64_be(0xC000);
+    let sender_addr = Address::from_low_u64_be(0x1000);
+
+    let slot_1 = ethrex_common::H256::from_low_u64_be(1);
+    let mut storage = FxHashMap::default();
+    storage.insert(slot_1, U256::from(0x42));
+
+    let mut accounts = FxHashMap::default();
+    accounts.insert(
+        contract_addr,
+        Account::new(
+            U256::zero(),
+            Code::from_bytecode(Bytes::from(bytecode), &NativeCrypto),
+            1,
+            storage,
+        ),
+    );
+    accounts.insert(
+        sender_addr,
+        Account::new(
+            U256::from(10u64) * U256::from(10u64).pow(U256::from(18)),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        ),
+    );
+
+    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
+    let header = default_header();
+    let tx = make_tx(contract_addr, sender_addr);
+
+    // Force refund emission even on zero so we can assert against the SSTORE step
+    // unambiguously (geth emits refund whenever non-zero, but the test asserts on
+    // a known step index regardless).
+    let emit = StructLoggerEmit {
+        mem_size: false,
+        return_data: false,
+        refund: true,
+    };
+    let result = LEVM::trace_tx_opcodes(
+        &mut db,
+        &header,
+        &tx,
+        OpcodeTracerConfig::default(),
+        VMType::L1,
+        &NativeCrypto,
+    )
+    .expect("trace should succeed");
+    let j = serde_json::to_value(StructLoggerResult {
+        result: &result,
+        emit,
+    })
+    .expect("serialize");
+    let steps = j["structLogs"].as_array().expect("structLogs");
+    assert_eq!(steps.len(), 4, "PUSH PUSH SSTORE STOP");
+
+    // Steps 0-1: PUSH ops, refund is still 0.
+    assert_eq!(steps[0]["refund"].as_u64(), Some(0));
+    assert_eq!(steps[1]["refund"].as_u64(), Some(0));
+
+    // Step 2: the SSTORE itself MUST carry the refund credit, not step 3.
+    assert_eq!(steps[2]["op"].as_str(), Some("SSTORE"));
+    let sstore_refund = steps[2]["refund"]
+        .as_u64()
+        .expect("SSTORE refund must be present");
+    assert!(
+        sstore_refund > 0,
+        "SSTORE step must show the refund credit from clearing slot 1 (got {sstore_refund})"
+    );
+
+    // Step 3: STOP must see the same refund (no further mutation).
+    assert_eq!(steps[3]["refund"].as_u64(), Some(sstore_refund));
+}
+
+/// `PUSH1 0x2a PUSH1 0x01 SSTORE PUSH1 0xab PUSH1 0x02 SSTORE STOP`
+///
+/// Storage accumulates across the transaction (matches geth's structLogger).
+/// The first SSTORE step carries only its slot; the second SSTORE step carries
+/// both slots. Non-SLOAD/SSTORE steps still omit the field.
+#[test]
+fn opcode_tracer_sstore_storage_accumulates() {
+    let bytecode = vec![
+        0x60, 0x2a, 0x60, 0x01, 0x55, // SSTORE slot 0x01 = 0x2a
+        0x60, 0xab, 0x60, 0x02, 0x55, // SSTORE slot 0x02 = 0xab
+        0x00, // STOP
+    ];
+    let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
+    let steps = j["structLogs"].as_array().expect("structLogs");
+    assert_eq!(steps.len(), 7, "PUSH PUSH SSTORE PUSH PUSH SSTORE STOP");
+
+    let slot_1 = format!("0x{:0>64}", "1");
+    let slot_2 = format!("0x{:0>64}", "2");
+    let val_2a = format!("0x{:0>64}", "2a");
+    let val_ab = format!("0x{:0>64}", "ab");
+
+    // First SSTORE — storage has just slot 1.
+    let first_sstore = &steps[2];
+    assert_eq!(first_sstore["op"].as_str(), Some("SSTORE"));
+    let s1 = first_sstore["storage"]
+        .as_object()
+        .expect("storage on 1st SSTORE");
+    assert_eq!(s1.len(), 1);
+    assert_eq!(
+        s1.get(&slot_1).and_then(Value::as_str),
+        Some(val_2a.as_str())
+    );
+
+    // Intermediate PUSH steps — no storage.
+    assert!(steps[3].get("storage").is_none());
+    assert!(steps[4].get("storage").is_none());
+
+    // Second SSTORE — storage accumulates both slots.
+    let second_sstore = &steps[5];
+    assert_eq!(second_sstore["op"].as_str(), Some("SSTORE"));
+    let s2 = second_sstore["storage"]
+        .as_object()
+        .expect("storage on 2nd SSTORE");
+    assert_eq!(s2.len(), 2, "accumulated across both SSTOREs");
+    assert_eq!(
+        s2.get(&slot_1).and_then(Value::as_str),
+        Some(val_2a.as_str())
+    );
+    assert_eq!(
+        s2.get(&slot_2).and_then(Value::as_str),
+        Some(val_ab.as_str())
+    );
+
+    // STOP — no storage field (only SLOAD/SSTORE steps carry it).
+    assert!(steps[6].get("storage").is_none());
+}
+
+/// `PUSH1 0x20 PUSH1 0x00 MSTORE STOP` with `enableMemory=true`
+///
+/// Memory grows by one 32-byte word after MSTORE. The STOP step (captured
+/// after MSTORE executes) carries `memory: ["0x000...0020"]` and `memSize: 32`.
+#[test]
+fn opcode_tracer_memory_capture_when_enabled() {
+    let bytecode = vec![0x60, 0x20, 0x60, 0x00, 0x52, 0x00];
+    let cfg = OpcodeTracerConfig {
+        enable_memory: true,
+        ..Default::default()
+    };
+    let j = trace_to_json(bytecode, cfg);
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    let stop = steps.last().expect("at least one step");
+    assert_eq!(stop["op"].as_str(), Some("STOP"));
+    assert_eq!(stop["memSize"].as_u64(), Some(32));
+    let mem = stop["memory"].as_array().expect("memory array");
+    assert_eq!(mem.len(), 1);
+    let expected = format!("0x{:0>64}", "20");
+    assert_eq!(mem[0].as_str(), Some(expected.as_str()));
+}
+
+/// `MSTORE8 + STATICCALL 0x04 (identity) + STOP` with `enableReturnData=true`
+///
+/// Identity precompile echoes its input. After STATICCALL returns, the
+/// subsequent STOP step surfaces `returnData: "0x01"`.
+#[test]
+fn opcode_tracer_return_data_capture_when_enabled() {
+    let bytecode = vec![
+        0x60, 0x01, 0x60, 0x00, 0x53, // PUSH1 0x01 PUSH1 0x00 MSTORE8
+        0x60, 0x01, 0x60, 0x00, // retLen=1 retOff=0
+        0x60, 0x01, 0x60, 0x00, // argsLen=1 argsOff=0
+        0x60, 0x04, // identity precompile addr
+        0x5a, 0xfa, // GAS STATICCALL
+        0x00, // STOP
+    ];
+    let cfg = OpcodeTracerConfig {
+        enable_return_data: true,
+        ..Default::default()
+    };
+    let j = trace_to_json(bytecode, cfg);
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    let stop = steps.last().expect("at least one step");
+    assert_eq!(stop["op"].as_str(), Some("STOP"));
+    assert_eq!(stop["returnData"].as_str(), Some("0x01"));
+}
+
+/// `PUSH1 0x01 PUSH1 0x02 ADD STOP` with `disableStack=true`
+///
+/// On the structLogger code path, disabled stack capture serializes as JSON `null`
+/// (matching geth's RPC behavior). The strict-EIP-3155 path (`Eip3155Step`) emits
+/// `[]` instead; that's covered by a separate test against the EIP-3155 wrapper.
+#[test]
+fn opcode_tracer_stack_disabled_is_null() {
+    let bytecode = vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00];
+    let cfg = OpcodeTracerConfig {
+        disable_stack: true,
+        ..Default::default()
+    };
+    let j = trace_to_json(bytecode, cfg);
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    for step in steps {
+        assert_eq!(
+            step["stack"],
+            Value::Null,
+            "structLogger: stack must serialize as JSON null when disabled",
+        );
+    }
+}
+
+/// `PUSH1 0x04 JUMP JUMPDEST STOP`
+///
+/// Verifies the fused JUMP + JUMPDEST optimization synthesizes a JUMPDEST trace
+/// entry: the JUMP step's `gasCost` is exactly 8 (not 9, which would include
+/// the absorbed JUMPDEST charge), and a JUMPDEST step follows it with
+/// `gasCost = 1`.
+#[test]
+fn opcode_tracer_jumpdest_synthesized_after_jump() {
+    // pc=0: PUSH1 0x04
+    // pc=2: JUMP
+    // pc=3: INVALID (padding, never executed)
+    // pc=4: JUMPDEST
+    // pc=5: STOP
+    let bytecode = vec![0x60, 0x04, 0x56, 0xfe, 0x5b, 0x00];
+    let j = trace_to_json(bytecode, OpcodeTracerConfig::default());
+    let steps = j["structLogs"].as_array().expect("structLogs");
+
+    assert_eq!(steps.len(), 4, "PUSH1 / JUMP / JUMPDEST / STOP");
+
+    assert_eq!(steps[0]["op"].as_str(), Some("PUSH1"));
+
+    assert_eq!(steps[1]["op"].as_str(), Some("JUMP"));
+    assert_eq!(
+        steps[1]["gasCost"].as_u64(),
+        Some(8),
+        "JUMP gasCost must not absorb the JUMPDEST charge"
+    );
+
+    assert_eq!(steps[2]["op"].as_str(), Some("JUMPDEST"));
+    assert_eq!(steps[2]["pc"].as_u64(), Some(4));
+    assert_eq!(steps[2]["gasCost"].as_u64(), Some(1));
+    assert_eq!(steps[2]["depth"].as_u64(), Some(1));
+    // Gas remaining at JUMPDEST = gas at JUMP minus JUMP's 8.
+    let jump_gas = steps[1]["gas"].as_u64().expect("JUMP gas");
+    let jumpdest_gas = steps[2]["gas"].as_u64().expect("JUMPDEST gas");
+    assert_eq!(jumpdest_gas, jump_gas - 8);
+
+    assert_eq!(steps[3]["op"].as_str(), Some("STOP"));
+    // STOP gas reflects the JUMPDEST charge having been consumed.
+    let stop_gas = steps[3]["gas"].as_u64().expect("STOP gas");
+    assert_eq!(stop_gas, jumpdest_gas - 1);
+}

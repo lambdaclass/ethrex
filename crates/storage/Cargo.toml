@@ -22,7 +22,7 @@ serde.workspace = true
 serde_json = "1.0.117"
 rocksdb = { workspace = true, optional = true }
 rustc-hash.workspace = true
-tokio = { workspace = true, features = ["rt"] }
+tokio = { workspace = true, features = ["rt", "sync"] }
 fastbloom = "0.14"
 rayon.workspace = true
 lru.workspace = true

@@ -15,7 +15,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{Block, DEFAULT_BUILDER_GAS_CEIL, Genesis, validate_block_body};
 use ethrex_p2p::{
-    discv4::server::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
+    discovery::INITIAL_LOOKUP_INTERVAL_MS, peer_table::TARGET_PEERS, sync::SyncMode,
     tx_broadcaster::BROADCAST_INTERVAL_MS, types::Node,
 };
 use ethrex_rlp::encode::RLPEncode;
@@ -57,7 +57,7 @@ pub fn compute_effective_datadir(base: &Path, network: &Network, dev: bool) -> P
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
-#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client")]
+#[command(name="ethrex", author = "Lambdaclass", version=get_client_version_string(), about = "ethrex Execution client", args_override_self = true)]
 pub struct CLI {
     #[command(flatten)]
     pub opts: Options,
@@ -159,6 +159,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "no-precompile-cache",
+        action = ArgAction::SetTrue,
+        help = "Disable the per-block precompile result cache (benchmarking only).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_PRECOMPILE_CACHE"
+    )]
+    pub no_precompile_cache: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -177,9 +185,10 @@ pub struct Options {
     pub mempool_max_size: usize,
     #[arg(
         long = "http.addr",
-        default_value = "0.0.0.0",
+        default_value = "127.0.0.1",
         value_name = "ADDRESS",
         help = "Listening address for the http rpc server.",
+        long_help = "Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).",
         help_heading = "RPC options",
         env = "ETHREX_HTTP_ADDR"
     )]
@@ -193,6 +202,18 @@ pub struct Options {
         env = "ETHREX_HTTP_PORT"
     )]
     pub http_port: String,
+    #[arg(
+        long = "http.api",
+        default_value = "eth,net,web3",
+        value_name = "NAMESPACES",
+        value_delimiter = ',',
+        value_parser = utils::parse_http_namespace,
+        help = "Comma-separated JSON-RPC namespaces enabled over HTTP/WS.",
+        long_help = "Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.",
+        help_heading = "RPC options",
+        env = "ETHREX_HTTP_API"
+    )]
+    pub http_api: Vec<ethrex_rpc::RpcNamespace>,
     #[arg(
         long = "ws.enabled",
         default_value = "false",
@@ -373,7 +394,7 @@ impl Options {
             network: Some(Network::LocalDevnet),
             datadir: DB_ETHREX_DEV_L1.into(),
             dev: true,
-            http_addr: "0.0.0.0".to_string(),
+            http_addr: "127.0.0.1".to_string(),
             http_port: "8545".to_string(),
             authrpc_port: "8551".to_string(),
             metrics_port: "9090".to_string(),
@@ -396,7 +417,7 @@ impl Options {
             metrics_port: "3702".into(),
             metrics_enabled: true,
             dev: true,
-            http_addr: "0.0.0.0".into(),
+            http_addr: "127.0.0.1".into(),
             http_port: "1729".into(),
             authrpc_addr: "localhost".into(),
             authrpc_port: "8551".into(),
@@ -416,6 +437,7 @@ impl Default for Options {
         Self {
             http_addr: Default::default(),
             http_port: Default::default(),
+            http_api: ethrex_rpc::DEFAULT_HTTP_API.to_vec(),
             ws_enabled: false,
             ws_addr: Default::default(),
             ws_port: Default::default(),
@@ -450,6 +472,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            no_precompile_cache: false,
         }
     }
 }
@@ -492,6 +515,19 @@ pub enum Subcommand {
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         l2: bool,
+        #[arg(
+            long = "export-bal",
+            value_name = "FILE",
+            help = "Export BALs produced during sequential execution to a single RLP file (concatenated, one per block). All BALs are buffered in memory before writing; suitable for benchmark-sized runs, not 100k+ block exports."
+        )]
+        export_bal: Option<String>,
+        #[arg(
+            long = "with-bal",
+            value_name = "FILE",
+            help = "Load BALs from a single RLP file and use the parallel execution path. The entire file is decoded into memory upfront; suitable for benchmark-sized runs, not 100k+ blocks.",
+            conflicts_with = "export_bal"
+        )]
+        with_bal: Option<String>,
     },
     #[command(
         name = "export",
@@ -622,7 +658,13 @@ impl Subcommand {
                 )
                 .await?;
             }
-            Subcommand::ImportBench { path, removedb, l2 } => {
+            Subcommand::ImportBench {
+                path,
+                removedb,
+                l2,
+                export_bal,
+                with_bal,
+            } => {
                 if removedb {
                     remove_db(&effective_datadir, opts.force);
                 }
@@ -641,8 +683,11 @@ impl Subcommand {
                     BlockchainOptions {
                         r#type: blockchain_type,
                         perf_logs_enabled: true,
+                        precompile_cache_enabled: !opts.no_precompile_cache,
                         ..Default::default()
                     },
+                    export_bal.as_deref(),
+                    with_bal.as_deref(),
                 )
                 .await?;
             }
@@ -752,6 +797,14 @@ pub async fn import_blocks(
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
+    // Re-execute any blocks above the last committed state root so the in-memory diff
+    // layers are populated before this import appends. Required for per-file imports
+    // (e.g. EEST consume-rlp fork-transition fixtures) where each invocation's tail
+    // layers are dropped on process exit and the next file's parent state would
+    // otherwise be unreachable.
+    crate::initializers::regenerate_head_state(&store, &blockchain)
+        .await
+        .map_err(|e| ChainError::Custom(format!("regenerate_head_state failed: {e}")))?;
     let path_metadata = metadata(path).expect("Failed to read path");
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
@@ -865,13 +918,20 @@ pub async fn import_blocks_bench(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    export_bal_path: Option<&str>,
+    with_bal_path: Option<&str>,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
-    let path_metadata = metadata(path).expect("Failed to read path");
+    let path_metadata =
+        metadata(path).unwrap_or_else(|e| panic!("failed to stat path {path:?}: {e}"));
+
+    if let Some(bal_path) = export_bal_path {
+        info!(path = %bal_path, "Will export BALs to file");
+    }
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
@@ -897,7 +957,48 @@ pub async fn import_blocks_bench(
         vec![utils::read_chain_file(path)]
     };
 
+    // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark.
+    // Done after chain loading so we can validate the count matches the number of
+    // Amsterdam+ blocks across all chains and fail fast on truncated BAL files.
+    let preloaded_bals = if let Some(bal_path) = with_bal_path {
+        info!(path = %bal_path, "Loading BALs from file (parallel path)");
+        use ethrex_common::types::block_access_list::BlockAccessList;
+        use ethrex_rlp::decode::RLPDecode as _;
+        let data = std::fs::read(bal_path)
+            .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
+        let mut remaining = data.as_slice();
+        let mut bals = Vec::new();
+        while !remaining.is_empty() {
+            let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
+                .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
+            bals.push(bal);
+            remaining = rest;
+        }
+        let amsterdam_blocks = chains
+            .iter()
+            .flatten()
+            .filter(|b| b.header.block_access_list_hash.is_some())
+            .count();
+        assert_eq!(
+            bals.len(),
+            amsterdam_blocks,
+            "--with-bal file at {bal_path:?} has {} entries but chain has {} Amsterdam+ blocks (block_access_list_hash set). \
+             Mismatched BAL files would silently fall through to sequential execution and produce misleading benchmark numbers.",
+            bals.len(),
+            amsterdam_blocks,
+        );
+        info!(count = bals.len(), "Loaded BALs into memory");
+        Some(bals)
+    } else {
+        None
+    };
+
+    let mut exported_bals = Vec::new();
     let mut total_blocks_imported = 0;
+    // Shared across chains: a directory import processes multiple chain files
+    // sequentially and the preloaded BAL list spans all Amsterdam+ blocks across
+    // all chains, so the cursor must persist between chains.
+    let mut bal_index = 0usize;
     for blocks in chains {
         let size = blocks.len();
         let mut numbers_and_hashes = blocks
@@ -933,21 +1034,44 @@ pub async fn import_blocks_bench(
             validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
-            blockchain
-                .add_block_pipeline(block, None)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+            // Look up preloaded BAL for this block (if --with-bal was provided).
+            // BALs are only produced for Amsterdam+ blocks, so use a separate counter
+            // that only advances for blocks that have a BAL hash in the header.
+            let bal = if block.header.block_access_list_hash.is_some() {
+                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                bal_index += 1;
+                b
+            } else {
+                None
+            };
 
-            // TODO: replace this
-            // This sleep is because we have a background process writing to disk the last layer
-            // And until it's done we can't execute the new block
-            // Because this wants to compare against running a real node in terms of reported performance
-            // It takes less than 500ms, so this is good enough, but we should report the performance
-            // without taking into account that wait.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            if export_bal_path.is_some() {
+                // Sequential path: execute and capture the produced BAL
+                let produced_bal = blockchain
+                    .add_block_pipeline_bal(block, None)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+
+                if let Some(bal) = produced_bal {
+                    exported_bals.push(bal);
+                }
+            } else {
+                // Normal path (or parallel if BAL was loaded)
+                blockchain
+                    .add_block_pipeline(block, bal)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+            }
+
+            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
+            // diff layer) and Phase 3 (in-memory layer removal) for the block just
+            // applied to drain. Keeps the next block's per-block timer from
+            // absorbing the previous block's background persistence cost.
+            store.wait_for_persistence_idle().await?;
         }
 
         // Make head canonical and label all special blocks correctly.
@@ -964,6 +1088,17 @@ pub async fn import_blocks_bench(
         }
 
         total_blocks_imported += size;
+    }
+
+    // Write all exported BALs to a single file
+    if let Some(bal_path) = export_bal_path {
+        let mut buf = Vec::new();
+        for bal in &exported_bals {
+            bal.encode(&mut buf);
+        }
+        std::fs::write(bal_path, &buf)
+            .unwrap_or_else(|e| panic!("failed to write BAL file at {bal_path:?}: {e}"));
+        info!(count = exported_bals.len(), "Exported BALs to file");
     }
 
     let total_duration = start_time.elapsed();
@@ -1091,4 +1226,119 @@ pub async fn export_blocks(
         path = %path,
         "Exported blocks to file"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+    use ethrex_rpc::RpcNamespace;
+
+    /// `--http.addr` must default to `127.0.0.1` so a fresh install on a public
+    /// host is not exposed to the open internet.
+    #[test]
+    fn http_addr_defaults_to_loopback() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(cli.opts.http_addr, "127.0.0.1");
+    }
+
+    /// `--http.api` must default to `eth,net,web3`. Operators have to opt in
+    /// explicitly to expose `admin`, `debug` or `txpool`.
+    #[test]
+    fn http_api_defaults_to_safe_namespaces() {
+        let cli = CLI::parse_from(["ethrex"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Net, RpcNamespace::Web3]
+        );
+    }
+
+    #[test]
+    fn http_api_parses_comma_separated_values() {
+        let cli = CLI::parse_from(["ethrex", "--http.api", "eth,debug,admin"]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![RpcNamespace::Eth, RpcNamespace::Debug, RpcNamespace::Admin]
+        );
+    }
+
+    #[test]
+    fn http_api_rejects_engine_namespace() {
+        let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,engine"]);
+        assert!(result.is_err(), "engine must not be allowed on --http.api");
+    }
+
+    #[test]
+    fn http_api_rejects_unknown_namespace() {
+        let result = CLI::try_parse_from(["ethrex", "--http.api", "eth,bogus"]);
+        assert!(result.is_err());
+    }
+
+    /// Flags hardcoded by external launchers (kurtosis ethereum-package, docker
+    /// compose, etc.) must be overridable from `el_extra_params`. Without
+    /// `overrides_with`, clap errors on a duplicate scalar flag and the node
+    /// fails to start.
+    #[test]
+    fn scalar_launch_flags_allow_last_wins_override() {
+        let cli = CLI::parse_from([
+            "ethrex",
+            "--syncmode=full",
+            "--syncmode=snap",
+            "--log.level=debug",
+            "--log.level=trace",
+            "--http.addr=0.0.0.0",
+            "--http.addr=127.0.0.2",
+            "--http.port=8545",
+            "--http.port=9000",
+            "--authrpc.addr=0.0.0.0",
+            "--authrpc.addr=127.0.0.3",
+            "--authrpc.port=8551",
+            "--authrpc.port=9551",
+            "--authrpc.jwtsecret=a.hex",
+            "--authrpc.jwtsecret=b.hex",
+            "--p2p.port=30303",
+            "--p2p.port=30304",
+            "--discovery.port=30303",
+            "--discovery.port=30305",
+            "--metrics.addr=0.0.0.0",
+            "--metrics.addr=127.0.0.4",
+            "--metrics.port=9090",
+            "--metrics.port=9091",
+            "--builder.gas-limit=30000000",
+            "--builder.gas-limit=45000000",
+        ]);
+        assert!(matches!(cli.opts.syncmode, SyncMode::Snap));
+        assert_eq!(cli.opts.log_level, Level::TRACE);
+        assert_eq!(cli.opts.http_addr, "127.0.0.2");
+        assert_eq!(cli.opts.http_port, "9000");
+        assert_eq!(cli.opts.authrpc_addr, "127.0.0.3");
+        assert_eq!(cli.opts.authrpc_port, "9551");
+        assert_eq!(cli.opts.authrpc_jwtsecret, "b.hex");
+        assert_eq!(cli.opts.p2p_port, "30304");
+        assert_eq!(cli.opts.discovery_port, "30305");
+        assert_eq!(cli.opts.metrics_addr, "127.0.0.4");
+        assert_eq!(cli.opts.metrics_port, "9091");
+        assert_eq!(cli.opts.gas_limit, 45000000);
+    }
+
+    /// `--http.api` should accumulate across repeated invocations (union) so
+    /// operators can extend whatever a launcher passed without restating it.
+    #[test]
+    fn http_api_repeated_flags_accumulate() {
+        let cli = CLI::parse_from([
+            "ethrex",
+            "--http.api=eth,net,web3",
+            "--http.api=debug,admin",
+        ]);
+        assert_eq!(
+            cli.opts.http_api,
+            vec![
+                RpcNamespace::Eth,
+                RpcNamespace::Net,
+                RpcNamespace::Web3,
+                RpcNamespace::Debug,
+                RpcNamespace::Admin,
+            ]
+        );
+    }
 }

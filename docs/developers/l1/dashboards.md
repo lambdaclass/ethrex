@@ -205,17 +205,17 @@ Row panels showing process-level and host-level metrics to help you monitor reso
 ![Process & Server info row](img/process_and_server_info_row.png)
 
 ### Uptime
-Displays time since the Ethrex process started. _[need proper instance labels]_ 
+Displays time since the Ethrex process started. _\[need proper instance labels\]_ 
 
 ![Uptime](img/uptime.png)
 
 ### Threads
-Shows the number of tokio process threads in use. _[need proper instance labels]_
+Shows the number of tokio process threads in use. _\[need proper instance labels\]_
 
 ![Threads](img/threads.png)
 
 ### Open FDs
-Reports current file descriptor usage so you can compare against limits. _[need proper instance labels]_
+Reports current file descriptor usage so you can compare against limits. _\[need proper instance labels\]_
 
 ![Open FDs](img/open_fds.png)
 

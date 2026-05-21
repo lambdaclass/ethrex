@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    subscription_manager::SubscriptionManagerProtocol,
     types::{
         fork_choice::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
@@ -220,7 +221,7 @@ async fn handle_forkchoice(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
-        finalized = %format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        finalized = %format!("{:#x}", fork_choice_state.finalized_block_hash),
         "New fork choice update",
     );
 
@@ -303,6 +304,11 @@ async fn handle_forkchoice(
                 }
             };
 
+            // Notify all eth_subscribe("newHeads") subscribers.
+            if let Some(ws) = &context.ws {
+                let _ = ws.subscription_manager.new_head(head.clone());
+            }
+
             Ok((
                 Some(head),
                 ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
@@ -312,9 +318,23 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
-                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
-                ),
+                InvalidForkChoice::NewHeadAlreadyCanonical => {
+                    // The fork-choice was effectively accepted: head is canonical and
+                    // points to a known block. Treat it like the Ok(head) branch:
+                    //   - mark the node synced so eth_syncing reports `false`,
+                    //   - return the head header so the caller can build a payload
+                    //     when payloadAttributes is non-null (engine API spec).
+                    context.blockchain.set_synced();
+                    let head_block = context
+                        .storage
+                        .get_block_header_by_hash(fork_choice_state.head_block_hash)?;
+                    return Ok((
+                        head_block,
+                        ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                            fork_choice_state.head_block_hash,
+                        )),
+                    ));
+                }
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
@@ -328,6 +348,10 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::TooDeepReorg { .. } => {
+                    warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
+                    return Err(RpcErr::TooDeepReorg(forkchoice_error.to_string()));
                 }
                 InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(

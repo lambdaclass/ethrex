@@ -21,6 +21,7 @@ use ethrex_common::{
     },
 };
 use ethrex_storage::error::StoreError;
+use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::warn;
 
 #[derive(Debug, Default)]
@@ -498,8 +499,15 @@ impl Mempool {
     }
 }
 
+/// Filter applied by the payload builder when querying pending transactions
+/// from the pool. NOT a mempool admission gate — all fields here are
+/// query-time filters used to pick block-includable transactions. Admission
+/// rules are enforced in `Blockchain::validate_transaction`.
 #[derive(Debug, Default)]
 pub struct PendingTxFilter {
+    /// Minimum effective priority fee for a transaction to be surfaced to
+    /// the payload builder. This is a block-building filter, not an
+    /// admission check — see `crates/common/types/constants.rs::MIN_GAS_TIP`.
     pub min_tip: Option<u64>,
     pub base_fee: Option<u64>,
     pub blob_fee: Option<u64>,
@@ -512,6 +520,30 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
+    // Amsterdam (EIP-8037): the VM splits intrinsic into (regular, state) and uses
+    // `REGULAR_GAS_CREATE = 9000` + `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for CREATE
+    // instead of the legacy `TX_CREATE_GAS_COST = 53000`. Mempool admission must
+    // match VM charge or we spuriously reject (or admit) transactions.
+    //
+    // The VM enforces `gas_limit >= max(intrinsic_regular + intrinsic_state,
+    // floor)` via two separate checks in `validate_gas_allowance` +
+    // `validate_min_gas_limit`. Apply the same max here so we don't admit
+    // txs whose calldata floor exceeds the weighted intrinsic — those would
+    // pass mempool and then fail at block inclusion, polluting the pool.
+    if config.is_amsterdam_activated(header.timestamp) {
+        let fork = config.fork(header.timestamp);
+        let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
+            .map_err(|_| MempoolError::TxGasOverflowError)?;
+        let intrinsic = regular
+            .checked_add(state)
+            .ok_or(MempoolError::TxGasOverflowError)?;
+        let floor = intrinsic_gas_floor(tx, fork).map_err(|_| MempoolError::TxGasOverflowError)?;
+        // Block-level gas = max(regular_dim, state_dim); regular_dim itself is
+        // `max(tx_regular, calldata_floor)` per EIP-7778. Use the same max so
+        // admission mirrors the VM's effective minimum.
+        return Ok(intrinsic.max(floor));
+    }
+
     let is_contract_creation = tx.is_contract_creation();
 
     let mut gas = if is_contract_creation {
