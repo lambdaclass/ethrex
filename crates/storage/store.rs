@@ -612,15 +612,17 @@ impl Store {
             let tx_hash_bytes = transaction_hash.as_bytes();
             let tx = db.begin_read()?;
 
-            // Use prefix iterator to find all entries with this transaction hash
+            // rust-rocksdb's prefix_iterator_cf seeks but does not bound iteration —
+            // caller must stop on the first prefix mismatch.
             let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
             let mut transaction_locations = Vec::new();
 
             while let Some(Ok((key, value))) = iter.next() {
-                // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
-                // and starts with our exact tx_hash
+                // Key is tx_hash (32) + block_hash (32) = 64 bytes.
                 if key.len() == 64 && &key[0..32] == tx_hash_bytes {
                     transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
+                } else {
+                    break;
                 }
             }
 
