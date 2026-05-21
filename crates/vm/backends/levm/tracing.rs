@@ -201,14 +201,8 @@ impl LEVM {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
         env.block_gas_limit = i64::MAX as u64;
         adjust_disabled_base_fee(&mut env);
-        let mut vm = vm_from_generic_with_tracer(
-            tx,
-            env,
-            db,
-            vm_type,
-            crypto,
-            LevmCallTracer::disabled(),
-        )?;
+        let mut vm =
+            vm_from_generic_with_tracer(tx, env, db, vm_type, crypto, LevmCallTracer::disabled())?;
         vm.execute()?;
 
         preload_touched_codes(&pre_snapshot, db)?;
@@ -245,14 +239,8 @@ impl LEVM {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
         env.block_gas_limit = i64::MAX as u64;
         adjust_disabled_base_fee(&mut env);
-        let mut vm = vm_from_generic_with_tracer(
-            tx,
-            env,
-            db,
-            vm_type,
-            crypto,
-            LevmCallTracer::disabled(),
-        )?;
+        let mut vm =
+            vm_from_generic_with_tracer(tx, env, db, vm_type, crypto, LevmCallTracer::disabled())?;
         vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
         vm.execute()?;
         Ok(vm.opcode_tracer.take_result())
