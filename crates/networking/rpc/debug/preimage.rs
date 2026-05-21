@@ -28,3 +28,41 @@ impl RpcHandler for PreimageRequest {
         Ok(Value::Null)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RpcHandler;
+    use serde_json::json;
+
+    #[test]
+    fn parse_valid_hash() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = PreimageRequest::parse(&params).unwrap();
+        assert_eq!(req._hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_no_params() {
+        assert!(PreimageRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_too_many_params() {
+        let params = Some(vec![json!("0x01"), json!("0x02")]);
+        assert!(PreimageRequest::parse(&params).is_err());
+    }
+
+    #[tokio::test]
+    async fn handle_returns_null() {
+        let req = PreimageRequest {
+            _hash: H256::zero(),
+        };
+        let storage = crate::test_utils::setup_store().await;
+        let context = crate::test_utils::default_context_with_storage(storage).await;
+        let result = req.handle(context).await.unwrap();
+        assert_eq!(result, Value::Null);
+    }
+}
