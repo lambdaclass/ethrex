@@ -398,7 +398,7 @@ impl OpcodeHandler for OpJumpHandler {
             .increase_consumed_gas(gas_cost::JUMP)?;
 
         let target = vm.current_call_frame.stack.pop1()?;
-        jump(vm, target.try_into().unwrap_or(usize::MAX))?;
+        jump(vm, target.try_into().unwrap_or(usize::MAX), gas_cost::JUMP)?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -414,14 +414,22 @@ impl OpcodeHandler for OpJumpIHandler {
 
         let [target, condition] = *vm.current_call_frame.stack.pop()?;
         if !condition.is_zero() {
-            jump(vm, target.try_into().unwrap_or(usize::MAX))?;
+            jump(vm, target.try_into().unwrap_or(usize::MAX), gas_cost::JUMPI)?;
         }
 
         Ok(OpcodeResult::Continue)
     }
 }
 
-fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
+/// Validate and take a jump. Fuses the destination JUMPDEST (advances PC past
+/// it and charges its 1 gas inline) to save a dispatch cycle on the hot path.
+///
+/// When the tracer is active we keep the fusion for performance and *synthesize*
+/// a JUMPDEST entry in the trace log: `parent_gas_cost` is recorded as the
+/// override for the parent JUMP/JUMPI step (so its `gasCost` doesn't absorb the
+/// JUMPDEST charge), and the JUMPDEST step is pushed directly via
+/// `synthesize_step` after the gas is charged.
+fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMError> {
     // Check target address validity.
     //   - Target bytecode has to be a JUMPDEST.
     //   - Target address must not be blacklisted (aka. the JUMPDEST must not be part of a literal).
@@ -441,14 +449,80 @@ fn jump(vm: &mut VM<'_>, target: usize) -> Result<(), VMError> {
                     .is_ok()
         })
     {
-        // Update PC and skip the JUMPDEST instruction.
-        vm.current_call_frame.pc = target.wrapping_add(1);
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::JUMPDEST)?;
+        if vm.opcode_tracer.active {
+            // Override the parent JUMP/JUMPI's gasCost so the dispatch loop
+            // doesn't roll the upcoming JUMPDEST charge into it.
+            vm.opcode_tracer.last_opcode_gas_cost = Some(parent_gas_cost);
 
+            // Capture the synthetic JUMPDEST step's state BEFORE charging its gas.
+            let synth = build_jumpdest_step(vm, target);
+
+            // Fuse: charge JUMPDEST + advance PC past it.
+            vm.current_call_frame.pc = target.wrapping_add(1);
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)?;
+
+            vm.opcode_tracer.synthesize_step(synth);
+        } else {
+            // Hot path: fuse JUMP/JUMPI + JUMPDEST without any trace bookkeeping.
+            vm.current_call_frame.pc = target.wrapping_add(1);
+            vm.current_call_frame
+                .increase_consumed_gas(gas_cost::JUMPDEST)?;
+        }
         Ok(())
     } else {
         // Target address is invalid.
         Err(ExceptionalHalt::InvalidJump.into())
     }
+}
+
+/// Builds a synthetic JUMPDEST trace entry. Captures gas/stack/memory/return-data
+/// state at the moment of the call (i.e. *before* the JUMPDEST gas has been
+/// charged) and hands them to the shared [`opcode_tracer::build_step`] so the
+/// cfg-driven conditionals (disable_stack, enable_memory, enable_return_data)
+/// live in exactly one place.
+#[expect(
+    clippy::as_conversions,
+    reason = "pc/depth/mem_size bounded; fit in target types"
+)]
+fn build_jumpdest_step(vm: &VM<'_>, target: usize) -> ethrex_common::tracing::OpcodeStep {
+    use crate::opcode_tracer::build_step;
+    use bytes::Bytes;
+
+    let cfg = &vm.opcode_tracer.cfg;
+    let gas = vm.current_call_frame.gas_remaining.max(0) as u64;
+    let depth = (vm.call_frames.len() as u32).saturating_add(1);
+    let refund = vm.substate.refunded_gas;
+    let mem_size = vm.current_call_frame.memory.len() as u64;
+
+    let stack_view = if cfg.disable_stack {
+        Vec::new()
+    } else {
+        vm.collect_stack_for_trace()
+    };
+    let mem_view = if cfg.enable_memory {
+        vm.collect_memory_for_trace()
+    } else {
+        Vec::new()
+    };
+    let return_data = if cfg.enable_return_data {
+        vm.current_call_frame.sub_return_data.clone()
+    } else {
+        Bytes::new()
+    };
+
+    build_step(
+        cfg,
+        target as u64,
+        Opcode::JUMPDEST as u8,
+        gas,
+        gas_cost::JUMPDEST,
+        depth,
+        refund,
+        &stack_view,
+        &mem_view,
+        mem_size,
+        &return_data,
+        None,
+    )
 }
