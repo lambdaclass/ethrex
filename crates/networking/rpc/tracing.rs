@@ -1,9 +1,10 @@
 use std::time::Duration;
 
-use ethrex_common::H256;
+use bytes::Bytes;
+use ethrex_common::{Address, H256, U256};
 use ethrex_common::{
     serde_utils,
-    tracing::{CallTraceFrame, PrestateResult, StructLoggerEmit, StructLoggerResult},
+    tracing::{CallTraceFrame, CallType, PrestateResult, StructLoggerEmit, StructLoggerResult},
 };
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
@@ -59,6 +60,9 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
+    /// Flat call tracer that returns a flat array of call frames with
+    /// `traceAddress` and `subtraces` fields (Parity/OpenEthereum format).
+    FlatCallTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -209,6 +213,25 @@ impl RpcHandler for TraceTransactionRequest {
                     emit,
                 })?)
             }
+            TracerType::FlatCallTracer => {
+                let call_trace = context
+                    .blockchain
+                    .trace_transaction_calls(
+                        self.tx_hash,
+                        reexec,
+                        timeout,
+                        false, // need all subcalls
+                        false,
+                    )
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let top_frame = call_trace
+                    .into_iter()
+                    .next()
+                    .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                let flat_frames = flatten_call_trace(&top_frame);
+                Ok(serde_json::to_value(flat_frames)?)
+            }
         }
     }
 }
@@ -355,6 +378,128 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
+            TracerType::FlatCallTracer => {
+                let call_traces = context
+                    .blockchain
+                    .trace_block_calls(block, reexec, timeout, false, false)
+                    .await
+                    .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                let block_trace: BlockTrace<Vec<FlatCallFrame>> = call_traces
+                    .into_iter()
+                    .map(|(hash, trace)| {
+                        let frame = trace
+                            .into_iter()
+                            .next()
+                            .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
+                        let flat_frames = flatten_call_trace(&frame);
+                        Ok((hash, flat_frames).into())
+                    })
+                    .collect::<Result<_, RpcErr>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
         }
+    }
+}
+
+// ── flatCallTracer types and helpers ─────────────────────────────────────
+
+/// A single flattened call frame following the Parity/OpenEthereum trace format.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlatCallFrame {
+    action: FlatCallAction,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<FlatCallResult>,
+    subtraces: usize,
+    trace_address: Vec<usize>,
+    #[serde(rename = "type")]
+    frame_type: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlatCallAction {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    creation_method: Option<String>,
+    from: Address,
+    #[serde(with = "serde_utils::u64::hex_str")]
+    gas: u64,
+    #[serde(with = "serde_utils::bytes")]
+    input: Bytes,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    to: Option<Address>,
+    value: U256,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FlatCallResult {
+    #[serde(with = "serde_utils::u64::hex_str")]
+    gas_used: u64,
+    #[serde(with = "serde_utils::bytes")]
+    output: Bytes,
+}
+
+/// Flattens a nested `CallTraceFrame` tree into a flat array with
+/// `traceAddress` and `subtraces` fields.
+fn flatten_call_trace(root: &CallTraceFrame) -> Vec<FlatCallFrame> {
+    let mut result = Vec::new();
+    flatten_recursive(root, &[], &mut result);
+    result
+}
+
+fn flatten_recursive(
+    frame: &CallTraceFrame,
+    trace_address: &[usize],
+    result: &mut Vec<FlatCallFrame>,
+) {
+    let (frame_type, call_type, creation_method) = match frame.call_type {
+        CallType::CALL => ("call", Some("call"), None),
+        CallType::CALLCODE => ("call", Some("callcode"), None),
+        CallType::STATICCALL => ("call", Some("staticcall"), None),
+        CallType::DELEGATECALL => ("call", Some("delegatecall"), None),
+        CallType::CREATE => ("create", None, Some("create")),
+        CallType::CREATE2 => ("create", None, Some("create2")),
+        CallType::SELFDESTRUCT => ("suicide", None, None),
+    };
+
+    let flat = FlatCallFrame {
+        action: FlatCallAction {
+            call_type: call_type.map(String::from),
+            creation_method: creation_method.map(String::from),
+            from: frame.from,
+            gas: frame.gas,
+            input: frame.input.clone(),
+            to: if frame_type == "call" {
+                Some(frame.to)
+            } else {
+                None
+            },
+            value: frame.value,
+        },
+        error: frame.error.clone(),
+        result: if frame.error.is_none() {
+            Some(FlatCallResult {
+                gas_used: frame.gas_used,
+                output: frame.output.clone(),
+            })
+        } else {
+            None
+        },
+        subtraces: frame.calls.len(),
+        trace_address: trace_address.to_vec(),
+        frame_type: frame_type.to_string(),
+    };
+
+    result.push(flat);
+
+    for (i, sub_call) in frame.calls.iter().enumerate() {
+        let mut child_address = trace_address.to_vec();
+        child_address.push(i);
+        flatten_recursive(sub_call, &child_address, result);
     }
 }
