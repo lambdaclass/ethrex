@@ -851,7 +851,7 @@ impl Store {
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<u32>>::decode(targets)?.into(),
+            jump_targets: <Vec<u8>>::decode(targets)?,
         };
 
         // insert into cache and evict if needed
@@ -3527,9 +3527,7 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets),
-    );
+    let mut buf = Vec::with_capacity(6 + code.bytecode.len() + code.jump_targets.len());
     code.bytecode.encode(&mut buf);
     // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
     // owned `Vec` on this cold DB-write path (code is persisted once per hash).

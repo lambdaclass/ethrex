@@ -33,13 +33,9 @@ pub struct Code {
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
-    // the callee's code) is a refcount bump instead of deep-copying the table.
-    // Serializes via serde's `rc` feature (enabled workspace-wide).
-    // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
-    // this does not apply to previous forks. This is tested in the EEST tests, which would
-    // panic in debug mode.
-    pub jump_targets: Arc<[u32]>,
+    // Jump targets stored as a bit vector: bit i is set iff position i is a valid JUMPDEST
+    // The size is exactly the bytecode length
+    pub jump_targets: Vec<u8>,
 }
 
 impl Code {
@@ -64,16 +60,16 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
-        debug_assert!(code.len() <= u32::MAX as usize);
-        let mut targets = Vec::new();
+    fn compute_jump_targets(code: &[u8]) -> Vec<u8> {
+        let bitset_len = code.len().saturating_add(7) / 8;
+        let mut targets = vec![0u8; bitset_len];
         let mut i = 0;
         while i < code.len() {
             // TODO: we don't use the constants from the vm module to avoid a circular dependency
             match code[i] {
                 // OP_JUMPDEST
                 0x5B => {
-                    targets.push(i as u32);
+                    targets[i / 8] |= 1 << (i % 8);
                 }
                 // OP_PUSH1..32
                 c @ 0x60..0x80 => {
@@ -93,6 +89,13 @@ impl Code {
         }
     }
 
+    #[inline(always)]
+    pub fn is_valid_jump_target(&self, target: usize) -> bool {
+        self.jump_targets
+            .get(target / 8)
+            .is_some_and(|byte| byte & (1 << (target % 8)) != 0)
+    }
+
     /// Estimates the size of the Code struct in bytes
     /// (including stack size and heap allocation).
     ///
@@ -104,7 +107,7 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
+        let vec_size = size_of::<Vec<u8>>() + self.jump_targets.len();
         hash_size + bytes_size + vec_size
     }
 }
