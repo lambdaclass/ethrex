@@ -2680,7 +2680,7 @@ pub fn calculate_gas_price_for_tx(
 /// When basefee tracking is disabled  (ie. env.disable_base_fee = true; env.disable_block_gas_limit = true;)
 /// and no gas prices were specified, lower the basefee to 0 to avoid breaking EVM invariants (basefee < feecap)
 /// See https://github.com/ethereum/go-ethereum/blob/00294e9d28151122e955c7db4344f06724295ec5/core/vm/evm.go#L137
-fn adjust_disabled_base_fee(env: &mut Environment) {
+pub(crate) fn adjust_disabled_base_fee(env: &mut Environment) {
     if env.gas_price == U256::zero() {
         env.base_fee_per_gas = U256::zero();
     }
@@ -2707,7 +2707,7 @@ fn adjust_disabled_l2_fees(env: &Environment, vm_type: VMType) -> VMType {
     vm_type
 }
 
-fn env_from_generic(
+pub(crate) fn env_from_generic(
     tx: &GenericTransaction,
     header: &BlockHeader,
     db: &GeneralizedDatabase,
@@ -2810,6 +2810,53 @@ fn vm_from_generic<'a>(
 
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
+}
+
+/// Like `vm_from_generic` but accepts a custom `LevmCallTracer`.
+pub(crate) fn vm_from_generic_with_tracer<'a>(
+    tx: &GenericTransaction,
+    env: Environment,
+    db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &'a dyn Crypto,
+    tracer: LevmCallTracer,
+) -> Result<VM<'a>, VMError> {
+    let tx = match &tx.authorization_list {
+        Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
+            to: match tx.to {
+                TxKind::Call(to) => to,
+                TxKind::Create => {
+                    return Err(InternalError::msg("Generic Tx cannot be create type").into());
+                }
+            },
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            authorization_list: authorization_list
+                .iter()
+                .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
+                .collect(),
+            ..Default::default()
+        }),
+        None => Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: tx.to.clone(),
+            value: tx.value,
+            data: tx.input.clone(),
+            access_list: tx
+                .access_list
+                .iter()
+                .map(|list| (list.address, list.storage_keys.clone()))
+                .collect(),
+            ..Default::default()
+        }),
+    };
+
+    let vm_type = adjust_disabled_l2_fees(&env, vm_type);
+    VM::new(env, db, &tx, tracer, vm_type, crypto)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

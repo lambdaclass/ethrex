@@ -6,7 +6,7 @@ use std::{
 use ethrex_common::{
     H256,
     tracing::{CallTrace, OpcodeTraceResult, PrestateResult},
-    types::Block,
+    types::{Block, BlockHeader, GenericTransaction},
 };
 use ethrex_storage::Store;
 use ethrex_vm::tracing::OpcodeTracerConfig;
@@ -216,6 +216,59 @@ impl Blockchain {
             traces.push((tx_hash, result));
         }
         Ok(traces)
+    }
+
+    /// Traces an arbitrary call with the callTracer at the state of the given block header.
+    pub async fn trace_call_calls(
+        &self,
+        header: &BlockHeader,
+        tx: &GenericTransaction,
+        timeout: Duration,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<CallTrace, ChainError> {
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), header.clone())?;
+        let mut vm = self.new_evm(vm_db)?;
+        let tx = tx.clone();
+        let header = header.clone();
+        timeout_trace_operation(timeout, move || {
+            vm.trace_call_calls(&header, &tx, only_top_call, with_log)
+        })
+        .await
+    }
+
+    /// Traces an arbitrary call with the prestateTracer at the state of the given block header.
+    pub async fn trace_call_prestate(
+        &self,
+        header: &BlockHeader,
+        tx: &GenericTransaction,
+        timeout: Duration,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, ChainError> {
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), header.clone())?;
+        let mut vm = self.new_evm(vm_db)?;
+        let tx = tx.clone();
+        let header = header.clone();
+        timeout_trace_operation(timeout, move || {
+            vm.trace_call_prestate(&header, &tx, diff_mode, include_empty)
+        })
+        .await
+    }
+
+    /// Traces an arbitrary call with the opcodeTracer at the state of the given block header.
+    pub async fn trace_call_opcodes(
+        &self,
+        header: &BlockHeader,
+        tx: &GenericTransaction,
+        timeout: Duration,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, ChainError> {
+        let vm_db = StoreVmDatabase::new(self.storage.clone(), header.clone())?;
+        let mut vm = self.new_evm(vm_db)?;
+        let tx = tx.clone();
+        let header = header.clone();
+        timeout_trace_operation(timeout, move || vm.trace_call_opcodes(&header, &tx, cfg)).await
     }
 
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached

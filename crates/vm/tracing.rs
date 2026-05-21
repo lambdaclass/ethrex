@@ -1,6 +1,6 @@
 use crate::backends::levm::LEVM;
 use ethrex_common::tracing::{CallTrace, OpcodeTraceResult, PrestateResult};
-use ethrex_common::types::Block;
+use ethrex_common::types::{Block, BlockHeader, GenericTransaction};
 pub use ethrex_levm::tracing::OpcodeTracerConfig;
 
 use crate::{Evm, EvmError};
@@ -83,6 +83,61 @@ impl Evm {
         LEVM::trace_tx_opcodes(
             &mut self.db,
             &block.header,
+            tx,
+            cfg,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces an arbitrary call (GenericTransaction) with the callTracer.
+    pub fn trace_call_calls(
+        &mut self,
+        header: &BlockHeader,
+        tx: &GenericTransaction,
+        only_top_call: bool,
+        with_log: bool,
+    ) -> Result<CallTrace, EvmError> {
+        LEVM::trace_call_calls(
+            &mut self.db,
+            header,
+            tx,
+            only_top_call,
+            with_log,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces an arbitrary call (GenericTransaction) with the prestateTracer.
+    pub fn trace_call_prestate(
+        &mut self,
+        header: &BlockHeader,
+        tx: &GenericTransaction,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, EvmError> {
+        LEVM::trace_call_prestate(
+            &mut self.db,
+            header,
+            tx,
+            diff_mode,
+            include_empty,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Traces an arbitrary call (GenericTransaction) with the opcodeTracer (EIP-3155).
+    pub fn trace_call_opcodes(
+        &mut self,
+        header: &BlockHeader,
+        tx: &GenericTransaction,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        LEVM::trace_call_opcodes(
+            &mut self.db,
+            header,
             tx,
             cfg,
             self.vm_type,

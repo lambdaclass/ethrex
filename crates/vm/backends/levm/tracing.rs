@@ -1,6 +1,6 @@
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
-use ethrex_common::types::{Block, Transaction};
+use ethrex_common::types::{Block, GenericTransaction, Transaction};
 use ethrex_common::{
     Address, BigEndianHash, H256, U256,
     tracing::{CallTrace, OpcodeTraceResult},
@@ -16,6 +16,7 @@ use ethrex_levm::{
     vm::VM,
 };
 
+use super::{adjust_disabled_base_fee, env_from_generic, vm_from_generic_with_tracer};
 use crate::{EvmError, backends::levm::LEVM};
 
 impl LEVM {
@@ -157,6 +158,104 @@ impl LEVM {
 
         // We only return the top call because a transaction only has one call with subcalls
         Ok(vec![callframe])
+    }
+
+    /// Trace a `GenericTransaction` (arbitrary call) with the callTracer.
+    pub fn trace_call_calls(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        only_top_call: bool,
+        with_log: bool,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<CallTrace, EvmError> {
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.block_gas_limit = i64::MAX as u64;
+        adjust_disabled_base_fee(&mut env);
+        let mut vm = vm_from_generic_with_tracer(
+            tx,
+            env,
+            db,
+            vm_type,
+            crypto,
+            LevmCallTracer::new(only_top_call, with_log),
+        )?;
+        vm.execute()?;
+        let callframe = vm.get_trace_result()?;
+        Ok(vec![callframe])
+    }
+
+    /// Trace a `GenericTransaction` (arbitrary call) with the prestateTracer.
+    pub fn trace_call_prestate(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        diff_mode: bool,
+        include_empty: bool,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<PrestateResult, EvmError> {
+        let pre_snapshot: CacheDB = db.current_accounts_state.clone();
+
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.block_gas_limit = i64::MAX as u64;
+        adjust_disabled_base_fee(&mut env);
+        let mut vm = vm_from_generic_with_tracer(
+            tx,
+            env,
+            db,
+            vm_type,
+            crypto,
+            LevmCallTracer::disabled(),
+        )?;
+        vm.execute()?;
+
+        preload_touched_codes(&pre_snapshot, db)?;
+
+        let mut pre_map = build_pre_state_map(&pre_snapshot, &db.current_accounts_state, db)?;
+
+        if diff_mode {
+            let (post_map, kept) =
+                build_post_state_map(&pre_snapshot, &db.current_accounts_state, db)?;
+            filter_diff_pre_storage(&mut pre_map, &db.current_accounts_state);
+            pre_map.retain(|addr, _| kept.contains(addr));
+            pre_map.retain(|_, state| !state.is_empty());
+            Ok(PrestateResult::Diff(PrePostState {
+                pre: pre_map,
+                post: post_map,
+            }))
+        } else {
+            if !include_empty {
+                pre_map.retain(|_, state| !state.is_empty());
+            }
+            Ok(PrestateResult::Prestate(pre_map))
+        }
+    }
+
+    /// Trace a `GenericTransaction` (arbitrary call) with the opcodeTracer (EIP-3155).
+    pub fn trace_call_opcodes(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &GenericTransaction,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        env.block_gas_limit = i64::MAX as u64;
+        adjust_disabled_base_fee(&mut env);
+        let mut vm = vm_from_generic_with_tracer(
+            tx,
+            env,
+            db,
+            vm_type,
+            crypto,
+            LevmCallTracer::disabled(),
+        )?;
+        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
+        vm.execute()?;
+        Ok(vm.opcode_tracer.take_result())
     }
 }
 
