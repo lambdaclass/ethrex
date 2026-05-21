@@ -347,7 +347,6 @@ impl GeneralizedDatabase {
             tracker.insert(address);
         }
 
-        // Fast path: already cached.
         if self.current_accounts_state.contains_key(&address) {
             return self
                 .current_accounts_state

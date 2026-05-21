@@ -873,10 +873,11 @@ impl LEVM {
         Ok(updates)
     }
 
-    /// Eager BAL prefix seed — used only by the outer DB path (system-call recovery
-    /// at `:440` and post-tx outer seed at `:463`). Per-tx parallel execution uses
-    /// `LazyBalCursor` in `execute_block_parallel`; see also `seed_one_address_info_from_bal`
-    /// and `seed_one_storage_slot_from_bal` in `ethrex_levm::db::gen_db`.
+    /// Eager BAL prefix seed — used only by the outer DB path (parallel-execution
+    /// fallback recovery and post-tx outer seed before request extraction).
+    /// Per-tx parallel execution uses `LazyBalCursor` in `execute_block_parallel`;
+    /// see also `seed_one_address_info_from_bal` and `seed_one_storage_slot_from_bal`
+    /// in `ethrex_levm::db::gen_db`.
     ///
     /// Pre-seed a GeneralizedDatabase with BAL-derived state for a specific tx.
     ///
