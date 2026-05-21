@@ -59,6 +59,10 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
+    /// No-op tracer that returns an empty JSON object `{}`. Useful for
+    /// benchmarking execution overhead without tracing cost.
+    /// Selected via `"tracer": "noopTracer"`.
+    NoopTracer,
 }
 
 #[derive(Deserialize, Default)]
@@ -209,6 +213,7 @@ impl RpcHandler for TraceTransactionRequest {
                     emit,
                 })?)
             }
+            TracerType::NoopTracer => Ok(serde_json::json!({})),
         }
     }
 }
@@ -353,6 +358,21 @@ impl RpcHandler for TraceBlockByNumberRequest {
                         })
                     })
                     .collect::<Result<_, serde_json::Error>>()?;
+                Ok(serde_json::to_value(block_trace)?)
+            }
+            TracerType::NoopTracer => {
+                // Return one empty object per transaction in the block, matching
+                // geth's behaviour where noopTracer produces {} for each tx.
+                let tx_hashes: Vec<H256> = block
+                    .body
+                    .transactions
+                    .iter()
+                    .map(|tx| tx.hash())
+                    .collect();
+                let block_trace: BlockTrace<Value> = tx_hashes
+                    .into_iter()
+                    .map(|hash| (hash, serde_json::json!({})).into())
+                    .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }
         }
