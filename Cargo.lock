@@ -3877,6 +3877,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spawned-concurrency",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

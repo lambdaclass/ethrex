@@ -111,19 +111,16 @@ impl TrieLayerCache {
     /// Installs an overlay on this cache. Subsequent reads that miss the layer chain
     /// will consult the overlay before falling through to disk. Replaces any
     /// previously-installed overlay.
-    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
     pub fn set_overlay(&mut self, overlay: Arc<Overlay>) {
         self.overlay = Some(overlay);
     }
 
     /// Removes any installed overlay. Idempotent.
-    #[allow(dead_code, reason = "consumed by PR 3 reconciliation")]
     pub fn clear_overlay(&mut self) {
         self.overlay = None;
     }
 
     /// Returns a reference to the installed overlay, if any.
-    #[allow(dead_code, reason = "consumed by PR 3 reconciliation")]
     pub fn overlay(&self) -> Option<&Arc<Overlay>> {
         self.overlay.as_ref()
     }
@@ -145,17 +142,15 @@ impl TrieLayerCache {
     }
 
     /// Returns true if a layer with the given `state_root` is present in the cache.
-    /// Used by callers (engine API, deep-reorg orchestrator in PR 3) to decide
-    /// whether a parent state is reachable through forward execution or requires
-    /// overlay construction.
-    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    /// Used by callers (engine API, deep-reorg orchestrator) to decide whether a
+    /// parent state is reachable through forward execution or requires overlay
+    /// construction.
     pub fn contains(&self, state_root: H256) -> bool {
         self.layers.contains_key(&state_root)
     }
 
-    /// Returns this cache's commit threshold. Used by the deep-reorg path (PR 3)
-    /// so a freshly-constructed replacement cache inherits the same threshold.
-    #[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
+    /// Returns this cache's commit threshold. Used by the deep-reorg path so a
+    /// freshly-constructed replacement cache inherits the same threshold.
     pub fn commit_threshold(&self) -> usize {
         self.commit_threshold
     }
@@ -499,7 +494,6 @@ impl OverlayCf {
 }
 
 /// Errors produced while constructing an [`Overlay`] from the on-disk journal.
-#[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
 #[derive(Debug, thiserror::Error)]
 pub enum OverlayError {
     #[error("missing journal entry for block {0}")]
@@ -575,7 +569,6 @@ impl Default for Overlay {
     }
 }
 
-#[allow(dead_code, reason = "consumed by PR 3 deep-reorg orchestration")]
 impl Overlay {
     /// Expected-items hint used to size the bloom filter at construction time.
     /// Sized for typical reorg depths (tens to low-hundreds of blocks); the filter
@@ -688,7 +681,9 @@ impl Overlay {
         map.get(key).cloned()
     }
 
-    /// Total number of overlay entries across all four CFs. Mostly for tests/metrics.
+    /// Total number of overlay entries across all four CFs. Used by tests and
+    /// future observability (PR 4).
+    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
     pub fn len(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
@@ -697,6 +692,7 @@ impl Overlay {
     }
 
     /// Whether the overlay holds any entries.
+    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
