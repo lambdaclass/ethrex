@@ -90,6 +90,34 @@ impl Evm {
         )
     }
 
+    /// Executes a single transaction in a block by index without any tracer.
+    /// Assumes that the DB already reflects all prior txs in the block.
+    pub fn execute_tx_by_index(
+        &mut self,
+        block: &Block,
+        tx_index: usize,
+    ) -> Result<(), EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Execution".to_string(),
+            ))?;
+        let sender = tx.sender(self.crypto.as_ref()).map_err(|e| {
+            EvmError::Transaction(format!("Couldn't recover sender: {e}"))
+        })?;
+        LEVM::execute_tx(
+            tx,
+            sender,
+            &block.header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )?;
+        Ok(())
+    }
+
     /// Reruns the given block, saving the changes on the state, doesn't output any results or receipts.
     /// If the optional argument `stop_index` is set, the run will stop just before executing the transaction at that index
     /// and won't process the withdrawals afterwards.

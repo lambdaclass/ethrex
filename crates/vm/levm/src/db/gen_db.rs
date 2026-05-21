@@ -661,6 +661,92 @@ impl GeneralizedDatabase {
         Ok(account_updates)
     }
 
+    /// Non-destructive version of `get_state_transitions`.
+    /// Returns cumulative account updates (current vs initial) without clearing the caches.
+    /// Used by `debug_intermediateRoots` to compute state roots after each transaction
+    /// while allowing execution to continue.
+    pub fn peek_state_transitions(&self) -> Result<Vec<AccountUpdate>, VMError> {
+        let mut account_updates: Vec<AccountUpdate> = vec![];
+        for (address, new_state_account) in self.current_accounts_state.iter() {
+            if new_state_account.is_unmodified() {
+                continue;
+            }
+            let initial_state_account =
+                self.initial_accounts_state.get(address).ok_or_else(|| {
+                    VMError::Internal(InternalError::Custom(format!(
+                        "Failed to get account {address} from immutable cache",
+                    )))
+                })?;
+
+            let mut acc_info_updated = false;
+            let mut storage_updated = false;
+
+            if initial_state_account.info.balance != new_state_account.info.balance {
+                acc_info_updated = true;
+            }
+
+            if initial_state_account.info.nonce != new_state_account.info.nonce {
+                acc_info_updated = true;
+            }
+
+            let code = if initial_state_account.info.code_hash != new_state_account.info.code_hash {
+                acc_info_updated = true;
+                Some(
+                    self.codes
+                        .get(&new_state_account.info.code_hash)
+                        .ok_or_else(|| {
+                            VMError::Internal(InternalError::Custom(format!(
+                                "Failed to get code for account {address}"
+                            )))
+                        })?,
+                )
+            } else {
+                None
+            };
+
+            let was_destroyed = new_state_account.status == AccountStatus::DestroyedModified;
+            let removed_storage = was_destroyed && initial_state_account.has_storage;
+
+            let mut added_storage: FxHashMap<_, _> = Default::default();
+
+            for (key, new_value) in &new_state_account.storage {
+                let old_value = if !was_destroyed {
+                    initial_state_account.storage.get(key).ok_or_else(|| { VMError::Internal(InternalError::Custom(format!("Failed to get old value from account's initial storage for address: {address:?}. For key: {key:?}")))})?
+                } else {
+                    &ZERO_U256
+                };
+
+                if new_value != old_value {
+                    added_storage.insert(*key, *new_value);
+                    storage_updated = true;
+                }
+            }
+
+            let info = if acc_info_updated {
+                Some(new_state_account.info.clone())
+            } else {
+                None
+            };
+
+            let was_empty = initial_state_account.is_empty();
+            let removed = new_state_account.is_empty() && !was_empty;
+
+            if !removed && !acc_info_updated && !storage_updated && !removed_storage {
+                continue;
+            }
+
+            account_updates.push(AccountUpdate {
+                address: *address,
+                removed,
+                info,
+                code: code.cloned(),
+                added_storage,
+                removed_storage,
+            });
+        }
+        Ok(account_updates)
+    }
+
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
         let mut account_updates: Vec<AccountUpdate> = vec![];
         for (address, new_state_account) in self.current_accounts_state.drain() {

@@ -218,6 +218,58 @@ impl Blockchain {
         Ok(traces)
     }
 
+    /// Computes the intermediate state root after each transaction in the given block.
+    /// Returns one H256 per transaction.
+    pub async fn compute_intermediate_roots(
+        &self,
+        block: Block,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<Vec<H256>, ChainError> {
+        let parent_header = self
+            .storage
+            .get_block_header_by_hash(block.header.parent_hash)?
+            .ok_or(ChainError::ParentNotFound)?;
+        let parent_state_root = parent_header.state_root;
+
+        // Rebuild parent state and run system calls (stop before tx 0)
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        vm.rerun_block(&block, Some(0))?;
+
+        let store = self.storage.clone();
+
+        timeout_trace_operation(timeout, move || {
+            let tx_count = block.body.transactions.len();
+            let mut roots = Vec::with_capacity(tx_count);
+
+            for index in 0..tx_count {
+                vm.execute_tx_by_index(&block, index)?;
+
+                // Peek at cumulative state transitions (non-destructive)
+                let updates = vm.db.peek_state_transitions().map_err(|e| {
+                    EvmError::Custom(format!("Failed to get state transitions: {e}"))
+                })?;
+
+                // Apply cumulative updates to a fresh trie from the parent state root
+                let mut state_trie = store.open_state_trie(parent_state_root).map_err(|e| {
+                    EvmError::Custom(format!("Failed to open state trie: {e}"))
+                })?;
+                let result = store
+                    .apply_account_updates_from_trie_batch(&mut state_trie, &updates)
+                    .map_err(|e| {
+                        EvmError::Custom(format!("Failed to apply account updates: {e}"))
+                    })?;
+
+                roots.push(result.state_trie_hash);
+            }
+
+            Ok(roots)
+        })
+        .await
+    }
+
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
     /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
     async fn rebuild_parent_state(
