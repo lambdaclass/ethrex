@@ -91,3 +91,48 @@ impl RpcHandler for AccountRangeRequest {
         Ok(serde_json::to_value(AccountRangeResult { accounts, next })?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RpcHandler;
+    use serde_json::json;
+
+    #[test]
+    fn parse_valid_params() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!(0),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            json!(64),
+        ]);
+        let req = AccountRangeRequest::parse(&params).unwrap();
+        assert_eq!(req.block_hash, H256::from_low_u64_be(1));
+        assert_eq!(req.tx_index, 0);
+        assert_eq!(req.start, H256::zero());
+        assert_eq!(req.max_results, 64);
+    }
+
+    #[test]
+    fn parse_no_params() {
+        assert!(AccountRangeRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_wrong_param_count() {
+        let params = Some(vec![json!("0x01"), json!(0)]);
+        assert!(AccountRangeRequest::parse(&params).is_err());
+    }
+
+    #[test]
+    fn parse_too_many_params() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!(0),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            json!(64),
+            json!("extra"),
+        ]);
+        assert!(AccountRangeRequest::parse(&params).is_err());
+    }
+}
