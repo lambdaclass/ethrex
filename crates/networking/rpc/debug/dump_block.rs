@@ -4,10 +4,7 @@ use ethrex_common::{H256, U256};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{
-    types::block_identifier::BlockIdentifier,
-    RpcApiContext, RpcErr, RpcHandler,
-};
+use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
 
 pub struct DumpBlockRequest {
     block: BlockIdentifier,
