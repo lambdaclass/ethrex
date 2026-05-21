@@ -253,9 +253,9 @@ impl Blockchain {
                 })?;
 
                 // Apply cumulative updates to a fresh trie from the parent state root
-                let mut state_trie = store.open_state_trie(parent_state_root).map_err(|e| {
-                    EvmError::Custom(format!("Failed to open state trie: {e}"))
-                })?;
+                let mut state_trie = store
+                    .open_state_trie(parent_state_root)
+                    .map_err(|e| EvmError::Custom(format!("Failed to open state trie: {e}")))?;
                 let result = store
                     .apply_account_updates_from_trie_batch(&mut state_trie, &updates)
                     .map_err(|e| {
