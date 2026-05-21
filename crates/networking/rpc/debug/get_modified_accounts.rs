@@ -4,10 +4,7 @@ use ethrex_common::{Address, H256};
 use ethrex_storage::Store;
 use serde_json::Value;
 
-use crate::{
-    types::block_identifier::BlockIdentifier,
-    RpcApiContext, RpcErr, RpcHandler,
-};
+use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
 
 pub struct GetModifiedAccountsByNumberRequest {
     start_block: BlockIdentifier,
@@ -135,7 +132,10 @@ fn diff_state_roots(
         .iter_accounts(start_root)
         .map_err(|e| RpcErr::Internal(e.to_string()))?
         .map(|(hash, state)| {
-            let encoded = format!("{:?}{:?}{:?}{:?}", state.nonce, state.balance, state.storage_root, state.code_hash);
+            let encoded = format!(
+                "{:?}{:?}{:?}{:?}",
+                state.nonce, state.balance, state.storage_root, state.code_hash
+            );
             (hash, encoded.into_bytes())
         })
         .collect();
@@ -148,7 +148,10 @@ fn diff_state_roots(
     let mut end_hashes = HashSet::new();
     for (hash, state) in end_iter {
         end_hashes.insert(hash);
-        let encoded = format!("{:?}{:?}{:?}{:?}", state.nonce, state.balance, state.storage_root, state.code_hash);
+        let encoded = format!(
+            "{:?}{:?}{:?}{:?}",
+            state.nonce, state.balance, state.storage_root, state.code_hash
+        );
         let key = (hash, encoded.into_bytes());
         if !start_accounts.contains(&key) {
             // Account was modified or created
