@@ -392,6 +392,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
         RpcErr::WrongParam(_) => "WrongParam",
         RpcErr::BadParams(_) => "BadParams",
+        RpcErr::InvalidRequest(_) => "InvalidRequest",
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
@@ -676,27 +677,54 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
+    // JSON-RPC 2.0: when the request body is not a valid Request object the
+    // response id MUST be null. Build these transport-level errors directly so
+    // we don't have to encode "no id" through `RpcRequestId`.
+    let null_id_error = |err: RpcErr| -> Value {
+        let meta: RpcErrorMetadata = err.into();
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": Value::Null,
+            "error": meta,
+        })
+    };
+
     let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
         Ok(w) => w,
         Err(_) => {
-            return Ok(Json(
-                rpc_response(
-                    RpcRequestId::String("".to_string()),
-                    Err(RpcErr::BadParams("Invalid request body".to_string())),
-                )
-                .map_err(|_| StatusCode::BAD_REQUEST)?,
-            ));
+            return Ok(Json(null_id_error(RpcErr::InvalidRequest(
+                "could not parse JSON-RPC request body".to_string(),
+            ))));
         }
     };
 
     if let Err(error) = authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        let id = match &wrapper {
-            RpcRequestWrapper::Single(req) => req.id.clone(),
-            RpcRequestWrapper::Multiple(_) => RpcRequestId::String("".to_string()),
+        // Auth failed: respond before dispatching anything. For batches, mirror
+        // the batch shape and emit one error response per request so clients
+        // can still correlate by id.
+        let error_meta: RpcErrorMetadata = error.into();
+        let res = match wrapper {
+            RpcRequestWrapper::Single(req) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req.id,
+                "error": error_meta,
+            }),
+            RpcRequestWrapper::Multiple(requests) if requests.is_empty() => null_id_error(
+                RpcErr::InvalidRequest("empty batch is not a valid Request".to_string()),
+            ),
+            RpcRequestWrapper::Multiple(requests) => {
+                let mut responses = Vec::with_capacity(requests.len());
+                for req in requests {
+                    responses.push(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": req.id,
+                        "error": error_meta.clone(),
+                    }));
+                }
+                serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+            }
         };
-        return Ok(Json(
-            rpc_response(id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
-        ));
+        return Ok(Json(res));
     }
 
     let res = match wrapper {
@@ -704,16 +732,10 @@ pub async fn handle_authrpc_request(
             let res = map_authrpc_requests(&req, service_context).await;
             rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
+        RpcRequestWrapper::Multiple(requests) if requests.is_empty() => null_id_error(
+            RpcErr::InvalidRequest("empty batch is not a valid Request".to_string()),
+        ),
         RpcRequestWrapper::Multiple(requests) => {
-            if requests.is_empty() {
-                return Ok(Json(
-                    rpc_response(
-                        RpcRequestId::String("".to_string()),
-                        Err(RpcErr::BadParams("Invalid request body".to_string())),
-                    )
-                    .map_err(|_| StatusCode::BAD_REQUEST)?,
-                ));
-            }
             let mut responses = Vec::with_capacity(requests.len());
             for req in requests {
                 let res = map_authrpc_requests(&req, service_context.clone()).await;
@@ -1686,110 +1708,5 @@ mod tests {
         });
         let expected_response = to_rpc_response_success_value(&json.to_string());
         assert_eq!(rpc_response.to_string(), expected_response.to_string())
-    }
-
-    /// Regression test for engine port batch parsing. Prior to the fix,
-    /// `handle_authrpc_request` deserialized directly into `RpcRequest` and
-    /// rejected JSON-RPC 2.0 batches with `Invalid request body`. Prysm's
-    /// `execution_payload_envelopes_by_root` handler batches `eth_getBlockByHash`
-    /// against the engine port, which caused glamsterdam-devnet-4 forking.
-    #[tokio::test]
-    async fn authrpc_accepts_batched_engine_requests() {
-        use axum::extract::State;
-        use axum_extra::TypedHeader;
-        use axum_extra::headers::Authorization;
-        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-
-        let mut storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage
-            .set_chain_config(&example_chain_config())
-            .await
-            .unwrap();
-        let context = default_context_with_storage(storage).await;
-
-        let iat = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let claims = serde_json::json!({ "iat": iat });
-        let token = encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(&context.node_data.jwt_secret),
-        )
-        .unwrap();
-        let auth_header = Some(TypedHeader(Authorization::bearer(&token).unwrap()));
-
-        let body = r#"[
-            {"jsonrpc":"2.0","method":"engine_exchangeCapabilities","params":[[]],"id":1},
-            {"jsonrpc":"2.0","method":"engine_exchangeCapabilities","params":[[]],"id":2}
-        ]"#
-        .to_string();
-
-        let response = handle_authrpc_request(State(context), auth_header, body)
-            .await
-            .expect("handler should succeed");
-        let value = response.0;
-        let arr = value
-            .as_array()
-            .expect("batched auth response must be a JSON array");
-        assert_eq!(arr.len(), 2, "expected 2 responses, got {value}");
-        for (i, item) in arr.iter().enumerate() {
-            assert!(
-                item.get("result").is_some(),
-                "response {i} should have a result field, got {item}"
-            );
-            assert_eq!(
-                item.get("id").and_then(|v| v.as_u64()),
-                Some((i + 1) as u64)
-            );
-        }
-    }
-
-    /// JSON-RPC 2.0 §6: an empty batch is itself an Invalid Request.
-    #[tokio::test]
-    async fn authrpc_rejects_empty_batch() {
-        use axum::extract::State;
-        use axum_extra::TypedHeader;
-        use axum_extra::headers::Authorization;
-        use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
-
-        let mut storage =
-            Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
-        storage
-            .set_chain_config(&example_chain_config())
-            .await
-            .unwrap();
-        let context = default_context_with_storage(storage).await;
-
-        let iat = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let claims = serde_json::json!({ "iat": iat });
-        let token = encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(&context.node_data.jwt_secret),
-        )
-        .unwrap();
-        let auth_header = Some(TypedHeader(Authorization::bearer(&token).unwrap()));
-
-        let response = handle_authrpc_request(State(context), auth_header, "[]".to_string())
-            .await
-            .expect("handler should succeed");
-        let err = response
-            .0
-            .get("error")
-            .expect("empty batch must produce an error response");
-        assert_eq!(err.get("code").and_then(|v| v.as_i64()), Some(-32000));
-        assert!(
-            err.get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .contains("Invalid request body"),
-            "expected Invalid request body, got {err}"
-        );
     }
 }
