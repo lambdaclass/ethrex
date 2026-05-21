@@ -1,12 +1,20 @@
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
 use ethrex_common::tracing::{PrePostState, PrestateAccountState, PrestateResult, PrestateTrace};
 use ethrex_common::types::{Block, Transaction};
-use ethrex_common::{Address, BigEndianHash, H256, U256, tracing::CallTrace, types::BlockHeader};
+use ethrex_common::{
+    Address, BigEndianHash, H256, U256,
+    tracing::{CallTrace, OpcodeTraceResult},
+    types::BlockHeader,
+};
 use ethrex_crypto::Crypto;
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::db::gen_db::CacheDB;
 use ethrex_levm::vm::VMType;
-use ethrex_levm::{db::gen_db::GeneralizedDatabase, tracing::LevmCallTracer, vm::VM};
+use ethrex_levm::{
+    db::gen_db::GeneralizedDatabase,
+    tracing::{LevmCallTracer, LevmOpcodeTracer, OpcodeTracerConfig},
+    vm::VM,
+};
 
 use crate::{EvmError, backends::levm::LEVM};
 
@@ -89,6 +97,30 @@ impl LEVM {
             }
             Ok(PrestateResult::Prestate(pre_map))
         }
+    }
+
+    /// Run transaction with opcode (EIP-3155) tracer activated.
+    pub fn trace_tx_opcodes(
+        db: &mut GeneralizedDatabase,
+        block_header: &BlockHeader,
+        tx: &Transaction,
+        cfg: OpcodeTracerConfig,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let env = Self::setup_env(
+            tx,
+            tx.sender(crypto).map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?,
+            block_header,
+            db,
+            vm_type,
+        )?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+        vm.opcode_tracer = LevmOpcodeTracer::new(cfg);
+        vm.execute()?;
+        Ok(vm.opcode_tracer.take_result())
     }
 
     /// Executes `tx` with tracing disabled and discards the result. Matches geth's
