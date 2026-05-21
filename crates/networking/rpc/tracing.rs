@@ -363,12 +363,12 @@ impl RpcHandler for TraceBlockByNumberRequest {
             .block
             .resolve_block_number(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
         let block = context
             .storage
             .get_block_by_number(block_number)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
         trace_block(block, &self.trace_config, &context).await
     }
 }
@@ -401,7 +401,7 @@ impl RpcHandler for TraceBlockByHashRequest {
             .storage
             .get_block_by_hash(self.block_hash)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
         trace_block(block, &self.trace_config, &context).await
     }
 }

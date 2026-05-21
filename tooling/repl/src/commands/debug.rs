@@ -99,7 +99,14 @@ pub fn commands() -> Vec<CommandDef> {
             name: "traceBlockByNumber",
             rpc_method: "debug_traceBlockByNumber",
             params: BLOCK_OPTIONS,
-            description: "Traces all transactions in a block",
+            description: "Traces all transactions in a block by number",
+        },
+        CommandDef {
+            namespace: "debug",
+            name: "traceBlockByHash",
+            rpc_method: "debug_traceBlockByHash",
+            params: HASH_OPTIONS,
+            description: "Traces all transactions in a block by hash",
         },
     ]
 }
