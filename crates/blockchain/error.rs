@@ -83,6 +83,8 @@ pub enum MempoolError {
     TxMaxInitCodeSizeError,
     #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
     TxSizeExceeded { actual: usize, limit: usize },
+    #[error("Tip cap {actual} wei below the configured minimum of {limit} wei")]
+    TipBelowMinimum { actual: u64, limit: u64 },
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error(

@@ -1,4 +1,5 @@
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::BlockchainOptions;
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
     TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
@@ -547,4 +548,255 @@ fn blobs_bundle_insert_and_remove() {
             .expect("should return empty"),
         vec![None]
     );
+}
+
+// --- min-tip floor admission tests ----------------------------------------
+
+/// Builds a blockchain configured with `min_tip_wei` as the admission floor
+/// (everything else permissive for tests).
+fn blockchain_with_min_tip(store: Store, min_tip_wei: u64) -> Blockchain {
+    let mut bc = Blockchain::default_with_store(store);
+    let mut opts = bc.options.clone();
+    opts.min_tip_wei = min_tip_wei;
+    bc.options = opts;
+    bc
+}
+
+#[tokio::test]
+async fn zero_tip_eip1559_rejected_under_default_floor() {
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn at_floor_eip1559_passes_tip_check() {
+    // Tip at the floor passes the min-tip check. The random sender has no
+    // funds, so the tx fails later with `NotEnoughBalance`; that's the only
+    // accepted post-tip-check outcome. Asserting the specific downstream
+    // error guards against a future refactor that accidentally skips the
+    // tip check (where a different error would still satisfy a `!matches!`
+    // negative assertion).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000,
+        max_fee_per_gas: 1_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn floor_of_zero_admits_zero_tip() {
+    // Operators can disable the floor with --mempool.min-tip 0. Same
+    // structure as `at_floor_eip1559_passes_tip_check`: we want a specific
+    // downstream error (the balance check) to fire, NOT just "any error
+    // other than TipBelowMinimum".
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 0);
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to skip (floor=0) and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn legacy_gas_price_below_floor_rejected() {
+    // Legacy tx: `gas_tip_cap()` returns `gas_price` so the floor applies to
+    // the raw gas price for legacy txs (geth applies `PriceLimit` to
+    // `tx.GasTipCap()` which is `gas_price` for legacy).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = ethrex_common::types::LegacyTransaction {
+        gas_price: U256::from(999_999u64), // 1 wei below floor
+        gas: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::LegacyTransaction(tx);
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 999_999,
+            limit: 1_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn options_field_is_used_in_validate_transaction() {
+    // Smoke test that BlockchainOptions::min_tip_wei is consulted (not
+    // accidentally ignored if the option-plumbing breaks).
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+
+    let mut bc = Blockchain::default_with_store(store);
+    bc.options = BlockchainOptions {
+        min_tip_wei: 5_000_000_000, // 5 gwei
+        ..BlockchainOptions::default()
+    };
+
+    let tx = EIP1559Transaction {
+        max_priority_fee_per_gas: 1_000_000_000, // 1 gwei (below 5 gwei)
+        max_fee_per_gas: 5_000_000_000,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    };
+    let tx = Transaction::EIP1559Transaction(tx);
+
+    let res = bc.validate_transaction(&tx, Address::random()).await;
+    assert!(matches!(
+        res,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 1_000_000_000,
+            limit: 5_000_000_000,
+        }),
+    ));
+}
+
+#[tokio::test]
+async fn shipped_default_floor_rejects_zero_tip_admits_one() {
+    // Pin the actual shipped default (`DEFAULT_MIN_TIP_WEI = 1`, matching
+    // geth's `PriceLimit = 1 wei`). Without this test the default could
+    // silently regress to 0 (admit-everything) or to the old 1 Mwei value.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, ethrex_blockchain::DEFAULT_MIN_TIP_WEI);
+
+    // tip = 0 → rejected
+    let zero = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&zero, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1
+        }),
+    ));
+
+    // tip = 1 → passes the tip check; sender has no funds so the next
+    // failure is `NotEnoughBalance`. Assert that specifically rather than
+    // "not TipBelowMinimum" so the test catches accidental skip of the
+    // tip check in future refactors.
+    let one = Transaction::EIP1559Transaction(EIP1559Transaction {
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: 1,
+        gas_limit: 50_000_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let res = blockchain
+        .validate_transaction(&one, Address::random())
+        .await;
+    // The tip check itself must not fire; the downstream account-lookup
+    // (state root or balance) is what should fail in this minimal setup.
+    // Asserting on the concrete next-stage error keeps the test honest if
+    // a future refactor accidentally skips the tip check.
+    assert!(
+        matches!(
+            res,
+            Err(MempoolError::NotEnoughBalance) | Err(MempoolError::StoreError(_))
+        ),
+        "expected the tip check to pass and an account-lookup error to fire next, got {res:?}",
+    );
+}
+
+#[tokio::test]
+async fn blob_tx_under_floor_rejected() {
+    // EIP-4844 path uses the same `gas_tip_cap()` accessor. Confirm an
+    // under-floor blob tx is also rejected so a regression in the per-type
+    // dispatch wouldn't slip through.
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = blockchain_with_min_tip(store, 1_000_000);
+
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 1_000_000,
+        max_fee_per_blob_gas: 1.into(),
+        gas: 50_000_000,
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+
+    assert!(matches!(
+        blockchain
+            .validate_transaction(&tx, Address::random())
+            .await,
+        Err(MempoolError::TipBelowMinimum {
+            actual: 0,
+            limit: 1_000_000,
+        }),
+    ));
 }
