@@ -420,8 +420,8 @@ fn collect_four_byte_selectors(frame: &CallTraceFrame, selectors: &mut HashMap<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytes::Bytes;
     use crate::rpc::RpcHandler;
+    use bytes::Bytes;
     use serde_json::json;
 
     // --- TraceTransactionRequest parse tests ---
@@ -462,7 +462,10 @@ mod tests {
             json!({"tracer": "4byteTracer"}),
         ]);
         let req = TraceTransactionRequest::parse(&params).unwrap();
-        assert!(matches!(req.trace_config.tracer, TracerType::FourByteTracer));
+        assert!(matches!(
+            req.trace_config.tracer,
+            TracerType::FourByteTracer
+        ));
     }
 
     // --- collect_four_byte_selectors tests ---
