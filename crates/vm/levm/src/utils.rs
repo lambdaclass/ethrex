@@ -346,7 +346,7 @@ impl<'a> VM<'a> {
             // An account can exist in the trie but be empty (e.g., has non-empty storage root).
             if authority_exists {
                 if self.env.config.fork >= Fork::Amsterdam {
-                    // EELS PR #2816 (bal-devnet-7): refund
+                    // EIP-7702: refund
                     // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for each existing authority via
                     // two independent channels:
                     //   1. `state_gas_reservoir += refund` — sender gets the gas back via
@@ -354,10 +354,8 @@ impl<'a> VM<'a> {
                     //   2. `state_refund += refund` — block-level state-gas accounting
                     //      subtracts this at refund_sender (mirrors EELS
                     //      `MessageCallOutput.state_refund`).
-                    // `state_gas_used` and `intrinsic_state_gas_charged` are intentionally
-                    // NOT decremented: spec keeps them immutable after validation so
-                    // Policy A's `execution_portion` math and refund_sender's regular-gas
-                    // formula stay correct on revert/halt/OOG paths.
+                    // `state_gas_used` is NOT decremented here: the refund goes through
+                    // `state_refund` (tx-level channel) so block-level accounting subtracts it.
                     let refund = self.state_gas_new_account;
                     self.state_gas_reservoir = self
                         .state_gas_reservoir
@@ -374,7 +372,7 @@ impl<'a> VM<'a> {
                 }
             }
 
-            // EELS PR #2836 + #2848 (bal-devnet-7, tests-bal@v7.1.1): refill the
+            // EIP-7702: refill the
             // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas
             // when no new delegation indicator bytes are written. That covers
             // two cases:
@@ -444,20 +442,16 @@ impl<'a> VM<'a> {
             .increase_consumed_gas(total_gas)
             .map_err(|_| TxValidationError::IntrinsicGasTooLow)?;
 
+        // state_gas_used is i64; intrinsic state gas is bounded by tx gas limit (< i64::MAX).
         self.state_gas_used = self
             .state_gas_used
-            .checked_add(state_gas)
+            .checked_add(i64::try_from(state_gas).map_err(|_| InternalError::Overflow)?)
             .ok_or(InternalError::Overflow)?;
-
-        // EIP-8037: Capture the intrinsic state gas charged so refund_sender's
-        // Policy A `execution_portion = state_gas_used − intrinsic − absorbed − pending`
-        // formula stays correct after revert/halt/OOG (where state_gas_used and
-        // intrinsic_state_gas_charged are intentionally not decremented).
-        debug_assert_eq!(
-            self.intrinsic_state_gas_charged, 0,
-            "intrinsic_state_gas_charged set twice"
-        );
-        self.intrinsic_state_gas_charged = self.state_gas_used;
+        // Remember the intrinsic split so we can leave it in state_gas_used on top-level
+        // error (matches EELS `tx_env.intrinsic_state_gas`, which is kept separate from
+        // `tx_output.state_gas_used` and never refunded).
+        debug_assert_eq!(self.intrinsic_state_gas, 0, "intrinsic_state_gas set twice");
+        self.intrinsic_state_gas = state_gas;
 
         // EIP-8037 (Amsterdam+): compute state gas reservoir from excess gas_limit.
         // execution_gas = what remains after all intrinsic gas; regular_gas_budget = how much
@@ -465,7 +459,7 @@ impl<'a> VM<'a> {
         // the reservoir for drawing state gas without consuming regular gas_remaining.
         if self.env.config.fork >= Fork::Amsterdam {
             if self.env.is_system_call {
-                // EIP-8037 bal-devnet-7 (execution-specs commit 7b3e8016): system
+                // EIP-8037: system
                 // transactions get a dedicated state-gas reservoir of
                 // `state_gas_storage_set * SYSTEM_MAX_SSTORES_PER_CALL` ON TOP of
                 // the full SYS_CALL_GAS_LIMIT regular budget — so SSTORE-heavy
