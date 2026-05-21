@@ -416,3 +416,123 @@ fn collect_four_byte_selectors(frame: &CallTraceFrame, selectors: &mut HashMap<S
         collect_four_byte_selectors(sub_call, selectors);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        assert!(TraceTransactionRequest::parse(&None).is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_four_byte() {
+        let t: TracerType = serde_json::from_value(json!("4byteTracer")).unwrap();
+        assert!(matches!(t, TracerType::FourByteTracer));
+    }
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        assert!(serde_json::from_value::<TracerType>(json!("unknownTracer")).is_err());
+    }
+
+    // --- 4byteTracer parse test ---
+
+    #[test]
+    fn parse_trace_tx_four_byte_tracer() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!({"tracer": "4byteTracer"}),
+        ]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert!(matches!(req.trace_config.tracer, TracerType::FourByteTracer));
+    }
+
+    // --- collect_four_byte_selectors tests ---
+
+    #[test]
+    fn four_byte_selectors_empty_input() {
+        let frame = CallTraceFrame {
+            input: Bytes::new(),
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert!(selectors.is_empty());
+    }
+
+    #[test]
+    fn four_byte_selectors_short_input_ignored() {
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c]),
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert!(selectors.is_empty());
+    }
+
+    #[test]
+    fn four_byte_selectors_single_call() {
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x00, 0x01]),
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert_eq!(selectors.len(), 1);
+        assert_eq!(selectors["0xa9059cbb-6"], 1);
+    }
+
+    #[test]
+    fn four_byte_selectors_nested_calls() {
+        let child = CallTraceFrame {
+            input: Bytes::from_static(&[0x23, 0xb8, 0x72, 0xdd, 0x01, 0x02, 0x03]),
+            ..Default::default()
+        };
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
+            calls: vec![child],
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert_eq!(selectors.len(), 2);
+        assert_eq!(selectors["0xa9059cbb-5"], 1);
+        assert_eq!(selectors["0x23b872dd-7"], 1);
+    }
+
+    #[test]
+    fn four_byte_selectors_duplicate_calls_counted() {
+        let child = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
+            ..Default::default()
+        };
+        let frame = CallTraceFrame {
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
+            calls: vec![child],
+            ..Default::default()
+        };
+        let mut selectors = HashMap::new();
+        collect_four_byte_selectors(&frame, &mut selectors);
+        assert_eq!(selectors.len(), 1);
+        assert_eq!(selectors["0xa9059cbb-5"], 2);
+    }
+}
