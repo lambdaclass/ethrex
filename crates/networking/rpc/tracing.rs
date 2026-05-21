@@ -405,3 +405,76 @@ async fn trace_block(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rpc::RpcHandler;
+    use serde_json::json;
+
+    // --- TraceTransactionRequest parse tests ---
+
+    #[test]
+    fn parse_trace_tx_with_hash_only() {
+        let params = Some(vec![json!(
+            "0x0000000000000000000000000000000000000000000000000000000000000001"
+        )]);
+        let req = TraceTransactionRequest::parse(&params).unwrap();
+        assert_eq!(req.tx_hash, H256::from_low_u64_be(1));
+    }
+
+    #[test]
+    fn parse_trace_tx_no_params() {
+        assert!(TraceTransactionRequest::parse(&None).is_err());
+    }
+
+    // --- TraceBlockRequest (RLP) parse tests ---
+
+    #[test]
+    fn parse_trace_block_rlp_missing_0x_prefix() {
+        let params = Some(vec![json!("deadbeef")]);
+        let result = TraceBlockRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_block_rlp_invalid_hex() {
+        let params = Some(vec![json!("0xZZZZ")]);
+        let result = TraceBlockRequest::parse(&params);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_trace_block_rlp_no_params() {
+        assert!(TraceBlockRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_trace_block_rlp_empty_params() {
+        assert!(TraceBlockRequest::parse(&Some(vec![])).is_err());
+    }
+
+    #[test]
+    fn parse_trace_block_rlp_too_many_params() {
+        let params = Some(vec![json!("0x00"), json!({}), json!("extra")]);
+        assert!(TraceBlockRequest::parse(&params).is_err());
+    }
+
+    // --- TracerType deserialization tests ---
+
+    #[test]
+    fn deserialize_tracer_type_unknown_fails() {
+        assert!(serde_json::from_value::<TracerType>(json!("unknownTracer")).is_err());
+    }
+
+    // --- PrestateTracerConfig validation ---
+
+    #[test]
+    fn prestate_config_diff_mode_and_include_empty_is_invalid() {
+        let cfg = PrestateTracerConfig {
+            diff_mode: true,
+            include_empty: true,
+        };
+        assert!(cfg.validate().is_err());
+    }
+}
