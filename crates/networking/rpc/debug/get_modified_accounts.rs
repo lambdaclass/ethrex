@@ -165,3 +165,55 @@ fn diff_state_roots(
 
     Ok(modified)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::RpcHandler;
+    use serde_json::json;
+
+    // --- GetModifiedAccountsByNumberRequest parse tests ---
+
+    #[test]
+    fn parse_by_number_valid() {
+        let params = Some(vec![json!("0x1"), json!("0xa")]);
+        let req = GetModifiedAccountsByNumberRequest::parse(&params).unwrap();
+        assert!(matches!(req.start_block, BlockIdentifier::Number(1)));
+        assert!(matches!(req.end_block, BlockIdentifier::Number(10)));
+    }
+
+    #[test]
+    fn parse_by_number_no_params() {
+        assert!(GetModifiedAccountsByNumberRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_by_number_wrong_count() {
+        let params = Some(vec![json!("0x1")]);
+        assert!(GetModifiedAccountsByNumberRequest::parse(&params).is_err());
+    }
+
+    // --- GetModifiedAccountsByHashRequest parse tests ---
+
+    #[test]
+    fn parse_by_hash_valid() {
+        let params = Some(vec![
+            json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000002"),
+        ]);
+        let req = GetModifiedAccountsByHashRequest::parse(&params).unwrap();
+        assert_eq!(req.start_hash, H256::from_low_u64_be(1));
+        assert_eq!(req.end_hash, H256::from_low_u64_be(2));
+    }
+
+    #[test]
+    fn parse_by_hash_no_params() {
+        assert!(GetModifiedAccountsByHashRequest::parse(&None).is_err());
+    }
+
+    #[test]
+    fn parse_by_hash_wrong_count() {
+        let params = Some(vec![json!("0x01")]);
+        assert!(GetModifiedAccountsByHashRequest::parse(&params).is_err());
+    }
+}
