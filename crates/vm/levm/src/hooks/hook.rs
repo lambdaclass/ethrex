@@ -1,6 +1,6 @@
 use crate::{
     errors::{ContextResult, VMError},
-    hooks::{L2Hook, backup_hook::BackupHook, default_hook::DefaultHook},
+    hooks::{L2Hook, PolygonHook, backup_hook::BackupHook, default_hook::DefaultHook},
     vm::{VM, VMType},
 };
 use ethrex_common::types::fee_config::FeeConfig;
@@ -20,6 +20,7 @@ pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
     match vm_type {
         VMType::L1 => l1_hooks(),
         VMType::L2(fee_config) => l2_hooks(*fee_config),
+        VMType::Polygon(pfc) => polygon_hooks(pfc.coinbase, pfc.burnt_contract),
     }
 }
 
@@ -32,4 +33,14 @@ pub fn l2_hooks(fee_config: FeeConfig) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
         Rc::new(RefCell::new(L2Hook::new(fee_config))),
         Rc::new(RefCell::new(BackupHook::default())),
     ]
+}
+
+pub fn polygon_hooks(
+    fee_coinbase: ethrex_common::Address,
+    burnt_contract: Option<ethrex_common::Address>,
+) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
+    vec![Rc::new(RefCell::new(PolygonHook::new(
+        fee_coinbase,
+        burnt_contract,
+    )))]
 }

@@ -4,9 +4,40 @@ use ethrex_rlp::encode::RLPEncode;
 use secp256k1::{PublicKey, SecretKey};
 use std::{
     path::{Path, PathBuf},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tracing::error;
+
+/// Logs diagnostics useful for investigating actor timeouts.
+///
+/// Measures the tokio runtime's responsiveness (yield / spawn / sleep latencies)
+/// *after* the timeout was observed. High latencies here indicate the runtime
+/// is congested (e.g. a blocking task is hogging a worker); near-zero latencies
+/// point to the target actor itself being stuck (long-running handler, blocked
+/// on I/O, deadlocked).
+pub async fn log_actor_timeout_diagnostics(actor: &str, operation: &str) {
+    let yield_start = Instant::now();
+    tokio::task::yield_now().await;
+    let yield_latency = yield_start.elapsed();
+
+    let sleep_start = Instant::now();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    let sleep_latency = sleep_start.elapsed();
+
+    let spawn_start = Instant::now();
+    let spawn_result = tokio::task::spawn(async {}).await;
+    let spawn_latency = spawn_start.elapsed();
+
+    error!(
+        actor,
+        operation,
+        ?yield_latency,
+        ?sleep_latency,
+        ?spawn_latency,
+        spawn_ok = spawn_result.is_ok(),
+        "actor timeout diagnostics (high yield/sleep/spawn latency => tokio runtime congested; near-zero => actor stuck)"
+    );
+}
 
 /// Computes the node_id from a public key (aka computes the Keccak256 hash of the given public key)
 pub fn node_id(public_key: &H512) -> H256 {

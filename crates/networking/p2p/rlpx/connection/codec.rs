@@ -229,14 +229,23 @@ impl Decoder for RLPxCodec {
             })?;
 
         let (msg_id, msg_data): (u8, _) = RLPDecode::decode_unfinished(frame_data)?;
-        Ok(Some(rlpx::Message::decode(
-            msg_id,
-            msg_data,
-            *self
-                .eth_version
-                .read()
-                .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?,
-        )?))
+        let eth_version = *self
+            .eth_version
+            .read()
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))?;
+        match rlpx::Message::decode(msg_id, msg_data, eth_version) {
+            Ok(msg) => Ok(Some(msg)),
+            Err(e) => {
+                tracing::warn!(
+                    msg_id,
+                    data_len = msg_data.len(),
+                    ?eth_version,
+                    error = %e,
+                    "Failed to decode incoming RLPx message"
+                );
+                Err(e.into())
+            }
+        }
     }
 
     fn framed<S: AsyncRead + AsyncWrite + Sized>(self, io: S) -> Framed<S, Self>

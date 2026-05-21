@@ -241,6 +241,8 @@ pub enum RpcNamespace {
     Net,
     /// Transaction pool inspection methods (exposed as `txpool_*`).
     Mempool,
+    /// Bor namespace for Polygon PoS specific methods.
+    Bor,
 }
 
 impl RpcNamespace {
@@ -254,6 +256,7 @@ impl RpcNamespace {
             "web3" => Some(RpcNamespace::Web3),
             "net" => Some(RpcNamespace::Net),
             "txpool" => Some(RpcNamespace::Mempool),
+            "bor" => Some(RpcNamespace::Bor),
             _ => None,
         }
     }

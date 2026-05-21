@@ -2,6 +2,7 @@ use ethrex_common::{
     H256,
     types::{BlobsBundleError, BlockHash},
 };
+use ethrex_polygon::consensus::engine::BorEngineError;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::error::StoreError;
 use ethrex_trie::TrieError;
@@ -36,6 +37,8 @@ pub enum ChainError {
     Custom(String),
     #[error("Unknown Payload")]
     UnknownPayload,
+    #[error("Bor consensus error: {0}")]
+    BorEngine(#[from] BorEngineError),
 }
 
 impl From<EvmError> for ChainError {
@@ -67,6 +70,7 @@ impl ChainError {
             ChainError::WitnessGeneration(_) => "witness_generation",
             ChainError::Custom(_) => "custom_error",
             ChainError::UnknownPayload => "unknown_payload",
+            ChainError::BorEngine(_) => "bor_engine_error",
         }
     }
 }
@@ -119,6 +123,12 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("Transaction gas price below minimum (25 Gwei)")]
+    TxGasPriceBelowMinimum,
+    #[error("Blob transactions (type 3) are not supported on Polygon")]
+    BlobTxNotSupported,
+    #[error("Transaction type {0} is not supported on Polygon")]
+    UnsupportedTxType(u8),
 }
 
 #[derive(Debug)]

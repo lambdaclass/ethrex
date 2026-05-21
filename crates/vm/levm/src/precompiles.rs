@@ -249,12 +249,33 @@ pub const PRECOMPILES: [Precompile; 18] = [
 ];
 
 pub fn precompiles_for_fork(fork: Fork) -> impl Iterator<Item = Precompile> {
-    PRECOMPILES
-        .into_iter()
-        .filter(move |precompile| precompile.active_since_fork <= fork)
+    PRECOMPILES.into_iter().filter(move |precompile| {
+        // On Polygon, KZG point evaluation is not available at Cancun —
+        // it's activated at Lisovo, then removed at LisovoPro.
+        if fork.is_polygon() && precompile.address == POINT_EVALUATION.address {
+            return fork >= Fork::Lisovo && fork < Fork::LisovoPro;
+        }
+        precompile.active_since_fork <= fork
+    })
 }
 
 pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
+    if matches!(vm_type, VMType::Polygon(_)) {
+        // Polygon: fork-aware precompile check using direct range + fork gates.
+        // Avoids iterator overhead — this is called on every CALL/DELEGATECALL opcode.
+        // High bytes must be zero (addresses like 0x4200...000f are NOT precompiles).
+        if address.0[..18] != [0u8; 18] {
+            return false;
+        }
+        let addr = u64::from(u16::from_be_bytes([address.0[18], address.0[19]]));
+        return match addr {
+            1..=9 => true,                       // Basic + Istanbul
+            0x0a => false,                       // KZG: not available on Polygon
+            0x0b..=0x11 => fork >= Fork::Prague, // BLS: active since Prague
+            0x100 => true,                       // P256Verify: always active
+            _ => false,
+        };
+    }
     (matches!(vm_type, VMType::L2(_)) && *address == P256VERIFY.address)
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
@@ -302,9 +323,11 @@ pub fn execute_precompile(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    eip7883: bool,
     cache: Option<&PrecompileCache>,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
+    // MODEXP has a different signature (extra eip7883 param), so it's dispatched separately.
     type PrecompileFn = fn(&Bytes, &mut u64, Fork, &dyn Crypto) -> Result<Bytes, VMError>;
 
     const PRECOMPILES: [Option<PrecompileFn>; 512] = const {
@@ -313,7 +336,6 @@ pub fn execute_precompile(
         precompiles[IDENTITY.address.0[19] as usize] = Some(identity as PrecompileFn);
         precompiles[SHA2_256.address.0[19] as usize] = Some(sha2_256 as PrecompileFn);
         precompiles[RIPEMD_160.address.0[19] as usize] = Some(ripemd_160 as PrecompileFn);
-        precompiles[MODEXP.address.0[19] as usize] = Some(modexp as PrecompileFn);
         precompiles[ECADD.address.0[19] as usize] = Some(ecadd as PrecompileFn);
         precompiles[ECMUL.address.0[19] as usize] = Some(ecmul as PrecompileFn);
         precompiles[ECPAIRING.address.0[19] as usize] = Some(ecpairing as PrecompileFn);
@@ -340,12 +362,12 @@ pub fn execute_precompile(
         return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
     }
     let index = u16::from_be_bytes([address[18], address[19]]) as usize;
+    let is_modexp = index == MODEXP.address.0[19] as usize;
 
-    let precompile = PRECOMPILES
-        .get(index)
-        .copied()
-        .flatten()
-        .ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?;
+    let precompile = PRECOMPILES.get(index).copied().flatten();
+    if !is_modexp && precompile.is_none() {
+        return Err(VMError::Internal(InternalError::InvalidPrecompileAddress));
+    }
 
     // Check cache (skip identity -- copy is cheaper than lookup)
     if address != IDENTITY.address
@@ -359,7 +381,16 @@ pub fn execute_precompile(
     let precompile_time_start = std::time::Instant::now();
 
     let gas_before = *gas_remaining;
-    let result = precompile(calldata, gas_remaining, fork, crypto);
+    let result = if is_modexp {
+        modexp(calldata, gas_remaining, fork, eip7883, crypto)
+    } else {
+        precompile.ok_or(VMError::Internal(InternalError::InvalidPrecompileAddress))?(
+            calldata,
+            gas_remaining,
+            fork,
+            crypto,
+        )
+    };
 
     #[cfg(feature = "perf_opcode_timings")]
     {
@@ -560,13 +591,15 @@ pub fn modexp(
     calldata: &Bytes,
     gas_remaining: &mut u64,
     fork: Fork,
+    eip7883: bool,
     crypto: &dyn Crypto,
 ) -> Result<Bytes, VMError> {
     // If calldata does not reach the required length, we should fill the rest with zeros
     let calldata = fill_with_zeros(calldata, 96);
 
     // Defer converting to a U256 after the zero check.
-    if fork < Fork::Osaka {
+    // Skip this shortcut when EIP-7883 is active (different static cost).
+    if !eip7883 && fork < Fork::Osaka {
         let base_size_bytes: [u8; 32] = calldata[0..32].try_into()?;
         let modulus_size_bytes: [u8; 32] = calldata[64..96].try_into()?;
         const ZERO_BYTES: [u8; 32] = [0u8; 32];
@@ -584,7 +617,7 @@ pub fn modexp(
     let modulus_size = u256_from_big_endian_const::<32>(calldata[64..96].try_into()?);
     let exponent_size = u256_from_big_endian_const::<32>(calldata[32..64].try_into()?);
 
-    if fork >= Fork::Osaka {
+    if eip7883 || fork >= Fork::Osaka {
         if base_size > U256::from(1024) {
             return Err(PrecompileError::ModExpBaseTooLarge.into());
         }
@@ -625,7 +658,14 @@ pub fn modexp(
         Natural::from_power_of_2_digits_desc(8u64, exp_first_32_bytes.iter().cloned())
             .ok_or(InternalError::TypeConversion)?;
 
-    let gas_cost = gas_cost::modexp(&exp_first_32, base_size, exponent_size, modulus_size, fork)?;
+    let gas_cost = gas_cost::modexp(
+        &exp_first_32,
+        base_size,
+        exponent_size,
+        modulus_size,
+        fork,
+        eip7883,
+    )?;
 
     increase_precompile_consumed_gas(gas_cost, gas_remaining)?;
 

@@ -91,6 +91,21 @@ stop-localnet: ## 🛑 Stop local network
 	kurtosis enclave stop $(ENCLAVE)
 	kurtosis enclave rm $(ENCLAVE) --force
 
+POLYGON_ENCLAVE ?= polygon-devnet
+POLYGON_PACKAGE_DIR ?= ./polygon-package
+POLYGON_ARGS_FILE ?= ./fixtures/networks/polygon.yaml
+
+polygon-localnet: build-image ## 🟣 Start Polygon devnet (Heimdall + Bor + ethrex)
+	@set -e; \
+	trap 'printf "\nStopping polygon localnet...\n"; $(MAKE) stop-polygon-localnet || true; exit 0' INT TERM HUP QUIT; \
+	kurtosis run --enclave $(POLYGON_ENCLAVE) $(POLYGON_PACKAGE_DIR) --args-file $(POLYGON_ARGS_FILE); \
+	CID=$$(docker ps -q --filter ancestor=ethrex:local | head -n1); \
+	if [ -n "$$CID" ]; then docker logs -f $$CID || true; else echo "No ethrex container found; skipping logs."; fi
+
+stop-polygon-localnet: ## 🛑 Stop Polygon devnet
+	kurtosis enclave stop $(POLYGON_ENCLAVE)
+	kurtosis enclave rm $(POLYGON_ENCLAVE) --force
+
 HIVE_BRANCH ?= master
 
 setup-hive: ## 🐝 Set up Hive testing framework

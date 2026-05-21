@@ -28,7 +28,9 @@ use bytes::Bytes;
 use ethrex_common::{
     Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
-    types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
+    types::{
+        AccessListEntry, Code, Fork, Log, PolygonFeeConfig, Transaction, fee_config::FeeConfig,
+    },
 };
 use ethrex_crypto::Crypto;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -42,7 +44,7 @@ use std::{
 /// Storage mapping from slot key to value.
 pub type Storage = FxHashMap<U256, H256>;
 
-/// Specifies whether the VM operates in L1 or L2 mode.
+/// Specifies whether the VM operates in L1, L2, or Polygon mode.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum VMType {
     /// Standard Ethereum L1 execution.
@@ -50,6 +52,8 @@ pub enum VMType {
     L1,
     /// L2 rollup execution with additional fee handling.
     L2(FeeConfig),
+    /// Polygon PoS execution with deferred fee distribution.
+    Polygon(PolygonFeeConfig),
 }
 
 /// Execution substate that tracks changes during transaction execution.
@@ -530,6 +534,19 @@ impl<'a> VM<'a> {
 
         let mut substate = Substate::initialize(&env, tx)?;
 
+        if matches!(vm_type, VMType::Polygon(_)) {
+            // Polygon: add P256Verify (0x100) to warm set.
+            substate
+                .accessed_addresses
+                .insert(Address::from_low_u64_be(0x100));
+            // Remove ONLY address 0x0a (KZG point evaluation) from warm set.
+            // Bor's Cancun-equivalent fork warms 1-9 but NOT 0x0a (KZG is not
+            // active on Polygon). BLS addresses 0x0b-0x11 stay warm.
+            substate
+                .accessed_addresses
+                .remove(&Address::from_low_u64_be(0x0a));
+        }
+
         let (callee, is_create) = Self::get_tx_callee(tx, db, &env, &mut substate)?;
 
         let fork = env.config.fork;
@@ -602,7 +619,11 @@ impl<'a> VM<'a> {
                 Memory::default(),
             ),
             env,
-            opcode_table: VM::build_opcode_table(fork),
+            opcode_table: if matches!(vm_type, VMType::Polygon(_)) {
+                VM::build_opcode_table_polygon(fork)
+            } else {
+                VM::build_opcode_table(fork)
+            },
             crypto,
         };
 
@@ -781,7 +802,7 @@ impl<'a> VM<'a> {
         // Empty bytecode would only execute STOP; skip the dispatch loop.
         // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
         // fail past this point and has no inner calls, so there's nothing to roll back.
-        if self.is_simple_transfer_fast_path() {
+        if !matches!(self.vm_type, VMType::Polygon(_)) && self.is_simple_transfer_fast_path() {
             #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
             let gas_used = self
                 .current_call_frame
@@ -813,6 +834,28 @@ impl<'a> VM<'a> {
         }
 
         self.substate.push_backup();
+
+        // Polygon: emit Bor LogTransfer for the initial tx value transfer.
+        // Must be AFTER push_backup() so the log reverts with failed transactions.
+        // Covers both CALL and CREATE tx types.
+        if matches!(self.vm_type, VMType::Polygon(_))
+            && !self.current_call_frame.msg_value.is_zero()
+        {
+            let from = self.env.origin;
+            let to = self.current_call_frame.to;
+            let value = self.current_call_frame.msg_value;
+            let sender_bal = self.db.get_account(from)?.info.balance;
+            let recipient_bal = self.db.get_account(to)?.info.balance;
+            let log = crate::hooks::polygon_hook::build_value_transfer_log(
+                from,
+                to,
+                value,
+                sender_bal,
+                recipient_bal,
+            );
+            self.substate.add_log(log);
+        }
+
         let context_result = self.run_execution()?;
 
         let report = self.finalize_execution(context_result)?;
@@ -866,6 +909,7 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.env.config.eip7883,
                 self.db.store.precompile_cache(),
                 self.crypto,
             );
@@ -1017,6 +1061,7 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        eip7883: bool,
         cache: Option<&precompiles::PrecompileCache>,
         crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
@@ -1026,6 +1071,7 @@ impl<'a> VM<'a> {
                 calldata,
                 gas_remaining,
                 fork,
+                eip7883,
                 cache,
                 crypto,
             ),
@@ -1061,17 +1107,22 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
+        // Polygon: handle substate backup for LogTransfer revert semantics.
+        // On success: commit the backup to preserve LogTransfer logs from execution.
+        // On failure: revert so LogTransfer from value transfer is discarded (only LogFeeTransfer survives).
+        // Skip for system calls (gas_price == 0) which don't have LogTransfer/LogFeeTransfer.
+        if matches!(self.vm_type, VMType::Polygon(_)) && !self.env.gas_price.is_zero() {
+            if ctx_result.is_success() {
+                self.substate.commit_backup();
+            } else {
+                self.substate.revert_backup();
+            }
+        }
+
         // EIP-8037 (PR #2815): On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
         // refill the reservoir with the execution portion of state-gas so the user gets
         // back both the entry reservoir and any spill that decremented `gas_remaining`.
-        // Matches EELS fork.py::process_transaction lines 1076-1077:
-        //   `tx_output.state_gas_left += tx_output.state_gas_used` on any non-success.
-        // Halt, OOG, and REVERT all take the same path (Policy A). Collision is handled
-        // separately in the hook.
         if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
-            // Policy A (REVERT / ExceptionalHalt / OOG, but NOT collision): refill
-            // reservoir with the execution portion of state-gas. Collision burns the
-            // forwarded gas wholesale — there is no execution state-gas to recover.
             if !ctx_result.is_collision() {
                 debug_assert!(
                     self.state_gas_used >= self.intrinsic_state_gas_charged,
@@ -1091,23 +1142,6 @@ impl<'a> VM<'a> {
                     self.state_gas_reservoir.saturating_add(execution_portion);
             }
 
-            // EIP-8037 bal-devnet-7 (EELS PR #2823): on ANY top-level CREATE-tx
-            // failure (revert / halt / OOG / collision), refund the intrinsic
-            // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the
-            // reservoir, mirroring the inner-CREATE rule. Routed through
-            // `state_gas_refund_absorbed` so block-level `state_gas_used` is reduced
-            // (matches EELS `tx_output.state_refund`). Collision specifically is the
-            // 7th of qu0b's table — handled here since it's another tx-CREATE
-            // failure variant that the spec wants refunded.
-            // `intrinsic_state_gas_charged` is left intact: `refund_sender`'s
-            // regular-gas formula subtracts it from `raw_consumed`, which keeps the
-            // intrinsic burn out of the regular dimension. The user gets the gas
-            // back via the reservoir, and neither dimension counts it.
-            // EELS reference: fork.py::process_transaction:
-            //   if isinstance(tx.to, Bytes0):
-            //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
-            //       tx_output.state_gas_left += new_account_refund
-            //       tx_output.state_refund   += new_account_refund
             if self.is_create()? {
                 let new_account_refund = self.state_gas_new_account;
                 self.state_gas_reservoir =
@@ -1138,7 +1172,9 @@ impl<'a> VM<'a> {
 
         // Only include logs if transaction succeeded. When a transaction reverts,
         // no logs should be emitted (including EIP-7708 Transfer logs).
-        let logs = if ctx_result.is_success() {
+        // Exception: Polygon always includes logs because the PolygonHook appends
+        // a LogFeeTransfer log after finalization, even for failed transactions.
+        let logs = if ctx_result.is_success() || matches!(self.vm_type, VMType::Polygon(_)) {
             self.substate.extract_logs()
         } else {
             Vec::new()
@@ -1288,7 +1324,9 @@ impl Substate {
             initial_accessed_addresses.insert(Address::from_low_u64_be(i));
         }
 
-        // Add the address for the P256 verify precompile post-Osaka
+        // Add P256Verify (0x100) to warm set for L1 post-Osaka.
+        // For Polygon, this is handled in VM::new using vm_type (since
+        // env.config.fork resolves to Prague, not a Polygon-specific fork).
         if env.config.fork >= Fork::Osaka {
             initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }

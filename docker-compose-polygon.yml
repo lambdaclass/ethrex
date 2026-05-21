@@ -1,0 +1,85 @@
+# Minimal local Polygon devnet with Heimdall, Bor, and ethrex.
+#
+# Usage:
+#   docker compose -f docker-compose-polygon.yml up --build
+#
+# Services:
+#   heimdall — Heimdall REST API on port 1317 (+ Tendermint RPC on 26657)
+#   bor      — Bor validator node on port 8545 (RPC) and 30303 (P2P)
+#   ethrex   — ethrex node configured for Polygon, connecting to Heimdall
+#
+# Note: This is for local development/testing only. The Bor node runs as a
+# single validator with mining enabled. For production setups, use the
+# official Polygon deployment tooling.
+
+services:
+  heimdall:
+    image: 0xpolygon/heimdall:latest
+    command:
+      - start
+      - --home=/heimdall-data
+      - --rest-server
+    ports:
+      - "1317:1317"     # REST API
+      - "26657:26657"   # Tendermint RPC
+    volumes:
+      - heimdall-data:/heimdall-data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:1317/staking/validator-set"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  bor:
+    image: 0xpolygon/bor:latest
+    command:
+      - server
+      - --datadir=/bor-data
+      - --chain=mainnet
+      - --http
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+      - --http.api=eth,net,web3,bor
+      - --mine
+      - --bor.heimdall=http://heimdall:1317
+    ports:
+      - "8546:8545"     # Bor RPC (mapped to 8546 to avoid conflict with ethrex)
+      - "30304:30303"   # Bor P2P (mapped to 30304)
+    volumes:
+      - bor-data:/bor-data
+    depends_on:
+      heimdall:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8545"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  ethrex:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - --network=polygon
+      - --bor.heimdall=http://heimdall:1317
+      - --bootnodes=enode://${BOR_ENODE:-}@bor:30303
+      - --http.addr=0.0.0.0
+      - --http.port=8545
+    ports:
+      - "8545:8545"     # ethrex RPC
+      - "30303:30303"   # ethrex P2P
+      - "9090:9090"     # Metrics
+    depends_on:
+      heimdall:
+        condition: service_healthy
+      bor:
+        condition: service_healthy
+    environment:
+      - RUST_LOG=info
+
+volumes:
+  heimdall-data:
+  bor-data:

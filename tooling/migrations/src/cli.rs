@@ -96,7 +96,7 @@ async fn migrate_libmdbx_to_rocksdb(
         r#type: BlockchainType::L2(L2Config::default()),
         ..Default::default()
     };
-    let blockchain = Blockchain::new(new_store.clone(), blockchain_opts);
+    let blockchain = Blockchain::new(new_store.clone(), blockchain_opts, None);
 
     let block_bodies = old_store
         .get_block_bodies(last_known_block + 1, last_block_number)

@@ -1,0 +1,12 @@
+# Polygon devnet configuration for polygon-package Kurtosis package.
+# All fields are optional — defaults are in polygon-package/main.star.
+
+heimdall_image: "0xpolygon/heimdall:latest"
+bor_image: "0xpolygon/bor:latest"
+ethrex_image: "ethrex:local"
+
+bor_chain: "mainnet"
+bor_http_api: "eth,net,web3,bor,admin"
+
+ethrex_network: "polygon"
+ethrex_log_level: "info"

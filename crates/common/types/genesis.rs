@@ -281,6 +281,8 @@ lazy_static::lazy_static! {
             (1, "mainnet"),
             (11155111, "sepolia"),
             (560048, "hoodi"),
+            (137, "polygon"),
+            (80002, "amoy"),
             (9, "L1 local devnet"),
             (65536999, "L2 local devnet"),
         ])
@@ -290,6 +292,7 @@ lazy_static::lazy_static! {
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, PartialOrd, Default, Hash, Clone, Copy, Serialize, Deserialize)]
 pub enum Fork {
+    // Ethereum EVM forks (kept for opcode table building)
     Frontier = 0,
     FrontierThawing = 1,
     Homestead = 2,
@@ -317,6 +320,26 @@ pub enum Fork {
     BPO4 = 23,
     BPO5 = 24,
     Amsterdam = 25,
+    // Polygon-specific forks (block-number activated via BorConfig)
+    Jaipur = 100,
+    Delhi = 101,
+    Indore = 102,
+    Ahmedabad = 103,
+    Bhilai = 104,
+    Rio = 105,
+    Madhugiri = 106,
+    MadhugiriPro = 107,
+    Dandeli = 108,
+    Lisovo = 109,
+    LisovoPro = 110,
+    Giugliano = 111,
+}
+
+impl Fork {
+    /// Returns true if this is a Polygon PoS fork (Jaipur through Giugliano).
+    pub fn is_polygon(&self) -> bool {
+        *self >= Fork::Jaipur
+    }
 }
 
 impl From<Fork> for &str {
@@ -348,6 +371,19 @@ impl From<Fork> for &str {
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
+            // Polygon forks
+            Fork::Jaipur => "Jaipur",
+            Fork::Delhi => "Delhi",
+            Fork::Indore => "Indore",
+            Fork::Ahmedabad => "Ahmedabad",
+            Fork::Bhilai => "Bhilai",
+            Fork::Rio => "Rio",
+            Fork::Madhugiri => "Madhugiri",
+            Fork::MadhugiriPro => "MadhugiriPro",
+            Fork::Dandeli => "Dandeli",
+            Fork::Lisovo => "Lisovo",
+            Fork::LisovoPro => "LisovoPro",
+            Fork::Giugliano => "Giugliano",
         }
     }
 }

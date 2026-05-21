@@ -158,6 +158,21 @@ async fn heal_state_trie(
         // other yield point) and the response channel is empty.
         tokio::task::yield_now().await;
 
+        // Check staleness and exit conditions at the top of the loop so that
+        // `continue` statements elsewhere (e.g. the no-peer-available branch)
+        // cannot skip them and cause the loop to spin forever.
+        if !is_stale && current_unix_time() > staleness_timestamp {
+            debug!("state healing is stale");
+            is_stale = true;
+        }
+        if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
+            debug!("Finished inflight tasks");
+            for result in db_joinset.join_all().await {
+                result?;
+            }
+            break;
+        }
+
         if last_update.elapsed() >= SHOW_PROGRESS_INTERVAL_DURATION {
             let num_peers = peers
                 .peer_table
@@ -174,8 +189,10 @@ async fn heal_state_trie(
             METRICS
                 .healing_empty_try_recv
                 .store(empty_try_recv, Ordering::Relaxed);
+            let now = current_unix_time();
             debug!(
                 status = if is_stale { "stopping" } else { "in progress" },
+                ?state_root,
                 snap_peers = num_peers,
                 inflight_tasks,
                 longest_path_seen,
@@ -186,6 +203,9 @@ async fn heal_state_trie(
                 pending_nodes = healing_queue.len(),
                 backpressure_stalls,
                 heals_per_cycle,
+                staleness_timestamp,
+                now,
+                stale_in_secs = staleness_timestamp.saturating_sub(now),
                 "State Healing",
             );
             downloads_success = 0;
@@ -201,6 +221,8 @@ async fn heal_state_trie(
         }
         if let Ok((peer_id, response, batch)) = res {
             inflight_tasks -= 1;
+            // Release the reservation we made before spawning the task.
+            peers.peer_table.dec_requests(peer_id)?;
             match response {
                 // If the peers responded with nodes, add them to the nodes_to_heal vector
                 Ok(nodes) => {
@@ -303,11 +325,17 @@ async fn heal_state_trie(
                     let tx = task_sender.clone();
                     inflight_tasks += 1;
 
+                    let batch_len = batch.len();
                     tokio::spawn(async move {
-                        // TODO: check errors to determine whether the current block is stale
+                        debug!("HEAL WORKER spawn: peer={peer_id} batch_size={batch_len}");
                         let response =
                             request_state_trienodes(connection, permit, state_root, batch.clone())
                                 .await;
+                        debug!(
+                            "HEAL WORKER returned: peer={peer_id} ok={} err={:?}",
+                            response.is_ok(),
+                            response.as_ref().err(),
+                        );
                         // TODO: add error handling
                         tx.send((peer_id, response, batch)).await.inspect_err(
                             |err| debug!(error=?err, "Failed to send state trie nodes response"),
@@ -371,20 +399,8 @@ async fn heal_state_trie(
             }
             break;
         }
-
-        // We check with a clock if we are stale
-        if !is_stale && current_unix_time() > staleness_timestamp {
-            debug!("state healing is stale");
-            is_stale = true;
-        }
-
-        if is_stale && nodes_to_heal.is_empty() && inflight_tasks == 0 {
-            debug!("Finished inflight tasks");
-            for result in db_joinset.join_all().await {
-                result?;
-            }
-            break;
-        }
+        // Staleness and stale-exit checks are at the top of the loop so
+        // that `continue` can never bypass them.
     }
     debug!("State Healing stopped, signaling storage healer");
     // Save paths for the next cycle. If there are no paths left, clear it in case pivot becomes stale during storage

@@ -241,6 +241,7 @@ impl Signable for Transaction {
             Transaction::EIP7702Transaction(tx) => tx.sign_inplace(signer).await,
             Transaction::PrivilegedL2Transaction(_) => Err(SignerError::PrivilegedL2TxUnsupported), // Privileged Transactions are not signed
             Transaction::FeeTokenTransaction(tx) => tx.sign_inplace(signer).await,
+            Transaction::StateSyncTransaction(_) => Err(SignerError::PrivilegedL2TxUnsupported), // System tx, not signed
         }
     }
 }

@@ -61,6 +61,7 @@
 
 mod admin;
 mod authentication;
+mod bor;
 pub mod debug;
 pub mod engine;
 mod eth;

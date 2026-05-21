@@ -8,7 +8,10 @@ use crate::rlpx::snap::{
 };
 
 use super::eth::block_access_lists::{BlockAccessLists, GetBlockAccessLists};
-use super::eth::blocks::{BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders};
+use super::eth::blocks::{
+    BlockBodies, BlockHeaders, GetBlockBodies, GetBlockHeaders, NewBlock as EthNewBlock,
+    NewBlockHashes,
+};
 use super::eth::receipts::{
     GetReceipts68, GetReceipts69, GetReceipts70, Receipts68, Receipts69, Receipts70,
 };
@@ -107,6 +110,9 @@ pub enum Message {
     BlockRangeUpdate(BlockRangeUpdate),
     GetBlockAccessLists(GetBlockAccessLists),
     BlockAccessLists(BlockAccessLists),
+    // Pre-merge ETH messages used by Polygon PoS for block propagation
+    NewBlockHashes(NewBlockHashes),
+    EthNewBlock(Box<EthNewBlock>),
     // snap capability
     // https://github.com/ethereum/devp2p/blob/master/caps/snap.md
     GetAccountRange(GetAccountRange),
@@ -168,6 +174,10 @@ impl Message {
             Message::BlockAccessLists(_) => {
                 eth_version.eth_capability_offset() + BlockAccessLists::CODE
             }
+            Message::NewBlockHashes(_) => {
+                eth_version.eth_capability_offset() + NewBlockHashes::CODE
+            }
+            Message::EthNewBlock(_) => eth_version.eth_capability_offset() + EthNewBlock::CODE,
             // snap capability
             Message::GetAccountRange(_) => {
                 eth_version.snap_capability_offset() + GetAccountRange::CODE
@@ -216,7 +226,16 @@ impl Message {
                     Ok(Message::Status68(StatusMessage68::decode(data)?))
                 }
                 StatusMessage69::CODE if matches!(eth_version, EthCapVersion::V69) => {
-                    Ok(Message::Status69(StatusMessage69::decode(data)?))
+                    // Try standard eth/69, then Bor hybrid (eth/69 with TD, no head),
+                    // then standard eth/68.  Bor advertises eth/69 but sends
+                    // [version, networkid, TD, genesis, forkid, earliest, latest, hash].
+                    match StatusMessage69::decode(data) {
+                        Ok(msg) => Ok(Message::Status69(msg)),
+                        Err(_) => match StatusMessage68::decode_bor_hybrid(data) {
+                            Ok(msg) => Ok(Message::Status68(msg)),
+                            Err(_) => Ok(Message::Status68(StatusMessage68::decode(data)?)),
+                        },
+                    }
                 }
                 StatusMessage70::CODE if matches!(eth_version, EthCapVersion::V70) => {
                     Ok(Message::Status70(StatusMessage70::decode(data)?))
@@ -273,6 +292,8 @@ impl Message {
                 BlockAccessLists::CODE if matches!(eth_version, EthCapVersion::V71) => {
                     Ok(Message::BlockAccessLists(BlockAccessLists::decode(data)?))
                 }
+                NewBlockHashes::CODE => Ok(Message::NewBlockHashes(NewBlockHashes::decode(data)?)),
+                EthNewBlock::CODE => Ok(Message::EthNewBlock(Box::new(EthNewBlock::decode(data)?))),
                 _ => Err(RLPDecodeError::MalformedData),
             }
         } else if msg_id < eth_version.based_capability_offset() {
@@ -346,6 +367,8 @@ impl Message {
             Message::BlockRangeUpdate(msg) => msg.encode(buf),
             Message::GetBlockAccessLists(msg) => msg.encode(buf),
             Message::BlockAccessLists(msg) => msg.encode(buf),
+            Message::NewBlockHashes(msg) => msg.encode(buf),
+            Message::EthNewBlock(msg) => msg.encode(buf),
             Message::GetAccountRange(msg) => msg.encode(buf),
             Message::AccountRange(msg) => msg.encode(buf),
             Message::GetStorageRanges(msg) => msg.encode(buf),
@@ -397,7 +420,9 @@ impl Message {
             | Message::Status71(_)
             | Message::Transactions(_)
             | Message::NewPooledTransactionHashes(_)
-            | Message::BlockRangeUpdate(_) => None,
+            | Message::BlockRangeUpdate(_)
+            | Message::NewBlockHashes(_)
+            | Message::EthNewBlock(_) => None,
             #[cfg(feature = "l2")]
             Message::L2(_) => None,
         }
@@ -441,6 +466,8 @@ impl Message {
             Message::ByteCodes(_) => "ByteCodes",
             Message::GetTrieNodes(_) => "GetTrieNodes",
             Message::TrieNodes(_) => "TrieNodes",
+            Message::NewBlockHashes(_) => "NewBlockHashes",
+            Message::EthNewBlock(_) => "NewBlock",
             #[cfg(feature = "l2")]
             Message::L2(l2_msg) => match l2_msg {
                 L2Message::NewBlock(_) => "L2NewBlock",
@@ -478,6 +505,8 @@ impl Display for Message {
             Message::BlockRangeUpdate(_) => "eth:BlockRangeUpdate".fmt(f),
             Message::GetBlockAccessLists(_) => "eth:GetBlockAccessLists".fmt(f),
             Message::BlockAccessLists(_) => "eth:BlockAccessLists".fmt(f),
+            Message::NewBlockHashes(_) => "eth:NewBlockHashes".fmt(f),
+            Message::EthNewBlock(_) => "eth:NewBlock".fmt(f),
             Message::GetAccountRange(_) => "snap:GetAccountRange".fmt(f),
             Message::AccountRange(_) => "snap:AccountRange".fmt(f),
             Message::GetStorageRanges(_) => "snap:GetStorageRanges".fmt(f),

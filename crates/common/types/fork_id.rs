@@ -78,8 +78,15 @@ impl ForkId {
         let (block_number_based_forks, timestamp_based_forks) =
             chain_config.gather_forks(genesis_header);
 
-        // Determine whether to compare the remote fork_next using a block number or a timestamp.
-        let head = if head_timestamp >= TIMESTAMP_THRESHOLD {
+        // The remote's fork_next can be either a block number or a timestamp
+        // (distinguishable by magnitude: timestamps are >= TIMESTAMP_THRESHOLD).
+        // Compare against the matching local head value. Using a single `head`
+        // chosen from `head_timestamp` is wrong for chains like BSC where the
+        // next fork_next is a block number (e.g. 5184000) but the genesis
+        // timestamp already exceeds TIMESTAMP_THRESHOLD, causing block-based
+        // fork_next values to be misread as timestamps and flagged "already
+        // passed" incorrectly.
+        let head = if remote.fork_next >= TIMESTAMP_THRESHOLD {
             head_timestamp
         } else {
             latest_block_number

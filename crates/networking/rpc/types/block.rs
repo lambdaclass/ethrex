@@ -31,7 +31,8 @@ pub enum BlockBodyWrapper {
 pub struct FullBlockBody {
     pub transactions: Vec<RpcTransaction>,
     pub uncles: Vec<H256>,
-    pub withdrawals: Vec<Withdrawal>,
+    #[serde(default)]
+    pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -39,7 +40,8 @@ pub struct OnlyHashesBlockBody {
     // Only tx hashes
     pub transactions: Vec<H256>,
     pub uncles: Vec<H256>,
-    pub withdrawals: Vec<Withdrawal>,
+    #[serde(default)]
+    pub withdrawals: Option<Vec<Withdrawal>>,
 }
 
 impl TryInto<Block> for RpcBlock {
@@ -54,12 +56,20 @@ impl TryInto<Block> for RpcBlock {
 
         let transactions = block_body.transactions.into_iter().map(|t| t.tx).collect();
 
+        // Normalize: if the header has no withdrawals_root, don't include
+        // withdrawals in the body (even if the RPC returned an empty array).
+        // This prevents validation mismatches on chains without withdrawals (e.g., Polygon).
+        let withdrawals = match block_body.withdrawals {
+            Some(w) if w.is_empty() && self.header.withdrawals_root.is_none() => None,
+            other => other,
+        };
+
         Ok(Block {
             header: self.header,
             body: BlockBody {
                 transactions,
                 ommers: Vec::new(),
-                withdrawals: Some(block_body.withdrawals),
+                withdrawals,
             },
         })
     }
@@ -79,7 +89,7 @@ impl RpcBlock {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
                 transactions: body.transactions.iter().map(|t| t.hash()).collect(),
                 uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
-                withdrawals: body.withdrawals.unwrap_or_default(),
+                withdrawals: body.withdrawals,
             })
         };
 
@@ -110,7 +120,7 @@ impl FullBlockBody {
         Ok(FullBlockBody {
             transactions,
             uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
-            withdrawals: body.withdrawals.unwrap_or_default(),
+            withdrawals: body.withdrawals,
         })
     }
 }

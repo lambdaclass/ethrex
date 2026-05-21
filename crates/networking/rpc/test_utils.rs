@@ -246,7 +246,7 @@ pub async fn start_test_api() -> tokio::task::JoinHandle<()> {
             jwt_secret,
             local_p2p_node,
             local_node_record,
-            dummy_sync_manager().await,
+            Arc::new(dummy_sync_manager().await),
             dummy_peer_handler(storage).await,
             ClientVersion::new(
                 "ethrex".to_string(),

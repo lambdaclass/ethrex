@@ -128,6 +128,22 @@ impl OpcodeHandler for OpPrevRandaoHandler {
     }
 }
 
+/// Implementation for the `DIFFICULTY` opcode (Polygon PoS).
+/// On Polygon, opcode 0x44 returns block.difficulty (1 or 2) instead of PREVRANDAO,
+/// because Polygon has no beacon chain (EIP-4399 is not active).
+pub struct OpDifficultyHandler;
+impl OpcodeHandler for OpDifficultyHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::PREVRANDAO)?;
+
+        vm.current_call_frame.stack.push(vm.env.difficulty)?;
+
+        Ok(OpcodeResult::Continue)
+    }
+}
+
 /// Implementation for the `GASLIMIT` opcode.
 pub struct OpGasLimitHandler;
 impl OpcodeHandler for OpGasLimitHandler {
