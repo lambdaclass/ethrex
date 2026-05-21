@@ -1927,12 +1927,20 @@ impl Blockchain {
                 parent_header,
                 &logger,
             )?;
-            if should_store_witness {
-                self.storage
-                    .store_witness(block_hash, block_number, generated_witness.clone())?;
-            }
-            if force_witness {
-                witness = Some(generated_witness);
+            match (should_store_witness, force_witness) {
+                (true, true) => {
+                    witness = Some(generated_witness.clone());
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (true, false) => {
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (false, true) => {
+                    witness = Some(generated_witness);
+                }
+                (false, false) => {}
             }
         };
 

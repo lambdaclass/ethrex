@@ -1112,11 +1112,12 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
-    // Return the valid message directly if we already have it.
+    // If we already know this block, return valid without re-importing it.
+    // Witness requests still need to include a witness in the response.
     // We check for header only as we do not download the block bodies before the pivot during snap sync
     // https://github.com/lambdaclass/ethrex/issues/1766
     if storage.get_block_header_by_hash(block_hash)?.is_some() {
-        return Ok(PayloadStatus::valid_with_hash(block_hash));
+        return payload_status_for_existing_block(&block, context, make_witness).await;
     }
 
     // Execute and store the block
@@ -1181,10 +1182,64 @@ async fn try_execute_payload(
     }
 }
 
+async fn payload_status_for_existing_block(
+    block: &Block,
+    context: &RpcApiContext,
+    make_witness: bool,
+) -> Result<PayloadStatus, RpcErr> {
+    let block_hash = block.hash();
+    let mut status = PayloadStatus::valid_with_hash(block_hash);
+
+    if make_witness {
+        status.witness = Some(witness_for_existing_block(block, context).await?);
+    }
+
+    Ok(status)
+}
+
+async fn witness_for_existing_block(
+    block: &Block,
+    context: &RpcApiContext,
+) -> Result<Bytes, RpcErr> {
+    let block_hash = block.hash();
+    if let Some(json_bytes) = context
+        .storage
+        .get_witness_json_bytes(block.header.number, block_hash)?
+    {
+        let rpc_witness = serde_json::from_slice(&json_bytes).map_err(|error| {
+            RpcErr::Internal(format!("Failed to parse cached witness: {error}"))
+        })?;
+        return encode_rpc_witness_for_engine_rpc(rpc_witness);
+    }
+
+    let witness = context
+        .blockchain
+        .generate_witness_for_blocks(std::slice::from_ref(block))
+        .await
+        .map_err(|error| RpcErr::Internal(format!("Failed to build execution witness: {error}")))?;
+    encode_witness_for_engine_rpc(witness)
+}
+
 fn encode_witness_for_engine_rpc(witness: ExecutionWitness) -> Result<Bytes, RpcErr> {
     let rpc_witness = RpcExecutionWitness::try_from(witness).map_err(|error| {
         RpcErr::Internal(format!("Failed to encode execution witness: {error}"))
     })?;
+    encode_rpc_witness_for_engine_rpc(rpc_witness)
+}
+
+/// Encodes the witness in geth's opaque `engine_newPayloadWithWitness*` shape.
+///
+/// Format: geth returns `rlp.EncodeToBytes(proofs)` from `newPayload`, and
+/// `stateless.Witness::EncodeRLP` delegates to `ExtWitness`.
+/// `ExtWitness` is an RLP list of `(headers, codes, state, keys)`, with
+/// headers ordered by block number and code/state byte lists sorted
+/// lexicographically. Geth currently emits empty keys, but the trailing field
+/// is part of the RLP shape.
+/// Reference:
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L30-L52
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L92-L98
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/eth/catalyst/api.go#L915-L920
+fn encode_rpc_witness_for_engine_rpc(rpc_witness: RpcExecutionWitness) -> Result<Bytes, RpcErr> {
     let mut headers = rpc_witness
         .headers
         .iter()
@@ -1196,11 +1251,14 @@ fn encode_witness_for_engine_rpc(witness: ExecutionWitness) -> Result<Bytes, Rpc
     codes.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut state = rpc_witness.state;
     state.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut keys = rpc_witness.keys;
+    keys.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
     let mut encoded = Vec::new();
     Encoder::new(&mut encoded)
         .encode_field(&headers)
         .encode_field(&codes)
         .encode_field(&state)
+        .encode_field(&keys)
         .finish();
     Ok(Bytes::from(encoded))
 }
@@ -1285,8 +1343,17 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::types::ChainConfig;
-    use ethrex_rlp::{encode::RLPEncode, structs::Decoder};
+    use crate::{test_utils, types::payload::PayloadValidationStatus};
+    use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+    use ethrex_common::types::{ChainConfig, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER};
+    use ethrex_rlp::encode::RLPEncode;
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
 
     fn v5_payload() -> ExecutionPayload {
         ExecutionPayload {
@@ -1335,5 +1402,77 @@ mod tests {
         let err = validate_execution_payload_v5(&payload).unwrap_err();
 
         assert!(matches!(err, RpcErr::WrongParam(param) if param == "slot_number"));
+    }
+
+    #[test]
+    fn engine_witness_encoding_matches_geth_ext_witness_shape() {
+        let header_1 = header(1);
+        let header_2 = header(2);
+        let witness = RpcExecutionWitness {
+            headers: vec![
+                header_2.encode_to_vec().into(),
+                header_1.encode_to_vec().into(),
+            ],
+            codes: vec![
+                Bytes::from_static(&[0x02]),
+                Bytes::from_static(&[0x01, 0xff]),
+                Bytes::from_static(&[0x01]),
+            ],
+            state: vec![
+                Bytes::from_static(&[0xff]),
+                Bytes::from_static(&[0x00]),
+                Bytes::from_static(&[0x7f]),
+            ],
+            keys: vec![Bytes::from_static(&[0x03]), Bytes::from_static(&[0x02])],
+        };
+
+        let encoded = encode_rpc_witness_for_engine_rpc(witness).unwrap();
+
+        let expected_headers = vec![header_1, header_2];
+        let expected_codes = vec![
+            Bytes::from_static(&[0x01]),
+            Bytes::from_static(&[0x01, 0xff]),
+            Bytes::from_static(&[0x02]),
+        ];
+        let expected_state = vec![
+            Bytes::from_static(&[0x00]),
+            Bytes::from_static(&[0x7f]),
+            Bytes::from_static(&[0xff]),
+        ];
+        let expected_keys = vec![Bytes::from_static(&[0x02]), Bytes::from_static(&[0x03])];
+        let expected = (
+            expected_headers.clone(),
+            expected_codes.clone(),
+            expected_state.clone(),
+            expected_keys.clone(),
+        )
+            .encode_to_vec();
+
+        assert_eq!(encoded.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn engine_witness_encoding_from_execution_witness_matches_expected_bytes() {
+        let header_1 = header(1);
+        let header_2 = header(2);
+        let witness = ExecutionWitness {
+            codes: vec![vec![0x02], vec![0x01]],
+            block_headers_bytes: vec![header_2.encode_to_vec(), header_1.encode_to_vec()],
+            first_block_number: 1,
+            chain_config: ChainConfig::default(),
+            state_trie_root: None,
+            storage_trie_roots: Default::default(),
+        };
+
+        let encoded = encode_witness_for_engine_rpc(witness).unwrap();
+
+        let expected = (
+            vec![header_1, header_2],
+            vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])],
+            Vec::<Bytes>::new(),
+            Vec::<Bytes>::new(),
+        )
+            .encode_to_vec();
+        assert_eq!(encoded.as_ref(), expected.as_slice());
     }
 }
