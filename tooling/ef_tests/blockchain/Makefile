@@ -16,10 +16,9 @@ AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
-# zkevm@v0.3.3 ships fixtures filled against an older Amsterdam base
-# (bal@v5.6.1). Extracting them on top of the bal-devnet-7 tree would
-# clobber the newer fixtures with stale gas-accounting expectations, so we
-# keep them in a separate root and only the stateless harness reads from it.
+# Keep the zkevm bundle in a separate root. The zkevm release cadence trails
+# the bal cadence, so during a divergence window extracting it over the
+# bal-devnet tree would clobber the newer fixtures with stale expectations.
 ZKEVM_VECTORS_ROOT := vectors_zkevm
 ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
 ZKEVM_FIXTURES_FILE := .fixtures_url_zkevm
@@ -79,16 +78,6 @@ test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
 test-stateless: zkevm-vectors
 	cargo test --profile release-with-debug --features stateless
 
-test-stateless-zkevm: zkevm-vectors
-	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
-
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
-	# Narrow stateless coverage to the EIP-8025 optional-proofs suite. The
-	# zkevm@v0.3.3 fixtures are filled against bal@v5.6.1, which is out of
-	# sync with this branch's bal-devnet-6+ (and bal-devnet-7-prep) gas
-	# accounting; the broader `test-stateless` invocation introduced by
-	# #6527 trips ~549 of those fixtures with `GasUsedMismatch` /
-	# `ReceiptsRootMismatch` / `BlockAccessListHashMismatch`. Re-broaden
-	# once the zkevm bundle is regenerated against the current bal spec.
-	$(MAKE) test-stateless-zkevm
+	$(MAKE) test-stateless
