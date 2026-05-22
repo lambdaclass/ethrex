@@ -163,7 +163,11 @@ impl VmDatabase for StoreVmDatabase {
             .get_account_states_batch_by_root(self.state_root, &miss_addrs)
             .map_err(|e| EvmError::DB(e.to_string()))?;
 
-        // Populate the per-DB cache and assemble results.
+        // Populate the per-DB cache and assemble results. `insert` (vs `or_insert`)
+        // is intentional: `state_root` is fixed for this `StoreVmDatabase`, so a
+        // concurrent populator can only have written the same value for the same
+        // address — overwriting is a no-op, and the unconditional insert avoids
+        // the extra `entry`-API lookup.
         let mut cache = self
             .account_state_cache
             .write()
