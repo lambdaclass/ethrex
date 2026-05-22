@@ -196,7 +196,12 @@ Each zkVM integration requires:
 3. A build function in `build.rs`
 4. Feature flags in `Cargo.toml`
 5. ELF constants in `src/lib.rs`
-6. Makefile targets
+6. Guest-program Makefile targets (build / clean)
+7. (If your zkVM ships patched crypto crates) `[patch.crates-io]` entries in `bin/<zkvm>/Cargo.toml`
+8. A host backend in `crates/prover/src/backend/<zkvm>.rs` plus its registration in `BackendType`
+9. A CI install action (`.github/actions/install-<zkvm>/action.yml`) and its inclusion in the prover-lint matrix
+10. Documentation updates (`docs/zkvm-integrations.md`, this README, the host backend's own crate docs)
+11. Root-level cargo-lock plumbing (root `Makefile` and `docs/developers/release-process.md`)
 
 ### Step-by-Step Guide
 
@@ -406,7 +411,7 @@ pub const ZKVM_<ZKVM>_PROGRAM_VK: &str = "";
 
 #### 6. Add Makefile Targets
 
-Add to `Makefile`:
+Add to `crates/guest-program/Makefile`:
 
 ```makefile
 .PHONY: <zkvm> l2-<zkvm>
@@ -425,7 +430,7 @@ clean:
 	rm -rf bin/sp1/out bin/risc0/out bin/zisk/out bin/openvm/out bin/<zkvm>/out
 ```
 
-Update the `help` target to include your new zkVM.
+Update the `help` target and the `.PHONY` line to include your new zkVM.
 
 #### 7. Add Patches for Cryptographic Libraries
 
@@ -438,11 +443,105 @@ Most zkVMs have optimized patches for cryptographic libraries. Common libraries 
 - `substrate-bn` (BN254 for EIP-196/197 precompiles)
 - `bls12_381` (BLS12-381 for EIP-2537)
 
-Check your zkVM's documentation or patches repository for available optimizations.
+Check your zkVM's documentation or patches repository for available optimizations. Patches go in `bin/<zkvm>/Cargo.toml` under `[patch.crates-io]`. The `Crypto` adapter's override methods will then transparently use the patched crate.
 
-#### 8. (Optional) Add CI Workflow
+#### 8. Wire the Host Backend Into `ethrex-prover`
 
-Add your zkVM to the CI workflow in `.github/workflows/`. See existing workflows for SP1, RISC0, ZisK, and OpenVM as examples.
+Each zkVM also needs a host-side backend that drives proof generation from a serialized `ProgramInput`. This lives in `crates/prover/`:
+
+1. **Create the backend module** at `crates/prover/src/backend/<zkvm>.rs`:
+   - A `<Zkvm>Backend` struct implementing the `ProverBackend` trait (`execute`, `prove`, `verify`, `prove_timed`, `to_proof_bytes`, etc.).
+   - A `<Zkvm>ProveOutput` proof type.
+   - If your zkVM ships a Rust host SDK, call it directly (see `sp1.rs`, `risc0.rs`, `openvm.rs`). If it only ships a CLI, shell out to that CLI (see `zisk.rs`, `lambdavm.rs`) and use the `.tmp + rename` pattern for atomic ELF writes.
+
+2. **Register the backend** in `crates/prover/src/backend/mod.rs`:
+
+   ```rust
+   #[cfg(feature = "<zkvm>")]
+   pub mod <zkvm>;
+   #[cfg(feature = "<zkvm>")]
+   pub use <zkvm>::<Zkvm>Backend;
+
+   pub enum BackendType {
+       // ... existing variants ...
+       #[cfg(feature = "<zkvm>")]
+       <Zkvm>,
+   }
+
+   impl FromStr for BackendType {
+       fn from_str(s: &str) -> Result<Self, Self::Err> {
+           match s.to_lowercase().as_str() {
+               // ... existing arms ...
+               #[cfg(feature = "<zkvm>")]
+               "<zkvm>" => Ok(BackendType::<Zkvm>),
+               _ => Err(Self::Err::from("Invalid backend")),
+           }
+       }
+   }
+   ```
+
+3. **Wire the dispatch site** in `crates/prover/src/prover.rs`. The `start_prover` function matches exhaustively on `BackendType` — add a new arm gated on `cfg(feature = "<zkvm>")` mirroring the existing arms.
+
+4. **Add features** to `crates/prover/Cargo.toml`:
+
+   ```toml
+   <zkvm> = ["ethrex-guest-program/<zkvm>"]
+   <zkvm>-build-elf = ["<zkvm>", "ethrex-guest-program/<zkvm>-build-elf"]
+   ```
+
+#### 9. Add the CI Install Action and Workflow Entry
+
+1. **Create `.github/actions/install-<zkvm>/action.yml`** as a composite action that:
+   - Installs the toolchain (`rustup toolchain install <channel>` if your zkVM uses a custom nightly).
+   - Fetches any sysroot or precompiled assets, with caching keyed on a version.
+   - Installs the zkVM host binary (e.g. `cli`, `cargo-<zkvm>`) on `$PATH`, also cached and keyed on a version pin.
+   - Look at `install-sp1`, `install-risc0`, `install-zisk`, and `install-lambdavm` for established patterns.
+
+2. **Add the backend to the prover-lint matrix** in `.github/workflows/pr-main_l2_prover.yaml` under the `lint_zk` job:
+
+   ```yaml
+   matrix:
+     backend: ["sp1", "risc0", "zisk", "<zkvm>"]
+   ```
+
+   Add a conditional install step:
+
+   ```yaml
+   - name: Install <Zkvm>
+     if: matrix.backend == '<zkvm>'
+     uses: ./.github/actions/install-<zkvm>
+   ```
+
+   The existing `Check ${{ matrix.backend }} backend` and `Clippy ${{ matrix.backend }} backend` steps will then exercise your backend automatically.
+
+3. **Pin versions consistently.** If your install action references a tag/commit/version, the same pin must appear in `crates/guest-program/Cargo.toml` (the guest SDK git dep) and in `bin/<zkvm>/Cargo.toml` (the same dep in the detached workspace). Inline comments cross-referencing the locations help future bumps land cleanly.
+
+#### 10. Update Documentation
+
+1. **`crates/guest-program/README.md`** (this file): add your zkVM to the directory listing, the features table, and the "zkVM Guest Implementations" section.
+2. **`docs/zkvm-integrations.md`**: the canonical zkVM landing doc. Add a row to the overview table and a section with status, key features, integration details, current limitations, and build/run instructions.
+
+#### 11. Add the New `Cargo.lock` to Root Plumbing
+
+Detached workspaces (`bin/<zkvm>/`) have their own `Cargo.lock`. Add it to both root-level tracking points:
+
+1. **Root `Makefile`** — extend the `update-cargo-lock` and `check-cargo-lock` targets:
+
+   ```makefile
+   update-cargo-lock:
+       # ... existing entries ...
+       cargo tree --manifest-path crates/guest-program/bin/<zkvm>/Cargo.toml
+
+   check-cargo-lock:
+       # ... existing entries ...
+       cargo metadata --locked --manifest-path crates/guest-program/bin/<zkvm>/Cargo.toml > /dev/null
+   ```
+
+   If your zkVM needs a custom toolchain to compile, use `cargo metadata --locked` (not `cargo build`) so the CI lockfile check doesn't require the toolchain to be installed on every PR runner.
+
+2. **`docs/developers/release-process.md`** — add `bin/<zkvm>/Cargo.toml` to the version-bump list and `bin/<zkvm>/Cargo.lock` to the expected-changes list. Bump the count in the "we need to update N more Cargo.toml files" sentence.
+
+After the integration is merged, the first release that includes your zkVM will pick up the new lockfile during the standard `make update-cargo-lock` step — no further work needed at release time.
 
 ### Testing Your Integration
 
@@ -457,8 +556,21 @@ Add your zkVM to the CI workflow in `.github/workflows/`. See existing workflows
    ls -la bin/<zkvm>/out/
    ```
 
-3. **Run with the prover** (requires host-side integration):
-   The prover backend code in `crates/l2/prover/` needs to be updated to support your zkVM for end-to-end proving.
+3. **Verify host-side build**:
+   ```bash
+   cargo check -p ethrex-prover --features <zkvm>
+   cargo clippy -p ethrex-prover --features <zkvm>
+   ```
+
+4. **Verify lockfile consistency**:
+   ```bash
+   make check-cargo-lock
+   ```
+
+5. **Run with the prover** (requires the install action / toolchain locally):
+   ```bash
+   cargo run -p ethrex-prover --features <zkvm> -- --backend <zkvm> prove <input>
+   ```
 
 ### Architecture Notes
 
