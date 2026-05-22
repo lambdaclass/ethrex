@@ -278,6 +278,18 @@ pub struct AccountUpdatesList {
 /// in the same batch containing the same tx) replaces any prior entry for the
 /// same `block_hash`, preserving the dedupe semantics of the previous composite-key
 /// schema.
+///
+/// # Concurrency invariant
+///
+/// Callers MUST be serialized at the application layer: the read snapshot and
+/// the write batch are separate, so two concurrent writers on the same tx hash
+/// would both see the pre-write state and the last commit wins — silently
+/// losing the other's entry. In ethrex the blockchain pipeline is sequential
+/// (fork-choice and block import run one block at a time), so this holds
+/// today. If that ever changes, this helper needs an exclusive lock around
+/// the read+stage+write sequence for the TRANSACTION_LOCATIONS slot. The
+/// previous composite-key schema avoided this question by giving concurrent
+/// writers different keys; the new schema can't.
 fn stage_tx_location(
     read: &dyn StorageReadView,
     pending: &mut HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
@@ -618,13 +630,8 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        self.add_transaction_locations(vec![(
-            transaction_hash,
-            block_number,
-            block_hash,
-            index,
-        )])
-        .await
+        self.add_transaction_locations(vec![(transaction_hash, block_number, block_hash, index)])
+            .await
     }
 
     /// Store transaction locations in batch (one db transaction for all)

@@ -379,7 +379,9 @@ mod tests {
         tx_hash: H256,
     ) -> Option<Vec<(BlockNumber, BlockHash, Index)>> {
         let read = backend.begin_read().unwrap();
-        let bytes = read.get(TRANSACTION_LOCATIONS, tx_hash.as_bytes()).unwrap()?;
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()?;
         Some(<Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap())
     }
 
