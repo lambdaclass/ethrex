@@ -269,6 +269,39 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Read-modify-write helper for the TRANSACTION_LOCATIONS table.
+///
+/// The table is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
+/// one entry per block the tx appears in (multiple only in case of reorgs). The
+/// caller stages updates in `pending`, lazily seeded from disk on first touch
+/// of each tx hash. Re-touching the same hash within the batch (e.g. two blocks
+/// in the same batch containing the same tx) replaces any prior entry for the
+/// same `block_hash`, preserving the dedupe semantics of the previous composite-key
+/// schema.
+fn stage_tx_location(
+    read: &dyn StorageReadView,
+    pending: &mut HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
+    tx_hash: H256,
+    block_number: BlockNumber,
+    block_hash: BlockHash,
+    index: Index,
+) -> Result<(), StoreError> {
+    let list = match pending.entry(tx_hash) {
+        Entry::Occupied(e) => e.into_mut(),
+        Entry::Vacant(e) => {
+            let existing = read
+                .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())?
+                .map(|bytes| <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes))
+                .transpose()?
+                .unwrap_or_default();
+            e.insert(existing)
+        }
+    };
+    list.retain(|(_, bh, _)| *bh != block_hash);
+    list.push((block_number, block_hash, index));
+    Ok(())
+}
+
 impl Store {
     /// Block until the trie-update background worker has drained every prior
     /// message and is waiting for new work — i.e. Phase 2 (disk write of the
@@ -304,6 +337,9 @@ impl Store {
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
+            let read = db.begin_read()?;
+            let mut tx_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>> =
+                HashMap::new();
             let mut tx = db.begin_write()?;
 
             // TODO: Same logic in apply_updates
@@ -321,15 +357,25 @@ impl Store {
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = transaction.hash();
-                    // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
-                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                    stage_tx_location(
+                        &*read,
+                        &mut tx_locations,
+                        transaction.hash(),
+                        block_number,
+                        block_hash,
+                        index as u64,
+                    )?;
                 }
             }
+
+            for (tx_hash, locations) in tx_locations {
+                tx.put(
+                    TRANSACTION_LOCATIONS,
+                    tx_hash.as_bytes(),
+                    &locations.encode_to_vec(),
+                )?;
+            }
+
             tx.commit()
         })
         .await
@@ -572,14 +618,13 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
-        let location_value = (block_number, block_hash, index).encode_to_vec();
-
-        self.write_async(TRANSACTION_LOCATIONS, composite_key, location_value)
-            .await
+        self.add_transaction_locations(vec![(
+            transaction_hash,
+            block_number,
+            block_hash,
+            index,
+        )])
+        .await
     }
 
     /// Store transaction locations in batch (one db transaction for all)
@@ -587,19 +632,35 @@ impl Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<_> = locations
-            .iter()
-            .map(|(tx_hash, block_number, block_hash, index)| {
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (composite_key, location_value)
-            })
-            .collect();
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let read = db.begin_read()?;
+            let mut tx_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>> =
+                HashMap::new();
 
-        self.write_batch_async(TRANSACTION_LOCATIONS, batch_items)
-            .await
+            for (tx_hash, block_number, block_hash, index) in locations {
+                stage_tx_location(
+                    &*read,
+                    &mut tx_locations,
+                    tx_hash,
+                    block_number,
+                    block_hash,
+                    index,
+                )?;
+            }
+
+            let mut tx = db.begin_write()?;
+            for (tx_hash, locs) in tx_locations {
+                tx.put(
+                    TRANSACTION_LOCATIONS,
+                    tx_hash.as_bytes(),
+                    &locs.encode_to_vec(),
+                )?;
+            }
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain transaction location (block hash and index)
@@ -609,37 +670,22 @@ impl Store {
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let tx_hash_bytes = transaction_hash.as_bytes();
             let tx = db.begin_read()?;
-
-            // rust-rocksdb's prefix_iterator_cf seeks but does not bound iteration —
-            // caller must stop on the first prefix mismatch.
-            let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
-            let mut transaction_locations = Vec::new();
-
-            while let Some(Ok((key, value))) = iter.next() {
-                // Key is tx_hash (32) + block_hash (32) = 64 bytes.
-                if key.len() == 64 && &key[0..32] == tx_hash_bytes {
-                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
-                } else {
-                    break;
-                }
-            }
-
-            if transaction_locations.is_empty() {
+            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
                 return Ok(None);
-            }
+            };
+            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
 
-            // If there are multiple locations, filter by the canonical chain
-            for (block_number, block_hash, index) in transaction_locations {
-                let canonical_hash = {
-                    tx.get(
+            // In the absence of reorgs, locations has exactly one entry.
+            // If multiple, filter by the canonical chain.
+            for (block_number, block_hash, index) in locations {
+                let canonical_hash = tx
+                    .get(
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
                     .map(|bytes| H256::decode(bytes.as_slice()))
-                    .transpose()?
-                };
+                    .transpose()?;
 
                 if canonical_hash == Some(block_hash) {
                     return Ok(Some((block_number, block_hash, index)));
@@ -1465,6 +1511,8 @@ impl Store {
             .map_err(|e| {
                 StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
             })?;
+        let read = db.begin_read()?;
+        let mut tx_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>> = HashMap::new();
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1481,14 +1529,23 @@ impl Store {
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                stage_tx_location(
+                    &*read,
+                    &mut tx_locations,
+                    transaction.hash(),
+                    block_number,
+                    block_hash,
+                    index as u64,
+                )?;
             }
+        }
+
+        for (tx_hash, locations) in tx_locations {
+            tx.put(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &locations.encode_to_vec(),
+            )?;
         }
 
         for (block_hash, receipts) in update_batch.receipts {
