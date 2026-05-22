@@ -2,6 +2,10 @@
 
 ## Perf
 
+### 2026-05-22
+
+- Batch account-state prefetch via rocksdb `multi_get_cf` on the flat key-value table [#6712](https://github.com/lambdaclass/ethrex/pull/6712)
+
 ### 2026-05-19
 
 - Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
