@@ -360,6 +360,20 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
     }
 
+    // Gnosis Chain: redirect the EIP-1559 base fee to the fee-collector
+    // contract instead of burning it. Required to preserve the xDAI:Dai
+    // bridge invariant. Skipped for system calls (gas_price == 0).
+    if let Some(fee_collector) = vm.env.config.fee_collector
+        && !vm.env.gas_price.is_zero()
+    {
+        let base_fee_credit = U256::from(gas_to_pay)
+            .checked_mul(vm.env.base_fee_per_gas)
+            .ok_or(InternalError::Overflow)?;
+        if !base_fee_credit.is_zero() {
+            vm.increase_account_balance(fee_collector, base_fee_credit)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -704,6 +718,16 @@ pub fn deduct_caller(
 
     vm.decrease_account_balance(sender_address, up_front_cost)
         .map_err(|_| TxValidationError::InsufficientAccountFunds)?;
+
+    // Gnosis Chain: redirect EIP-4844 blob base fee to the fee collector
+    // instead of burning. Per the Gnosis Pectra spec, the blob fee is
+    // deducted upfront and credited even if the tx later reverts (it is
+    // never refunded).
+    if let Some(fee_collector) = vm.env.config.fee_collector
+        && !blob_gas_cost.is_zero()
+    {
+        vm.increase_account_balance(fee_collector, blob_gas_cost)?;
+    }
 
     Ok(())
 }

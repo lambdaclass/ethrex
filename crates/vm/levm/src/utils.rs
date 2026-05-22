@@ -116,8 +116,15 @@ pub fn get_base_fee_per_blob_gas(
     evm_config: &EVMConfig,
 ) -> Result<U256, VMError> {
     let base_fee_update_fraction = evm_config.blob_schedule.base_fee_update_fraction;
+    // EIP-4844: floor blob base fee is normally 1 wei. Gnosis raises this to
+    // 1 gwei via ChainConfig.min_blob_gas_price; EVMConfig propagates it.
+    let min_blob_base_fee = if evm_config.min_blob_base_fee == 0 {
+        MIN_BASE_FEE_PER_BLOB_GAS
+    } else {
+        evm_config.min_blob_base_fee
+    };
     fake_exponential(
-        MIN_BASE_FEE_PER_BLOB_GAS.into(),
+        min_blob_base_fee.into(),
         block_excess_blob_gas.unwrap_or_default().into(),
         base_fee_update_fraction,
     )

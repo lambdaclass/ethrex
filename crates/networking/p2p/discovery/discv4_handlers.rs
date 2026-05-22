@@ -416,8 +416,13 @@ impl DiscoveryServer {
         let node_fork_id = node_record.get_fork_id().cloned();
 
         let Some(remote_fork_id) = node_fork_id else {
-            self.peer_table.set_is_fork_id_valid(node_id, false)?;
-            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR response, skipping");
+            // ENR has no eth fork_id key. Some EL nodes (older Nethermind, Bor,
+            // a few Erigon configurations) don't advertise fork_id in their ENR;
+            // we'd still like to peer with them and verify chain compatibility
+            // via the eth/68+ status handshake. Mark as valid here and let the
+            // RLPx layer enforce.
+            self.peer_table.set_is_fork_id_valid(node_id, true)?;
+            debug!(protocol = "discv4", received = "ENRResponse", from = %format!("{sender_public_key:#x}"), "missing fork id in ENR — accepting optimistically, will verify in eth/68 status handshake");
             return Ok(());
         };
 

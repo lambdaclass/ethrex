@@ -139,6 +139,9 @@ impl RpcHandler for FeeHistoryRequest {
             let blob_base_fee = calculate_base_fee_per_blob_gas(
                 header.excess_blob_gas.unwrap_or_default(),
                 blob_schedule.base_fee_update_fraction,
+                config
+                    .min_blob_gas_price
+                    .unwrap_or(ethrex_common::constants::MIN_BASE_FEE_PER_BLOB_GAS),
             );
 
             base_fee_per_gas[idx] = header.base_fee_per_gas.unwrap_or_default();
@@ -153,6 +156,9 @@ impl RpcHandler for FeeHistoryRequest {
                         blob_schedule,
                         fork,
                         context.gas_ceil,
+                        config
+                            .min_blob_gas_price
+                            .unwrap_or(ethrex_common::constants::MIN_BASE_FEE_PER_BLOB_GAS),
                     )?;
             }
             if !self.reward_percentiles.is_empty() {
@@ -189,6 +195,7 @@ fn project_next_block_base_fee_values(
     schedule: ForkBlobSchedule,
     fork: Fork,
     gas_ceil: u64,
+    min_base_fee_per_blob_gas: u64,
 ) -> Result<(u64, U256), RpcErr> {
     // NOTE: Given that this client supports the Paris fork and later versions, we are sure that the next block
     // will have the London update active, so the base fee calculation makes sense
@@ -203,9 +210,13 @@ fn project_next_block_base_fee_values(
         ELASTICITY_MULTIPLIER,
     )
     .unwrap_or_default();
-    let next_excess_blob_gas = calc_excess_blob_gas(header, schedule, fork);
-    let base_fee_per_blob =
-        calculate_base_fee_per_blob_gas(next_excess_blob_gas, schedule.base_fee_update_fraction);
+    let next_excess_blob_gas =
+        calc_excess_blob_gas(header, schedule, fork, min_base_fee_per_blob_gas);
+    let base_fee_per_blob = calculate_base_fee_per_blob_gas(
+        next_excess_blob_gas,
+        schedule.base_fee_update_fraction,
+        min_base_fee_per_blob_gas,
+    );
     Ok((base_fee_per_gas, base_fee_per_blob))
 }
 

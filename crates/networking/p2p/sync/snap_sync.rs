@@ -865,7 +865,7 @@ pub fn block_is_stale(block_header: &BlockHeader) -> bool {
 }
 
 pub fn calculate_staleness_timestamp(timestamp: u64) -> u64 {
-    timestamp + (SNAP_LIMIT as u64 * 12)
+    timestamp + (SNAP_LIMIT as u64 * SECONDS_PER_BLOCK)
 }
 
 pub async fn validate_state_root(store: Store, state_root: H256) -> bool {

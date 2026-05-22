@@ -62,6 +62,11 @@ pub struct Environment {
 pub struct EVMConfig {
     pub fork: Fork,
     pub blob_schedule: ForkBlobSchedule,
+    /// Gnosis Chain: address that receives EIP-1559 base fee (and EIP-4844
+    /// blob base fee post-Pectra) instead of burning. `None` on Ethereum.
+    pub fee_collector: Option<Address>,
+    /// Floor for the EIP-4844 blob base fee. Ethereum: 1 wei. Gnosis: 1 gwei.
+    pub min_blob_base_fee: u64,
 }
 
 impl EVMConfig {
@@ -69,6 +74,8 @@ impl EVMConfig {
         EVMConfig {
             fork,
             blob_schedule,
+            fee_collector: None,
+            min_blob_base_fee: 1,
         }
     }
 
@@ -79,7 +86,12 @@ impl EVMConfig {
             .get_fork_blob_schedule(block_header.timestamp)
             .unwrap_or_else(|| EVMConfig::canonical_values(fork));
 
-        EVMConfig::new(fork, blob_schedule)
+        EVMConfig {
+            fork,
+            blob_schedule,
+            fee_collector: chain_config.eip1559_collector,
+            min_blob_base_fee: chain_config.min_blob_gas_price.unwrap_or(1),
+        }
     }
 
     /// This function is used for running the EF tests. If you don't
@@ -132,6 +144,8 @@ impl Default for EVMConfig {
         EVMConfig {
             fork,
             blob_schedule: Self::canonical_values(fork),
+            fee_collector: None,
+            min_blob_base_fee: 1,
         }
     }
 }

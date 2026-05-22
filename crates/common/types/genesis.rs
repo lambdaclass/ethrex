@@ -55,6 +55,17 @@ pub struct Genesis {
     pub block_access_list_hash: Option<H256>,
     #[serde(default, with = "crate::serde_utils::u64::hex_str_opt")]
     pub slot_number: Option<u64>,
+
+    /// Override for the genesis block hash. Used by chains whose canonical
+    /// genesis was computed under a non-geth RLP encoding (e.g. Gnosis
+    /// Chain's AuRa-era genesis block uses `[seal_step, seal_signature]`
+    /// instead of `[mix_hash, nonce]`). When set, this hash is used in
+    /// place of the standard `keccak256(rlp(header))` computation, ensuring
+    /// the genesis hash propagated through the storage layer and fork ID
+    /// matches the live network.
+    /// Skipped by serde — must be set programmatically after parsing.
+    #[serde(skip)]
+    pub genesis_hash_override: Option<H256>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -273,6 +284,48 @@ pub struct ChainConfig {
 
     #[serde(default)]
     pub enable_verkle_at_genesis: bool,
+
+    /// Gnosis: address that receives EIP-1559 base fee (and EIP-4844 blob fee
+    /// post-Pectra) instead of burning. JSON key: `eip1559collector`.
+    /// Optional; only present on Gnosis Chain / Chiado genesis files.
+    #[serde(default, rename = "eip1559collector")]
+    #[rkyv(with = rkyv_utils::OptionH160Wrapper)]
+    pub eip1559_collector: Option<Address>,
+
+    /// Gnosis: address of the POSDAO block-rewards contract. Called via system
+    /// transaction after user txs every block; returns (receivers, amounts) to
+    /// credit (this is how xDAI is minted post-Merge).
+    #[serde(default)]
+    #[rkyv(with = rkyv_utils::OptionH160Wrapper)]
+    pub block_rewards_contract: Option<Address>,
+
+    /// Gnosis: floor for the EIP-4844 blob base fee. Ethereum uses 1 wei;
+    /// Gnosis raises this to 1 gwei (10^9) to account for the smaller blob
+    /// capacity. Read from JSON key `minBlobGasPrice`.
+    #[serde(default)]
+    pub min_blob_gas_price: Option<u64>,
+
+    /// Gnosis-specific: POSDAO migration block (block 9_186_425 on mainnet).
+    /// The validator-set governance moved from a fixed multi-validator list
+    /// to the POSDAO staking contract at this block. It's a fork-ID-relevant
+    /// transition: Erigon, Nethermind and reth_gnosis all include it in the
+    /// EIP-2124 fork hash schedule between Istanbul and Berlin. Without it,
+    /// our fork hash diverges from peers and we get rejected on the
+    /// handshake.
+    /// Not part of OE genesis JSON top-level; we lift it out of
+    /// `aura.posdaoTransition` during genesis JSON conversion.
+    #[serde(default)]
+    pub posdao_block: Option<u64>,
+
+    /// Gnosis-specific: Balancer hardfork timestamp (mainnet: 1_766_419_900,
+    /// Nov 22 2025). An emergency hard fork after the Balancer hack that
+    /// applies a bytecode rewrite to a specific set of vault contracts
+    /// at the fork boundary. Fork-ID-relevant: appears in the timestamp
+    /// schedule between Prague and Osaka on mainnet, so omitting it makes
+    /// our post-Osaka fork hash diverge from peers (0xd82765dd vs the
+    /// canonical 0xcfca387c).
+    #[serde(default)]
+    pub balancer_hardfork_time: Option<u64>,
 }
 
 lazy_static::lazy_static! {
@@ -353,6 +406,14 @@ impl From<Fork> for &str {
 }
 
 impl ChainConfig {
+    /// True if this is a Gnosis Chain network (mainnet 100 or Chiado 10200).
+    /// Used to dispatch Gnosis-specific block-execution behavior (fee
+    /// redirection, post-block system calls, withdrawals via contract).
+    pub fn is_gnosis(&self) -> bool {
+        // Keep in sync with crates/gnosis/src/genesis.rs.
+        matches!(self.chain_id, 100 | 10200)
+    }
+
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
@@ -620,6 +681,10 @@ impl ChainConfig {
             self.petersburg_block,
             self.istanbul_block,
             self.muir_glacier_block,
+            // Gnosis-specific POSDAO migration. Always None on Ethereum; on
+            // Gnosis mainnet it's 9_186_425 and lives between Istanbul and
+            // Berlin. Required for EIP-2124 fork hash to match peers.
+            self.posdao_block,
             self.berlin_block,
             self.london_block,
             self.arrow_glacier_block,
@@ -638,6 +703,11 @@ impl ChainConfig {
             self.shanghai_time,
             self.cancun_time,
             self.prague_time,
+            // Gnosis-specific Balancer hardfork sits between Prague and
+            // Osaka on mainnet. None on Ethereum; on Chiado either None
+            // or after Fusaka. gather_forks sorts + dedups so its
+            // placement within this vec doesn't matter.
+            self.balancer_hardfork_time,
             self.osaka_time,
             self.bpo1_time,
             self.bpo2_time,
@@ -678,7 +748,14 @@ pub struct GenesisAccount {
 
 impl Genesis {
     pub fn get_block(&self) -> Block {
-        Block::new(self.get_block_header(), self.get_block_body())
+        let header = self.get_block_header();
+        // Allow chains with non-geth genesis RLP (e.g. Gnosis Chain's AuRa
+        // genesis used [seal_step, seal_signature] in place of [mix_hash,
+        // nonce]) to short-circuit hash computation to the canonical value.
+        if let Some(canonical) = self.genesis_hash_override {
+            let _ = header.hash.set(canonical);
+        }
+        Block::new(header, self.get_block_body())
     }
 
     fn get_block_header(&self) -> BlockHeader {

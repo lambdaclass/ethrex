@@ -11,7 +11,7 @@ use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
     constants::{
         DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
-        TX_MAX_GAS_LIMIT_AMSTERDAM,
+        MIN_BASE_FEE_PER_BLOB_GAS, TX_MAX_GAS_LIMIT_AMSTERDAM,
     },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
@@ -138,9 +138,12 @@ pub fn create_payload(
     let chain_config = storage.get_chain_config();
     let fork = chain_config.fork(args.timestamp);
     let gas_limit = calc_gas_limit(parent_block.gas_limit, args.gas_ceil);
+    let min_blob = chain_config
+        .min_blob_gas_price
+        .unwrap_or(MIN_BASE_FEE_PER_BLOB_GAS);
     let excess_blob_gas = chain_config
         .get_fork_blob_schedule(args.timestamp)
-        .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork));
+        .map(|schedule| calc_excess_blob_gas(&parent_block, schedule, fork, min_blob));
 
     let header = BlockHeader {
         parent_hash: args.parent,
@@ -253,6 +256,9 @@ impl PayloadBuildContext {
                 .get_fork_blob_schedule(payload.header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
+            config
+                .min_blob_gas_price
+                .unwrap_or(MIN_BASE_FEE_PER_BLOB_GAS),
         );
 
         let parent_header = storage
