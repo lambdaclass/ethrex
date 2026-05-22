@@ -4,29 +4,31 @@ Tests intentionally excluded from CI. Source of truth for the **Known
 Issues** section the L1 workflow appends to each ef-tests job summary
 and posts as a sticky PR comment.
 
-## EF Tests — Stateless coverage narrowed to EIP-8025 optional-proofs
+## EF Tests — Stateless `stateless_input_invalid_public_key_is_rejected` skipped
 
-`make -C tooling/ef_tests/blockchain test` calls `test-stateless-zkevm`
-instead of `test-stateless`. The zkevm@v0.3.3 fixtures are filled against
-bal@v5.6.1, out of sync with current bal spec; the broad target trips ~549
-fixtures. Re-broaden once the zkevm bundle is regenerated.
+The single fixture
+`tests/amsterdam/eip8025_optional_proofs/test_stateless_input_validation.py::test_stateless_input_invalid_public_key_is_rejected`
+is filtered out of `test-stateless`. All other ~2864 stateless fixtures
+from `tests-zkevm@v0.4.1` (bal@v7.2.0 baseline) pass.
 
 <details>
 <summary>Why and resolution path</summary>
 
-[PR #6527](https://github.com/lambdaclass/ethrex/pull/6527) broadened
-`test-stateless` to extract the entire `for_amsterdam/` tree from the
-zkevm bundle and run all of it under `--features stateless`; combined with
-this branch's bal-devnet-7 semantics that scope produces ~549
-`GasUsedMismatch` / `ReceiptsRootMismatch` /
-`BlockAccessListHashMismatch` failures.
+`tests-zkevm@v0.4.x` introduces the v0.4 stateless wire format: a new
+schema-id prefix and a populated `public_keys` field on
+`StatelessInput`. Two gaps prevent the wrong-pubkey rejection from
+being observable end-to-end in ethrex's harness:
 
-`test-stateless-zkevm` filters cargo to the `eip8025_optional_proofs`
-suite, which still validates the stateless harness without the bal-version
-mismatch.
+1. `decode_eip8025` still parses the v0.3 framing (no schema-id, old
+   `ChainConfig` shape), so v0.4 canonical bytes don't round-trip.
+2. The blockchain ef_test runner consumes JSON `executionWitness`
+   instead of the canonical `statelessInputBytes`, bypassing the
+   `public_keys` check entirely.
 
-Re-broaden by switching `test:` back to `test-stateless` in
-`tooling/ef_tests/blockchain/Makefile` once the zkevm bundle is regenerated
-against the current bal spec.
+Resolution: update `decode_eip8025` for the v0.4 schema-id + reshaped
+`ChainConfig`, then route the stateless test runner through
+`execution_program(bytes)` (or replicate the public-keys check against
+the canonical input). The skip site in
+`tooling/ef_tests/blockchain/tests/all.rs` carries the same note.
 
 </details>
