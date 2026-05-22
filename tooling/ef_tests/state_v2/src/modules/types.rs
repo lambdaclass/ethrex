@@ -27,7 +27,14 @@ use std::{
     path::PathBuf,
 };
 
-const DEFAULT_FORKS: [&str; 6] = ["Merge", "Shanghai", "Cancun", "Prague", "Osaka", "Amsterdam"];
+const DEFAULT_FORKS: [&str; 6] = [
+    "Merge",
+    "Shanghai",
+    "Cancun",
+    "Prague",
+    "Osaka",
+    "Amsterdam",
+];
 
 /// `Tests` structure is the result of parsing a whole `.json` file from the EF tests. This file includes at
 /// least one general test enviroment and different test cases inside each enviroment.
@@ -120,12 +127,14 @@ impl Tests {
         // The `_info` field is optional — EF fixtures populate it but
         // goevmlab-generated fixtures may omit it.
         let test_info = match test_data.get("_info") {
-            Some(info_field) => Some(serde_json::from_value(info_field.clone()).map_err(|err| {
-                serde::de::Error::custom(format!(
-                    "Failed to deserialize `info` field in test {}. Serde error: {}",
-                    test_name, err
-                ))
-            })?),
+            Some(info_field) => {
+                Some(serde_json::from_value(info_field.clone()).map_err(|err| {
+                    serde::de::Error::custom(format!(
+                        "Failed to deserialize `info` field in test {}. Serde error: {}",
+                        test_name, err
+                    ))
+                })?)
+            }
             None => None,
         };
         // Obtain the value of the `env` field in the JSON.
@@ -229,7 +238,7 @@ pub struct Test {
     /// General information about the test (optional — present in EF fixtures,
     /// may be absent in goevmlab-generated ones).
     pub _info: Option<Info>,
-    pub env: Env,      // The block enviroment before the test transaction happens.
+    pub env: Env, // The block enviroment before the test transaction happens.
     pub pre: HashMap<Address, AccountState>, // The accounts state previous to the test transaction.
     pub test_cases: Vec<TestCase>, // A vector of specific cases to be tested under these conditions (transactions).
 }
@@ -622,7 +631,10 @@ mod tests {
         let json = fixture_json(false);
         let tests: Tests = serde_json::from_str(&json).expect("must parse without _info");
         assert_eq!(tests.0.len(), 1);
-        assert!(tests.0[0]._info.is_none(), "_info should be None when absent");
+        assert!(
+            tests.0[0]._info.is_none(),
+            "_info should be None when absent"
+        );
     }
 
     #[test]
@@ -630,7 +642,10 @@ mod tests {
         let json = fixture_json(true);
         let tests: Tests = serde_json::from_str(&json).expect("must parse with _info");
         assert_eq!(tests.0.len(), 1);
-        let info = tests.0[0]._info.as_ref().expect("_info should be Some when present");
+        let info = tests.0[0]
+            ._info
+            .as_ref()
+            .expect("_info should be Some when present");
         assert_eq!(info.comment.as_deref(), Some("goevmlab-generated"));
     }
 }

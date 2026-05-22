@@ -112,12 +112,7 @@ pub async fn load_initial_state(
     };
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
-    (
-        GeneralizedDatabase::new(db),
-        block_hash,
-        storage,
-        genesis,
-    )
+    (GeneralizedDatabase::new(db), block_hash, storage, genesis)
 }
 
 #[cfg(test)]
@@ -156,10 +151,9 @@ mod tests {
     fn blockhash_zero_matches_ef_convention() {
         let db = StatetestDatabase::new(Arc::new(SentinelInner));
         // Per geth's vmTestBlockHash: keccak256("0").
-        let expected = H256::from_str(
-            "0x044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d",
-        )
-        .unwrap();
+        let expected =
+            H256::from_str("0x044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d")
+                .unwrap();
         assert_eq!(db.get_block_hash(0).unwrap(), expected);
     }
 
@@ -167,10 +161,9 @@ mod tests {
     fn blockhash_nonzero_matches_ef_convention() {
         let db = StatetestDatabase::new(Arc::new(SentinelInner));
         // keccak256("1") per geth's vmTestBlockHash.
-        let expected = H256::from_str(
-            "0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6",
-        )
-        .unwrap();
+        let expected =
+            H256::from_str("0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6")
+                .unwrap();
         assert_eq!(db.get_block_hash(1).unwrap(), expected);
     }
 

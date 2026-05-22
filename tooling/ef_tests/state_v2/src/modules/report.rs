@@ -78,19 +78,21 @@ pub fn write_failing_test_to_report(test: &Test, failing_test_cases: Vec<PostChe
     let description = test
         ._info
         .as_ref()
-        .and_then(|info| {
-            info.description
-                .clone()
-                .or_else(|| info.comment.clone())
-        })
+        .and_then(|info| info.description.clone().or_else(|| info.comment.clone()))
         .unwrap_or_else(|| "No description or comment".to_string());
-    header_table.add_row(Row::new(vec![Cell::new("Description"), Cell::new(&description)]));
+    header_table.add_row(Row::new(vec![
+        Cell::new("Description"),
+        Cell::new(&description),
+    ]));
     let reference_spec = test
         ._info
         .as_ref()
         .and_then(|info| info.reference_spec.clone())
         .unwrap_or_else(|| "No reference spec".to_string());
-    header_table.add_row(Row::new(vec![Cell::new("Reference"), Cell::new(&reference_spec)]));
+    header_table.add_row(Row::new(vec![
+        Cell::new("Reference"),
+        Cell::new(&reference_spec),
+    ]));
 
     let header_content = format!("{}\n", header_table);
     report.write_all(header_content.as_bytes()).unwrap();
