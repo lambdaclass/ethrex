@@ -109,3 +109,26 @@ async fn authrpc_single_auth_failure_keeps_request_id() {
     let err = value.get("error").expect("auth failure must error");
     assert_eq!(err.get("code").and_then(|v| v.as_i64()), Some(-32000));
 }
+
+/// Batches larger than `MAX_BATCH_SIZE` (1000) must be rejected before any
+/// JWT-auth or dispatch work runs, to keep a 100k-request body from burning
+/// crypto or memory on the engine port. Matches geth's
+/// `--engine.batchitemlimit` default.
+#[tokio::test]
+async fn authrpc_rejects_oversize_batch() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    let context = default_context_with_storage(storage).await;
+    let auth = jwt_auth_header_for(&context);
+
+    let reqs: Vec<String> = (0..1001)
+        .map(|i| format!(r#"{{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":{i}}}"#))
+        .collect();
+    let body = format!("[{}]", reqs.join(","));
+
+    let value = call_authrpc(context, auth, body).await;
+    let err = value
+        .get("error")
+        .expect("oversize batch must produce an error response");
+    assert_eq!(err.get("code").and_then(|v| v.as_i64()), Some(-32600));
+    assert!(value.get("id").map(|v| v.is_null()).unwrap_or(false));
+}

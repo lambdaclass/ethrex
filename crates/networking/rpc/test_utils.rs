@@ -8,8 +8,8 @@
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
     rpc::{
-        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, start_api,
-        start_block_executor,
+        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, handle_http_request,
+        start_api, start_block_executor,
     },
     utils::RpcNamespace,
 };
@@ -401,5 +401,14 @@ pub async fn call_authrpc(
     handle_authrpc_request(State(context), auth_header, body)
         .await
         .expect("handle_authrpc_request should not return a status code error")
+        .0
+}
+
+/// Drive the public HTTP RPC handler without needing axum extractor types at
+/// the call site.
+pub async fn call_http(context: RpcApiContext, body: String) -> Value {
+    handle_http_request(State(context), body)
+        .await
+        .expect("handle_http_request should not return a status code error")
         .0
 }

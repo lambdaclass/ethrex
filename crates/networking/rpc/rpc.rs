@@ -646,28 +646,78 @@ pub async fn shutdown_signal() {
         .expect("failed to install Ctrl+C handler");
 }
 
-async fn handle_http_request(
+/// Maximum number of requests accepted in a single JSON-RPC batch on either
+/// the public HTTP port or the engine auth port. Matches geth's
+/// `--engine.batchitemlimit` default. Larger batches are rejected up front
+/// with `-32600 InvalidRequest` before any per-request work runs.
+const MAX_BATCH_SIZE: usize = 1000;
+
+/// JSON-RPC 2.0 §5.1: when the request body is not a valid Request object the
+/// response id MUST be null. Build these transport-level errors directly so we
+/// don't have to encode "no id" through `RpcRequestId`.
+fn null_id_error(err: RpcErr) -> Value {
+    let meta: RpcErrorMetadata = err.into();
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": Value::Null,
+        "error": meta,
+    })
+}
+
+/// Reject empty and oversize batches before they reach dispatch. Returns
+/// `Some(error_value)` to short-circuit, or `None` to proceed.
+fn reject_invalid_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
+    let RpcRequestWrapper::Multiple(requests) = wrapper else {
+        return None;
+    };
+    if requests.is_empty() {
+        return Some(null_id_error(RpcErr::InvalidRequest(
+            "empty batch is not a valid Request".to_string(),
+        )));
+    }
+    if requests.len() > MAX_BATCH_SIZE {
+        return Some(null_id_error(RpcErr::InvalidRequest(format!(
+            "batch too large: {} > {MAX_BATCH_SIZE}",
+            requests.len()
+        ))));
+    }
+    None
+}
+
+pub(crate) async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
-        Ok(RpcRequestWrapper::Single(request)) => {
+    let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
+        Ok(w) => w,
+        Err(_) => {
+            return Ok(Json(
+                rpc_response(
+                    RpcRequestId::String("".to_string()),
+                    Err(RpcErr::BadParams("Invalid request body".to_string())),
+                )
+                .map_err(|_| StatusCode::BAD_REQUEST)?,
+            ));
+        }
+    };
+
+    if let Some(err) = reject_invalid_batch(&wrapper) {
+        return Ok(Json(err));
+    }
+
+    let res = match wrapper {
+        RpcRequestWrapper::Single(request) => {
             let res = map_http_requests(&request, service_context).await;
             rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
-        Ok(RpcRequestWrapper::Multiple(requests)) => {
-            let mut responses = Vec::new();
+        RpcRequestWrapper::Multiple(requests) => {
+            let mut responses = Vec::with_capacity(requests.len());
             for req in requests {
                 let res = map_http_requests(&req, service_context.clone()).await;
                 responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
             }
             serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
         }
-        Err(_) => rpc_response(
-            RpcRequestId::String("".to_string()),
-            Err(RpcErr::BadParams("Invalid request body".to_string())),
-        )
-        .map_err(|_| StatusCode::BAD_REQUEST)?,
     };
     Ok(Json(res))
 }
@@ -677,18 +727,6 @@ pub async fn handle_authrpc_request(
     auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    // JSON-RPC 2.0: when the request body is not a valid Request object the
-    // response id MUST be null. Build these transport-level errors directly so
-    // we don't have to encode "no id" through `RpcRequestId`.
-    let null_id_error = |err: RpcErr| -> Value {
-        let meta: RpcErrorMetadata = err.into();
-        serde_json::json!({
-            "jsonrpc": "2.0",
-            "id": Value::Null,
-            "error": meta,
-        })
-    };
-
     let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
         Ok(w) => w,
         Err(_) => {
@@ -697,6 +735,12 @@ pub async fn handle_authrpc_request(
             ))));
         }
     };
+
+    // Reject empty / oversize batches before any auth or dispatch work so a
+    // 100k-request body can't burn JWT crypto or memory.
+    if let Some(err) = reject_invalid_batch(&wrapper) {
+        return Ok(Json(err));
+    }
 
     if let Err(error) = authenticate(&service_context.node_data.jwt_secret, auth_header) {
         // Auth failed: respond before dispatching anything. For batches, mirror
@@ -709,9 +753,6 @@ pub async fn handle_authrpc_request(
                 "id": req.id,
                 "error": error_meta,
             }),
-            RpcRequestWrapper::Multiple(requests) if requests.is_empty() => null_id_error(
-                RpcErr::InvalidRequest("empty batch is not a valid Request".to_string()),
-            ),
             RpcRequestWrapper::Multiple(requests) => {
                 let mut responses = Vec::with_capacity(requests.len());
                 for req in requests {
@@ -732,9 +773,6 @@ pub async fn handle_authrpc_request(
             let res = map_authrpc_requests(&req, service_context).await;
             rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
         }
-        RpcRequestWrapper::Multiple(requests) if requests.is_empty() => null_id_error(
-            RpcErr::InvalidRequest("empty batch is not a valid Request".to_string()),
-        ),
         RpcRequestWrapper::Multiple(requests) => {
             let mut responses = Vec::with_capacity(requests.len());
             for req in requests {
