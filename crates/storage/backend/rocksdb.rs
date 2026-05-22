@@ -370,6 +370,28 @@ impl StorageReadView for RocksDBReadTx {
             .map_err(|e| StoreError::Custom(format!("Failed to get from {}: {}", table, e)))
     }
 
+    fn multi_get(
+        &self,
+        table: &'static str,
+        keys: &[&[u8]],
+    ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
+        let Some(cf) = self.db.cf_handle(table) else {
+            let err = StoreError::Custom(format!("Table {} not found", table));
+            return (0..keys.len())
+                .map(|_| Err(StoreError::Custom(err.to_string())))
+                .collect();
+        };
+        // `sorted_input=false`: rocksdb sorts internally. Caller may pass arbitrary order.
+        self.db
+            .batched_multi_get_cf(&cf, keys.iter().copied(), false)
+            .into_iter()
+            .map(|res| {
+                res.map(|opt| opt.map(|slice| slice.to_vec()))
+                    .map_err(|e| StoreError::Custom(format!("multi_get {}: {}", table, e)))
+            })
+            .collect()
+    }
+
     fn prefix_iterator(
         &self,
         table: &'static str,
