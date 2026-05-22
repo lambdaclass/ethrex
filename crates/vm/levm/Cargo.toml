@@ -60,3 +60,4 @@ manual_saturating_arithmetic = "warn"
 
 [lib]
 path = "./src/lib.rs"
+
