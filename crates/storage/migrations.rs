@@ -13,6 +13,9 @@ use crate::error::StoreError;
 use crate::store::receipt_key;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
 
+use ethrex_common::H256;
+use ethrex_rlp::decode::RLPDecode;
+
 use super::store::StoreMetadata;
 
 /// A migration function that upgrades the database schema by one version.
