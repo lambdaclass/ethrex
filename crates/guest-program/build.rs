@@ -261,6 +261,15 @@ fn build_lambdavm_program() {
             "-Z",
             "json-target-spec",
         ])
+        // The outer cargo (running this build script) sets RUSTC, CARGO, and
+        // RUSTUP_TOOLCHAIN for child processes. Those override the
+        // `+nightly-2026-02-01` flag and force the inner build to use the
+        // outer (stable) toolchain — which then rejects the `-Z` flags below.
+        // Pin the inner toolchain explicitly via RUSTC + clearing the
+        // overrides, matching the Zisk build script's pattern.
+        .env("RUSTC", rustc_path("nightly-2026-02-01"))
+        .env_remove("CARGO")
+        .env_remove("RUSTUP_TOOLCHAIN")
         .env("CFLAGS_riscv64im_lambda_vm_elf", &sysroot_cflags)
         .env_remove("RUSTFLAGS")
         .env_remove("CARGO_ENCODED_RUSTFLAGS")
@@ -289,7 +298,10 @@ fn build_lambdavm_program() {
     .expect("could not copy LambdaVM elf to output directory");
 }
 
-#[cfg(all(not(clippy), feature = "zisk-build-elf"))]
+#[cfg(all(
+    not(clippy),
+    any(feature = "zisk-build-elf", feature = "lambdavm-build-elf")
+))]
 /// Returns the path to `rustc` executable of the given toolchain.
 ///
 /// Taken from https://github.com/eth-act/ere/blob/master/crates/compile-utils/src/rust.rs#L166
