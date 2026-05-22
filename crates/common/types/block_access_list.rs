@@ -1492,6 +1492,10 @@ impl BlockAccessListRecorder {
     /// Like the storage_writes walk in `restore`, but does NOT promote
     /// emptied slots to `storage_reads`. Used by `tx_restore` where a rejected
     /// tx should leave no trace at all.
+    ///
+    /// Cleanup of `reads_promoted_to_writes` for the rejected tx is delegated
+    /// to the caller (`tx_restore` walks `reads_promoted_journal` separately
+    /// before invoking this helper).
     fn walk_storage_writes_journal_no_promote(
         journal: &mut Vec<(Address, U256, usize)>,
         target_len: usize,
@@ -1499,6 +1503,8 @@ impl BlockAccessListRecorder {
     ) {
         while journal.len() > target_len {
             let (addr, slot, prev_len) = journal.pop().expect("checked non-empty");
+            // Address may already have been removed by a prior iteration of
+            // this same loop (last slot emptied → address entry pruned below).
             let Some(slots) = storage_writes.get_mut(&addr) else {
                 continue;
             };
@@ -1621,6 +1627,14 @@ impl BlockAccessListRecorder {
     /// Called after destroy_account for contracts created and destroyed in the same tx.
     /// Removes nonce/code changes, converts storage writes to reads.
     /// Matches EELS `track_selfdestruct` in state_tracker.py:315.
+    ///
+    /// INVARIANT: must be called only at top-level tx finalization, with no
+    /// outstanding `checkpoint()` pending restore. The `retain` calls below
+    /// mutate the change maps WITHOUT pushing journal entries, so any later
+    /// `restore()` against an older checkpoint would observe a journal whose
+    /// `prev_len`s no longer match the underlying map and silently produce
+    /// incorrect results. Caller is `LEVM::finalize_execution`, which runs
+    /// after every nested call frame has already committed or restored.
     pub fn track_selfdestruct(&mut self, address: Address) {
         let idx = self.current_index;
 
@@ -2184,6 +2198,41 @@ mod checkpoint_restore_tests {
                 .unwrap_or(true),
             "slot must not appear in both writes and reads"
         );
+    }
+
+    #[test]
+    fn restore_keeps_promotion_when_second_write_after_checkpoint() {
+        // Slot is read, then promoted by a pre-checkpoint write. A second
+        // write to the same slot after the checkpoint must NOT add a new
+        // promotion-journal entry (IndexSet dedup is the whole point of the
+        // O(1) change). On restore the pre-checkpoint write must remain and
+        // the slot must stay in `reads_promoted_to_writes` so `build()`
+        // continues to filter it out of the BAL `storage_reads` section.
+        let mut r = BlockAccessListRecorder::new();
+        r.set_block_access_index(1);
+        r.record_storage_read(addr(1), U256::from(5));
+        r.record_storage_write(addr(1), U256::from(5), U256::from(11));
+        assert!(r.reads_promoted_to_writes[&addr(1)].contains(&U256::from(5)));
+        assert_eq!(r.reads_promoted_journal.len(), 1);
+
+        let cp = r.checkpoint();
+        // Second write to the already-promoted slot — `IndexSet::insert`
+        // returns false, so no new journal entry.
+        r.record_storage_write(addr(1), U256::from(5), U256::from(22));
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(5)].len(), 2);
+        assert_eq!(r.reads_promoted_journal.len(), 1, "dedup: no new entry");
+
+        r.restore(cp);
+        // Pre-checkpoint write survives; promotion is preserved.
+        assert_eq!(r.storage_writes[&addr(1)][&U256::from(5)].len(), 1);
+        assert_eq!(
+            r.storage_writes[&addr(1)][&U256::from(5)][0].1,
+            U256::from(11)
+        );
+        assert!(r.reads_promoted_to_writes[&addr(1)].contains(&U256::from(5)));
+        // `storage_reads` still carries the original read entry — the dedup
+        // happens at `build()` time via the `reads_promoted_to_writes` and
+        // `storage_writes` filters, not by mutating `storage_reads` here.
     }
 
     #[test]
