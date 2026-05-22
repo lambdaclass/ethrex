@@ -496,6 +496,7 @@ impl RpcHandler for TraceCallRequest {
                             PrestateResult::Diff(d) => Ok(serde_json::to_value(d)?),
                         }
                     }
+                    TracerType::OpcodeTracer => todo!(),
                 }
             });
 
