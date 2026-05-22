@@ -37,7 +37,11 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
         vec!["eip-7594", "eip-7939", "eip-7918", "eip-7892", "eip-7883"];
 
     for test in tests {
-        let test_eip = test._info.clone().reference_spec.unwrap_or_default();
+        let test_eip = test
+            ._info
+            .as_ref()
+            .and_then(|info| info.reference_spec.clone())
+            .unwrap_or_default();
 
         if test.path.to_str().unwrap().contains("osaka")
             && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
