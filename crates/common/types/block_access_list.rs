@@ -747,6 +747,32 @@ pub struct TxCheckpoint {
     addresses_with_initial_code_len: usize,
 }
 
+/// Containers that support length-based truncation. Lets `walk_journal_simple`
+/// work for both `Vec<_>` (change lists) and `IndexSet<_>` (promoted-reads
+/// dedup set) without duplicating the journal walk.
+trait TruncatableEmpty {
+    fn truncate(&mut self, len: usize);
+    fn is_empty(&self) -> bool;
+}
+
+impl<T> TruncatableEmpty for Vec<T> {
+    fn truncate(&mut self, len: usize) {
+        Vec::truncate(self, len);
+    }
+    fn is_empty(&self) -> bool {
+        Vec::is_empty(self)
+    }
+}
+
+impl<T: std::hash::Hash + Eq> TruncatableEmpty for IndexSet<T> {
+    fn truncate(&mut self, len: usize) {
+        IndexSet::truncate(self, len);
+    }
+    fn is_empty(&self) -> bool {
+        IndexSet::is_empty(self)
+    }
+}
+
 /// Records state accesses during block execution to build a Block Access List (EIP-7928).
 ///
 /// The recorder accumulates all storage reads/writes, balance changes, nonce changes,
@@ -795,8 +821,10 @@ pub struct BlockAccessListRecorder {
     addresses_with_initial_code: IndexSet<Address>,
     /// Tracks reads that were promoted to writes, in insertion order per address.
     /// Used for efficient checkpoint/restore without cloning storage_reads.
-    /// On restore, we truncate this Vec and the slots go back to being reads.
-    reads_promoted_to_writes: BTreeMap<Address, Vec<U256>>,
+    /// On restore, we truncate this set and the slots go back to being reads.
+    /// `IndexSet` gives O(1) membership for the dedup check in
+    /// `record_storage_write` while keeping insertion-ordered truncation.
+    reads_promoted_to_writes: BTreeMap<Address, IndexSet<U256>>,
     /// When true, SYSTEM_ADDRESS balance/nonce/touch changes are filtered out.
     /// Set during system contract calls (EIP-2935, EIP-4788, etc.) where the
     /// system address account is backed up and restored, so changes are transient.
@@ -1048,11 +1076,11 @@ impl BlockAccessListRecorder {
             .get(&address)
             .is_some_and(|reads| reads.contains(&slot))
         {
-            // Only track promotion if not already tracked
+            // Only track promotion if not already tracked. `IndexSet::insert`
+            // returns true iff the slot is new, giving us O(1) dedup.
             let promoted = self.reads_promoted_to_writes.entry(address).or_default();
-            if !promoted.contains(&slot) {
-                let prev_len = promoted.len();
-                promoted.push(slot);
+            let prev_len = promoted.len();
+            if promoted.insert(slot) {
                 self.reads_promoted_journal.push((address, prev_len));
             }
         }
@@ -1245,7 +1273,7 @@ impl BlockAccessListRecorder {
                 let writes = self.storage_writes.get(address);
                 let mut sorted_reads: Vec<_> = reads
                     .iter()
-                    .filter(|slot| !promoted.is_some_and(|p| p.contains(slot)))
+                    .filter(|slot| !promoted.is_some_and(|p| p.contains(*slot)))
                     .filter(|slot| !writes.is_some_and(|w| w.contains_key(slot)))
                     .copied()
                     .collect();
@@ -1433,16 +1461,18 @@ impl BlockAccessListRecorder {
     }
 
     /// Walk a per-address journal in reverse from its current length down to
-    /// `target_len`, truncating each affected `map[addr]` Vec to its `prev_len`.
-    /// Removes addresses whose vec becomes empty.
+    /// `target_len`, truncating each affected `map[addr]` container to its
+    /// `prev_len`. Removes addresses whose container becomes empty.
     ///
     /// Used by `restore` / `tx_restore` for `balance_changes`, `nonce_changes`,
     /// `code_changes`, and `reads_promoted_to_writes` (which all key on `Address`
-    /// alone, unlike `storage_writes` which keys on `(Address, U256)`).
-    fn walk_journal_simple<V>(
+    /// alone, unlike `storage_writes` which keys on `(Address, U256)`). The
+    /// `TruncatableEmpty` bound lets the helper work for both `Vec<_>` (the
+    /// change-list maps) and `IndexSet<U256>` (`reads_promoted_to_writes`).
+    fn walk_journal_simple<C: TruncatableEmpty>(
         journal: &mut Vec<(Address, usize)>,
         target_len: usize,
-        map: &mut BTreeMap<Address, Vec<V>>,
+        map: &mut BTreeMap<Address, C>,
     ) {
         while journal.len() > target_len {
             // SAFETY: while-condition guarantees non-empty.
