@@ -37,14 +37,16 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
         vec!["eip-7594", "eip-7939", "eip-7918", "eip-7892", "eip-7883"];
 
     for test in tests {
-        let test_eip = test
-            ._info
-            .as_ref()
-            .and_then(|info| info.reference_spec.clone())
-            .unwrap_or_default();
-
+        // Fusaka EIP allowlist only applies when `_info.reference_spec` is
+        // present. Fixtures without it (e.g. goevmlab-generated) bypass the
+        // filter so they aren't silently dropped just because we can't read
+        // the EIP list.
         if test.path.to_str().unwrap().contains("osaka")
-            && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
+            && let Some(spec) = test
+                ._info
+                .as_ref()
+                .and_then(|info| info.reference_spec.as_deref())
+            && !fusaka_eips_to_test.iter().any(|eip| spec.contains(eip))
         {
             continue;
         }
@@ -70,7 +72,7 @@ pub async fn run_test(
     for test_case in &test.test_cases {
         // Setup VM for transaction.
         let (mut db, initial_block_hash, storage, genesis) =
-            load_initial_state(test, &test_case.fork).await;
+            load_initial_state(test, &test_case.fork, true).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();

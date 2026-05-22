@@ -226,7 +226,9 @@ impl Tests {
 pub struct Test {
     pub name: String,  // The name of the test object inside the .json file.
     pub path: PathBuf, // The path of the .json file the Test can be found at.
-    pub _info: Option<Info>, // General information about the test (optional — present in EF fixtures, may be absent in goevmlab-generated ones).
+    /// General information about the test (optional — present in EF fixtures,
+    /// may be absent in goevmlab-generated ones).
+    pub _info: Option<Info>,
     pub env: Env,      // The block enviroment before the test transaction happens.
     pub pre: HashMap<Address, AccountState>, // The accounts state previous to the test transaction.
     pub test_cases: Vec<TestCase>, // A vector of specific cases to be tested under these conditions (transactions).
@@ -295,6 +297,8 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
             schedule.cancun.target
         } else if *fork == Fork::Prague {
             schedule.prague.target
+        } else if *fork == Fork::Osaka {
+            schedule.osaka.target
         } else {
             0
         };

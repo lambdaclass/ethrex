@@ -26,12 +26,19 @@ use crate::modules::{
 /// ethrex derives from the test's pre-state, which doesn't match the hash
 /// fixtures put in `env.previousHash` (the EF convention). That trips
 /// differential fuzzers like goevmlab on the very first block-hash lookup.
-pub struct StatetestDatabase {
+///
+/// Scoped to single-pass executions (`statetest` CLI + `runner.rs` EF runner).
+/// `block_runner.rs` deliberately does NOT use this shim — its phase-3 real
+/// import goes through `add_block_pipeline` which would not honor the override,
+/// so applying the shim only to its phase-1 pre-exec would make the two phases
+/// disagree on BLOCKHASH. Closing block_runner's BLOCKHASH gap end-to-end is
+/// a separate fix.
+pub(crate) struct StatetestDatabase {
     inner: Arc<dyn LevmDatabase>,
 }
 
 impl StatetestDatabase {
-    pub fn new(inner: Arc<dyn LevmDatabase>) -> Self {
+    pub(crate) fn new(inner: Arc<dyn LevmDatabase>) -> Self {
         Self { inner }
     }
 }
@@ -77,9 +84,17 @@ pub fn effective_gas_price(test_env: &Env, test_case: &TestCase) -> Result<U256,
 }
 
 /// Loads the pre state of the test (the initial state of specific accounts) into the Genesis.
+///
+/// `override_blockhash` controls whether the returned database enforces the EF
+/// state-test convention `BLOCKHASH(n) = keccak256(decimal_string(n))`. Pass
+/// `true` for single-pass executions (statetest CLI, runner.rs); pass `false`
+/// for the two-phase `block_runner` to avoid disagreement between the LEVM
+/// pre-exec and the `add_block_pipeline` real-exec (see `StatetestDatabase`
+/// doc comment for details).
 pub async fn load_initial_state(
     test: &Test,
     fork: &Fork,
+    override_blockhash: bool,
 ) -> (GeneralizedDatabase, H256, Store, Genesis) {
     let genesis = genesis_from_test_and_fork(test, fork);
     let mut storage = Store::new("./temp", EngineType::InMemory).expect("Failed to create Store");
@@ -90,11 +105,15 @@ pub async fn load_initial_state(
     let store: DynVmDatabase =
         Box::new(StoreVmDatabase::new(storage.clone(), genesis.get_block().header).unwrap());
     let inner: Arc<dyn LevmDatabase> = Arc::new(store);
-    let wrapped: Arc<dyn LevmDatabase> = Arc::new(StatetestDatabase::new(inner));
+    let db: Arc<dyn LevmDatabase> = if override_blockhash {
+        Arc::new(StatetestDatabase::new(inner))
+    } else {
+        inner
+    };
 
     // We return some values that will be needed to calculate the post execution checks (original storage, genesis and blockhash)
     (
-        GeneralizedDatabase::new(wrapped),
+        GeneralizedDatabase::new(db),
         block_hash,
         storage,
         genesis,
