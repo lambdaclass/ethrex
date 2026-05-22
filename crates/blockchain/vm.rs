@@ -124,6 +124,68 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
+        name = "Account read batch",
+        skip_all,
+        fields(namespace = "block_execution", n = addresses.len())
+    )]
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, EvmError> {
+        // Split into cached / uncached so the rocksdb multi_get only fires for
+        // addresses we haven't memoized yet on this StoreVmDatabase.
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        let mut miss_idx: Vec<usize> = Vec::new();
+        let mut miss_addrs: Vec<Address> = Vec::new();
+        {
+            let cache = self
+                .account_state_cache
+                .read()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+            for (i, addr) in addresses.iter().enumerate() {
+                match cache.get(addr) {
+                    Some(Some(entry)) => results[i] = Some(entry.state),
+                    Some(None) => results[i] = None,
+                    None => {
+                        miss_idx.push(i);
+                        miss_addrs.push(*addr);
+                    }
+                }
+            }
+        }
+
+        if miss_addrs.is_empty() {
+            return Ok(results);
+        }
+
+        let fetched = self
+            .store
+            .get_account_states_batch_by_root(self.state_root, &miss_addrs)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        // Populate the per-DB cache and assemble results.
+        let mut cache = self
+            .account_state_cache
+            .write()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+        for ((slot, addr), state) in miss_idx
+            .iter()
+            .zip(miss_addrs.iter())
+            .zip(fetched.into_iter())
+        {
+            let cached = state.map(|state| AccountStateCacheEntry {
+                state,
+                hashed_address: H256::from(keccak_hash(addr.to_fixed_bytes())),
+            });
+            cache.insert(*addr, cached);
+            results[*slot] = cached.map(|e| e.state);
+        }
+
+        Ok(results)
+    }
+
+    #[instrument(
+        level = "trace",
         name = "Storage read",
         skip_all,
         fields(namespace = "block_execution")
