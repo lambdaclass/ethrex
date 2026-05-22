@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
-use crate::utils::keccak;
+use crate::utils::{keccak, u256_to_h256};
 
 /// Encode a slice of items in sorted order without cloning.
 fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
@@ -560,6 +560,8 @@ impl BlockAccessList {
             FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
         let mut tx_to_accounts: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
         let mut accounts_by_min_index: Vec<(u32, usize)> = Vec::new();
+        let mut slot_idx_by_account: Vec<FxHashMap<H256, usize>> =
+            Vec::with_capacity(self.inner.len());
 
         for (i, acct) in self.inner.iter().enumerate() {
             addr_to_idx.insert(acct.address, i);
@@ -588,6 +590,15 @@ impl BlockAccessList {
             for idx in seen_indices {
                 tx_to_accounts.entry(idx).or_default().push(i);
             }
+
+            // Per-account slot → storage_changes index map for O(1) lookup on
+            // lazy-cursor cache miss. Empty for accounts with no storage writes.
+            let mut slot_map: FxHashMap<H256, usize> =
+                FxHashMap::with_capacity_and_hasher(acct.storage_changes.len(), Default::default());
+            for (sc_idx, sc) in acct.storage_changes.iter().enumerate() {
+                slot_map.insert(u256_to_h256(sc.slot), sc_idx);
+            }
+            slot_idx_by_account.push(slot_map);
         }
 
         accounts_by_min_index.sort_unstable_by_key(|(min_idx, _)| *min_idx);
@@ -596,12 +607,14 @@ impl BlockAccessList {
             addr_to_idx,
             tx_to_accounts,
             accounts_by_min_index,
+            slot_idx_by_account,
         }
     }
 }
 
 /// Pre-computed index for fast per-tx BAL validation lookups.
 /// Built once per block, shared read-only across parallel tx validations.
+#[derive(Clone)]
 pub struct BalAddressIndex {
     /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
     pub addr_to_idx: FxHashMap<Address, usize>,
@@ -611,6 +624,11 @@ pub struct BalAddressIndex {
     /// Used by `seed_db_from_bal` to skip accounts with no changes at indices <= max_idx.
     /// Only includes accounts that have at least one mutation (balance/nonce/code/storage write).
     pub accounts_by_min_index: Vec<(u32, usize)>,
+    /// Per-account slot → `storage_changes` index map. Lets `seed_one_storage_slot_from_bal`
+    /// resolve a slot key to its `SlotChange` in O(1) instead of a linear scan. Indexed by
+    /// the same `acct_idx` used by `addr_to_idx`; empty inner map for accounts with no
+    /// storage writes. Slot uniqueness is enforced by canonical-ordering validation.
+    pub slot_idx_by_account: Vec<FxHashMap<H256, usize>>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
@@ -1588,5 +1606,91 @@ impl BlockAccessListRecorder {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod decode_tests {
+    use super::*;
+    use std::str::FromStr;
+
+    /// Sanity check that our RLP decoder produces the same `post_balance` for
+    /// the sender as the bytes literally encode in
+    /// `test_call_value_to_self_destructed_same_tx_account` at tests-bal@v7.1.0.
+    ///
+    /// If this passes, our decoder is correct and any mismatch observed during
+    /// hive runs comes from the BAL the test harness sends (not the fixture's
+    /// on-disk bytes). If it fails, the bug is local to this decoder.
+    #[test]
+    fn decode_v7_1_0_sender_balance_change() {
+        // Sender's entry only, manually trimmed from the v7.1.0 fixture's
+        // `engineNewPayloads[0].params[0].blockAccessList` field at
+        // `eip8037_state_creation_gas_cost_increase/state_gas_call/call_value_to_self_destructed_same_tx_account.json`.
+        // Wrapped in a single-element list (`0xee`) so it decodes as a full BAL.
+        // 0xee = list, 46 bytes follow:
+        //   0xed = AccountChanges list, 45 bytes follow:
+        //     0x94 + 20 byte address  (= 21 bytes)
+        //     0xc0                    storageReads empty list
+        //     0xc0                    storageChanges empty list
+        //     0xcc 0xcb 0x01 0x89 <9-byte post_balance>  balanceChanges (= 14 bytes)
+        //     0xc3 0xc2 0x01 0x01                       nonceChanges (= 4 bytes)
+        //     0xc0                    codeChanges empty list
+        //   total inner len = 21 + 1 + 1 + 14 + 4 + 1 = 42 bytes
+        // Outer 0xee covers 1-byte AccountChanges header + 42 bytes = 43 bytes
+        // Wait, let me recount the inner: 0xed is header (1 byte) for 42-byte payload.
+        //   AccountChanges total wire: 1 + 42 = 43 bytes.
+        //   Outer list (BlockAccessList) wraps that: 0x... + 43 bytes.
+        //   Outer header for a 43-byte payload: 0xc0 + 43 = 0xeb.
+        // Byte counts (carefully):
+        //   inner BalanceChange list:  [01, 89, 9_bytes] = 11 bytes  → header cb
+        //   inner balanceChanges:      [<12_byte_change>] = 12 bytes → header cc
+        //   inner NonceChange list:    [01, 01]           = 2 bytes  → header c2
+        //   inner nonceChanges:        [<3_byte_change>]  = 3 bytes  → header c3
+        //   AccountChanges payload:    addr(21) + c0 + c0 + bal(13) + nonce(4) + c0 = 41 bytes
+        //   AccountChanges total wire: e9 + 41 = 42 bytes
+        //   BAL payload:               42 bytes → header ea
+        let hex_str = concat!(
+            "ea", // outer list, 42 bytes follow
+            "e9", // AccountChanges list, 41 bytes follow
+            "94",
+            "1ad9bc24818784172ff393bb6f89f094d4d2ca29", // address (20 bytes)
+            "c0",                                       // storage_changes = []
+            "c0",                                       // storage_reads = []
+            "cc",                                       // balanceChanges list, 12 bytes follow
+            "cb",                                       // single change, 11 bytes follow
+            "01",                                       // block_access_index = 1
+            "89",
+            "3635c9adc5de6de476", // post_balance = 9-byte big-endian uint
+            "c3",                 // nonceChanges list, 3 bytes follow
+            "c2",                 // single change, 2 bytes follow
+            "01",                 // block_access_index = 1
+            "01",                 // post_nonce = 1
+            "c0",                 // codeChanges = []
+        );
+
+        let bytes = hex::decode(hex_str).expect("hex");
+        let bal = BlockAccessList::decode(&bytes).expect("BAL decode");
+
+        let accts = bal.accounts();
+        assert_eq!(accts.len(), 1, "expected exactly one account in the BAL");
+
+        let acct = &accts[0];
+        assert_eq!(
+            acct.address,
+            Address::from_str("0x1ad9bc24818784172ff393bb6f89f094d4d2ca29").unwrap(),
+            "address mismatch",
+        );
+        assert_eq!(acct.balance_changes.len(), 1, "expected one balance change");
+        let change = &acct.balance_changes[0];
+        assert_eq!(change.block_access_index, 1, "block_access_index");
+
+        // 0x3635c9adc5de6de476 = 999_999_999_999_996_716_150
+        // = 10^21 − 3_283_850 (= 328_385 gas × 10 gas_price)
+        let expected = U256::from_dec_str("999999999999996716150").expect("post_balance decimal");
+        assert_eq!(
+            change.post_balance, expected,
+            "RLP decoder produced wrong post_balance: got {}, expected {}",
+            change.post_balance, expected,
+        );
     }
 }

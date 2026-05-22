@@ -1,7 +1,7 @@
 pub mod db;
 mod tracing;
 
-use super::BlockExecutionResult;
+use super::{BlockExecutionResult, TxGasBreakdown};
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
     PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -47,6 +47,10 @@ use ethrex_levm::constants::{
     TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_levm::db::gen_db::{
+    LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
+};
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
@@ -195,7 +199,9 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
-        let mut receipts = Vec::new();
+        let n_txs = block.body.transactions.len();
+        let mut receipts = Vec::with_capacity(n_txs);
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -248,6 +254,8 @@ impl LEVM {
             }
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;
@@ -343,6 +351,7 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                tx_gas_breakdowns,
             },
             bal,
         ))
@@ -417,34 +426,40 @@ impl LEVM {
             // contracts — SystemContractCallFailed takes priority over BAL errors.
             // The BAL may be inconsistent for blocks that are fundamentally invalid
             // due to a failing system contract.
-            let (receipts, block_gas_used, mut unread_storage_reads, mut unaccessed_pure_accounts) =
-                match parallel_result {
-                    Ok(result) => result,
-                    Err(parallel_err) => {
-                        let last_tx_idx =
-                            u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
-                        if Self::seed_db_from_bal(
-                            db,
-                            bal,
-                            last_tx_idx,
-                            &validation_index.accounts_by_min_index,
-                        )
-                        .is_ok()
-                            && let VMType::L1 = vm_type
-                            && let Err(e @ EvmError::SystemContractCallFailed(_)) =
-                                extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
-                        {
-                            return Err(e);
-                        }
-                        return Err(parallel_err);
+            let (
+                receipts,
+                block_gas_used,
+                mut unread_storage_reads,
+                mut unaccessed_pure_accounts,
+                tx_gas_breakdowns,
+            ) = match parallel_result {
+                Ok(result) => result,
+                Err(parallel_err) => {
+                    let last_tx_idx =
+                        u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
+                    if Self::seed_db_from_bal(
+                        db,
+                        bal,
+                        last_tx_idx,
+                        &validation_index.accounts_by_min_index,
+                    )
+                    .is_ok()
+                        && let VMType::L1 = vm_type
+                        && let Err(e @ EvmError::SystemContractCallFailed(_)) =
+                            extract_all_requests_levm(&[], db, &block.header, vm_type, crypto)
+                    {
+                        return Err(e);
                     }
-                };
+                    return Err(parallel_err);
+                }
+            };
 
             // Seed main db with post-tx state (excluding withdrawal effects) so
             // request extraction system calls see user-queued requests on predeploys.
             // Withdrawal index is n_txs+1 in BAL; we use n_txs to avoid double-applying
             // withdrawal balances (process_withdrawals handles those below).
             let last_tx_idx = u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
+            // Eager seed retained: lazy_bal cursor is per-tx only; outer DB has no cursor.
             Self::seed_db_from_bal(
                 db,
                 bal,
@@ -532,6 +547,7 @@ impl LEVM {
                     receipts,
                     requests,
                     block_gas_used,
+                    tx_gas_breakdowns,
                 },
                 None,
             ));
@@ -548,7 +564,9 @@ impl LEVM {
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
 
-        let mut receipts = Vec::new();
+        let n_txs = block.body.transactions.len();
+        let mut receipts = Vec::with_capacity(n_txs);
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
         // Cumulative gas for receipts (POST-REFUND per EIP-7778)
         let mut cumulative_gas_used = 0_u64;
         // Block gas accounting (PRE-REFUND for Amsterdam+ per EIP-7778)
@@ -606,6 +624,9 @@ impl LEVM {
                 false,
                 crypto,
             )?;
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
                 tx_since_last_flush = 0;
@@ -715,22 +736,10 @@ impl LEVM {
                 receipts,
                 requests,
                 block_gas_used,
+                tx_gas_breakdowns,
             },
             bal,
         ))
-    }
-
-    /// Convert BAL into `Vec<AccountUpdate>` for the merkleizer.
-    /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-    fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
-        if new_code.is_empty() {
-            (*EMPTY_KECCACK_HASH, None)
-        } else {
-            let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
-            let hash = code_obj.hash;
-            (hash, Some(code_obj))
-        }
     }
 
     ///
@@ -795,7 +804,7 @@ impl LEVM {
 
             // Final code: last entry or prestate
             let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
-                Self::code_from_bal(&c.new_code)
+                code_from_bal(&c.new_code)
             } else {
                 (prestate.code_hash, None)
             };
@@ -864,6 +873,12 @@ impl LEVM {
         Ok(updates)
     }
 
+    /// Eager BAL prefix seed — used only by the outer DB path (parallel-execution
+    /// fallback recovery and post-tx outer seed before request extraction).
+    /// Per-tx parallel execution uses `LazyBalCursor` in `execute_block_parallel`;
+    /// see also `seed_one_address_info_from_bal` and `seed_one_storage_slot_from_bal`
+    /// in `ethrex_levm::db::gen_db`.
+    ///
     /// Pre-seed a GeneralizedDatabase with BAL-derived state for a specific tx.
     ///
     /// For each BAL-modified account, applies accumulated diffs with
@@ -881,117 +896,37 @@ impl LEVM {
         max_idx: u32,
         accounts_by_min_index: &[(u32, usize)],
     ) -> Result<(), EvmError> {
-        // Only visit accounts whose minimum change index <= max_idx.
         let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
         let bal_accounts = bal.accounts();
         for &(_, acct_idx) in &accounts_by_min_index[..end] {
-            let acct_changes = &bal_accounts[acct_idx];
-            let addr = acct_changes.address;
+            seed_one_address_info_from_bal(db, bal, acct_idx, max_idx)
+                .map_err(|e| EvmError::Custom(format!("seed_db_from_bal: {e}")))?;
 
-            // Binary search (slices are sorted ascending by block_access_index):
-            // partition_point returns the number of elements <= max_idx.
-            let balance_pos = acct_changes
-                .balance_changes
-                .partition_point(|c| c.block_access_index <= max_idx);
-            let nonce_pos = acct_changes
-                .nonce_changes
-                .partition_point(|c| c.block_access_index <= max_idx);
-            let code_pos = acct_changes
-                .code_changes
-                .partition_point(|c| c.block_access_index <= max_idx);
-            // Each slot's slot_changes are sorted ascending by block_access_index,
-            // so if the first entry is <= max_idx, at least one change is in scope.
+            let acct_changes = &bal_accounts[acct_idx];
+            if acct_changes.storage_changes.is_empty() {
+                continue;
+            }
             let any_storage = acct_changes.storage_changes.iter().any(|sc| {
                 sc.slot_changes
                     .first()
                     .is_some_and(|c| c.block_access_index <= max_idx)
             });
-
-            if balance_pos == 0 && nonce_pos == 0 && !any_storage && code_pos == 0 {
+            if !any_storage {
                 continue;
             }
-
-            // Compute code update before borrowing acc (borrow checker: can't access
-            // db.codes while acc holds a mutable borrow of db)
-            let code_update = if code_pos > 0 {
-                Some(Self::code_from_bal(
-                    &acct_changes.code_changes[code_pos - 1].new_code,
-                ))
-            } else {
-                None
-            };
-
-            // When BAL covers all account info fields (balance + nonce + code), insert
-            // a default LevmAccount directly to skip the store/shared_base lookup.
-            // For partial coverage, load from store to fill missing fields.
-            let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
-            if has_all_info {
-                use ethrex_common::types::AccountInfo;
-                let balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
-                let nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
-                let code_hash = code_update
-                    .as_ref()
-                    .map(|(h, _)| *h)
-                    .unwrap_or(*EMPTY_KECCACK_HASH);
-                // NOTE: has_storage is false for newly inserted accounts. This is safe
-                // because this DB is only used for the parallel execution path (state
-                // comes from BAL, not get_state_transitions_tx). Do not reuse this DB
-                // for sequential fallback without fixing has_storage.
-                let acc = db
-                    .current_accounts_state
-                    .entry(addr)
-                    .or_insert_with(|| LevmAccount {
-                        info: AccountInfo::default(),
-                        storage: FxHashMap::default(),
-                        has_storage: false,
-                        status: AccountStatus::Modified,
-                        exists: true,
-                    });
-                acc.info.balance = balance;
-                acc.info.nonce = nonce;
-                acc.info.code_hash = code_hash;
-                acc.mark_modified();
-            } else {
-                // Partial BAL coverage — load from store/shared_base, then overwrite
-                // the covered fields. get_account already caches, so get_account_mut
-                // will be a cache hit.
+            let addr = acct_changes.address;
+            if !db.current_accounts_state.contains_key(&addr) {
                 db.get_account(addr)
-                    .map_err(|e| EvmError::Custom(format!("seed_db_from_bal load: {e}")))?;
-                let acc = db
-                    .get_account_mut(addr)
-                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
-
-                if balance_pos > 0 {
-                    acc.info.balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
-                }
-                if nonce_pos > 0 {
-                    acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
-                }
-                if let Some((hash, _)) = &code_update {
-                    acc.info.code_hash = *hash;
-                }
+                    .map_err(|e| EvmError::Custom(format!("seed storage: {e}")))?;
             }
-
-            // Apply storage changes (works for both paths since acc is now in current_accounts_state)
-            if any_storage {
-                let acc = db
-                    .current_accounts_state
-                    .get_mut(&addr)
-                    .expect("account was just inserted");
-                for sc in &acct_changes.storage_changes {
-                    let pos = sc
-                        .slot_changes
-                        .partition_point(|c| c.block_access_index <= max_idx);
-                    if pos > 0 {
-                        let key = ethrex_common::utils::u256_to_h256(sc.slot);
-                        acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
-                    }
+            let acc = db
+                .get_account_mut(addr)
+                .map_err(|e| EvmError::Custom(format!("seed storage mut: {e}")))?;
+            for sc in &acct_changes.storage_changes {
+                if let Some(value) = post_value_at_or_before(sc, max_idx) {
+                    acc.storage
+                        .insert(ethrex_common::utils::u256_to_h256(sc.slot), value);
                 }
-            }
-
-            // Insert code object after acc borrow is released
-            if let Some((hash, Some(code_obj))) = code_update {
-                db.codes.entry(hash).or_insert(code_obj);
             }
         }
         Ok(())
@@ -1022,6 +957,7 @@ impl LEVM {
             u64,
             FxHashSet<(Address, H256)>,
             FxHashSet<Address>,
+            Vec<TxGasBreakdown>,
         ),
         EvmError,
     > {
@@ -1087,8 +1023,9 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Pre-compute capacity hint for per-tx DBs from BAL account count.
-        let bal_account_count = bal.accounts().len();
+        // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
+        let arc_bal = Arc::new(bal.clone());
+        let arc_idx = Arc::new(validation_index.clone());
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
         //    BAL validation is deferred to after the gas limit check (step 3) so that
@@ -1111,22 +1048,16 @@ impl LEVM {
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
-                    bal_account_count,
+                    32,
                 );
+                tx_db.lazy_bal = Some(LazyBalCursor {
+                    bal: arc_bal.clone(),
+                    bal_index: u32::try_from(tx_idx + 1).unwrap_or(u32::MAX),
+                    index: arc_idx.clone(),
+                });
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
-
-                // Pre-seed with BAL-derived intermediate state.
-                // BAL index: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
-                // For tx at index i, we want state through BAL index i
-                // (= system calls + effects of txs 0..i-1).
-                Self::seed_db_from_bal(
-                    &mut tx_db,
-                    bal,
-                    u32::try_from(tx_idx).unwrap_or(u32::MAX),
-                    &validation_index.accounts_by_min_index,
-                )?;
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -1196,6 +1127,7 @@ impl LEVM {
         //    position invalidates the block with GAS_ALLOWANCE_EXCEEDED.
         let mut block_regular_gas_used = 0_u64;
         let mut block_state_gas_used = 0_u64;
+        let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
         for (tx_idx, _, report, _, _, _, _, _) in &exec_results {
             let (tx, _) = txs_with_sender
                 .get(*tx_idx)
@@ -1209,6 +1141,8 @@ impl LEVM {
                     header.gas_limit,
                 )?;
             }
+
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(*tx_idx, tx.hash(), report));
 
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
@@ -1329,6 +1263,7 @@ impl LEVM {
             block_gas_used,
             unread_storage_reads,
             unaccessed_pure_accounts,
+            tx_gas_breakdowns,
         ))
     }
 
@@ -1431,8 +1366,9 @@ impl LEVM {
                         Some(a) if a.info.balance == expected => {}
                         Some(a) => {
                             return Err(BalValidationError::Mismatch(format!(
-                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={}",
-                                a.info.balance
+                                "account {addr:?} balance mismatch at index {bal_idx}: BAL={expected}, exec={} (diff={})",
+                                a.info.balance,
+                                describe_balance_diff(expected, a.info.balance),
                             )));
                         }
                         None => {
@@ -2869,6 +2805,56 @@ pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
     } else {
         block_gas_limit
     }
+}
+
+/// Format a balance diff (signed wei) and try to identify it as a multiple of
+/// well-known EIP-8037 state-gas constants (NEW_ACCOUNT, STORAGE_SET, AUTH_*),
+/// scaled by a plausible gas_price. Best-effort hint to triage gas-accounting
+/// drifts at a glance.
+///
+/// `dead_code` allowed: only reached via the L1 BAL-validation path, which is
+/// not exercised in the L2 build profile so the per-crate analysis flags it.
+#[allow(dead_code)]
+fn describe_balance_diff(expected: U256, actual: U256) -> String {
+    let (sign, mag) = if expected >= actual {
+        ("+", expected - actual)
+    } else {
+        ("-", actual - expected)
+    };
+    let Ok(mag_u128) = u128::try_from(mag) else {
+        return format!("{sign}{mag}");
+    };
+    if mag_u128 == 0 {
+        return "0".to_string();
+    }
+    let cpsb: u128 = 1530;
+    // EIP-8037 state-byte constants
+    let consts = [
+        ("NEW_ACCOUNT", 120u128),
+        ("STORAGE_SET", 64),
+        ("AUTH_BASE", 23),
+        ("AUTH_TOTAL", 143),
+    ];
+    // Try common test gas_prices first, then 1 wei/gas as fallback.
+    for &gp in &[10u128, 1, 7, 100, 1000, 1_000_000_000] {
+        if !mag_u128.is_multiple_of(gp) {
+            continue;
+        }
+        let gas = mag_u128 / gp;
+        if !gas.is_multiple_of(cpsb) {
+            continue;
+        }
+        let bytes = gas / cpsb;
+        for (name, c) in consts {
+            if bytes.is_multiple_of(c) {
+                let n = bytes / c;
+                return format!(
+                    "{sign}{mag_u128} wei (= {gas} gas at {gp} wei/gas = {n}× {name}_state_gas)"
+                );
+            }
+        }
+    }
+    format!("{sign}{mag_u128} wei")
 }
 
 #[cfg(test)]

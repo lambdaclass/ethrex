@@ -143,48 +143,48 @@ impl Hook for DefaultHook {
             undo_value_transfer(vm)?;
         }
 
-        // EIP-8037 (Amsterdam+): Handle CREATE collision specially.
-        // Per EELS, collision at process_message_call level returns
-        // gas_left=0, state_gas_left=0, regular_gas_used=0, state_gas_used=0.
-        // The user pays tx.gas (everything), but block accounting only sees
-        // intrinsic gas (no execution gas was consumed).
+        // EIP-8037 (Amsterdam+): CREATE-tx address collision.
+        // Per EELS process_message_call (interpreter.py:120-145) the collision
+        // returns `state_gas_left = message.state_gas_reservoir` (reservoir is
+        // PRESERVED, not burned). The failure block in fork.py:1086-1094 then
+        // adds `new_account_refund` to both `state_gas_left` and `state_refund`,
+        // so the user gets back reservoir + new_account_refund. tx_state_gas
+        // collapses to 0, tx_regular_gas = max(intrinsic_regular + message.gas,
+        // calldata_floor). The user does NOT lose the whole gas_limit.
         if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_collision() {
             let gas_limit = vm.env.gas_limit;
-            // Block accounting: gas_used = intrinsic_regular + intrinsic_state.
-            // state_gas_used already = intrinsic_state (no execution state gas).
-            // Per EELS, `tx_env.intrinsic_state_gas` is immutable — any auth refund
-            // goes to the reservoir, not to block-accounted state_gas.
-            let state_gas = vm.state_gas_used;
+            // state_gas_used is already net (signed, inline refunds applied).
+            // state_refund carries the EIP-7702 auth refund and CREATE-failure intrinsic
+            // (added by vm.finalize_execution). Clamp at zero.
+            let state_refund_signed =
+                i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+            let state_gas: u64 =
+                u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
+                    .map_err(|_| InternalError::Overflow)?;
             let floor = vm.get_min_gas_used()?;
-            // Regular gas from intrinsic only (gas_limit - reservoir - gas_remaining at collision)
-            // = total_intrinsic_gas consumed so far, minus state portion
-            #[expect(
-                clippy::as_conversions,
-                reason = "gas_remaining is positive at collision"
-            )]
-            let gas_remaining = vm.current_call_frame.gas_remaining as u64;
-            let total_intrinsic = gas_limit
-                .saturating_sub(vm.state_gas_reservoir)
-                .saturating_sub(gas_remaining);
-            let regular_gas = total_intrinsic.saturating_sub(state_gas);
+            // Regular gas = gas_limit - state_gas_left, where state_gas_left =
+            // reservoir (PRESERVED across collision in EELS, with new_account_refund
+            // already folded in by vm.finalize_execution above). Mirrors EELS
+            // tx_gas_used_before_refund = tx.gas - gas_left(=0) - state_gas_left.
+            let regular_gas = gas_limit.saturating_sub(vm.state_gas_reservoir);
             let effective_regular = regular_gas.max(floor);
             ctx_result.gas_used = effective_regular
                 .checked_add(state_gas)
                 .ok_or(InternalError::Overflow)?;
-            // User pays everything (gas_left=0, state_gas_left=0)
-            ctx_result.gas_spent = gas_limit;
-            // Coinbase gets paid on what user pays
-            pay_coinbase(vm, gas_limit)?;
-            // Return 0 gas to sender (they lose everything)
+            // User pays only the effective regular (post-floor); coinbase gets the
+            // same; remainder returns to sender.
+            ctx_result.gas_spent = effective_regular;
+            pay_coinbase(vm, effective_regular)?;
+            let gas_to_return = gas_limit
+                .checked_sub(effective_regular)
+                .ok_or(InternalError::Underflow)?;
+            let wei_return_amount = vm
+                .env
+                .gas_price
+                .checked_mul(U256::from(gas_to_return))
+                .ok_or(InternalError::Overflow)?;
+            vm.increase_account_balance(vm.env.origin, wei_return_amount)?;
             return Ok(());
-        }
-
-        // EIP-8037 PR #2707: on tx success, refund state gas for same-tx
-        // created accounts that were SELFDESTRUCTed — NEW_ACCOUNT + SSTORE
-        // state gas for created slots + code_length * cpsb. Must run BEFORE
-        // the reservoir subtraction so sender gets the refund.
-        if vm.env.config.fork >= Fork::Amsterdam && ctx_result.is_success() {
-            apply_same_tx_selfdestruct_state_refund(vm)?;
         }
 
         // EIP-8037 (Amsterdam+): unused reservoir is always returned to sender.
@@ -242,35 +242,26 @@ pub fn refund_sender(
     if vm.env.config.fork >= Fork::Amsterdam {
         // EIP-7623 floor applies to the regular (non-state) gas component only.
         let floor = vm.get_min_gas_used()?;
-        // EELS block accounting per fork.py:
-        //   tx_regular_gas = intrinsic_regular + regular_gas_used
-        //   tx_state_gas   = intrinsic_state   + state_gas_used (net after refunds)
-        // Reservoir activity (auth refunds, SSTORE 0→N→0 credits) is NEUTRAL to
-        // block accounting — it only affects sender refund. To derive tx_regular_gas
-        // from our raw gas consumption, subtract intrinsic_state, the initial
-        // reservoir (pre-consumed from gas_remaining in add_intrinsic_gas), and any
-        // state-gas spills that reduced gas_remaining (EELS charge_state_gas spills
-        // don't count as regular_gas_used).
-        let execution_state_gas_refund = vm
-            .state_gas_refund_absorbed
-            .saturating_add(vm.state_gas_refund_pending);
-        let state_gas = vm.state_gas_used.saturating_sub(execution_state_gas_refund);
+        // EIP-8037: state_gas_used is already net (signed, credits applied inline).
+        // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero.
+        let state_refund_signed =
+            i64::try_from(vm.state_refund).map_err(|_| InternalError::Overflow)?;
+        let state_gas: u64 =
+            u64::try_from(vm.state_gas_used.saturating_sub(state_refund_signed).max(0))
+                .map_err(|_| InternalError::Overflow)?;
         // Compute raw consumption from scratch (gas_limit minus gas_remaining)
         // to avoid interference from any reservoir-current subtraction baked
         // into the caller's pre-refund number.
         #[expect(clippy::as_conversions, reason = "gas_remaining is >= 0 here")]
         let gas_remaining = vm.current_call_frame.gas_remaining.max(0) as u64;
         let raw_consumed = vm.env.gas_limit.saturating_sub(gas_remaining);
-        // PR #2689: state-gas charges that were halted (top-level or sub-frame) get
-        // reclassified to regular_gas_used via `regular_gas_reclassified`. The base
-        // formula subtracts every spill (treats them all as state-gas); the
-        // reclassification term adds back the halted portion so it counts toward the
-        // regular dimension.
+        // Subtract intrinsic_state (pre-consumed from gas_remaining as part of total intrinsic),
+        // the initial reservoir (pre-consumed from gas_remaining), and state-gas spills
+        // (EELS charge_state_gas spills don't count as regular_gas_used).
         let regular_gas = raw_consumed
-            .saturating_sub(vm.intrinsic_state_gas_charged)
+            .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
-            .saturating_sub(vm.state_gas_spill)
-            .saturating_add(vm.regular_gas_reclassified);
+            .saturating_sub(vm.state_gas_spill);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)
@@ -349,77 +340,6 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     // Only pay coinbase if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
-    }
-
-    Ok(())
-}
-
-/// EIP-8037 PR #2707: same-tx SELFDESTRUCT refunds state gas to the reservoir.
-///
-/// For each SELFDESTRUCTed address that was CREATEd in the same transaction, refund:
-///   - STATE_BYTES_PER_NEW_ACCOUNT * cpsb (account creation)
-///   - STATE_BYTES_PER_STORAGE_SET * cpsb per non-zero storage slot written in this tx
-///   - code_length * cpsb (the deployed code)
-///
-/// Refund is clamped to the net execution state_gas_used (gross minus already-absorbed
-/// and pending credits) so it cannot go negative. Adds to both the reservoir (so the
-/// sender gets it back via the reservoir subtraction in `finalize_execution`) and to
-/// `state_gas_refund_absorbed` (so block-accounted `state_gas` is reduced accordingly).
-pub fn apply_same_tx_selfdestruct_state_refund(vm: &mut VM<'_>) -> Result<(), VMError> {
-    let cpsb = vm.cost_per_state_byte;
-    let new_account_bytes = crate::gas_cost::STATE_BYTES_PER_NEW_ACCOUNT;
-    let storage_set_bytes = crate::gas_cost::STATE_BYTES_PER_STORAGE_SET;
-
-    // Collect (address, refund_amount) first to avoid borrow conflicts with db access.
-    let mut refunds: Vec<u64> = Vec::new();
-    let selfdestruct_addrs: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
-    for addr in &selfdestruct_addrs {
-        if !vm.substate.is_account_created(addr) {
-            continue;
-        }
-        let account = vm.db.get_account(*addr)?;
-        let created_slots: u64 = account
-            .storage
-            .values()
-            .filter(|v| !v.is_zero())
-            .count()
-            .try_into()
-            .unwrap_or(u64::MAX);
-        let code_hash = account.info.code_hash;
-        let code = vm.db.get_code(code_hash)?.clone();
-        let code_len: u64 = u64::try_from(code.bytecode.len()).unwrap_or(u64::MAX);
-
-        let per_byte: u64 = new_account_bytes
-            .saturating_add(created_slots.saturating_mul(storage_set_bytes))
-            .saturating_add(code_len);
-        let refund = per_byte.saturating_mul(cpsb);
-        refunds.push(refund);
-    }
-
-    for refund in refunds {
-        // EELS fork.py:1100 clamps against `tx_output.state_gas_used`, which is the
-        // execution-only accumulator (intrinsic lives separately in tx_env.intrinsic_state_gas).
-        // Our `vm.state_gas_used` lumps intrinsic + execution, so subtract the intrinsic
-        // portion here — otherwise a CREATE tx whose initcode SELFDESTRUCTs would refund
-        // its own intrinsic NEW_ACCOUNT charge.
-        let execution_state_gas = vm
-            .state_gas_used
-            .saturating_sub(vm.intrinsic_state_gas_charged);
-        let net_state_gas = execution_state_gas
-            .saturating_sub(vm.state_gas_refund_absorbed)
-            .saturating_sub(vm.state_gas_refund_pending);
-        let clamped = refund.min(net_state_gas);
-        if clamped == 0 {
-            continue;
-        }
-        vm.state_gas_reservoir = vm
-            .state_gas_reservoir
-            .checked_add(clamped)
-            .ok_or(InternalError::Overflow)?;
-        vm.state_gas_refund_absorbed = vm
-            .state_gas_refund_absorbed
-            .checked_add(clamped)
-            .ok_or(InternalError::Overflow)?;
     }
 
     Ok(())
