@@ -1,0 +1,27 @@
+[package]
+version = "13.0.0"
+name = "ethrex-guest-lambdavm"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[dependencies]
+# Must match LAMBDA_VM_COMMIT in .github/actions/install-lambdavm/action.yml
+# and the lambda-vm-syscalls rev in crates/guest-program/Cargo.toml.
+lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "8af4e92e6e75638746fe9924f6bac715ffac9cb6" }
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
+
+ethrex-guest-program = { path = "../../", default-features = false, features = [
+    "lambdavm",
+] }
+
+[features]
+l2 = ["ethrex-guest-program/l2"]
+eip-8025 = ["ethrex-guest-program/eip-8025"]

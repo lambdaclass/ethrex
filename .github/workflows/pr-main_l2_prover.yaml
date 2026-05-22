@@ -46,7 +46,7 @@ jobs:
     strategy:
       matrix:
         # Note: openvm backend linting is disabled due to a problem in the installation https://github.com/lambdaclass/ethrex/issues/5509
-        backend: ["sp1", "risc0", "zisk"]
+        backend: ["sp1", "risc0", "zisk", "lambdavm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
@@ -84,6 +84,12 @@ jobs:
           rustup install nightly-2025-02-14
           rustup component add rust-src --toolchain nightly-2025-02-14
           cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.1 cargo-openvm
+
+      - name: Install LambdaVM
+        if: matrix.backend == 'lambdavm'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/install-lambdavm
 
       - name: Check ${{ matrix.backend }} backend
         run: |

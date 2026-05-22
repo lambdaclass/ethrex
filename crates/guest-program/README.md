@@ -21,7 +21,8 @@ guest-program/
 │   │   ├── sp1.rs
 │   │   ├── risc0.rs
 │   │   ├── zisk.rs
-│   │   └── openvm.rs
+│   │   ├── openvm.rs
+│   │   └── lambdavm.rs
 │   ├── l1/             # L1 (mainnet) program
 │   │   ├── mod.rs
 │   │   ├── input.rs
@@ -40,7 +41,8 @@ guest-program/
     ├── risc0/          # RISC Zero guest
     ├── sp1/            # Succinct SP1 guest
     ├── zisk/           # Polygon ZisK guest
-    └── openvm/         # Axiom OpenVM guest
+    ├── openvm/         # Axiom OpenVM guest
+    └── lambdavm/       # LambdaClass / 3MI Labs LambdaVM guest
 ```
 
 ## Prerequisites
@@ -120,10 +122,12 @@ cargo check -p ethrex-guest-program --features sp1
 | `risc0` | Base RISC Zero feature: enables RISC0 crypto module and feature propagation |
 | `zisk` | Base ZisK feature: enables ZisK crypto module and feature propagation |
 | `openvm` | Base OpenVM feature: enables OpenVM crypto module and feature propagation |
+| `lambdavm` | Base LambdaVM feature: enables LambdaVM crypto module and feature propagation |
 | `sp1-build-elf` | SP1 base + build tooling. Triggers `build.rs` to compile the SP1 guest ELF |
 | `risc0-build-elf` | RISC Zero base + build tooling. Triggers `build.rs` to compile the RISC0 guest ELF |
 | `zisk-build-elf` | ZisK base + build tooling. Triggers `build.rs` to compile the ZisK guest ELF |
 | `openvm-build-elf` | OpenVM base + build tooling. Triggers `build.rs` to compile the OpenVM guest ELF |
+| `lambdavm-build-elf` | LambdaVM base + build tooling. Triggers `build.rs` to compile the LambdaVM guest ELF |
 | `l2` | Enables L2 (rollup) program mode. Used for L2 provers. Can be combined with one zkVM feature |
 | `sp1-cycles` | Reports cycle counts (SP1 only) |
 | `c-kzg` | Enables KZG precompile support |
@@ -153,6 +157,13 @@ Each subdirectory in `bin/` contains a guest implementation for a specific zkVM.
 ### OpenVM v1.4.1 (Axiom)
 - **Architecture**: RISC-V 32-bit
 - **ELF output**: `bin/openvm/out/riscv32im-openvm-elf`
+
+### LambdaVM (LambdaClass & 3MI Labs)
+- **Architecture**: RISC-V 64-bit
+- **ELF output**: `bin/lambdavm/out/riscv64im-lambda-vm-elf`
+- **Source pin**: see `LAMBDA_VM_COMMIT` in `.github/actions/install-lambdavm/action.yml` and the `rev` of `lambda-vm-syscalls` in `crates/guest-program/Cargo.toml` (both must match).
+- **Requires**: nightly Rust toolchain (`nightly-2026-02-01`), `rust-src`, the LambdaVM sysroot (default `/opt/lambda-vm-sysroot`, overridable via `LAMBDA_VM_SYSROOT_DIR`), and the LambdaVM `cli` binary on `$PATH`.
+- **Accelerated primitives**: `keccak_permute` only. ECDSA, BN254, KZG, BLS12-381, sha256, and modexp run via pure-Rust crates (slow inside the zkVM until more precompiles land).
 
 ## Data Flow
 

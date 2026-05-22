@@ -1,0 +1,14 @@
+[target.riscv64im-lambda-vm-elf]
+rustflags = [
+  "--cfg", "getrandom_backend=\"custom\"",
+  "-C", "passes=lower-atomic"
+]
+
+# CC_/CFLAGS_ env vars route `cc`-rs invocations (for any C deps in the guest
+# tree) through clang targeting the LambdaVM sysroot. The sysroot path is the
+# upstream default; override via the `LAMBDA_VM_SYSROOT_DIR` env var when the
+# build script in `crates/guest-program/build.rs` re-exports it as
+# `CFLAGS_riscv64im_lambda_vm_elf`.
+[env]
+CC_riscv64im_lambda_vm_elf = "clang"
+CFLAGS_riscv64im_lambda_vm_elf = "--target=riscv64 -march=rv64im -mabi=lp64 --sysroot=/opt/lambda-vm-sysroot"

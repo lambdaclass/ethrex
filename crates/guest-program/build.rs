@@ -12,6 +12,9 @@ fn main() {
 
     #[cfg(all(not(clippy), feature = "openvm-build-elf"))]
     build_openvm_program();
+
+    #[cfg(all(not(clippy), feature = "lambdavm-build-elf"))]
+    build_lambdavm_program();
 }
 
 #[cfg(all(not(clippy), feature = "risc0-build-elf"))]
@@ -217,6 +220,73 @@ fn build_openvm_program() {
     }
 
     fs::copy(&elf_src, &elf_dst).expect("failed to copy ethrex-guest-openvm");
+}
+
+#[cfg(all(not(clippy), feature = "lambdavm-build-elf"))]
+fn build_lambdavm_program() {
+    use std::path::Path;
+
+    // LambdaVM's RV64IM target requires a prebuilt sysroot for C/std linkage.
+    // Resolution order: `LAMBDA_VM_SYSROOT_DIR` env var, then `/opt/lambda-vm-sysroot`
+    // (LambdaVM's documented default).
+    let sysroot_dir = std::env::var("LAMBDA_VM_SYSROOT_DIR")
+        .unwrap_or_else(|_| "/opt/lambda-vm-sysroot".to_string());
+
+    if !Path::new(&sysroot_dir).is_dir() {
+        panic!(
+            "LambdaVM sysroot not found at `{sysroot_dir}`.\n\
+             Run `.github/actions/install-lambdavm` in CI, or follow the sysroot setup\n\
+             in https://github.com/yetanotherco/lambda_vm (`make prepare-sysroot`).\n\
+             Override the path via the `LAMBDA_VM_SYSROOT_DIR` env var."
+        );
+    }
+
+    let sysroot_cflags = format!(
+        "--target=riscv64 -march=rv64im -mabi=lp64 --sysroot={sysroot_dir}"
+    );
+
+    let start = std::time::Instant::now();
+
+    let status = std::process::Command::new("cargo")
+        .args([
+            "+nightly-2026-02-01",
+            "build",
+            "--release",
+            "--target",
+            "riscv64im-lambda-vm-elf.json",
+            "-Z",
+            "build-std=core,alloc,std,compiler_builtins,panic_abort",
+            "-Z",
+            "build-std-features=compiler-builtins-mem",
+            "-Z",
+            "json-target-spec",
+        ])
+        .env("CFLAGS_riscv64im_lambda_vm_elf", &sysroot_cflags)
+        .env_remove("RUSTFLAGS")
+        .env_remove("CARGO_ENCODED_RUSTFLAGS")
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .current_dir("./bin/lambdavm")
+        .status()
+        .expect("Failed to execute LambdaVM build command");
+
+    if !status.success() {
+        panic!("Failed to build guest program with LambdaVM toolchain");
+    }
+
+    let duration = start.elapsed();
+    println!(
+        "LambdaVM guest program built in {:.2?} seconds",
+        duration.as_secs_f64()
+    );
+
+    let _ = std::fs::create_dir("./bin/lambdavm/out");
+
+    std::fs::copy(
+        "./bin/lambdavm/target/riscv64im-lambda-vm-elf/release/ethrex-guest-lambdavm",
+        "./bin/lambdavm/out/riscv64im-lambda-vm-elf",
+    )
+    .expect("could not copy LambdaVM elf to output directory");
 }
 
 #[cfg(all(not(clippy), feature = "zisk-build-elf"))]
