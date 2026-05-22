@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
-use crate::utils::keccak;
+use crate::utils::{keccak, u256_to_h256};
 
 /// Encode a slice of items in sorted order without cloning.
 fn encode_sorted_by<T, K, F>(items: &[T], buf: &mut dyn BufMut, key_fn: F)
@@ -560,6 +560,8 @@ impl BlockAccessList {
             FxHashMap::with_capacity_and_hasher(self.inner.len(), Default::default());
         let mut tx_to_accounts: FxHashMap<u32, Vec<usize>> = FxHashMap::default();
         let mut accounts_by_min_index: Vec<(u32, usize)> = Vec::new();
+        let mut slot_idx_by_account: Vec<FxHashMap<H256, usize>> =
+            Vec::with_capacity(self.inner.len());
 
         for (i, acct) in self.inner.iter().enumerate() {
             addr_to_idx.insert(acct.address, i);
@@ -588,6 +590,15 @@ impl BlockAccessList {
             for idx in seen_indices {
                 tx_to_accounts.entry(idx).or_default().push(i);
             }
+
+            // Per-account slot → storage_changes index map for O(1) lookup on
+            // lazy-cursor cache miss. Empty for accounts with no storage writes.
+            let mut slot_map: FxHashMap<H256, usize> =
+                FxHashMap::with_capacity_and_hasher(acct.storage_changes.len(), Default::default());
+            for (sc_idx, sc) in acct.storage_changes.iter().enumerate() {
+                slot_map.insert(u256_to_h256(sc.slot), sc_idx);
+            }
+            slot_idx_by_account.push(slot_map);
         }
 
         accounts_by_min_index.sort_unstable_by_key(|(min_idx, _)| *min_idx);
@@ -596,12 +607,14 @@ impl BlockAccessList {
             addr_to_idx,
             tx_to_accounts,
             accounts_by_min_index,
+            slot_idx_by_account,
         }
     }
 }
 
 /// Pre-computed index for fast per-tx BAL validation lookups.
 /// Built once per block, shared read-only across parallel tx validations.
+#[derive(Clone)]
 pub struct BalAddressIndex {
     /// Maps each address in the BAL to its index in `BlockAccessList.inner`.
     pub addr_to_idx: FxHashMap<Address, usize>,
@@ -611,6 +624,11 @@ pub struct BalAddressIndex {
     /// Used by `seed_db_from_bal` to skip accounts with no changes at indices <= max_idx.
     /// Only includes accounts that have at least one mutation (balance/nonce/code/storage write).
     pub accounts_by_min_index: Vec<(u32, usize)>,
+    /// Per-account slot → `storage_changes` index map. Lets `seed_one_storage_slot_from_bal`
+    /// resolve a slot key to its `SlotChange` in O(1) instead of a linear scan. Indexed by
+    /// the same `acct_idx` used by `addr_to_idx`; empty inner map for accounts with no
+    /// storage writes. Slot uniqueness is enforced by canonical-ordering validation.
+    pub slot_idx_by_account: Vec<FxHashMap<H256, usize>>,
 }
 
 /// Binary search for exact match at `idx` in balance changes (sorted by block_access_index).
