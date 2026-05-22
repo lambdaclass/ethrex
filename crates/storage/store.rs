@@ -2496,21 +2496,24 @@ impl Store {
 
         let mut fkv_indices: Vec<usize> = Vec::new();
         let mut trie_indices: Vec<usize> = Vec::new();
-        let mut diff_hits: usize = 0;
 
+        // Match `BackendTrieDB::flatkeyvalue_computed` semantics: a path is
+        // covered by FKV iff `last_written >= path` as raw nibble bytes. This
+        // is the same check `Trie::get` uses; the related helper
+        // `Store::flatkeyvalue_computed_with_last_written` slices `[0..64]`
+        // and is intentionally more conservative — using that here would
+        // unnecessarily fall back to the trie when the cursor sits inside an
+        // account's storage sweep (the account leaf is already in FKV at that
+        // point; see `flatkeyvalue_generator`).
+        let fkv_cursor = Nibbles::from_hex(last_written.clone());
         for (i, path) in leaf_paths.iter().enumerate() {
             if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
                 if !value.is_empty() {
                     results[i] = Some(AccountState::decode(&value)?);
                 }
-                diff_hits += 1;
                 continue;
             }
-            // Reuse the trie's FKV-cursor check semantics via the leaf path.
             let path_nibbles = Nibbles::from_hex(path.clone());
-            // `last_computed_flatkeyvalue >= path` ⇒ FKV row is authoritative
-            // (either present with value, or absent meaning the account does not exist).
-            let fkv_cursor = Nibbles::from_hex(last_written.clone());
             if fkv_cursor >= path_nibbles {
                 fkv_indices.push(i);
             } else {
@@ -2543,7 +2546,6 @@ impl Store {
             }
         }
 
-        let _ = diff_hits; // surface via tracing if needed.
         Ok(results)
     }
 

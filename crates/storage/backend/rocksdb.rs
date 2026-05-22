@@ -308,9 +308,9 @@ impl StorageReadView for RocksDBReadTx {
         keys: &[&[u8]],
     ) -> Vec<Result<Option<Vec<u8>>, StoreError>> {
         let Some(cf) = self.db.cf_handle(table) else {
-            let err = StoreError::Custom(format!("Table {} not found", table));
+            let err_msg = format!("Table {} not found", table);
             return (0..keys.len())
-                .map(|_| Err(StoreError::Custom(err.to_string())))
+                .map(|_| Err(StoreError::Custom(err_msg.clone())))
                 .collect();
         };
         // `sorted_input=false`: rocksdb sorts internally. Caller may pass arbitrary order.
