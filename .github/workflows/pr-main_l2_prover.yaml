@@ -49,7 +49,7 @@ jobs:
         # Note: risc0 backend linting is temporarily disabled: the c-kzg 2.1.8 floor exceeds the
         # highest risc0 c-kzg fork tag (v2.1.7-risczero.0), so the guest workspace can't resolve.
         # Re-add "risc0" once risc0/c-kzg-4844 publishes a >=2.1.8 tag.
-        backend: ["sp1", "zisk"]
+        backend: ["sp1", "zisk", "lambdavm"]
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
@@ -87,6 +87,12 @@ jobs:
           rustup install nightly-2025-02-14
           rustup component add rust-src --toolchain nightly-2025-02-14
           cargo +1.86 install --locked --git https://github.com/openvm-org/openvm.git --tag v1.4.1 cargo-openvm
+
+      - name: Install LambdaVM
+        if: matrix.backend == 'lambdavm'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ./.github/actions/install-lambdavm
 
       - name: Check ${{ matrix.backend }} backend
         run: |

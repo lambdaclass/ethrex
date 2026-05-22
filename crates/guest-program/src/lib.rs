@@ -55,6 +55,12 @@ pub static ZKVM_ZISK_PROGRAM_ELF: &[u8] =
 #[cfg(any(clippy, not(feature = "zisk-build-elf")))]
 pub const ZKVM_ZISK_PROGRAM_ELF: &[u8] = &[];
 
+#[cfg(all(not(clippy), feature = "lambdavm-build-elf"))]
+pub static ZKVM_LAMBDAVM_PROGRAM_ELF: &[u8] =
+    include_bytes!("../bin/lambdavm/out/riscv64im-lambda-vm-elf");
+#[cfg(any(clippy, not(feature = "lambdavm-build-elf")))]
+pub const ZKVM_LAMBDAVM_PROGRAM_ELF: &[u8] = &[];
+
 /// Report cycles used in a code block when running inside SP1 zkVM.
 ///
 /// When the feature "sp1-cycles" is enabled, it will print start and end cycle

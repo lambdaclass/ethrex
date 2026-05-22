@@ -10,6 +10,7 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 | **RISC Zero** | RISC Zero | Production | ✓ | ✓ | [RISC0 Prover Guide](./l2/deployment/prover/risc0.md) |
 | **ZisK** | Polygon | Experimental | ✓ | Planned | Coming soon |
 | **OpenVM** | Axiom | Experimental | ✓ | Planned | Coming soon |
+| **LambdaVM** | LambdaClass & 3MI Labs | Experimental | ✓ | Planned | Coming soon |
 | **TEE (TDX)** | Intel | Production | — | ✓ | [TDX Prover Guide](./l2/deployment/prover/tee.md) |
 
 ## SP1 (Succinct)
@@ -89,6 +90,34 @@ ethrex integrates with multiple zero-knowledge virtual machines (zkVMs), giving 
 - Precompile support is being expanded
 - L2 prover integration is planned
 
+## LambdaVM (LambdaClass & 3MI Labs)
+
+[LambdaVM](https://github.com/yetanotherco/lambda_vm) is a verifiable RV64IM zkVM with a STARK-over-Goldilocks proof system and LogUp lookups.
+
+**Status:** Experimental. L1 proving is functional via local execute/prove/verify; L2 integration is planned.
+
+**Key Features:**
+- Transparent (no trusted setup) and post-quantum-secure
+- 128-bit provable security
+- STARK proofs over the Goldilocks field with LogUp lookup argument
+- Minimalist, auditable codebase
+
+**Integration Details:**
+- The host backend shells out to LambdaVM's `cli` binary (`execute`, `prove`, `verify`).
+- The guest binary uses LambdaVM's `lambda-vm-syscalls` SDK and a custom RV64IM target spec.
+- `LambdaVmCrypto` overrides `keccak256` (LambdaVM's only accelerated primitive today) and routes ECDSA secp256k1 through pure-Rust `k256`. All other `Crypto` methods inherit the trait default.
+- Source is pinned via commit hash on `yetanotherco/lambda_vm`; the same hash appears in `crates/guest-program/Cargo.toml` and `.github/actions/install-lambdavm/action.yml`.
+
+**Current Limitations:**
+- Only `keccak_permute` is accelerated. ECDSA recovery, BN254, KZG, BLS12-381, sha256, and modexp run via pure-Rust crates — real EVM block proving will be substantially slower than SP1/RISC0 until more precompiles land.
+- Proof compression to an L1-cheap verifier (Groth16/Plonk wrapper) is on LambdaVM's roadmap. Proofs today are local STARKs, not directly verifiable on Ethereum L1.
+- L2 prover integration is not yet wired (`BackendType::LambdaVM` is L1-only, mirroring the Zisk backend's current state).
+
+**Build & Run:**
+- Install the toolchain via `.github/actions/install-lambdavm` (CI) or follow `make prepare-sysroot` in the LambdaVM repo (local dev).
+- Build the guest ELF: `cargo build -p ethrex-guest-program --features lambdavm-build-elf`.
+- Run with the prover: `cargo run -p ethrex-prover --features lambdavm -- --backend lambdavm prove <block>`.
+
 ## TEE (Intel TDX)
 
 Intel Trust Domain Extensions (TDX) provides hardware-based trusted execution for block proving.
@@ -155,7 +184,7 @@ See [Multi-prover deployment guide](./l2/deployment/prover/multi-prover.md) for 
 | **Production L2** | SP1 or RISC Zero (most mature) |
 | **Maximum performance** | SP1 with GPU acceleration |
 | **Hardware security** | TEE (TDX) |
-| **Experimentation** | ZisK or OpenVM |
+| **Experimentation** | ZisK, OpenVM, or LambdaVM |
 | **Redundancy** | Multi-prover with SP1 + RISC Zero + TEE |
 
 ## Performance Comparison

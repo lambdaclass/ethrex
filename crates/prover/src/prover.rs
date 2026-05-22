@@ -283,6 +283,14 @@ where
             let _ = actor_ref.send(prover_protocol::Poll);
             actor_ref.join().await;
         }
+        #[cfg(feature = "lambdavm")]
+        BackendType::LambdaVM => {
+            use crate::backend::LambdaVmBackend;
+            let prover: Prover<LambdaVmBackend, I> = Prover::new(LambdaVmBackend::new(), config);
+            let actor_ref = prover.start_with_backend(Backend::Blocking);
+            let _ = actor_ref.send(prover_protocol::Poll);
+            actor_ref.join().await;
+        }
     }
 }
 

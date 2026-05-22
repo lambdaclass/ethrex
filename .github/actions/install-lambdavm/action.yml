@@ -1,0 +1,72 @@
+name: "Install LambdaVM"
+description: "Install LambdaVM toolchain, sysroot, and CLI"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install LambdaVM dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y clang lld curl build-essential
+
+    - name: Install Rust nightly toolchain for LambdaVM
+      shell: bash
+      # Must match the channel pinned in
+      # crates/guest-program/bin/lambdavm/rust-toolchain.toml.
+      env:
+        LAMBDA_VM_RUST_TOOLCHAIN: "nightly-2026-02-01"
+      run: |
+        rustup toolchain install "${LAMBDA_VM_RUST_TOOLCHAIN}" --component rust-src
+
+    - name: Cache LambdaVM sysroot
+      id: cache-sysroot
+      uses: actions/cache@v4
+      with:
+        path: /opt/lambda-vm-sysroot
+        key: lambda-vm-sysroot-rv64im-v1
+
+    - name: Prepare LambdaVM sysroot
+      if: steps.cache-sysroot.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SYSROOT_TARBALL: /tmp/lambda-vm-sysroot-rv64im.tar.gz
+        SYSROOT_URL: https://lambda.alignedlayer.com/lambda-vm-sysroot-rv64im.tar.gz
+      run: |
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+
+        retry curl -L "${SYSROOT_URL}" -o "${SYSROOT_TARBALL}"
+        sudo mkdir -p /opt/lambda-vm-sysroot
+        sudo tar -xzf "${SYSROOT_TARBALL}" -C /opt/lambda-vm-sysroot --strip-components=1
+        rm -f "${SYSROOT_TARBALL}"
+
+    - name: Cache LambdaVM CLI binary
+      id: cache-cli
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/bin/cli
+        # Must match the `rev` of `lambda-vm-syscalls` in
+        # crates/guest-program/Cargo.toml and crates/guest-program/bin/lambdavm/Cargo.toml.
+        key: lambda-vm-cli-8af4e92e6e75638746fe9924f6bac715ffac9cb6
+
+    - name: Build LambdaVM CLI
+      if: steps.cache-cli.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        LAMBDA_VM_COMMIT: "8af4e92e6e75638746fe9924f6bac715ffac9cb6"
+      run: |
+        TMP_DIR="$(mktemp -d)"
+        git clone https://github.com/yetanotherco/lambda_vm.git "${TMP_DIR}"
+        cd "${TMP_DIR}"
+        git checkout "${LAMBDA_VM_COMMIT}"
+        cargo build --release -p cli
+        mkdir -p "${HOME}/.cargo/bin"
+        cp target/release/cli "${HOME}/.cargo/bin/cli"
+        cd -
+        rm -rf "${TMP_DIR}"
+
+    - name: Expose LAMBDA_VM_SYSROOT_DIR
+      shell: bash
+      run: |
+        echo "LAMBDA_VM_SYSROOT_DIR=/opt/lambda-vm-sysroot" >> "$GITHUB_ENV"
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"

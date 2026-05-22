@@ -21,6 +21,9 @@ pub mod zisk;
 #[cfg(feature = "openvm")]
 pub mod openvm;
 
+#[cfg(feature = "lambdavm")]
+pub mod lambdavm;
+
 pub use error::BackendError;
 
 // Re-export backend structs
@@ -38,6 +41,9 @@ pub use zisk::ZiskBackend;
 #[cfg(feature = "openvm")]
 pub use openvm::OpenVmBackend;
 
+#[cfg(feature = "lambdavm")]
+pub use lambdavm::LambdaVmBackend;
+
 /// Enum for selecting which backend to use (for CLI/config).
 #[derive(Default, Debug, Deserialize, Serialize, Copy, Clone, ValueEnum, PartialEq)]
 pub enum BackendType {
@@ -51,6 +57,8 @@ pub enum BackendType {
     ZisK,
     #[cfg(feature = "openvm")]
     OpenVM,
+    #[cfg(feature = "lambdavm")]
+    LambdaVM,
 }
 
 // Needed for Clap
@@ -68,6 +76,8 @@ impl FromStr for BackendType {
             "zisk" => Ok(BackendType::ZisK),
             #[cfg(feature = "openvm")]
             "openvm" => Ok(BackendType::OpenVM),
+            #[cfg(feature = "lambdavm")]
+            "lambdavm" => Ok(BackendType::LambdaVM),
             _ => Err(Self::Err::from("Invalid backend")),
         }
     }
