@@ -139,7 +139,9 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
             tx.put_batch(RECEIPTS_V2, std::mem::take(&mut batch))?;
             tx.commit()?;
             migrated += count;
-            tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
+            if migrated % 100_000 == 0 {
+                tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
+            }
         }
     }
 

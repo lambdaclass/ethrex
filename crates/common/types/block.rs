@@ -636,6 +636,10 @@ pub enum InvalidBlockHeaderError {
     ParentBeaconBlockRootPresent,
     #[error("Requests hash is present")]
     RequestsHashPresent,
+    #[error("Block access list hash is not present")]
+    BlockAccessListHashNotPresent,
+    #[error("Block access list hash is present")]
+    BlockAccessListHashPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -764,6 +768,13 @@ pub fn validate_prague_header_fields(
     if header.requests_hash.is_none() {
         return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
     }
+    if chain_config.is_amsterdam_activated(header.timestamp) {
+        if header.block_access_list_hash.is_none() {
+            return Err(InvalidBlockHeaderError::BlockAccessListHashNotPresent);
+        }
+    } else if header.block_access_list_hash.is_some() {
+        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+    }
     Ok(())
 }
 
@@ -787,6 +798,9 @@ pub fn validate_cancun_header_fields(
     if header.requests_hash.is_some() {
         return Err(InvalidBlockHeaderError::RequestsHashPresent);
     }
+    if header.block_access_list_hash.is_some() {
+        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+    }
     Ok(())
 }
 
@@ -806,6 +820,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.requests_hash.is_some() {
         return Err(InvalidBlockHeaderError::RequestsHashPresent);
+    }
+    if header.block_access_list_hash.is_some() {
+        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
     }
     Ok(())
 }
