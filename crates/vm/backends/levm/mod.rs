@@ -1137,7 +1137,13 @@ impl LEVM {
                 // storage from the final state, so destroyed accounts
                 // satisfy ALL their BAL storage_reads regardless of which
                 // slots remain in `current_state`.
-                let mut reads_satisfied: Vec<(Address, H256)> = Vec::new();
+                // Rough avg storage slots per touched account; over-allocation
+                // is cheap compared to 2-3 reallocations on the hot path.
+                let mut reads_satisfied: Vec<(Address, H256)> =
+                    Vec::with_capacity(current_state.len() * 4);
+                // `destroyed` stays empty on the typical block (selfdestruct
+                // is rare post-EIP-6780), so `Vec::new()` (no allocation) is
+                // optimal here.
                 let mut destroyed: Vec<Address> = Vec::new();
                 for (addr, acct) in &current_state {
                     if matches!(
@@ -1223,7 +1229,12 @@ impl LEVM {
 
         let mut exec_results = exec_results?;
 
-        // Sort so gas accounting and error surfacing happen in tx order.
+        // `IndexedParallelIterator` (via `(0..n_txs).into_par_iter()`) preserves
+        // source-index order through `.map().collect()`, so `exec_results` is
+        // already sorted. The sort is kept as a defensive guard against a future
+        // refactor swapping in an unordered iterator; `sort_unstable_by_key` on
+        // an already-sorted slice is near-linear via pdqsort, so the cost is
+        // negligible.
         exec_results.sort_unstable_by_key(|(idx, _, _, _, _, _, _)| *idx);
 
         // 3. Gas limit check — must happen BEFORE BAL validation errors so that
