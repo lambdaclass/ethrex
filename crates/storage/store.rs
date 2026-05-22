@@ -2717,7 +2717,7 @@ impl Store {
         // unnecessarily fall back to the trie when the cursor sits inside an
         // account's storage sweep (the account leaf is already in FKV at that
         // point; see `flatkeyvalue_generator`).
-        let fkv_cursor = Nibbles::from_hex(last_written.clone());
+        let fkv_cursor = Nibbles::from_hex(last_written);
         for (i, path) in leaf_paths.iter().enumerate() {
             if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
                 if !value.is_empty() {
