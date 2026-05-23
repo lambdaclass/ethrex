@@ -419,6 +419,9 @@ impl Blockchain {
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // TODO(#4997): start with an empty block
+        // Snapshot the mempool sequence *before* the build so any tx that lands
+        // during the build is seen as newer than the current `res`.
+        let mut last_built_seq = self.mempool.tx_seq();
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
@@ -431,6 +434,7 @@ impl Blockchain {
             }
             let payload = payload.clone();
             let self_clone = self.clone();
+            let seq_before = self.mempool.tx_seq();
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
@@ -439,6 +443,7 @@ impl Blockchain {
             match cancel_token.run_until_cancelled(building_task).await {
                 Some(Ok(current_res)) => {
                     res = current_res?;
+                    last_built_seq = seq_before;
                 }
                 Some(Err(err)) => {
                     warn!(%err, "Payload-building task panicked");
@@ -446,6 +451,23 @@ impl Blockchain {
                 None => {}
             }
         }
+
+        // If a tx landed after the snapshot that produced `res`, do one final
+        // build before returning. Covers both races: (a) cancellation dropping
+        // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
+        // timeout `select!` arm winning over a simultaneous `tx_added`
+        // notification near the slot boundary.
+        if self.mempool.tx_seq() > last_built_seq {
+            let blockchain = self.clone();
+            match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
+                Ok(Ok(final_res)) => res = final_res,
+                Ok(Err(err)) => {
+                    warn!(%err, "Final payload rebuild failed; returning previous result")
+                }
+                Err(err) => warn!(%err, "Final payload rebuild task panicked"),
+            }
+        }
+
         Ok(res)
     }
 
