@@ -271,6 +271,25 @@ async fn handle_forkchoice(
         return Ok((None, PayloadStatus::syncing().into()));
     }
 
+    // Snapshot the previous head and previously-finalized number before applying
+    // the new fork choice. We use the previous head later to detect reorgs and
+    // re-inject orphaned-block transactions into the mempool; we use the previous
+    // finalized number to decide which blob sidecars are safe to purge from the
+    // limbo.
+    let previous_head_hash = context
+        .storage
+        .get_latest_canonical_block_hash()
+        .await?
+        .unwrap_or_default();
+    let previous_finalized_hash = match context.storage.get_finalized_block_number().await? {
+        Some(number) => context
+            .storage
+            .get_canonical_block_hash(number)
+            .await?
+            .unwrap_or_default(),
+        None => Default::default(),
+    };
+
     match apply_fork_choice(
         &context.storage,
         fork_choice_state.head_block_hash,
@@ -282,8 +301,9 @@ async fn handle_forkchoice(
         Ok(head) => {
             // Fork Choice was succesful, the node is up to date with the current chain
             context.blockchain.set_synced();
-            // Remove included transactions from the mempool after we accept the fork choice
-            // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
+            // Remove included transactions from the mempool after we accept the fork choice.
+            // Blob sidecars for included blob txs are moved to the mempool limbo so
+            // they survive a potential reorg until the block is finalized.
             match context.storage.get_block_by_hash(head.hash()).await {
                 Ok(Some(block)) => {
                     // Remove executed transactions from mempool
@@ -303,6 +323,59 @@ async fn handle_forkchoice(
                     ));
                 }
             };
+
+            // Re-inject any transactions orphaned by a reorg back into the mempool.
+            // This is best-effort and is spawned off the FCU response path so the
+            // CL gets its acknowledgment immediately. A near-cap reorg of ~10K
+            // orphaned txs would otherwise add ~1+ second of ECDSA recovery + KZG
+            // re-verification to the engine API response (well under the 8s spec
+            // timeout but tight enough to destabilize CL timing budgets).
+            //
+            // Fast-path: in the normal slot-advance case the new head's parent
+            // IS the previous head, i.e. no reorg. Skip the spawn (and its 3
+            // header-by-hash DB reads) to keep typical FCUs lean. Genuine
+            // reorgs — where the new head's parent differs from the previous
+            // head — still fall through to the spawned re-injection.
+            if !previous_head_hash.is_zero()
+                && previous_head_hash != head.hash()
+                && head.parent_hash != previous_head_hash
+            {
+                let blockchain = context.blockchain.clone();
+                let new_head_hash = head.hash();
+                tokio::spawn(async move {
+                    match blockchain
+                        .reinject_orphaned_transactions(previous_head_hash, new_head_hash)
+                        .await
+                    {
+                        Ok(0) => {}
+                        Ok(count) => {
+                            debug!(
+                                reinjected = count,
+                                "Re-injected orphaned transactions into mempool"
+                            );
+                        }
+                        Err(error) => {
+                            debug!(%error, "Failed to re-inject orphaned transactions");
+                        }
+                    }
+                });
+            }
+
+            // Purge blob sidecars from the limbo for transactions in newly-finalized
+            // blocks. Finalized blocks cannot be reorged, so we no longer need to
+            // retain their sidecars.
+            if !fork_choice_state.finalized_block_hash.is_zero()
+                && fork_choice_state.finalized_block_hash != previous_finalized_hash
+                && let Err(error) = context
+                    .blockchain
+                    .purge_finalized_blob_limbo(
+                        previous_finalized_hash,
+                        fork_choice_state.finalized_block_hash,
+                    )
+                    .await
+            {
+                debug!(%error, "Failed to purge finalized blob limbo entries");
+            }
 
             // Notify all eth_subscribe("newHeads") subscribers.
             if let Some(ws) = &context.ws {

@@ -29,6 +29,16 @@ struct MempoolInner {
     broadcast_pool: FxHashSet<H256>,
     transaction_pool: FxHashMap<H256, MempoolTransaction>,
     blobs_bundle_pool: FxHashMap<H256, BlobsBundle>,
+    /// Blob sidecars for transactions that have been included in a recently
+    /// applied block but whose containing block has not yet been finalized.
+    /// Kept around so that on a reorg the sidecars can be pulled back along
+    /// with the orphaned transactions and re-injected into the mempool.
+    ///
+    /// Entries are moved here from `blobs_bundle_pool` when a block is
+    /// applied and removed when the containing block is finalized (purged
+    /// by `purge_blob_limbo_entries`) or when pulled back for re-injection
+    /// on a reorg (`take_blob_limbo_entry`).
+    blobs_bundle_limbo: FxHashMap<H256, BlobsBundle>,
     /// Transaction hashes that have been requested via GetPooledTransactions
     /// but whose responses haven't arrived yet. Used to avoid sending duplicate
     /// requests when multiple peers announce the same transaction.
@@ -72,13 +82,13 @@ impl MempoolInner {
         Ok(())
     }
 
-    /// Remove a blobs bundle from the pool
-    pub fn remove_blob_bundle(&mut self, hash: &H256) {
-        let Some(h) = self.blobs_bundle_pool.remove(hash) else {
-            return;
-        };
-
-        for commitment in &h.commitments {
+    /// Clear the versioned-hash index entries for `bundle`'s tx hash. Used
+    /// by both `remove_blob_bundle` (which also drops the bundle) and
+    /// `remove_included_transaction` (which MOVES the bundle into limbo and
+    /// therefore must clear the index separately to avoid an extra clone of
+    /// the full sidecar).
+    fn clear_blob_versioned_hash_index(&mut self, hash: &H256, bundle: &BlobsBundle) {
+        for commitment in &bundle.commitments {
             let versioned_hash = kzg_commitment_to_versioned_hash(commitment);
             if let Entry::Occupied(mut entry) =
                 self.blobs_bundle_by_versioned_hash.entry(versioned_hash)
@@ -90,6 +100,14 @@ impl MempoolInner {
                 }
             }
         }
+    }
+
+    /// Remove a blobs bundle from the pool
+    pub fn remove_blob_bundle(&mut self, hash: &H256) {
+        let Some(bundle) = self.blobs_bundle_pool.remove(hash) else {
+            return;
+        };
+        self.clear_blob_versioned_hash_index(hash, &bundle);
     }
 
     /// Remove the oldest transaction in the pool
@@ -140,6 +158,16 @@ impl Mempool {
         self.inner
             .read()
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
+    }
+
+    /// Returns `true` if the pool is at capacity. Callers can use this to
+    /// decide whether to admit a new tx (and trigger oldest-first eviction)
+    /// or to skip admission entirely. Used by reorg re-injection so a deep
+    /// reorg doesn't evict freshly-arrived txs to make room for orphaned
+    /// ones.
+    pub fn is_full(&self) -> Result<bool, StoreError> {
+        let inner = self.read()?;
+        Ok(inner.transaction_pool.len() >= inner.max_mempool_size)
     }
 
     /// Add transaction to the pool without doing validity checks
@@ -226,6 +254,68 @@ impl Mempool {
         let mut inner = self.write()?;
         inner.remove_transaction_with_lock(hash)?;
         Ok(())
+    }
+
+    /// Remove a transaction from the pool that was just included in a block.
+    /// For blob (EIP-4844) transactions, the sidecar is MOVED from the active
+    /// `blobs_bundle_pool` into `blobs_bundle_limbo` rather than cloned, so
+    /// it remains available for re-injection if a reorg orphans the block.
+    /// Moving avoids cloning the full sidecar (~800 KB worst case) on every
+    /// blob-tx inclusion.
+    ///
+    /// Returns whether the transaction was present in the mempool.
+    pub fn remove_included_transaction(&self, hash: &H256) -> Result<bool, StoreError> {
+        let mut inner = self.write()?;
+        let was_present = inner.transaction_pool.contains_key(hash);
+        // Detach the bundle (if any) from `blobs_bundle_pool` without
+        // cloning, clear its versioned-hash index entries, then park the
+        // bundle in limbo. The subsequent `remove_transaction_with_lock`
+        // call observes an empty `blobs_bundle_pool` for this hash and
+        // doesn't try to remove or re-iterate the bundle.
+        if let Some(bundle) = inner.blobs_bundle_pool.remove(hash) {
+            inner.clear_blob_versioned_hash_index(hash, &bundle);
+            inner.blobs_bundle_limbo.insert(*hash, bundle);
+        }
+        inner.remove_transaction_with_lock(hash)?;
+        Ok(was_present)
+    }
+
+    /// Purge a set of transaction-hash blob sidecars from the limbo.
+    /// Called when a block is finalized; sidecars for txs in finalized
+    /// blocks are no longer needed because finalized blocks cannot be reorged.
+    pub fn purge_blob_limbo_entries(&self, tx_hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in tx_hashes {
+            inner.blobs_bundle_limbo.remove(hash);
+        }
+        Ok(())
+    }
+
+    /// Pop a blob sidecar from limbo by tx hash. Returns the bundle if it was
+    /// present. Used by reorg re-injection to recover sidecars for orphaned
+    /// blob transactions.
+    pub fn take_blob_limbo_entry(&self, tx_hash: &H256) -> Result<Option<BlobsBundle>, StoreError> {
+        let mut inner = self.write()?;
+        Ok(inner.blobs_bundle_limbo.remove(tx_hash))
+    }
+
+    /// Reinsert a previously-taken blob sidecar back into limbo. Used by
+    /// reorg re-injection to put the sidecar back when admission of the
+    /// orphaned blob tx fails (so it can be retried on a subsequent
+    /// re-injection attempt rather than being permanently lost).
+    pub fn insert_blob_limbo_entry(
+        &self,
+        tx_hash: H256,
+        bundle: BlobsBundle,
+    ) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        inner.blobs_bundle_limbo.insert(tx_hash, bundle);
+        Ok(())
+    }
+
+    /// Returns the current number of blob sidecars held in limbo.
+    pub fn blob_limbo_size(&self) -> Result<usize, StoreError> {
+        Ok(self.read()?.blobs_bundle_limbo.len())
     }
 
     /// Applies the filter and returns a set of suitable transactions from the mempool.
