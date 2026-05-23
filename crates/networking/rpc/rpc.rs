@@ -12,7 +12,7 @@ use crate::engine::payload::{
 use crate::engine::proof::{
     RequestProofsV1, VerifyExecutionProofV1, VerifyNewPayloadRequestHeaderV1,
 };
-use crate::engine::rest::handle_new_payload_with_witness_v4;
+use crate::engine::rest::{handle_new_payload_with_witness_v4, handle_new_payload_with_witness_v5};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -633,6 +633,10 @@ pub async fn start_api(
         .route(
             "/new-payload-with-witness-v4",
             post(handle_new_payload_with_witness_v4),
+        )
+        .route(
+            "/new-payload-with-witness",
+            post(handle_new_payload_with_witness_v5),
         )
         .with_state(service_context.clone())
         // Bump the body limit for the engine API to 256MB
