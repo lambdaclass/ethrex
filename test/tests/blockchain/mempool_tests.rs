@@ -548,3 +548,155 @@ fn blobs_bundle_insert_and_remove() {
         vec![None]
     );
 }
+
+mod alternates {
+    use super::*;
+    use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;
+    use std::time::Duration;
+
+    fn h(n: u8) -> H256 {
+        let mut b = [0u8; 32];
+        b[31] = n;
+        H256::from(b)
+    }
+
+    /// Helper that reserves `hashes` with synthetic per-hash (type, size)
+    /// metadata. Tests that don't care about the metadata can use this.
+    fn reserve(mp: &Mempool, hashes: &[H256], announcer: H256) -> Vec<H256> {
+        let types = vec![0u8; hashes.len()];
+        let sizes = vec![0usize; hashes.len()];
+        mp.reserve_unknown_hashes(hashes, &types, &sizes, announcer)
+            .unwrap()
+    }
+
+    #[test]
+    fn primary_requester_is_not_an_alternate() {
+        let mp = Mempool::new(64);
+        let peer_a = h(1);
+        let tx = h(0xa);
+
+        // peer_a is the first announcer: it becomes the primary requester
+        // (returned in `unknown`), so no alternates entry should be created.
+        let unknown = reserve(&mp, &[tx], peer_a);
+        assert_eq!(unknown, vec![tx]);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn second_announcer_recorded_as_alternate() {
+        let mp = Mempool::new(64);
+        let peer_a = h(1);
+        let peer_b = h(2);
+        let tx_a = h(0xa);
+        let tx_b = h(0xb);
+
+        let unknown = reserve(&mp, &[tx_a, tx_b], peer_a);
+        assert_eq!(unknown, vec![tx_a, tx_b]);
+
+        // peer_b sees the same hashes already in-flight from peer_a, so it
+        // should be filed as an alternate for each hash.
+        let unknown = reserve(&mp, &[tx_a, tx_b], peer_b);
+        assert!(unknown.is_empty());
+
+        let alt_a = mp.pop_alternate(tx_a).unwrap().expect("alt for tx_a");
+        let alt_b = mp.pop_alternate(tx_b).unwrap().expect("alt for tx_b");
+        assert_eq!(alt_a.peer_id, peer_b);
+        assert_eq!(alt_b.peer_id, peer_b);
+    }
+
+    #[test]
+    fn alternate_carries_per_hash_type_and_size() {
+        let mp = Mempool::new(64);
+        let primary = h(1);
+        let alt_peer = h(2);
+        let tx = h(0xa);
+
+        // primary announces with one (type, size); alt announces with another.
+        // The stored alternate must carry the alt peer's metadata, not the
+        // primary's, so a later retry validates the alt peer's response
+        // against the alt's own announcement.
+        mp.reserve_unknown_hashes(&[tx], &[0x03], &[42], primary)
+            .unwrap();
+        mp.reserve_unknown_hashes(&[tx], &[0x03], &[131072], alt_peer)
+            .unwrap();
+
+        let popped = mp.pop_alternate(tx).unwrap().expect("alt present");
+        assert_eq!(popped.peer_id, alt_peer);
+        assert_eq!(popped.tx_type, 0x03);
+        assert_eq!(popped.tx_size, 131072);
+    }
+
+    #[test]
+    fn pop_alternates_is_fifo_and_drains() {
+        let mp = Mempool::new(64);
+        let tx = h(0xab);
+        let primary = h(99);
+        let p1 = h(1);
+        let p2 = h(2);
+        let p3 = h(3);
+
+        reserve(&mp, &[tx], primary);
+        reserve(&mp, &[tx], p1);
+        reserve(&mp, &[tx], p2);
+        reserve(&mp, &[tx], p3);
+
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p1);
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p2);
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p3);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn alternates_capped() {
+        let mp = Mempool::new(64);
+        let tx = h(0xcd);
+        let primary = h(0xff);
+        reserve(&mp, &[tx], primary);
+        for i in 0..(MAX_ALTERNATES_PER_HASH + 4) {
+            reserve(&mp, &[tx], h(i as u8 + 1));
+        }
+        let mut count = 0;
+        while mp.pop_alternate(tx).unwrap().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, MAX_ALTERNATES_PER_HASH);
+    }
+
+    #[test]
+    fn duplicate_announcer_not_double_counted() {
+        let mp = Mempool::new(64);
+        let tx = h(0xef);
+        let primary = h(0xff);
+        let peer = h(42);
+        reserve(&mp, &[tx], primary);
+        reserve(&mp, &[tx], peer);
+        reserve(&mp, &[tx], peer);
+        reserve(&mp, &[tx], peer);
+        let popped = mp.pop_alternate(tx).unwrap().expect("alt present");
+        assert_eq!(popped.peer_id, peer);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn clear_alternates_drops_entries() {
+        let mp = Mempool::new(64);
+        let tx = h(1);
+        reserve(&mp, &[tx], h(99));
+        reserve(&mp, &[tx], h(2));
+        mp.clear_alternates(&[tx]).unwrap();
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn prune_alternates_drops_stale_entries() {
+        let mp = Mempool::new(64);
+        let tx = h(0xaa);
+        reserve(&mp, &[tx], h(1));
+        reserve(&mp, &[tx], h(2));
+        // Sleep well past the TTL so a loaded CI scheduler that gives us a
+        // shorter-than-asked sleep still observes the entries as stale.
+        std::thread::sleep(Duration::from_millis(20));
+        mp.prune_alternates(Duration::from_millis(5)).unwrap();
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+}

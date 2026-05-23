@@ -49,6 +49,7 @@ use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use futures::{SinkExt as _, Stream, stream::SplitSink};
 use rand::random;
+use rustc_hash::FxHashMap;
 use secp256k1::{PublicKey, SecretKey};
 use spawned_concurrency::{
     actor,
@@ -103,6 +104,11 @@ pub trait PeerConnectionServerProtocol: Send + Sync {
     fn broadcast_message(&self, task_id: Id, msg: Arc<Message>) -> Result<(), ActorError>;
     fn sweep_inflight_txs(&self) -> Result<(), ActorError>;
     fn flush_pending_tx_requests(&self) -> Result<(), ActorError>;
+    fn enqueue_tx_requests(
+        &self,
+        announcement: NewPooledTransactionHashes,
+        hashes: Vec<H256>,
+    ) -> Result<(), ActorError>;
 }
 
 #[cfg(feature = "l2")]
@@ -152,6 +158,19 @@ impl PeerConnection {
     pub async fn outgoing_message(&mut self, message: Message) -> Result<(), PeerConnectionError> {
         self.handle
             .outgoing_message(message)
+            .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
+    }
+
+    /// Queue tx hashes (with the originating announcement metadata) to be
+    /// requested on the next flush tick. Used as a fallback when an in-flight
+    /// request on another peer fails.
+    pub fn enqueue_tx_requests(
+        &self,
+        announcement: NewPooledTransactionHashes,
+        hashes: Vec<H256>,
+    ) -> Result<(), PeerConnectionError> {
+        self.handle
+            .enqueue_tx_requests(announcement, hashes)
             .map_err(|err| PeerConnectionError::InternalError(err.to_string()))
     }
 
@@ -250,16 +269,27 @@ pub struct Established {
 
 impl Established {
     async fn teardown(&mut self) {
-        // Clear any in-flight transaction hashes so other connections can re-request them.
+        // Clear any in-flight transaction hashes so other connections can re-request them,
+        // then try to re-issue each pending request to an alternate announcer.
+        // Order matters: clear first so the alternate's reserve_unknown_hashes sees the
+        // hashes as free; otherwise the actor handler can race with clear_in_flight_txs
+        // and silently no-op the retry while consuming an alternates slot.
         for (_, (_announced, requested_hashes, _)) in self.requested_pooled_txs.drain() {
-            let _ = self
+            if let Err(e) = self
                 .blockchain
                 .mempool
-                .clear_in_flight_txs(&requested_hashes);
+                .clear_in_flight_txs(&requested_hashes)
+            {
+                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+            }
+            retry_on_alternates(&self.blockchain, &self.peer_table, &requested_hashes).await;
         }
         // Also clear hashes that were buffered but not yet sent.
         for (_announced, pending_hashes) in self.pending_tx_requests.drain(..) {
-            let _ = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes);
+            if let Err(e) = self.blockchain.mempool.clear_in_flight_txs(&pending_hashes) {
+                warn!(error = %e, "clear_in_flight_txs failed during teardown");
+            }
+            retry_on_alternates(&self.blockchain, &self.peer_table, &pending_hashes).await;
         }
         // Closing the sink. It may fail if it is already closed (eg. the other side already closed it)
         // Just logging a debug line if that's the case.
@@ -511,8 +541,13 @@ impl PeerConnectionServer {
                 .map(|(id, _)| *id)
                 .collect();
             for id in stale_ids {
-                if let Some((_, hashes, _)) = state.requested_pooled_txs.remove(&id) {
-                    let _ = state.blockchain.mempool.clear_in_flight_txs(&hashes);
+                if let Some((_announced, hashes, _)) = state.requested_pooled_txs.remove(&id) {
+                    // Clear in-flight before retry so the alternate's reserve_unknown_hashes
+                    // doesn't race against still-in-flight state and silently no-op.
+                    if let Err(e) = state.blockchain.mempool.clear_in_flight_txs(&hashes) {
+                        warn!(error = %e, "clear_in_flight_txs failed while sweeping stale requests");
+                    }
+                    retry_on_alternates(&state.blockchain, &state.peer_table, &hashes).await;
                 }
             }
         }
@@ -527,6 +562,32 @@ impl PeerConnectionServer {
         if let ConnectionState::Established(ref mut established_state) = self.state {
             let result = flush_pending_tx_requests(established_state).await;
             Self::process_cast_error(&self.state, result, ctx);
+        }
+    }
+
+    #[send_handler]
+    async fn handle_enqueue_tx_requests(
+        &mut self,
+        msg: peer_connection_server_protocol::EnqueueTxRequests,
+        _ctx: &Context<Self>,
+    ) {
+        if let ConnectionState::Established(ref mut state) = self.state {
+            // Re-reserve in-flight against this peer. If any hashes are already
+            // in-flight (race), drop them; we don't want duplicate requests.
+            let to_request: Vec<H256> = match state.blockchain.mempool.reserve_unknown_hashes(
+                &msg.announcement.transaction_hashes,
+                &msg.announcement.transaction_types,
+                &msg.announcement.transaction_sizes,
+                state.node.node_id(),
+            ) {
+                Ok(unknown) => unknown,
+                Err(_) => return,
+            };
+            if to_request.is_empty() {
+                return;
+            }
+            let trimmed = msg.announcement.filter_to(&to_request);
+            state.pending_tx_requests.push((trimmed, to_request));
         }
     }
 
@@ -1340,8 +1401,8 @@ async fn handle_incoming_message(
         Message::NewPooledTransactionHashes(new_pooled_transaction_hashes) if peer_supports_eth => {
             // Don't request transactions if we're not synced — we won't be building blocks soon.
             if state.blockchain.is_synced() {
-                let hashes =
-                    new_pooled_transaction_hashes.get_transactions_to_request(&state.blockchain)?;
+                let hashes = new_pooled_transaction_hashes
+                    .get_transactions_to_request(&state.blockchain, state.node.node_id())?;
                 if !hashes.is_empty() {
                     // Buffer hashes for batched requesting instead of sending immediately.
                     // The periodic flush_pending_tx_requests handler will send them.
@@ -1397,6 +1458,10 @@ async fn handle_incoming_message(
                         peer=%state.node,
                         "disconnected from peer. Reason: Invalid/Missing Blobs",
                     );
+                    if let Some((_announced, requested_hashes, _)) = &removed_request {
+                        retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
+                            .await;
+                    }
                     send_disconnect_message(state, Some(DisconnectReason::SubprotocolError)).await;
                     return Err(PeerConnectionError::DisconnectSent(
                         DisconnectReason::SubprotocolError,
@@ -1404,14 +1469,16 @@ async fn handle_incoming_message(
                 }
             }
             if state.blockchain.is_synced() {
-                if let Some((announced, _requested_hashes, _)) = removed_request {
+                if let Some((announced, requested_hashes, _)) = &removed_request {
                     let fork = state.blockchain.current_fork().await?;
-                    if let Err(error) = msg.validate_requested(&announced, fork) {
+                    if let Err(error) = msg.validate_requested(announced, fork) {
                         warn!(
                             peer=%state.node,
                             reason=%error,
                             "disconnected from peer",
                         );
+                        retry_on_alternates(&state.blockchain, &state.peer_table, requested_hashes)
+                            .await;
                         send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
                             .await;
                         return Err(PeerConnectionError::DisconnectSent(
@@ -1434,6 +1501,14 @@ async fn handle_incoming_message(
                             reason=%error,
                             "disconnected from peer",
                         );
+                        if let Some((_announced, requested_hashes, _)) = &removed_request {
+                            retry_on_alternates(
+                                &state.blockchain,
+                                &state.peer_table,
+                                requested_hashes,
+                            )
+                            .await;
+                        }
                         send_disconnect_message(state, Some(DisconnectReason::SubprotocolError))
                             .await;
                         return Err(PeerConnectionError::DisconnectSent(
@@ -1602,10 +1677,17 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
         // Send first, only register in requested_pooled_txs on success.
         // This ensures we never track hashes for messages that were not transmitted.
         if let Err(e) = send(state, Message::GetPooledTransactions(request)).await {
-            // Clear in-flight for the current chunk (failed to send) and all remaining chunks.
+            // Clear in-flight for the current chunk (failed to send) and all remaining chunks,
+            // then try alternate announcers. Order matters: clear first so the alternate's
+            // reserve_unknown_hashes sees the hashes as free.
+            // Build an announcement covering every unsent hash (later chunks too) so the
+            // alternate can validate its response against the original type/size metadata.
             let unsent = &all_hashes[offset..];
             if !unsent.is_empty() {
-                let _ = state.blockchain.mempool.clear_in_flight_txs(unsent);
+                if let Err(clear_err) = state.blockchain.mempool.clear_in_flight_txs(unsent) {
+                    warn!(error = %clear_err, "clear_in_flight_txs failed after send error");
+                }
+                retry_on_alternates(&state.blockchain, &state.peer_table, unsent).await;
             }
             return Err(e);
         }
@@ -1615,4 +1697,74 @@ async fn flush_pending_tx_requests(state: &mut Established) -> Result<(), PeerCo
     }
 
     Ok(())
+}
+
+/// For each hash that has a remaining alternate announcer, look up that
+/// peer's connection and enqueue the request there. Each alternate carries
+/// the (type, size) metadata it originally announced, so the retry request
+/// is built from the alternate's own announcement rather than the failing
+/// peer's; otherwise validation against the failing peer's sizes would
+/// reject the alternate's response when the two announcements differ (e.g.
+/// bare blob tx vs full sidecar).
+///
+/// If a popped alternate is no longer reachable, keep popping until a live
+/// peer is found or alternates for that hash are exhausted, so a disconnected
+/// alternate doesn't burn the only fallback slot.
+async fn retry_on_alternates(
+    blockchain: &Arc<Blockchain>,
+    peer_table: &PeerTable,
+    hashes: &[H256],
+) {
+    if hashes.is_empty() {
+        return;
+    }
+    // Group hashes by chosen live alternate, carrying their own type/size.
+    // We walk per-hash so a dead alternate for hash X doesn't consume the
+    // slot that hash Y could use.
+    let mut by_peer: FxHashMap<H256, Vec<(H256, u8, usize)>> = FxHashMap::default();
+    for hash in hashes {
+        loop {
+            let alt = match blockchain.mempool.pop_alternate(*hash) {
+                Ok(Some(a)) => a,
+                Ok(None) => break,
+                Err(e) => {
+                    warn!(error = %e, "pop_alternate failed");
+                    break;
+                }
+            };
+            match peer_table.get_peer_connection(alt.peer_id).await {
+                Ok(Some(_)) => {
+                    by_peer
+                        .entry(alt.peer_id)
+                        .or_default()
+                        .push((*hash, alt.tx_type, alt.tx_size));
+                    break;
+                }
+                Ok(None) => continue, // dead peer, try next alternate
+                Err(e) => {
+                    warn!(error = %e, "get_peer_connection failed");
+                    break;
+                }
+            }
+        }
+    }
+
+    for (alt_peer_id, entries) in by_peer {
+        let mut types = Vec::with_capacity(entries.len());
+        let mut sizes = Vec::with_capacity(entries.len());
+        let mut hash_list = Vec::with_capacity(entries.len());
+        for (h, t, s) in &entries {
+            hash_list.push(*h);
+            types.push(*t);
+            sizes.push(*s);
+        }
+        let announcement =
+            NewPooledTransactionHashes::from_raw(types.into(), sizes, hash_list.clone());
+        // Look up again: connection could have closed since we checked.
+        if let Ok(Some(conn)) = peer_table.get_peer_connection(alt_peer_id).await
+            && let Err(e) = conn.enqueue_tx_requests(announcement, hash_list)
+        {
+            warn!(error = %e, "failed to enqueue tx requests on alternate peer");
+        }
+    }
 }
