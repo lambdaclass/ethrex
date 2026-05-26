@@ -338,6 +338,19 @@ async fn reorg_apply_deep(
         .get_block_header_by_hash(head_hash)?
         .ok_or(InvalidForkChoice::Syncing)?;
 
+    // `find_link_with_canonical_chain` returns an empty branch in two distinct
+    // cases that must NOT be conflated for replay purposes:
+    //
+    // 1. Head is already canonical (its state was just unreachable from disk
+    //    after enough commits past it). Overlay install is the entire fix; no
+    //    side-chain to replay.
+    // 2. Head is NOT canonical but its direct parent IS. Branch is empty
+    //    because no non-canonical ancestors were found before the canonical
+    //    parent, but we still need to add head itself via the replay loop.
+    //
+    // Pre-compute head_is_canonical so the replay list below can disambiguate.
+    let head_is_canonical = is_canonical(store, head.number, head_hash).await?;
+
     // Branch is head's non-canonical ancestors, in descending order. The
     // deepest entry's `(number-1)` is the pivot. Head itself is NOT in the
     // branch and must be appended to the replay list below.
@@ -394,12 +407,10 @@ async fn reorg_apply_deep(
     // and EXCLUDES head; we reverse the branch and append head so reorg replay
     // covers `[pivot+1 .. head]`.
     //
-    // When `new_canonical_blocks` is empty, head was already canonical and only
-    // its state was unreachable from disk (commits had moved past it). Installing
-    // the overlay is the entire fix; there is no side-chain to replay and head
-    // itself is the pivot, so re-executing it would just trip `ParentStateNotFound`
-    // (its parent state is what the overlay just made readable).
-    let replay_iter: Vec<(BlockNumber, H256)> = if new_canonical_blocks.is_empty() {
+    // Skip the replay entirely only when head is already canonical (case 1
+    // above). For case 2 (parent canonical, head not), branch is empty but we
+    // still need to replay head.
+    let replay_iter: Vec<(BlockNumber, H256)> = if head_is_canonical {
         Vec::new()
     } else {
         new_canonical_blocks
