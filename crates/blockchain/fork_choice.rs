@@ -84,10 +84,20 @@ pub async fn apply_fork_choice(
     // `head.number < latest` is the strict-ancestor check; equality (head IS the current
     // canonical head) falls through to normal FCU so the CL can still build a payload on
     // top, mirroring geth's `head == current_head` carve-out in `eth/catalyst/api.go`.
+    //
+    // Also require that head's state is actually reachable from disk. After enough
+    // commits past head, the head's state root is no longer present in the trie
+    // (the disk root has moved forward). Treating that FCU as a no-op would let the
+    // CL move on and then fail downstream during `engine_getPayload` with a confusing
+    // "state root missing" error. Falling through here lets the regular path detect
+    // the missing state via the `has_state_root` check below and route the FCU into
+    // the deep-reorg apply path, which installs the overlay that makes head's state
+    // readable again.
     if let Some(stored_finalized) = store.get_finalized_block_number().await?
         && head.number < latest
         && head.number <= stored_finalized
         && head_is_canonical
+        && store.has_state_root(head.state_root)?
     {
         return Err(InvalidForkChoice::NewHeadAlreadyCanonical);
     }
@@ -389,11 +399,22 @@ async fn reorg_apply_deep(
     // `find_link_with_canonical_chain` returns the branch in descending order
     // and EXCLUDES head; we reverse the branch and append head so reorg replay
     // covers `[pivot+1 .. head]`.
-    let replay_iter = new_canonical_blocks
-        .iter()
-        .rev()
-        .copied()
-        .chain(std::iter::once((head.number, head_hash)));
+    //
+    // When `new_canonical_blocks` is empty, head was already canonical and only
+    // its state was unreachable from disk (commits had moved past it). Installing
+    // the overlay is the entire fix; there is no side-chain to replay and head
+    // itself is the pivot, so re-executing it would just trip `ParentStateNotFound`
+    // (its parent state is what the overlay just made readable).
+    let replay_iter: Vec<(BlockNumber, H256)> = if new_canonical_blocks.is_empty() {
+        Vec::new()
+    } else {
+        new_canonical_blocks
+            .iter()
+            .rev()
+            .copied()
+            .chain(std::iter::once((head.number, head_hash)))
+            .collect()
+    };
 
     for (number, block_hash) in replay_iter {
         let block = match store.get_block_by_hash(block_hash).await? {
