@@ -62,7 +62,10 @@ pub trait StorageReadView: Send + Sync {
     /// Retrieves multiple values by key from the specified table.
     /// Returns results in the same order as the input keys.
     /// Backends that support batched reads (e.g. RocksDB `multi_get_cf`)
-    /// should override this for better throughput.
+    /// should override this for better throughput. Callers should not
+    /// assume `multi_get` is asymptotically faster than `get`; on backends
+    /// without a batched read primitive (e.g. the in-memory backend) the
+    /// default impl below is equivalent to N independent `get` calls.
     fn multi_get(
         &self,
         table: &'static str,
