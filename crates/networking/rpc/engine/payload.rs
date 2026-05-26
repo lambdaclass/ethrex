@@ -1116,11 +1116,42 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
-    // Return the valid message directly if we already have it.
-    // We check for header only as we do not download the block bodies before the pivot during snap sync
-    // https://github.com/lambdaclass/ethrex/issues/1766
-    if storage.get_block_header_by_hash(block_hash)?.is_some() {
-        return Ok(PayloadStatus::valid_with_hash(block_hash));
+    // Fast path: if we already have this block's header AND its state is reachable,
+    // we know it has been fully validated previously and can reply VALID without
+    // re-execution.
+    //
+    // The historical version of this check only inspected the header (issue
+    // https://github.com/lambdaclass/ethrex/issues/1766) so that snap-sync
+    // pre-pivot blocks ; whose bodies aren't downloaded locally ; could still be
+    // marked VALID without trying to execute them. That fast path is preserved
+    // below: when the state isn't materialized AND the parent state isn't
+    // reachable either (the snap-sync condition), we still return VALID. The
+    // only behavior change is that we fall through to re-execution when the
+    // header is known but our local state was evicted (e.g. a deep-reorg
+    // overlay install wiped the layer cache), as long as the parent state IS
+    // reachable so the re-execution can succeed. This rebuilds the layer and
+    // prevents subsequent FCUs from looping back into `reorg_apply_deep`.
+    if let Some(known_header) = storage.get_block_header_by_hash(block_hash)? {
+        let state_materialized = storage.is_state_in_layer_cache(known_header.state_root)?
+            || storage.has_state_root(known_header.state_root)?;
+        if state_materialized {
+            return Ok(PayloadStatus::valid_with_hash(block_hash));
+        }
+        // Header known but our state was evicted. Only re-execute when we can:
+        // the parent state must be reachable (cache, disk, or overlay-backed)
+        // for execution to make progress. Otherwise preserve the legacy
+        // snap-sync fast-path and reply VALID without re-execution.
+        let parent_reachable = match storage.get_block_header_by_hash(block.header.parent_hash)? {
+            Some(parent) => {
+                storage.is_state_in_layer_cache(parent.state_root)?
+                    || storage.has_state_root(parent.state_root)?
+            }
+            None => false,
+        };
+        if !parent_reachable {
+            return Ok(PayloadStatus::valid_with_hash(block_hash));
+        }
+        // Fall through ; `add_block` below will re-execute and rebuild the layer.
     }
 
     // Defer eager execution when the parent block is known but its state is
