@@ -60,8 +60,10 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
-    /// Flat call tracer that returns a flat array of call frames with
-    /// `traceAddress` and `subtraces` fields (Parity/OpenEthereum format).
+    /// Flat call tracer matching geth's built-in `flatCallTracer`: a flat array
+    /// of call frames with `traceAddress` and `subtraces`, following the
+    /// Parity/OpenEthereum shape plus geth's `creationMethod` field on
+    /// `create` actions. Selected via `"tracer": "flatCallTracer"`.
     FlatCallTracer,
 }
 
@@ -402,8 +404,19 @@ impl RpcHandler for TraceBlockByNumberRequest {
 }
 
 // ── flatCallTracer types and helpers ─────────────────────────────────────
+//
+// Output mirrors geth's built-in `flatCallTracer`
+// (https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/native/call_flat.go),
+// which itself follows the Parity/OpenEthereum trace shape but adds a
+// `creationMethod` field on `create` frames. Three variants exist:
+//
+// - `type: "call"`  → action has callType/from/gas/input/to/value,
+//                     result has gasUsed/output
+// - `type: "create"`→ action has creationMethod/from/gas/init/value,
+//                     result has address/code/gasUsed
+// - `type: "suicide"`→ action has address/balance/refundAddress, no result
 
-/// A single flattened call frame following the Parity/OpenEthereum trace format.
+/// A single flattened call frame.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FlatCallFrame {
@@ -415,37 +428,67 @@ struct FlatCallFrame {
     subtraces: usize,
     trace_address: Vec<usize>,
     #[serde(rename = "type")]
-    frame_type: String,
+    frame_type: &'static str,
+}
+
+/// Per-variant action object. The outer `type` field disambiguates which shape
+/// is in use; `#[serde(untagged)]` emits the inner fields directly without a
+/// discriminator key, matching geth.
+#[derive(Serialize)]
+#[serde(untagged)]
+enum FlatCallAction {
+    #[serde(rename_all = "camelCase")]
+    Call {
+        call_type: &'static str,
+        from: Address,
+        #[serde(with = "serde_utils::u64::hex_str")]
+        gas: u64,
+        #[serde(with = "serde_utils::bytes")]
+        input: Bytes,
+        to: Address,
+        value: U256,
+    },
+    #[serde(rename_all = "camelCase")]
+    Create {
+        creation_method: &'static str,
+        from: Address,
+        #[serde(with = "serde_utils::u64::hex_str")]
+        gas: u64,
+        #[serde(with = "serde_utils::bytes")]
+        init: Bytes,
+        value: U256,
+    },
+    #[serde(rename_all = "camelCase")]
+    Suicide {
+        address: Address,
+        balance: U256,
+        refund_address: Address,
+    },
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FlatCallAction {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    call_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    creation_method: Option<String>,
-    from: Address,
-    #[serde(with = "serde_utils::u64::hex_str")]
-    gas: u64,
-    #[serde(with = "serde_utils::bytes")]
-    input: Bytes,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    to: Option<Address>,
-    value: U256,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct FlatCallResult {
-    #[serde(with = "serde_utils::u64::hex_str")]
-    gas_used: u64,
-    #[serde(with = "serde_utils::bytes")]
-    output: Bytes,
+#[serde(untagged)]
+enum FlatCallResult {
+    #[serde(rename_all = "camelCase")]
+    Call {
+        #[serde(with = "serde_utils::u64::hex_str")]
+        gas_used: u64,
+        #[serde(with = "serde_utils::bytes")]
+        output: Bytes,
+    },
+    #[serde(rename_all = "camelCase")]
+    Create {
+        address: Address,
+        #[serde(with = "serde_utils::bytes")]
+        code: Bytes,
+        #[serde(with = "serde_utils::u64::hex_str")]
+        gas_used: u64,
+    },
 }
 
 /// Flattens a nested `CallTraceFrame` tree into a flat array with
-/// `traceAddress` and `subtraces` fields.
+/// `traceAddress` and `subtraces` fields. Maximum recursion depth is bounded
+/// by the EVM call depth limit (1024), so stack usage is safe.
 fn flatten_call_trace(root: &CallTraceFrame) -> Vec<FlatCallFrame> {
     let mut result = Vec::new();
     flatten_recursive(root, &[], &mut result);
@@ -457,45 +500,79 @@ fn flatten_recursive(
     trace_address: &[usize],
     result: &mut Vec<FlatCallFrame>,
 ) {
-    let (frame_type, call_type, creation_method) = match frame.call_type {
-        CallType::CALL => ("call", Some("call"), None),
-        CallType::CALLCODE => ("call", Some("callcode"), None),
-        CallType::STATICCALL => ("call", Some("staticcall"), None),
-        CallType::DELEGATECALL => ("call", Some("delegatecall"), None),
-        CallType::CREATE => ("create", None, Some("create")),
-        CallType::CREATE2 => ("create", None, Some("create2")),
-        CallType::SELFDESTRUCT => ("suicide", None, None),
+    let frame_type: &'static str = match frame.call_type {
+        CallType::CALL | CallType::CALLCODE | CallType::STATICCALL | CallType::DELEGATECALL => {
+            "call"
+        }
+        CallType::CREATE | CallType::CREATE2 => "create",
+        CallType::SELFDESTRUCT => "suicide",
     };
 
-    let flat = FlatCallFrame {
-        action: FlatCallAction {
-            call_type: call_type.map(String::from),
-            creation_method: creation_method.map(String::from),
+    let action = match frame.call_type {
+        CallType::CALL | CallType::CALLCODE | CallType::STATICCALL | CallType::DELEGATECALL => {
+            FlatCallAction::Call {
+                call_type: match frame.call_type {
+                    CallType::CALL => "call",
+                    CallType::CALLCODE => "callcode",
+                    CallType::STATICCALL => "staticcall",
+                    CallType::DELEGATECALL => "delegatecall",
+                    _ => unreachable!(),
+                },
+                from: frame.from,
+                gas: frame.gas,
+                input: frame.input.clone(),
+                to: frame.to,
+                value: frame.value,
+            }
+        }
+        CallType::CREATE | CallType::CREATE2 => FlatCallAction::Create {
+            creation_method: if matches!(frame.call_type, CallType::CREATE) {
+                "create"
+            } else {
+                "create2"
+            },
             from: frame.from,
             gas: frame.gas,
-            input: frame.input.clone(),
-            to: if frame_type == "call" {
-                Some(frame.to)
-            } else {
-                None
-            },
+            init: frame.input.clone(),
             value: frame.value,
         },
-        error: frame.error.clone(),
-        result: if frame.error.is_none() {
-            Some(FlatCallResult {
-                gas_used: frame.gas_used,
-                output: frame.output.clone(),
-            })
-        } else {
-            None
+        // SELFDESTRUCT: `from` is the destructed contract, `to` is the refund
+        // address, `value` is the balance forwarded — match those onto Parity's
+        // suicide action shape.
+        CallType::SELFDESTRUCT => FlatCallAction::Suicide {
+            address: frame.from,
+            balance: frame.value,
+            refund_address: frame.to,
         },
-        subtraces: frame.calls.len(),
-        trace_address: trace_address.to_vec(),
-        frame_type: frame_type.to_string(),
     };
 
-    result.push(flat);
+    // Suicide frames never carry a result; failed frames omit it too (the
+    // failure is surfaced via the `error` field).
+    let result_value = if frame.error.is_some() || matches!(frame.call_type, CallType::SELFDESTRUCT)
+    {
+        None
+    } else {
+        Some(match frame.call_type {
+            CallType::CREATE | CallType::CREATE2 => FlatCallResult::Create {
+                address: frame.to,
+                code: frame.output.clone(),
+                gas_used: frame.gas_used,
+            },
+            _ => FlatCallResult::Call {
+                gas_used: frame.gas_used,
+                output: frame.output.clone(),
+            },
+        })
+    };
+
+    result.push(FlatCallFrame {
+        action,
+        error: frame.error.clone(),
+        result: result_value,
+        subtraces: frame.calls.len(),
+        trace_address: trace_address.to_vec(),
+        frame_type,
+    });
 
     for (i, sub_call) in frame.calls.iter().enumerate() {
         let mut child_address = trace_address.to_vec();
@@ -539,47 +616,56 @@ mod tests {
     }
 
     // --- flatten_call_trace tests ---
+    //
+    // The Serialize-only types are inspected via their JSON projection so we
+    // verify the wire shape clients actually receive.
+
+    fn flat_json(frame: &CallTraceFrame) -> Vec<serde_json::Value> {
+        flatten_call_trace(frame)
+            .iter()
+            .map(|f| serde_json::to_value(f).unwrap())
+            .collect()
+    }
 
     #[test]
-    fn flatten_single_frame() {
+    fn flatten_single_call_frame() {
         let frame = CallTraceFrame {
             call_type: CallType::CALL,
             from: Address::zero(),
             to: Address::from_low_u64_be(1),
             gas: 21000,
             gas_used: 21000,
-            input: Bytes::new(),
-            output: Bytes::new(),
             ..Default::default()
         };
-        let flat = flatten_call_trace(&frame);
-        assert_eq!(flat.len(), 1);
-        assert_eq!(flat[0].trace_address, Vec::<usize>::new());
-        assert_eq!(flat[0].subtraces, 0);
-        assert_eq!(flat[0].frame_type, "call");
-        assert!(flat[0].action.call_type.as_deref() == Some("call"));
+        let frames = flat_json(&frame);
+        assert_eq!(frames.len(), 1);
+        let f = &frames[0];
+        assert_eq!(f["type"], "call");
+        assert_eq!(f["traceAddress"], json!([]));
+        assert_eq!(f["subtraces"], 0);
+        assert_eq!(f["action"]["callType"], "call");
+        assert_eq!(
+            f["action"]["to"],
+            format!("{:#x}", Address::from_low_u64_be(1))
+        );
+        // Call results carry gasUsed + output, not address/code.
+        assert!(f["result"]["gasUsed"].is_string());
+        assert!(f["result"]["output"].is_string());
+        assert!(f["result"].get("address").is_none());
     }
 
     #[test]
-    fn flatten_nested_frames() {
+    fn flatten_nested_frames_pre_order_with_trace_address() {
         let grandchild = CallTraceFrame {
             call_type: CallType::STATICCALL,
             from: Address::from_low_u64_be(2),
             to: Address::from_low_u64_be(3),
-            gas: 5000,
-            gas_used: 3000,
-            input: Bytes::new(),
-            output: Bytes::new(),
             ..Default::default()
         };
         let child = CallTraceFrame {
             call_type: CallType::DELEGATECALL,
             from: Address::from_low_u64_be(1),
             to: Address::from_low_u64_be(2),
-            gas: 10000,
-            gas_used: 8000,
-            input: Bytes::new(),
-            output: Bytes::new(),
             calls: vec![grandchild],
             ..Default::default()
         };
@@ -587,62 +673,103 @@ mod tests {
             call_type: CallType::CALL,
             from: Address::zero(),
             to: Address::from_low_u64_be(1),
-            gas: 21000,
-            gas_used: 15000,
-            input: Bytes::new(),
-            output: Bytes::new(),
             calls: vec![child],
             ..Default::default()
         };
-        let flat = flatten_call_trace(&root);
-        assert_eq!(flat.len(), 3);
-        // Root
-        assert_eq!(flat[0].trace_address, Vec::<usize>::new());
-        assert_eq!(flat[0].subtraces, 1);
-        // Child
-        assert_eq!(flat[1].trace_address, vec![0]);
-        assert_eq!(flat[1].subtraces, 1);
-        assert!(flat[1].action.call_type.as_deref() == Some("delegatecall"));
-        // Grandchild
-        assert_eq!(flat[2].trace_address, vec![0, 0]);
-        assert_eq!(flat[2].subtraces, 0);
-        assert!(flat[2].action.call_type.as_deref() == Some("staticcall"));
+        let frames = flat_json(&root);
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0]["traceAddress"], json!([]));
+        assert_eq!(frames[0]["subtraces"], 1);
+        assert_eq!(frames[1]["traceAddress"], json!([0]));
+        assert_eq!(frames[1]["action"]["callType"], "delegatecall");
+        assert_eq!(frames[1]["subtraces"], 1);
+        assert_eq!(frames[2]["traceAddress"], json!([0, 0]));
+        assert_eq!(frames[2]["action"]["callType"], "staticcall");
+        assert_eq!(frames[2]["subtraces"], 0);
     }
 
     #[test]
-    fn flatten_create_frame_type() {
+    fn flatten_create_emits_init_and_address_code_result() {
+        let deployed_addr = Address::from_low_u64_be(0x42);
         let frame = CallTraceFrame {
             call_type: CallType::CREATE,
             from: Address::zero(),
+            to: deployed_addr,
             gas: 50000,
             gas_used: 32000,
-            input: Bytes::new(),
-            output: Bytes::new(),
+            input: Bytes::from_static(b"init"),
+            output: Bytes::from_static(&[0xfe, 0xfe, 0xfe]),
             ..Default::default()
         };
-        let flat = flatten_call_trace(&frame);
-        assert_eq!(flat[0].frame_type, "create");
-        assert!(flat[0].action.creation_method.as_deref() == Some("create"));
-        assert!(flat[0].action.call_type.is_none());
-        // `to` should be None for create frames
-        assert!(flat[0].action.to.is_none());
+        let frames = flat_json(&frame);
+        let f = &frames[0];
+        assert_eq!(f["type"], "create");
+        assert_eq!(f["action"]["creationMethod"], "create");
+        // The init code lives under `init`, not `input`.
+        assert!(
+            f["action"].get("input").is_none(),
+            "create action must use `init`, not `input`"
+        );
+        assert!(f["action"]["init"].is_string());
+        // `to` does not appear on create actions.
+        assert!(f["action"].get("to").is_none());
+        // Result carries address + code, not output.
+        assert_eq!(f["result"]["address"], format!("{deployed_addr:#x}"));
+        assert!(f["result"]["code"].is_string());
+        assert!(f["result"].get("output").is_none());
+        assert!(f["result"]["gasUsed"].is_string());
     }
 
     #[test]
-    fn flatten_error_frame_has_no_result() {
+    fn flatten_create2_uses_create2_method() {
+        let frame = CallTraceFrame {
+            call_type: CallType::CREATE2,
+            ..Default::default()
+        };
+        let frames = flat_json(&frame);
+        assert_eq!(frames[0]["action"]["creationMethod"], "create2");
+    }
+
+    #[test]
+    fn flatten_selfdestruct_uses_suicide_shape() {
+        let destructed = Address::from_low_u64_be(0xaa);
+        let beneficiary = Address::from_low_u64_be(0xbb);
+        let balance = U256::from(123_456u64);
+        let frame = CallTraceFrame {
+            call_type: CallType::SELFDESTRUCT,
+            from: destructed,
+            to: beneficiary,
+            value: balance,
+            ..Default::default()
+        };
+        let frames = flat_json(&frame);
+        let f = &frames[0];
+        assert_eq!(f["type"], "suicide");
+        // Action shape is {address, balance, refundAddress} — nothing from the
+        // call shape leaks through.
+        assert_eq!(f["action"]["address"], format!("{destructed:#x}"));
+        assert_eq!(f["action"]["refundAddress"], format!("{beneficiary:#x}"));
+        assert!(f["action"]["balance"].is_string());
+        assert!(f["action"].get("from").is_none());
+        assert!(f["action"].get("to").is_none());
+        assert!(f["action"].get("callType").is_none());
+        assert!(f["action"].get("input").is_none());
+        // Suicide frames never carry a result.
+        assert!(f.get("result").is_none() || f["result"].is_null());
+    }
+
+    #[test]
+    fn flatten_failed_call_omits_result_and_keeps_error() {
         let frame = CallTraceFrame {
             call_type: CallType::CALL,
             from: Address::zero(),
             to: Address::from_low_u64_be(1),
-            gas: 21000,
-            gas_used: 0,
-            input: Bytes::new(),
-            output: Bytes::new(),
             error: Some("out of gas".to_string()),
             ..Default::default()
         };
-        let flat = flatten_call_trace(&frame);
-        assert!(flat[0].result.is_none());
-        assert_eq!(flat[0].error.as_deref(), Some("out of gas"));
+        let frames = flat_json(&frame);
+        let f = &frames[0];
+        assert_eq!(f["error"], "out of gas");
+        assert!(f.get("result").is_none() || f["result"].is_null());
     }
 }

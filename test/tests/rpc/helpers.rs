@@ -1,3 +1,10 @@
+//! Shared setup helpers for the rpc integration tests. Each test file builds
+//! its own in-memory `Store`, funds a known sender, and uses [`rpc_call`] to
+//! drive the dispatcher just like a live request would. Individual test files
+//! only need a subset of the helpers, so the module is permissive about dead
+//! code rather than gating each item separately.
+#![allow(dead_code)]
+
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
@@ -15,16 +22,17 @@ use ethrex_common::{
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rpc::rpc::map_http_requests;
 use ethrex_rpc::test_utils::default_context_with_storage;
-use ethrex_rpc::utils::RpcRequest;
+use ethrex_rpc::utils::{RpcErr, RpcRequest};
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use serde_json::{Value, json};
 
-const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
-const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
-const TEST_GAS_LIMIT: u64 = 100_000;
+pub const TEST_PRIVATE_KEY: &str =
+    "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
+pub const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
+pub const TEST_GAS_LIMIT: u64 = 100_000;
 
-fn test_secret_key() -> SecretKey {
+pub fn test_secret_key() -> SecretKey {
     SecretKey::from_slice(&hex::decode(TEST_PRIVATE_KEY).unwrap()).unwrap()
 }
 
@@ -32,11 +40,11 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-fn sender_from_key(sk: &SecretKey) -> Address {
+pub fn sender_from_key(sk: &SecretKey) -> Address {
     LocalSigner::new(*sk).address
 }
 
-async fn setup_store(sender: Address) -> (Store, u64) {
+pub async fn setup_store(sender: Address) -> (Store, u64) {
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
     let reader = BufReader::new(file);
@@ -61,7 +69,11 @@ async fn setup_store(sender: Address) -> (Store, u64) {
     (store, chain_id)
 }
 
-async fn build_block(store: &Store, blockchain: &Blockchain, parent_header: &BlockHeader) -> Block {
+pub async fn build_block(
+    store: &Store,
+    blockchain: &Blockchain,
+    parent_header: &BlockHeader,
+) -> Block {
     let args = BuildPayloadArgs {
         parent: parent_header.hash(),
         timestamp: parent_header.timestamp + 12,
@@ -79,7 +91,7 @@ async fn build_block(store: &Store, blockchain: &Blockchain, parent_header: &Blo
     result.payload
 }
 
-async fn create_transfer_tx(
+pub async fn create_transfer_tx(
     chain_id: u64,
     nonce: u64,
     to: Address,
@@ -101,7 +113,28 @@ async fn create_transfer_tx(
     tx
 }
 
-async fn build_and_execute_block(
+pub async fn create_deploy_tx(
+    chain_id: u64,
+    nonce: u64,
+    init_code: Bytes,
+    signer: &Signer,
+) -> Transaction {
+    let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id,
+        nonce,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas_limit: 1_000_000,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: init_code,
+        ..Default::default()
+    });
+    tx.sign_inplace(signer).await.unwrap();
+    tx
+}
+
+pub async fn build_and_execute_block(
     store: &Store,
     blockchain: &Blockchain,
     parent_header: &BlockHeader,
@@ -125,27 +158,40 @@ async fn build_and_execute_block(
     block
 }
 
-async fn rpc_call(store: &Store, method: &str, params: Vec<Value>) -> Value {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-    let request: RpcRequest = serde_json::from_value(body).expect("valid RPC request");
+pub async fn rpc_call(store: &Store, method: &str, params: Vec<Value>) -> Value {
+    let request = build_rpc_request(method, params);
     let context = default_context_with_storage(store.clone()).await;
     map_http_requests(&request, context)
         .await
         .expect("RPC call should succeed")
 }
 
-struct TestEnv {
-    store: Store,
-    block: Block,
-    tx_hash: H256,
+pub async fn rpc_call_expect_err(store: &Store, method: &str, params: Vec<Value>) -> RpcErr {
+    let request = build_rpc_request(method, params);
+    let context = default_context_with_storage(store.clone()).await;
+    map_http_requests(&request, context)
+        .await
+        .expect_err("RPC call should fail")
 }
 
-async fn setup_single_transfer_block() -> TestEnv {
+fn build_rpc_request(method: &str, params: Vec<Value>) -> RpcRequest {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1,
+    });
+    serde_json::from_value(body).expect("valid RPC request")
+}
+
+pub struct TestEnv {
+    pub store: Store,
+    pub block: Block,
+    pub tx_hash: H256,
+    pub sender: Address,
+}
+
+pub async fn setup_single_transfer_block() -> TestEnv {
     let sk = test_secret_key();
     let sender = sender_from_key(&sk);
     let signer: Signer = LocalSigner::new(sk).into();
@@ -161,37 +207,39 @@ async fn setup_single_transfer_block() -> TestEnv {
         store,
         block,
         tx_hash,
+        sender,
     }
 }
 
-#[tokio::test]
-async fn trace_tx_flat_call_tracer() {
-    let env = setup_single_transfer_block().await;
-
-    let result = rpc_call(
-        &env.store,
-        "debug_traceTransaction",
-        vec![
-            json!(format!("{:#x}", env.tx_hash)),
-            json!({"tracer": "flatCallTracer"}),
-        ],
-    )
-    .await;
-
-    // flatCallTracer returns a flat array of call frames.
-    let arr = result.as_array().expect("response should be an array");
-    assert!(!arr.is_empty(), "should have at least one frame");
-
-    let frame = arr[0].as_object().expect("frame should be an object");
-    assert!(frame.contains_key("action"), "frame should have 'action'");
-    assert!(
-        frame.contains_key("subtraces"),
-        "frame should have 'subtraces'"
-    );
-    assert!(
-        frame.contains_key("traceAddress"),
-        "frame should have 'traceAddress'"
-    );
-    assert!(frame.contains_key("type"), "frame should have 'type'");
-    assert_eq!(frame["type"].as_str().unwrap(), "call");
+/// Same as [`setup_single_transfer_block`] but the single tx is a contract
+/// deployment whose runtime code is the trivial `STOP` opcode. Useful for
+/// exercising `CREATE` paths in tracers.
+pub async fn setup_single_deploy_block() -> TestEnv {
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+    let (store, chain_id) = setup_store(sender).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    // init code: PUSH1 0x01 PUSH1 0x00 MSTORE8 PUSH1 0x01 PUSH1 0x00 RETURN —
+    // deploys runtime bytecode `0x01` (a single byte). The actual byte doesn't
+    // matter; what matters is that runtime code is non-empty so we can verify
+    // it round-trips through the tracer's `result.code` field.
+    let init_code = Bytes::from_static(&[
+        0x60, 0x01, // PUSH1 0x01
+        0x60, 0x00, // PUSH1 0x00
+        0x53, // MSTORE8
+        0x60, 0x01, // PUSH1 0x01
+        0x60, 0x00, // PUSH1 0x00
+        0xF3, // RETURN
+    ]);
+    let tx = create_deploy_tx(chain_id, 0, init_code, &signer).await;
+    let tx_hash = tx.hash();
+    let block = build_and_execute_block(&store, &blockchain, &genesis_header, vec![tx]).await;
+    TestEnv {
+        store,
+        block,
+        tx_hash,
+        sender,
+    }
 }
