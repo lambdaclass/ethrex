@@ -862,9 +862,15 @@ pub async fn regenerate_head_state(
     // chain regardless of canonical-map completeness.
     //
     // Cap the walk to bound memory: each entry in `chain_to_replay` holds a
-    // full header, so a runaway walk (caused by HEAD pointing far ahead of
-    // committed state) would OOM long before reaching genesis.
-    const MAX_BACK_WALK: usize = 50_000;
+    // full header (~500 B), so a runaway walk (e.g. caused by a corrupted
+    // HEAD pointer that diverges from the committed chain) would otherwise
+    // OOM long before reaching genesis. 1M blocks ≈ 500 MB of headers, which
+    // is the upper bound of how far a real ungraceful-shutdown can leave
+    // HEAD ahead of the committed top-level root (BSC at 0.45 s/block is
+    // ~5 days of chain time, far longer than any realistic outage). Forward
+    // replay of that many blocks afterwards is still expensive (~3 hours)
+    // but completes deterministically.
+    const MAX_BACK_WALK: usize = 1_000_000;
 
     let mut chain_to_replay: Vec<BlockHeader> = Vec::new();
     let mut current_last_header = last_header;
