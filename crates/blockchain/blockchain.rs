@@ -252,6 +252,12 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// Optional operator override for the maximum reorg depth. `None` ; cap is purely
+    /// finality-bounded (the natural physical ceiling). `Some(d)` ; reject reorgs of
+    /// depth `> d` before the deep-reorg fallback even runs. `Some(0)` disables deep
+    /// reorgs entirely (the pre-PR-4 behaviour, but with the cap fully under operator
+    /// control).
+    pub max_reorg_depth: Option<u64>,
 }
 
 impl Default for BlockchainOptions {
@@ -263,6 +269,7 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            max_reorg_depth: None,
         }
     }
 }
