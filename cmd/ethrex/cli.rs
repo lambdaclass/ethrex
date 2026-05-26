@@ -515,6 +515,19 @@ pub enum Subcommand {
         removedb: bool,
         #[arg(long, action = ArgAction::SetTrue)]
         l2: bool,
+        #[arg(
+            long = "export-bal",
+            value_name = "FILE",
+            help = "Export BALs produced during sequential execution to a single RLP file (concatenated, one per block). All BALs are buffered in memory before writing; suitable for benchmark-sized runs, not 100k+ block exports."
+        )]
+        export_bal: Option<String>,
+        #[arg(
+            long = "with-bal",
+            value_name = "FILE",
+            help = "Load BALs from a single RLP file and use the parallel execution path. The entire file is decoded into memory upfront; suitable for benchmark-sized runs, not 100k+ blocks.",
+            conflicts_with = "export_bal"
+        )]
+        with_bal: Option<String>,
     },
     #[command(
         name = "export",
@@ -645,7 +658,13 @@ impl Subcommand {
                 )
                 .await?;
             }
-            Subcommand::ImportBench { path, removedb, l2 } => {
+            Subcommand::ImportBench {
+                path,
+                removedb,
+                l2,
+                export_bal,
+                with_bal,
+            } => {
                 if removedb {
                     remove_db(&effective_datadir, opts.force);
                 }
@@ -667,6 +686,8 @@ impl Subcommand {
                         precompile_cache_enabled: !opts.no_precompile_cache,
                         ..Default::default()
                     },
+                    export_bal.as_deref(),
+                    with_bal.as_deref(),
                 )
                 .await?;
             }
@@ -897,13 +918,20 @@ pub async fn import_blocks_bench(
     datadir: &Path,
     genesis: Genesis,
     blockchain_opts: BlockchainOptions,
+    export_bal_path: Option<&str>,
+    with_bal_path: Option<&str>,
 ) -> Result<(), ChainError> {
     let start_time = Instant::now();
     init_datadir(datadir);
     let store = init_store(datadir, genesis).await?;
     let blockchain = init_blockchain(store.clone(), blockchain_opts);
     regenerate_head_state(&store, &blockchain).await.unwrap();
-    let path_metadata = metadata(path).expect("Failed to read path");
+    let path_metadata =
+        metadata(path).unwrap_or_else(|e| panic!("failed to stat path {path:?}: {e}"));
+
+    if let Some(bal_path) = export_bal_path {
+        info!(path = %bal_path, "Will export BALs to file");
+    }
 
     // If it's an .rlp file it will be just one chain, but if it's a directory there can be multiple chains.
     let chains: Vec<Vec<Block>> = if path_metadata.is_dir() {
@@ -929,7 +957,48 @@ pub async fn import_blocks_bench(
         vec![utils::read_chain_file(path)]
     };
 
+    // Pre-load all BALs into memory upfront to avoid per-block I/O during benchmark.
+    // Done after chain loading so we can validate the count matches the number of
+    // Amsterdam+ blocks across all chains and fail fast on truncated BAL files.
+    let preloaded_bals = if let Some(bal_path) = with_bal_path {
+        info!(path = %bal_path, "Loading BALs from file (parallel path)");
+        use ethrex_common::types::block_access_list::BlockAccessList;
+        use ethrex_rlp::decode::RLPDecode as _;
+        let data = std::fs::read(bal_path)
+            .unwrap_or_else(|e| panic!("failed to read BAL file at {bal_path:?}: {e}"));
+        let mut remaining = data.as_slice();
+        let mut bals = Vec::new();
+        while !remaining.is_empty() {
+            let (bal, rest) = BlockAccessList::decode_unfinished(remaining)
+                .unwrap_or_else(|e| panic!("failed to decode BAL from {bal_path:?}: {e}"));
+            bals.push(bal);
+            remaining = rest;
+        }
+        let amsterdam_blocks = chains
+            .iter()
+            .flatten()
+            .filter(|b| b.header.block_access_list_hash.is_some())
+            .count();
+        assert_eq!(
+            bals.len(),
+            amsterdam_blocks,
+            "--with-bal file at {bal_path:?} has {} entries but chain has {} Amsterdam+ blocks (block_access_list_hash set). \
+             Mismatched BAL files would silently fall through to sequential execution and produce misleading benchmark numbers.",
+            bals.len(),
+            amsterdam_blocks,
+        );
+        info!(count = bals.len(), "Loaded BALs into memory");
+        Some(bals)
+    } else {
+        None
+    };
+
+    let mut exported_bals = Vec::new();
     let mut total_blocks_imported = 0;
+    // Shared across chains: a directory import processes multiple chain files
+    // sequentially and the preloaded BAL list spans all Amsterdam+ blocks across
+    // all chains, so the cursor must persist between chains.
+    let mut bal_index = 0usize;
     for blocks in chains {
         let size = blocks.len();
         let mut numbers_and_hashes = blocks
@@ -965,21 +1034,44 @@ pub async fn import_blocks_bench(
             validate_block_body(&block.header, &block.body, &ethrex_crypto::NativeCrypto)
                 .map_err(InvalidBlockError::InvalidBody)?;
 
-            blockchain
-                .add_block_pipeline(block, None)
-                .inspect_err(|err| match err {
-                    // Block number 1's parent not found, the chain must not belong to the same network as the genesis file
-                    ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
-                    _ => warn!("Failed to add block {number} with hash {hash:#x}"),
-                })?;
+            // Look up preloaded BAL for this block (if --with-bal was provided).
+            // BALs are only produced for Amsterdam+ blocks, so use a separate counter
+            // that only advances for blocks that have a BAL hash in the header.
+            let bal = if block.header.block_access_list_hash.is_some() {
+                let b = preloaded_bals.as_ref().and_then(|bals| bals.get(bal_index));
+                bal_index += 1;
+                b
+            } else {
+                None
+            };
 
-            // TODO: replace this
-            // This sleep is because we have a background process writing to disk the last layer
-            // And until it's done we can't execute the new block
-            // Because this wants to compare against running a real node in terms of reported performance
-            // It takes less than 500ms, so this is good enough, but we should report the performance
-            // without taking into account that wait.
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            if export_bal_path.is_some() {
+                // Sequential path: execute and capture the produced BAL
+                let produced_bal = blockchain
+                    .add_block_pipeline_bal(block, None)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+
+                if let Some(bal) = produced_bal {
+                    exported_bals.push(bal);
+                }
+            } else {
+                // Normal path (or parallel if BAL was loaded)
+                blockchain
+                    .add_block_pipeline(block, bal)
+                    .inspect_err(|err| match err {
+                        ChainError::ParentNotFound if number == 1 => warn!("The chain file is not compatible with the genesis file. Are you sure you selected the correct network?"),
+                        _ => warn!("Failed to add block {number} with hash {hash:#x}"),
+                    })?;
+            }
+
+            // Wait for the trie-update worker's Phase 2 (disk write of bottom-most
+            // diff layer) and Phase 3 (in-memory layer removal) for the block just
+            // applied to drain. Keeps the next block's per-block timer from
+            // absorbing the previous block's background persistence cost.
+            store.wait_for_persistence_idle().await?;
         }
 
         // Make head canonical and label all special blocks correctly.
@@ -996,6 +1088,17 @@ pub async fn import_blocks_bench(
         }
 
         total_blocks_imported += size;
+    }
+
+    // Write all exported BALs to a single file
+    if let Some(bal_path) = export_bal_path {
+        let mut buf = Vec::new();
+        for bal in &exported_bals {
+            bal.encode(&mut buf);
+        }
+        std::fs::write(bal_path, &buf)
+            .unwrap_or_else(|e| panic!("failed to write BAL file at {bal_path:?}: {e}"));
+        info!(count = exported_bals.len(), "Exported BALs to file");
     }
 
     let total_duration = start_time.elapsed();
