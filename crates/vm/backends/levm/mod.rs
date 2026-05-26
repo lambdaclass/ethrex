@@ -2014,6 +2014,9 @@ impl LEVM {
     /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
     /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
     ///
+    /// Sender groups are dispatched to rayon sorted by each sender's earliest tx
+    /// index so the warmer biases toward state the sequential executor reads first.
+    ///
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
@@ -2034,16 +2037,33 @@ impl LEVM {
                 EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
             })?;
 
-        // Group transactions by sender for sequential execution within groups
-        let mut sender_groups: FxHashMap<Address, Vec<&Transaction>> = FxHashMap::default();
-        for (tx, sender) in &txs_with_sender {
-            sender_groups.entry(*sender).or_default().push(tx);
+        // Group transactions by sender for sequential execution within groups,
+        // tracking each sender's earliest tx index. Iterating in block order means
+        // the first tx pushed to a sender's group is also its lowest-indexed one.
+        let mut sender_groups: FxHashMap<Address, (usize, Vec<&Transaction>)> =
+            FxHashMap::default();
+        for (idx, (tx, sender)) in txs_with_sender.iter().enumerate() {
+            let entry = sender_groups
+                .entry(*sender)
+                .or_insert_with(|| (idx, Vec::new()));
+            entry.1.push(tx);
         }
 
+        // Sort by min tx index so rayon's work-stealing queue feeds senders the
+        // executor will read first. Work-stealing still spreads load across cores,
+        // but the head of the queue biases toward urgent senders, reducing the
+        // chance that the executor stalls on cold state for tx[0] while the warmer
+        // is busy on tx[N-1]'s sender.
+        let mut sorted_groups: Vec<(usize, Address, Vec<&Transaction>)> = sender_groups
+            .into_iter()
+            .map(|(sender, (min_idx, txs))| (min_idx, sender, txs))
+            .collect();
+        sorted_groups.sort_unstable_by_key(|&(min_idx, _, _)| min_idx);
+
         // Parallel across sender groups, sequential within each group
-        sender_groups.into_par_iter().for_each_with(
+        sorted_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
+            |stack_pool, (_min_idx, sender, txs)| {
                 if cancelled.load(Ordering::Relaxed) {
                     return;
                 }
