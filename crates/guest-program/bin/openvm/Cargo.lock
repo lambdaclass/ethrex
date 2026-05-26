@@ -703,7 +703,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -723,7 +723,6 @@ dependencies = [
  "libssz-types",
  "lru 0.16.3",
  "once_cell",
- "rayon",
  "rkyv",
  "rustc-hash",
  "serde",
@@ -735,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -756,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-openvm"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-guest-program",
@@ -771,7 +770,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -794,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -812,7 +811,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -820,7 +819,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-rlp",
  "malachite",
- "rayon",
  "rustc-hash",
  "serde",
  "strum",
@@ -829,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -838,7 +836,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -856,7 +854,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "12.0.0"
+version = "13.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -865,7 +863,6 @@ dependencies = [
  "ethrex-crypto",
  "ethrex-levm",
  "ethrex-rlp",
- "rayon",
  "rustc-hash",
  "serde",
  "thiserror",
