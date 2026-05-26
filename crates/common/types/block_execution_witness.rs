@@ -139,35 +139,17 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
 
 impl RpcExecutionWitness {
     /// Convert an RPC execution witness into the internal [`ExecutionWitness`]
-    /// format by rebuilding trie structures from the flat node list.
+    /// format by rebuilding trie structures from the flat node list. Takes
+    /// pre-decoded headers (see [`decode_witness_headers`]) so callers that
+    /// already paid the RLP decode cost — e.g. to run
+    /// [`validate_witness_headers_chain`] — don't pay it twice.
     pub fn into_execution_witness(
         self,
         chain_config: ChainConfig,
         first_block_number: u64,
+        decoded_headers: &[BlockHeader],
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
-        if first_block_number == 0 {
-            return Err(GuestProgramStateError::Custom(
-                "first_block_number must be > 0 (need parent header)".to_string(),
-            ));
-        }
-
-        let mut initial_state_root = None;
-
-        for h in &self.headers {
-            let header = BlockHeader::decode(h)?;
-            if header.number == first_block_number - 1 {
-                initial_state_root = Some(header.state_root);
-                break;
-            }
-        }
-
-        let initial_state_root = initial_state_root.ok_or_else(|| {
-            GuestProgramStateError::Custom(format!(
-                "header for block {} not found",
-                first_block_number - 1
-            ))
-        })?;
-
+        let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
         // Per EIP-8025 §Tolerance, entries in the witness `state` list that are
         // not reachable from the executed state root must not cause rejection.
         // We silently drop entries that fail to decode as a trie node; any
@@ -236,26 +218,60 @@ impl RpcExecutionWitness {
     }
 }
 
+/// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`. Centralised
+/// so callers that need the decoded headers more than once (e.g. for
+/// `validate_witness_headers_chain` followed by
+/// [`RpcExecutionWitness::into_execution_witness_with_decoded_headers`]) can
+/// share a single decode pass instead of paying the RLP cost repeatedly.
+pub fn decode_witness_headers<B: AsRef<[u8]>>(
+    headers_bytes: &[B],
+) -> Result<Vec<BlockHeader>, GuestProgramStateError> {
+    headers_bytes
+        .iter()
+        .map(|b| BlockHeader::decode(b.as_ref()).map_err(GuestProgramStateError::from))
+        .collect()
+}
+
+/// Locate the parent block's state root from a slice of decoded headers.
+/// Returns an error if `first_block_number == 0` (no parent possible) or if the
+/// parent header is not in the slice.
+fn find_parent_state_root(
+    headers: &[BlockHeader],
+    first_block_number: u64,
+) -> Result<H256, GuestProgramStateError> {
+    let parent_number = first_block_number
+        .checked_sub(1)
+        .ok_or(GuestProgramStateError::Custom(
+            "first_block_number must be > 0 (need parent header)".to_string(),
+        ))?;
+    headers
+        .iter()
+        .find(|h| h.number == parent_number)
+        .map(|h| h.state_root)
+        .ok_or_else(|| {
+            GuestProgramStateError::Custom(format!("header for block {parent_number} not found"))
+        })
+}
+
 /// Validate that an SSZ-witness header list (in input order) forms a
 /// contiguous chain — each header's `parent_hash` must equal the keccak hash
 /// of the preceding header's RLP encoding. Returns an error on the first
-/// broken linkage or on any header that fails to RLP-decode.
+/// broken linkage.
 ///
 /// This is the EIP-8025 §Validation rule for the canonical stateless witness
 /// header sequence (BLOCKHASH ancestors). It is order-sensitive because the
 /// spec verifies the sequence as supplied; reordering the headers (e.g. into
 /// a `BTreeMap` keyed by block number) hides the violation by reshaping the
 /// data. Call this before any sort/dedup of the header list.
-pub fn validate_witness_headers_chain<B: AsRef<[u8]>>(
-    headers_bytes: &[B],
+pub fn validate_witness_headers_chain(
+    headers: &[BlockHeader],
     crypto: &dyn Crypto,
 ) -> Result<(), GuestProgramStateError> {
-    if headers_bytes.len() <= 1 {
+    if headers.len() <= 1 {
         return Ok(());
     }
     let mut prev_hash: Option<H256> = None;
-    for bytes in headers_bytes {
-        let header = BlockHeader::decode(bytes.as_ref())?;
+    for header in headers {
         if let Some(prev) = prev_hash
             && header.parent_hash != prev
         {

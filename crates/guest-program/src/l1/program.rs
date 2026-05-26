@@ -447,28 +447,39 @@ fn validate_eip8025_canonical_execution(
     chain_config: ethrex_common::types::ChainConfig,
     crypto: Arc<dyn Crypto>,
 ) -> Result<(), ExecutionError> {
-    if stateless_input.chain_config.chain_id != chain_config.chain_id {
-        return Err(ExecutionError::Internal(format!(
-            "chain_id mismatch between canonical input ({}) and chain config ({})",
-            stateless_input.chain_config.chain_id, chain_config.chain_id
-        )));
-    }
+    let block_timestamp = stateless_input
+        .new_payload_request
+        .execution_payload
+        .timestamp;
+    validate_canonical_chain_config(
+        &stateless_input.chain_config,
+        &chain_config,
+        block_timestamp,
+    )?;
 
     let block_number = stateless_input
         .new_payload_request
         .execution_payload
         .block_number;
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
+    // Pre-decode the ancestor headers once and reuse the decoded vector for the
+    // chain-linkage check and for extracting the parent state root in
+    // `into_execution_witness`. Saves one full RLP decode pass over up to
+    // `MAX_WITNESS_HEADERS` entries.
+    let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
+        &rpc_witness.headers,
+    )?;
     // Validate the BLOCKHASH ancestor chain in the witness-given order *before*
     // `into_execution_witness` collapses the headers into a number-keyed map
     // and loses the original sequence. Spec EIP-8025 §Validation requires the
     // headers to form a contiguous chain as supplied.
     ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
-        &rpc_witness.headers,
+        &decoded_headers,
         crypto.as_ref(),
     )?;
 
-    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number)?;
+    let execution_witness =
+        rpc_witness.into_execution_witness(chain_config, block_number, &decoded_headers)?;
 
     validate_eip8025_amsterdam_execution(
         &stateless_input.new_payload_request,
@@ -476,6 +487,73 @@ fn validate_eip8025_canonical_execution(
         crypto,
         stateless_input.public_keys,
     )
+}
+
+/// Cross-check the prover-supplied `CanonicalChainConfig` against the
+/// verifier's out-of-band `ChainConfig`. Beyond the `chain_id` equality, this
+/// also asserts that the prover's `active_fork` discriminator and blob
+/// schedule agree with what the verifier would compute at the block's
+/// timestamp.
+#[cfg(feature = "eip-8025")]
+fn validate_canonical_chain_config(
+    canonical: &crate::l1::input::CanonicalChainConfig,
+    expected: &ethrex_common::types::ChainConfig,
+    block_timestamp: u64,
+) -> Result<(), ExecutionError> {
+    if canonical.chain_id != expected.chain_id {
+        return Err(ExecutionError::Internal(format!(
+            "chain_id mismatch between canonical input ({}) and chain config ({})",
+            canonical.chain_id, expected.chain_id
+        )));
+    }
+
+    let expected_fork = expected.get_fork(block_timestamp) as u64;
+    if canonical.active_fork.fork != expected_fork {
+        return Err(ExecutionError::Internal(format!(
+            "active_fork mismatch between canonical input ({}) and chain config ({})",
+            canonical.active_fork.fork, expected_fork
+        )));
+    }
+
+    let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
+    let expected_schedule = expected.get_fork_blob_schedule(block_timestamp);
+    match (canonical_schedule, expected_schedule) {
+        (Some(c), Some(e)) => {
+            if c.target != e.target as u64
+                || c.max != e.max as u64
+                || c.base_fee_update_fraction != e.base_fee_update_fraction
+            {
+                return Err(ExecutionError::Internal(format!(
+                    "blob_schedule mismatch: canonical \
+                     (target={}, max={}, base_fee_update_fraction={}) \
+                     vs chain config (target={}, max={}, base_fee_update_fraction={})",
+                    c.target,
+                    c.max,
+                    c.base_fee_update_fraction,
+                    e.target,
+                    e.max,
+                    e.base_fee_update_fraction
+                )));
+            }
+        }
+        (Some(_), None) => {
+            return Err(ExecutionError::Internal(
+                "blob_schedule mismatch: canonical input includes a schedule but \
+                 chain config has none at the block's timestamp"
+                    .to_string(),
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(ExecutionError::Internal(
+                "blob_schedule mismatch: canonical input omits the schedule but \
+                 chain config has one at the block's timestamp"
+                    .to_string(),
+            ));
+        }
+        (None, None) => {}
+    }
+
+    Ok(())
 }
 
 #[cfg(feature = "eip-8025")]

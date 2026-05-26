@@ -115,14 +115,19 @@ pub async fn run_ef_test(
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
-        // If the fixture provides an executionWitness (zkevm format), use it directly
-        // instead of regenerating the witness from blockchain execution.
+        // If the fixture provides an executionWitness *or* a statelessInputBytes
+        // (zkevm format), use it directly instead of regenerating the witness
+        // from blockchain execution. We must also gate on `statelessInputBytes`
+        // because canonical-only fixtures may ship without `executionWitness`,
+        // and we want them routed through `run_stateless_from_fixture` (which
+        // dispatches to the canonical wire path) rather than the legacy
+        // `re_run_stateless` regeneration path.
         #[cfg(feature = "stateless")]
         {
             let has_fixture_witness = test.blocks.iter().any(|bf| {
-                bf.block()
-                    .and_then(|b| b.execution_witness.as_ref())
-                    .is_some()
+                bf.block().is_some_and(|b| {
+                    b.execution_witness.is_some() || b.stateless_input_bytes.is_some()
+                })
             });
             if has_fixture_witness {
                 run_stateless_from_fixture(test, test_key, backend).await?;
@@ -600,8 +605,15 @@ async fn run_stateless_from_fixture(
             .map_err(|e| {
                 format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
             })?;
+        let decoded_headers =
+            ethrex_common::types::block_execution_witness::decode_witness_headers(
+                &rpc_witness.headers,
+            )
+            .map_err(|e| {
+                format!("witness header decode failed for {test_key} block {block_number}: {e}")
+            })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number)
+            .into_execution_witness(*chain_config, block_number, &decoded_headers)
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;
@@ -671,7 +683,7 @@ fn run_stateless_from_input_bytes(
             "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed"
         )),
         (false, true) => Err(format!(
-            "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid executionWitness)"
+            "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid statelessInputBytes)"
         )),
     }
 }

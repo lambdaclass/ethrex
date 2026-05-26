@@ -7,9 +7,10 @@ use std::path::Path;
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
 // test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
-// test-stateless reads zkevm@v0.3.3 (the only bundle that ships executionWitness)
-// from a separate `vectors_zkevm/` so its older bal@v5.6.1 base never overlays
-// the snobal fixtures used by the other suites.
+// test-stateless reads zkevm@v0.4.1 (the EIP-8025 canonical bundle that ships
+// both `executionWitness` and `statelessInputBytes`) from a separate
+// `vectors_zkevm/` so its bal-derived base never overlays the snobal fixtures
+// used by the other suites.
 #[cfg(feature = "stateless")]
 const TEST_FOLDER: &str = "vectors_zkevm/";
 #[cfg(not(feature = "stateless"))]

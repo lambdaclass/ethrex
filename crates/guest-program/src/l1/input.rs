@@ -86,9 +86,12 @@ const MAX_OPTIONAL_FORK_ACTIVATION_VALUES: usize = 1;
 const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 
 /// Big-endian schema id prefixed onto canonical `SszStatelessInput` wire bytes,
-/// mirroring `STATELESS_INPUT_SCHEMA_ID` in `stateless_ssz.py` (Amsterdam).
+/// mirroring `STATELESS_INPUT_SCHEMA_ID` from the EIP-8025 Amsterdam spec
+/// (see <https://github.com/ethereum/execution-specs/blob/master/src/ethereum/amsterdam/stateless_ssz.py>).
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x0001;
+/// Byte length of the schema-id prefix (`STATELESS_INPUT_SCHEMA_ID` encoded as
+/// big-endian `u16`) at the start of a canonical EIP-8025 wire payload.
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 
