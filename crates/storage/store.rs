@@ -3362,17 +3362,39 @@ impl Store {
     /// Returns the highest block number with a `STATE_HISTORY` entry; the cache
     /// edge `D` (the deepest block whose post-state is on disk). Returns `None`
     /// if the journal is empty (no commits since boot, or fully pruned by finality).
+    ///
+    /// O(1) via reverse seek on the column family's last key.
     pub fn highest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let read = self.backend.begin_read()?;
-        let mut max: Option<BlockNumber> = None;
-        for entry in read.prefix_iterator(STATE_HISTORY, &[])? {
-            let (key, _) = entry?;
-            if let Ok(arr) = <[u8; 8]>::try_from(key.as_ref()) {
-                let n = BlockNumber::from_be_bytes(arr);
-                max = Some(max.map_or(n, |m| m.max(n)));
-            }
-        }
-        Ok(max)
+        let Some(key) = read.last_key(STATE_HISTORY)? else {
+            return Ok(None);
+        };
+        let arr = <[u8; 8]>::try_from(key.as_slice()).map_err(|_| {
+            StoreError::Custom(format!(
+                "STATE_HISTORY key has unexpected length: {}",
+                key.len()
+            ))
+        })?;
+        Ok(Some(BlockNumber::from_be_bytes(arr)))
+    }
+
+    /// Returns the lowest block number with a `STATE_HISTORY` entry. Returns `None`
+    /// if the journal is empty (no commits since boot, or fully pruned by finality).
+    ///
+    /// O(1) via forward seek on the column family's first key.
+    pub fn lowest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let Some(entry) = read.prefix_iterator(STATE_HISTORY, &[])?.next() else {
+            return Ok(None);
+        };
+        let (key, _) = entry?;
+        let arr = <[u8; 8]>::try_from(key.as_ref()).map_err(|_| {
+            StoreError::Custom(format!(
+                "STATE_HISTORY key has unexpected length: {}",
+                key.len()
+            ))
+        })?;
+        Ok(Some(BlockNumber::from_be_bytes(arr)))
     }
 
     /// Atomically prepares the store for a deep-reorg apply pass.

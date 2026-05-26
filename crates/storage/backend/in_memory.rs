@@ -140,6 +140,13 @@ impl StorageReadView for InMemoryReadTx {
         };
         Ok(Box::new(iter))
     }
+
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError> {
+        let Some(table_data) = self.snapshot.get(table) else {
+            return Ok(None);
+        };
+        Ok(table_data.keys().max().cloned())
+    }
 }
 
 pub struct InMemoryWriteTx {
