@@ -28,33 +28,63 @@
 
 ## Implementation Status
 
-### Core Amsterdam EIPs
+### Implemented — Amsterdam EL (per [EIP-7773])
 
 | EIP | Title | Status | SFI/CFI | Owner |
 |-----|-------|--------|---------|-------|
-| **7928** | Block-Level Access Lists | ✅ Implemented (devnet-7 aligned) | SFI | Edgar |
-| **7708** | ETH Transfers Emit Logs | ✅ Implemented | CFI | Edgar |
-| **7778** | Block Gas Accounting without Refunds | ✅ Implemented | CFI | Edgar |
-| **7843** | SLOTNUM Opcode | ✅ Implemented | CFI | Esteve |
-| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Implemented | CFI | Esteve |
-| **8037** | State Creation Gas Cost (2D gas) | ✅ Implemented (devnet-7 aligned) | CFI | Edgar |
-| **7976** | Increase Calldata Floor Cost | ✅ Implemented | CFI | |
-| **7981** | Increase Access List Cost | ✅ Implemented | CFI | |
-| **7954** | Increase Max Contract Size (24→32 KiB) | ✅ Implemented | CFI | |
+| **7928** | Block-Level Access Lists | ✅ Implemented (devnet-7 aligned) | SFI (EL headliner) | Edgar |
+| **7708** | ETH Transfers Emit Logs | ✅ Implemented | SFI | Edgar |
+| **7778** | Block Gas Accounting without Refunds | ✅ Implemented | SFI | Edgar |
+| **7843** | SLOTNUM Opcode | ✅ Implemented | SFI | Esteve |
+| **8024** | DUPN/SWAPN/EXCHANGE | ✅ Implemented | SFI | Esteve |
+| **8037** | State Creation Gas Cost (2D gas) | ✅ Implemented (devnet-7 aligned) | SFI (CFI→SFI @ ACDE #236) | Edgar |
+| **7976** | Increase Calldata Floor Cost | ✅ Implemented | SFI | |
+| **7981** | Increase Access List Cost | ✅ Implemented | SFI | |
+| **7954** | Increase Max Contract Size (24→32 KiB) | ✅ Implemented | SFI | |
+| **8159** | eth/71 Block Access List Exchange | ✅ Implemented | SFI (protocol req for bal-7) | |
 | **7872** | Max Blob Flag for Local Builders | ✅ Implemented | PFI | Edgar |
-| **8025** | Optional Proofs (zkboost SSZ) | ✅ Implemented ([#6361]) | CFI | |
-| **8159** | eth/71 Block Access List Exchange | ✅ Implemented | SFI | |
+| **8025** | Optional Execution Proofs | ✅ Implemented ([#6361], #6516, #6549, #6560) | Hegotá PFI ([EIP-8081]) | |
 
-### Not Implemented
+> **8025 note:** Stagnant on eips.ethereum.org and listed as PFI for Hegotá in [EIP-8081]. ethrex code paths exist (zkboost SSZ); status may shift to Hegotá-only.
 
-| EIP | Title | Priority | Notes |
-|-----|-------|----------|-------|
-| **2780** | Reduce Intrinsic Transaction Gas | Low | No other client started |
-| **7904** | General Repricing | Low | Nethermind draft #9619 only |
-| **8038** | State-Access Gas Cost Update | Low | No other client started |
-| **7997** | Deterministic Factory Predeploy | Low | No other client started |
-| **8070** | Sparse Blobpool | Low | No other client started |
-| **7610** | Revert Creation on Non-empty Storage | Low | PFI |
+### Not Implemented — Amsterdam EL candidates
+
+CFI per [EIP-7773] (not PFI as previously labelled):
+
+| EIP | Title | SFI/CFI | Notes |
+|-----|-------|---------|-------|
+| **2780** | Reduce Intrinsic Transaction Gas (21000→4500) | CFI | No other client started |
+| **7904** | General Repricing | CFI | Nethermind draft #9619 only |
+| **8038** | State-Access Gas Cost Update | CFI | No other client started |
+| **7997** | Deterministic Factory Predeploy | CFI | No other client started |
+| **8070** | Sparse Blobpool | CFI | No other client started |
+| **7610** | Revert Creation on Non-empty Storage | PFI | Confirmed PFI in [EIP-7773] |
+| **7979** | Call/Return Opcodes | PFI | |
+| **8163** | Reserve Opcode | PFI | |
+
+### Amsterdam EL CFI candidates (not yet evaluated)
+
+Not in ethrex; need triage per ACDE outcomes:
+
+| EIP | Title | SFI/CFI |
+|-----|-------|---------|
+| **7688** | Consensus structures | CFI |
+| **7975** | Networking | CFI |
+| **8045** | Core | CFI |
+| **8061** | Core | CFI |
+| **8080** | Core | CFI |
+| **8136** | Networking | CFI |
+| **8246** | Core | CFI |
+
+### CL-side (informational)
+
+| EIP | Title | SFI/CFI |
+|-----|-------|---------|
+| **7732** | Enshrined Proposer-Builder Separation (ePBS) | SFI (CL headliner) |
+
+### Notable DFI
+
+Declined from Glamsterdam per [EIP-7773]: 47 EIPs including **EIP-7805 (FOCIL)**, EIP-7692 (EOF), EIP-7937 (64-bit EVM). FOCIL re-targeted at Hegotá.
 
 ---
 
@@ -127,30 +157,37 @@ Docker: `bal-devnet-7` not in [`ethpandaops/eth-client-docker-image-builder/bran
 
 ---
 
-## Ongoing: EIP Evaluation
+## Next Fork: Hegotá (H2 2026)
 
-Read and evaluate new EIPs proposed for Glamsterdam:
+Post-Glamsterdam fork. CL = **Heka**, EL = **Bogotá** (some secondary press uses "Heze/Hegota"; primary source: [EIP-8081]).
 
-- [**EL PFI'd EIPs (Ansgar)**](https://notes.ethereum.org/@ansgar/glamsterdam-el-pfi-eips) - Live progress
+### SFI
 
-Key areas to watch:
-- Gas repricing changes (significant economic impact)
-- Any new opcodes beyond current set
-- State growth mitigations
+| EIP | Title | Notes |
+|-----|-------|-------|
+| **7805** | FOCIL — Fork-choice enforced Inclusion Lists | **Headliner.** Promoted to SFI after DFI from Glamsterdam |
 
----
+### CFI
 
-## Next Fork: Hegota (H2 2026)
+| EIP | Title | Notes |
+|-----|-------|-------|
+| **8141** | Frame Transaction (Account Abstraction) | Lost headliner debate; retained as non-headliner CFI |
 
-Post-Glamsterdam, execution layer = **Bogota**.
+### PFI
 
-| Topic | Details |
-|-------|---------|
-| **FOCIL (EIP-7805)** | Inclusion lists for censorship resistance |
-| **Deferred EIPs** | Whatever doesn't make Glamsterdam |
-| **BPO sequence** | `bpo1_time`..`bpo5_time` already defined in `ChainConfig` |
+| EIP | Title |
+|-----|-------|
+| **4758** | Deactivate `SELFDESTRUCT` |
+| **7709** | Read `BLOCKHASH` from storage and update cost (presented ACDE #236) |
+| **7716** | Anti-correlation attestation penalties |
+| **8025** | Optional Execution Proofs (ethrex already has code paths; see Amsterdam table) |
+| **8188** | State Tiering by Write Age |
+| **8205** | Withdrawal credentials preregistration |
+| **8253** | Bump nonce of zero-nonce storage accounts (presented ACDE #236) |
 
-> Headliner EIP TBD.
+### Infrastructure
+
+`bpo1_time`..`bpo5_time` already defined in `ChainConfig` (see Fork Infrastructure above).
 
 ---
 
@@ -168,8 +205,13 @@ Meetings on **Thursdays**. Agendas/notes at [ethereum/pm](https://github.com/eth
 
 ## Links
 
-- [EIP-7773 Meta Glamsterdam](https://eips.ethereum.org/EIPS/eip-7773)
+- [EIP-7773 Meta Glamsterdam][EIP-7773]
+- [EIP-8081 Meta Hegotá (Heka/Bogotá)][EIP-8081]
 - [EIP-7928 Block-Level Access Lists](https://eips.ethereum.org/EIPS/eip-7928)
+- [EIP-7732 ePBS (Glamsterdam CL headliner)](https://eips.ethereum.org/EIPS/eip-7732)
+- [EIP-7805 FOCIL (Hegotá SFI)](https://eips.ethereum.org/EIPS/eip-7805)
+- [Ansgar — Glamsterdam EL PFI'd EIPs](https://notes.ethereum.org/@ansgar/glamsterdam-el-pfi-eips)
+- [ACDE #236 — May 7 2026](https://github.com/ethereum/pm/issues/2033)
 - [qu0b's bal-devnet-7 spec sheet](https://gist.github.com/qu0b/f3f905cadee4464a1a941838a5a5fadb)
 - [Upstream tracker — execution-specs#2804](https://github.com/ethereum/execution-specs/issues/2804)
 - [ethrex docs/eip.md](../eip.md) — EIP tracking
@@ -183,3 +225,5 @@ Meetings on **Thursdays**. Agendas/notes at [ethereum/pm](https://github.com/eth
 [#6361]: https://github.com/lambdaclass/ethrex/pull/6361
 [#6583]: https://github.com/lambdaclass/ethrex/issues/6583
 [EIPs#11699]: https://github.com/ethereum/EIPs/pull/11699
+[EIP-7773]: https://eips.ethereum.org/EIPS/eip-7773
+[EIP-8081]: https://eips.ethereum.org/EIPS/eip-8081
