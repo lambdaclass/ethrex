@@ -41,6 +41,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -2793,7 +2794,7 @@ impl Store {
         // unnecessarily fall back to the trie when the cursor sits inside an
         // account's storage sweep (the account leaf is already in FKV at that
         // point; see `flatkeyvalue_generator`).
-        let fkv_cursor = Nibbles::from_hex(last_written);
+        let fkv_cursor: &[u8] = last_written.as_slice();
         for (i, path) in leaf_paths.iter().enumerate() {
             if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
                 if !value.is_empty() {
@@ -2801,8 +2802,7 @@ impl Store {
                 }
                 continue;
             }
-            let path_nibbles = Nibbles::from_hex(path.clone());
-            if fkv_cursor >= path_nibbles {
+            if fkv_cursor >= path.as_slice() {
                 fkv_indices.push(i);
             } else {
                 trie_indices.push(i);
@@ -2827,10 +2827,20 @@ impl Store {
 
         if !trie_indices.is_empty() {
             // Fall back to the regular trie path for any addresses whose path
-            // hasn't been swept by the FKV generator yet.
+            // hasn't been swept by the FKV generator yet. Parallelized to
+            // recover the per-address fan-out the pre-batch `par_iter` path
+            // had, which matters during initial sync when most addresses
+            // miss FKV.
             let state_trie = self.open_state_trie(state_root)?;
-            for &i in &trie_indices {
-                results[i] = self.get_account_state_from_trie(&state_trie, addresses[i])?;
+            let fetched: Result<Vec<(usize, Option<AccountState>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    self.get_account_state_from_trie(&state_trie, addresses[i])
+                        .map(|s| (i, s))
+                })
+                .collect();
+            for (i, s) in fetched? {
+                results[i] = s;
             }
         }
 
