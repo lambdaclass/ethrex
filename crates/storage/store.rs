@@ -2928,6 +2928,53 @@ impl Store {
         Ok(header)
     }
 
+    /// Scan **all** stored headers (canonical or not) looking for one whose
+    /// `state_root` matches `target`. Returns `(block_number, block_hash)` of
+    /// the first match, or `None` if no header has that state root.
+    ///
+    /// This is a recovery-only operation: it's O(stored headers) and may take
+    /// minutes on a full chain. Used by `regenerate_head_state` as a last
+    /// resort when the on-disk top trie root doesn't correspond to any block
+    /// reachable via canonical chain walks.
+    pub fn find_block_by_state_root(
+        &self,
+        target: H256,
+    ) -> Result<Option<(BlockNumber, BlockHash)>, StoreError> {
+        let read = self.backend.begin_read()?;
+        let iter = read.prefix_iterator(HEADERS, &[])?;
+        let mut scanned: u64 = 0;
+        for entry in iter {
+            let (key_bytes, value_bytes) = entry?;
+            scanned = scanned.saturating_add(1);
+            if scanned % 1_000_000 == 0 {
+                debug!("find_block_by_state_root: scanned {scanned} headers");
+            }
+            let header: BlockHeader = match BlockHeaderRLP::from_bytes(value_bytes.into_vec()).to()
+            {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            if header.state_root != target {
+                continue;
+            }
+            let block_hash = H256::decode(&key_bytes)?;
+            // Translate hash → number via BLOCK_NUMBERS (might not be present
+            // for non-canonical headers; fall back to header.number).
+            let number = match read.get(BLOCK_NUMBERS, &key_bytes)? {
+                Some(b) => {
+                    let arr: [u8; 8] = b
+                        .as_slice()
+                        .try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".into()))?;
+                    BlockNumber::from_le_bytes(arr)
+                }
+                None => header.number,
+            };
+            return Ok(Some((number, block_hash)));
+        }
+        Ok(None)
+    }
+
     pub fn last_written(&self) -> Result<Vec<u8>, StoreError> {
         let last_computed_flatkeyvalue = self
             .last_computed_flatkeyvalue

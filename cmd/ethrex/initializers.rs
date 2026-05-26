@@ -913,14 +913,31 @@ pub async fn regenerate_head_state(
                     return Ok(());
                 }
             }
+            // Last resort: scan *all* stored headers (canonical or not) for
+            // a state_root match. This is slow but exhaustive — catches the
+            // case where the matching block is on a non-canonical branch we
+            // executed but never canonicalized, or sits beyond the forward
+            // walk's canonical-map coverage.
+            info!(
+                "regenerate_head_state: canonical walks exhausted (back {}, forward {} checked / {} present); \
+                 scanning all stored headers for state_root {:?} — this may take several minutes",
+                MAX_BACK_WALK, forward_checked, forward_present, actual_root_hash,
+            );
+            if let Some((number, hash)) = store.find_block_by_state_root(actual_root_hash)? {
+                info!(
+                    "regenerate_head_state: found matching block via full scan; \
+                     setting HEAD to block {} (hash {:?}, state_root {:?})",
+                    number, hash, actual_root_hash
+                );
+                store
+                    .forkchoice_update(vec![(number, hash)], number, hash, None, None)
+                    .await?;
+                return Ok(());
+            }
             return Err(eyre::eyre!(
-                "regenerate_head_state: walked back {} blocks from HEAD={}, forward {} blocks \
-                 ({} canonical entries present) without finding the committed state root {:?}. \
-                 Run `ethrex removedb` and restart node",
-                MAX_BACK_WALK,
-                head_block_number,
-                forward_checked,
-                forward_present,
+                "regenerate_head_state: full header scan also found no block with state root {:?}. \
+                 The on-disk top trie root does not match any stored header — run `ethrex removedb` \
+                 and restart node",
                 actual_root_hash,
             ));
         }
