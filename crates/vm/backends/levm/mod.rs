@@ -1586,14 +1586,22 @@ impl LEVM {
             let acct = &bal.accounts()[bal_acct_idx];
 
             // Balance: if BAL has no change at bal_idx, execution must not have changed it
-            if !has_exact_change_balance(&acct.balance_changes, bal_idx) {
-                let seeded_pos = acct
-                    .balance_changes
-                    .partition_point(|c| c.block_access_index <= seed_idx);
-                let seeded = if seeded_pos > 0 {
-                    acct.balance_changes[seeded_pos - 1].post_balance
+            // Fused partition_point: since seed_idx == bal_idx - 1, the position
+            // where entries with idx < bal_idx end is identical to the position
+            // where entries with idx <= seed_idx end. One binary search answers
+            // both "is there an exact change at bal_idx?" and "what is the last
+            // seeded value before bal_idx?".
+            let pos = acct
+                .balance_changes
+                .partition_point(|c| c.block_access_index < bal_idx);
+            let has_exact_at_bal = acct
+                .balance_changes
+                .get(pos)
+                .is_some_and(|c| c.block_access_index == bal_idx);
+            if !has_exact_at_bal {
+                let seeded = if pos > 0 {
+                    acct.balance_changes[pos - 1].post_balance
                 } else {
-                    // No BAL balance entry before this tx — value came from system_seed or store.
                     system_seed
                         .get(addr)
                         .map(|a| a.info.balance)
@@ -1614,12 +1622,16 @@ impl LEVM {
             }
 
             // Nonce: same pattern
-            if !has_exact_change_nonce(&acct.nonce_changes, bal_idx) {
-                let seeded_pos = acct
-                    .nonce_changes
-                    .partition_point(|c| c.block_access_index <= seed_idx);
-                let seeded = if seeded_pos > 0 {
-                    acct.nonce_changes[seeded_pos - 1].post_nonce
+            let pos = acct
+                .nonce_changes
+                .partition_point(|c| c.block_access_index < bal_idx);
+            let has_exact_at_bal = acct
+                .nonce_changes
+                .get(pos)
+                .is_some_and(|c| c.block_access_index == bal_idx);
+            if !has_exact_at_bal {
+                let seeded = if pos > 0 {
+                    acct.nonce_changes[pos - 1].post_nonce
                 } else {
                     system_seed
                         .get(addr)
@@ -1643,12 +1655,16 @@ impl LEVM {
             // Code: same pattern — use keccak256 of the raw bytes directly to
             // avoid reconstructing a full Code object (seed_db_from_bal already
             // did that work; here we only need the hash for comparison).
-            if !has_exact_change_code(&acct.code_changes, bal_idx) {
-                let seeded_pos = acct
-                    .code_changes
-                    .partition_point(|c| c.block_access_index <= seed_idx);
-                let seeded_hash = if seeded_pos > 0 {
-                    let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
+            let pos = acct
+                .code_changes
+                .partition_point(|c| c.block_access_index < bal_idx);
+            let has_exact_at_bal = acct
+                .code_changes
+                .get(pos)
+                .is_some_and(|c| c.block_access_index == bal_idx);
+            if !has_exact_at_bal {
+                let seeded_hash = if pos > 0 {
+                    let seeded_code = &acct.code_changes[pos - 1].new_code;
                     if seeded_code.is_empty() {
                         *EMPTY_KECCACK_HASH
                     } else {
@@ -1683,19 +1699,21 @@ impl LEVM {
                     .partition_point(|sc| sc.slot < slot_u256);
                 if pos < acct.storage_changes.len() && acct.storage_changes[pos].slot == slot_u256 {
                     let sc = &acct.storage_changes[pos];
-                    if !has_exact_change_storage(&sc.slot_changes, bal_idx) {
-                        let seeded_pos = sc
-                            .slot_changes
-                            .partition_point(|c| c.block_access_index <= seed_idx);
-                        if seeded_pos > 0 {
-                            let seeded = sc.slot_changes[seeded_pos - 1].post_value;
-                            if value != seeded {
-                                return Err(BalValidationError::Mismatch(format!(
-                                    "account {addr:?} storage slot {slot_u256} changed by \
-                                     execution ({value}) but BAL has no change at index \
-                                     {bal_idx} (seeded={seeded})"
-                                )));
-                            }
+                    let slot_pos = sc
+                        .slot_changes
+                        .partition_point(|c| c.block_access_index < bal_idx);
+                    let has_exact_at_bal = sc
+                        .slot_changes
+                        .get(slot_pos)
+                        .is_some_and(|c| c.block_access_index == bal_idx);
+                    if !has_exact_at_bal && slot_pos > 0 {
+                        let seeded = sc.slot_changes[slot_pos - 1].post_value;
+                        if value != seeded {
+                            return Err(BalValidationError::Mismatch(format!(
+                                "account {addr:?} storage slot {slot_u256} changed by \
+                                 execution ({value}) but BAL has no change at index \
+                                 {bal_idx} (seeded={seeded})"
+                            )));
                         }
                     }
                 }
