@@ -601,7 +601,7 @@ async fn run_stateless_from_fixture(
                 format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
             })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number, false)
+            .into_execution_witness(*chain_config, block_number)
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;

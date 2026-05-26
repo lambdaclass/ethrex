@@ -468,9 +468,7 @@ fn validate_eip8025_canonical_execution(
         crypto.as_ref(),
     )?;
 
-    // EIP-8025 stateless validation must reject witnesses that omit any
-    // bytecode the VM reads, instead of defaulting missing codes to empty.
-    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number, true)?;
+    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number)?;
 
     validate_eip8025_amsterdam_execution(
         &stateless_input.new_payload_request,

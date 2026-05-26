@@ -1543,7 +1543,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            strict_codes: false,
         })
     }
 
@@ -1778,7 +1777,6 @@ impl Blockchain {
             chain_config: self.storage.get_chain_config(),
             state_trie_root,
             storage_trie_roots,
-            strict_codes: false,
         })
     }
 

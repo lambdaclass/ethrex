@@ -29,13 +29,6 @@ pub struct GuestProgramState {
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
     pub codes_hashed: BTreeMap<H256, Code>,
-    /// If true, witness-incomplete reads (a code hash the VM looks up that is
-    /// not present in `codes_hashed`) surface as errors. Used by the
-    /// canonical EIP-8025 stateless validation path where the witness must
-    /// contain every byte of code the VM touches. Lenient `false` is the
-    /// default used by the `debug_executionWitness` consumer paths where the
-    /// witness is permitted to omit irrelevant codes.
-    pub strict_codes: bool,
     /// Map of block numbers to their corresponding block headers.
     /// The block headers are pushed to the zkVM RLP-encoded, and then
     /// decoded and stored in this map during guest program execution,
@@ -88,10 +81,6 @@ pub struct ExecutionWitness {
     /// keyed by the keccak256 hash of the account address.
     #[rkyv(with = MapKV<H256Wrapper, Identity>)]
     pub storage_trie_roots: BTreeMap<H256, Node>,
-    /// Whether to fail on witness-incomplete code reads (missing bytecode for
-    /// a code hash the VM looks up). See [`GuestProgramState::strict_codes`].
-    #[serde(default)]
-    pub strict_codes: bool,
 }
 
 /// RPC-friendly representation of an execution witness.
@@ -151,15 +140,10 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
 impl RpcExecutionWitness {
     /// Convert an RPC execution witness into the internal [`ExecutionWitness`]
     /// format by rebuilding trie structures from the flat node list.
-    ///
-    /// `strict_codes` selects between the lenient `debug_executionWitness`
-    /// behavior (missing bytecode defaults to empty) and the canonical
-    /// EIP-8025 stateless behavior (missing bytecode is a hard error).
     pub fn into_execution_witness(
         self,
         chain_config: ChainConfig,
         first_block_number: u64,
-        strict_codes: bool,
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         if first_block_number == 0 {
             return Err(GuestProgramStateError::Custom(
@@ -248,7 +232,6 @@ impl RpcExecutionWitness {
             block_headers_bytes: self.headers.into_iter().map(|b| b.to_vec()).collect(),
             state_trie_root,
             storage_trie_roots,
-            strict_codes,
         })
     }
 }
@@ -440,7 +423,6 @@ impl GuestProgramState {
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
             verified_storage_roots: BTreeMap::new(),
-            strict_codes: value.strict_codes,
         })
     }
 }
@@ -645,30 +627,17 @@ impl GuestProgramState {
 
     /// Retrieves the account code for a specific account.
     ///
-    /// In lenient mode (default), a missing code defaults to empty: the
-    /// `debug_executionWitness` consumer paths emit witnesses that omit codes
-    /// the VM doesn't actually touch, so missing bytecode is informational.
-    /// In strict mode (canonical EIP-8025 stateless validation), the witness
-    /// is required to contain every byte of code the VM reads, so a missing
-    /// entry surfaces as [`GuestProgramStateError::MissingBytecode`].
+    /// A missing code hash is always an error: ethrex's own witness producers
+    /// include every byte of code the VM reads, and EIP-8025 stateless
+    /// validation requires the same.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(code.clone()),
-            None => {
-                if self.strict_codes {
-                    return Err(GuestProgramStateError::MissingBytecode(code_hash));
-                }
-                // Sidenote: logger doesn't work inside SP1, that's why we use println!
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
-                    hex::encode(code_hash)
-                );
-                Ok(Code::default())
-            }
-        }
+        self.codes_hashed
+            .get(&code_hash)
+            .cloned()
+            .ok_or(GuestProgramStateError::MissingBytecode(code_hash))
     }
 
     /// Retrieves code metadata (length) for a specific code hash.
@@ -677,26 +646,15 @@ impl GuestProgramState {
         &self,
         code_hash: H256,
     ) -> Result<CodeMetadata, GuestProgramStateError> {
-        use crate::constants::EMPTY_KECCACK_HASH;
-
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
-        match self.codes_hashed.get(&code_hash) {
-            Some(code) => Ok(CodeMetadata {
+        self.codes_hashed
+            .get(&code_hash)
+            .map(|code| CodeMetadata {
                 length: code.bytecode.len() as u64,
-            }),
-            None => {
-                if self.strict_codes {
-                    return Err(GuestProgramStateError::MissingBytecode(code_hash));
-                }
-                println!(
-                    "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
-                    hex::encode(code_hash)
-                );
-                Ok(CodeMetadata { length: 0 })
-            }
-        }
+            })
+            .ok_or(GuestProgramStateError::MissingBytecode(code_hash))
     }
 
     /// When executing multiple blocks in the L2 it happens that the headers in block_headers correspond to the same block headers that we have in the blocks array. The main goal is to hash these only once and set them in both places.
