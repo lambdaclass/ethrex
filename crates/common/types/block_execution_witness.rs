@@ -139,10 +139,9 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
 
 impl RpcExecutionWitness {
     /// Convert an RPC execution witness into the internal [`ExecutionWitness`]
-    /// format by rebuilding trie structures from the flat node list. Takes
-    /// pre-decoded headers (see [`decode_witness_headers`]) so callers that
-    /// already paid the RLP decode cost — e.g. to run
-    /// [`validate_witness_headers_chain`] — don't pay it twice.
+    /// format by rebuilding trie structures from the flat node list. `decoded_headers`
+    /// is passed in so we don't re-RLP-decode the headers that the caller already
+    /// produced (typically via [`decode_witness_headers`]).
     pub fn into_execution_witness(
         self,
         chain_config: ChainConfig,
@@ -218,11 +217,7 @@ impl RpcExecutionWitness {
     }
 }
 
-/// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`. Centralised
-/// so callers that need the decoded headers more than once (e.g. for
-/// `validate_witness_headers_chain` followed by
-/// [`RpcExecutionWitness::into_execution_witness_with_decoded_headers`]) can
-/// share a single decode pass instead of paying the RLP cost repeatedly.
+/// RLP-decode the raw header byte slices into a `Vec<BlockHeader>`.
 pub fn decode_witness_headers<B: AsRef<[u8]>>(
     headers_bytes: &[B],
 ) -> Result<Vec<BlockHeader>, GuestProgramStateError> {

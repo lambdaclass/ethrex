@@ -7,10 +7,8 @@ use std::path::Path;
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
 // test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
-// test-stateless reads zkevm@v0.4.1 (the EIP-8025 canonical bundle that ships
-// both `executionWitness` and `statelessInputBytes`) from a separate
-// `vectors_zkevm/` so its bal-derived base never overlays the snobal fixtures
-// used by the other suites.
+// test-stateless reads zkevm@v0.4.1 (EIP-8025 canonical bundle) from a separate
+// `vectors_zkevm/` so the bundles don't overlay each other.
 #[cfg(feature = "stateless")]
 const TEST_FOLDER: &str = "vectors_zkevm/";
 #[cfg(not(feature = "stateless"))]
@@ -38,12 +36,10 @@ const EXTRA_SKIPS: &[&str] = &[
 ];
 #[cfg(feature = "stateless")]
 const EXTRA_SKIPS: &[&str] = &[
-    // zkevm@v0.4.1 fixture bug: the d13/d14 variants STATICCALL the contract at
-    // 0xbea0000000000000000000000000000000000000, but the witness omits that
-    // bytecode (hash 0x26f1e82a..747f). Per EIP-8025 strict mode that should
-    // make `valid = 0` (matching the dedicated validation_codes_missing_*
-    // fixtures in the same bundle), but the fixture declares `valid = 1`.
-    // Re-enable once the upstream fixture is regenerated.
+    // zkevm@v0.4.1 inconsistency: witness includes 0xbea0...'s account leaf
+    // (codehash 0x26f1..747f) but omits the bytecode, so strict mode fails
+    // with `MissingBytecode`. d9/d10 work by coincidence (leaf also missing →
+    // fallback to empty account). Re-enable once upstream regenerates.
     "sstore_change_from_external_call_in_init_code[fork_Amsterdam-blockchain_test_from_state_test-d13",
     "sstore_change_from_external_call_in_init_code[fork_Amsterdam-blockchain_test_from_state_test-d14",
 ];

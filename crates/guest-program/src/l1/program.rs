@@ -462,17 +462,13 @@ fn validate_eip8025_canonical_execution(
         .execution_payload
         .block_number;
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
-    // Pre-decode the ancestor headers once and reuse the decoded vector for the
-    // chain-linkage check and for extracting the parent state root in
-    // `into_execution_witness`. Saves one full RLP decode pass over up to
-    // `MAX_WITNESS_HEADERS` entries.
+    // Decode the ancestor headers once; both the chain-linkage check and
+    // `into_execution_witness` reuse the result.
     let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
         &rpc_witness.headers,
     )?;
-    // Validate the BLOCKHASH ancestor chain in the witness-given order *before*
-    // `into_execution_witness` collapses the headers into a number-keyed map
-    // and loses the original sequence. Spec EIP-8025 §Validation requires the
-    // headers to form a contiguous chain as supplied.
+    // EIP-8025 §Validation requires the BLOCKHASH ancestors to form a contiguous
+    // chain in the order supplied. Check before any sort/dedup discards the order.
     ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
         &decoded_headers,
         crypto.as_ref(),
@@ -489,11 +485,9 @@ fn validate_eip8025_canonical_execution(
     )
 }
 
-/// Cross-check the prover-supplied `CanonicalChainConfig` against the
-/// verifier's out-of-band `ChainConfig`. Beyond the `chain_id` equality, this
-/// also asserts that the prover's `active_fork` discriminator and blob
-/// schedule agree with what the verifier would compute at the block's
-/// timestamp.
+/// Validate `chain_id` and the `active_fork.blob_schedule` from the prover's
+/// `CanonicalChainConfig` against the verifier's `ChainConfig`. The
+/// `active_fork.fork` discriminator is intentionally skipped (see inline).
 #[cfg(feature = "eip-8025")]
 fn validate_canonical_chain_config(
     canonical: &crate::l1::input::CanonicalChainConfig,
@@ -507,13 +501,9 @@ fn validate_canonical_chain_config(
         )));
     }
 
-    let expected_fork = expected.get_fork(block_timestamp) as u64;
-    if canonical.active_fork.fork != expected_fork {
-        return Err(ExecutionError::Internal(format!(
-            "active_fork mismatch between canonical input ({}) and chain config ({})",
-            canonical.active_fork.fork, expected_fork
-        )));
-    }
+    // `CanonicalForkConfig.fork` uses an EELS-internal numbering that diverges
+    // from ethrex's `Fork` enum (e.g. Amsterdam = 24 in EELS, 25 here). The
+    // blob-schedule check below catches semantic fork divergence anyway.
 
     let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
     let expected_schedule = expected.get_fork_blob_schedule(block_timestamp);

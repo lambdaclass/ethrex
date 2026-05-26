@@ -115,13 +115,9 @@ pub async fn run_ef_test(
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
-        // If the fixture provides an executionWitness *or* a statelessInputBytes
-        // (zkevm format), use it directly instead of regenerating the witness
-        // from blockchain execution. We must also gate on `statelessInputBytes`
-        // because canonical-only fixtures may ship without `executionWitness`,
-        // and we want them routed through `run_stateless_from_fixture` (which
-        // dispatches to the canonical wire path) rather than the legacy
-        // `re_run_stateless` regeneration path.
+        // Use the fixture's witness directly when available; otherwise regenerate
+        // by re-running execution. Either `executionWitness` or `statelessInputBytes`
+        // counts — canonical-only fixtures may ship without `executionWitness`.
         #[cfg(feature = "stateless")]
         {
             let has_fixture_witness = test.blocks.iter().any(|bf| {
