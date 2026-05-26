@@ -664,9 +664,10 @@ fn null_id_error(err: RpcErr) -> Value {
     })
 }
 
-/// Reject empty and oversize batches before they reach dispatch. Returns
-/// `Some(error_value)` to short-circuit, or `None` to proceed.
-fn reject_invalid_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
+/// Validate a batch envelope. Returns `Some(error_value)` for empty or
+/// oversize batches (short-circuits dispatch), `None` if the request is
+/// ok to process.
+fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
     let RpcRequestWrapper::Multiple(requests) = wrapper else {
         return None;
     };
@@ -701,7 +702,7 @@ pub(crate) async fn handle_http_request(
         }
     };
 
-    if let Some(err) = reject_invalid_batch(&wrapper) {
+    if let Some(err) = validate_batch(&wrapper) {
         return Ok(Json(err));
     }
 
@@ -738,7 +739,7 @@ pub async fn handle_authrpc_request(
 
     // Reject empty / oversize batches before any auth or dispatch work so a
     // 100k-request body can't burn JWT crypto or memory.
-    if let Some(err) = reject_invalid_batch(&wrapper) {
+    if let Some(err) = validate_batch(&wrapper) {
         return Ok(Json(err));
     }
 
