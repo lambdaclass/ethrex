@@ -1,10 +1,10 @@
 use ethrex_common::types::block_access_list::{AccountChanges, BlockAccessList};
 use serde_json::{Value, json};
 
-use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
+use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifierOrHash};
 
 pub struct BlockAccessListRequest {
-    pub block_id: BlockIdentifier,
+    pub block: BlockIdentifierOrHash,
 }
 
 impl RpcHandler for BlockAccessListRequest {
@@ -15,20 +15,24 @@ impl RpcHandler for BlockAccessListRequest {
         if params.is_empty() {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         }
-        let block_id = BlockIdentifier::parse(params[0].clone(), 0)?;
-        Ok(BlockAccessListRequest { block_id })
+        let block = BlockIdentifierOrHash::parse(params[0].clone(), 0)?;
+        Ok(BlockAccessListRequest { block })
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         // Per execution-apis, unknown blocks map to the `notFound` schema (null).
-        let Some(block_number) = self.block_id.resolve_block_number(&context.storage).await? else {
-            return Ok(Value::Null);
+        let block_hash = match &self.block {
+            BlockIdentifierOrHash::Hash(h) => *h,
+            BlockIdentifierOrHash::Identifier(id) => {
+                let Some(block_number) = id.resolve_block_number(&context.storage).await? else {
+                    return Ok(Value::Null);
+                };
+                let Some(header) = context.storage.get_block_header(block_number)? else {
+                    return Ok(Value::Null);
+                };
+                header.hash()
+            }
         };
-
-        let Some(header) = context.storage.get_block_header(block_number)? else {
-            return Ok(Value::Null);
-        };
-        let block_hash = header.hash();
 
         // Fast path: serve from the BAL store populated at block import.
         // Avoids re-executing the block when it's already known.
