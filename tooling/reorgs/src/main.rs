@@ -61,6 +61,9 @@ async fn main() {
         ("deep_reorg_beyond_128", |s| {
             Box::pin(test_deep_reorg_beyond_128(s))
         }),
+        ("deep_reorg_side_chain_replay", |s| {
+            Box::pin(test_deep_reorg_side_chain_replay(s))
+        }),
     ];
 
     for (name, scenario_fn) in all_scenarios {
@@ -489,6 +492,15 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
 ///      hence `reorg_depth = 150`. The old `REORG_DEPTH_LIMIT = 128` would
 ///      have returned `TooDeepReorg`; PR 4's finality-bounded ceiling
 ///      (`latest - finalized_number = 150`) accepts it.
+///
+/// Chain B is salted (`with_salt(1)`) so its blocks diverge from chain A's
+/// from block 1 onward. Without the salt the two chains would produce
+/// byte-identical blocks (payload attributes are deterministic from the
+/// parent hash), `engine_newPayload(chain_b_block_N)` would short-circuit on
+/// the chain-A header already in storage, no layer would be added to the
+/// cache after the deep-reorg overlay install, and every subsequent FCU would
+/// loop back into `reorg_apply_deep` until the simulator panicked on
+/// `Syncing`. See the `salt` field on `Chain` for the longer explanation.
 async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
     let node = simulator.start_node().await;
@@ -514,7 +526,7 @@ async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
     // the cap-check at reorg_depth = 150 (latest_A - link_to_genesis = 150).
     // Pre-PR-4 this would return TooDeepReorg{ limit: 128 } and the test
     // would panic on the build_payload assertion.
-    let mut chain_b = base_chain.fork();
+    let mut chain_b = base_chain.fork().with_salt(1);
     info!("Building chain B (200 blocks, forks at genesis -- first FCU is the 150-deep reorg)");
     for i in 0..200usize {
         chain_b = node.build_payload(chain_b).await;
@@ -528,5 +540,103 @@ async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
         canonical_baseline = 150,
         side_chain_len = chain_b.len() - 1,
         "Deep reorg beyond legacy 128-block cap accepted -- test passed"
+    );
+}
+
+/// Exercises the deep-reorg REPLAY loop with `side_chain_len >> 0`.
+///
+/// `deep_reorg_beyond_128` validates the cap-lift policy but its FCU lands on
+/// genesis itself, so `reorg_apply_deep` runs with `side_chain_len = 0` (head
+/// is the pivot, no blocks to replay). This scenario complements it by driving
+/// the replay loop and the overlay-backed cascade for 200 sequential
+/// `add_block` calls.
+///
+/// Setup uses two nodes because building a competing chain on the same node
+/// would FCU each new tip canonical, defeating the "non-canonical head" setup
+/// the replay loop needs:
+///
+///   1. Node 0 builds chain A to height `COMMON = 100`, each block FCU'd
+///      canonical. Node 1 receives those same blocks via `submit_block`
+///      (re-execution; identical to node 0 because the block headers carry
+///      their own fee recipient / state root) and FCUs node 1's canonical to
+///      height `COMMON`.
+///   2. Node 1 forks chain B from height `COMMON` with `salt = 1` and extends
+///      it by 200 blocks, each FCU'd canonical on node 1 only.
+///   3. Node 0 extends chain A by 200 more blocks (heights `COMMON + 1 ..= 300`),
+///      each FCU'd canonical on node 0 only. After this, both nodes have a
+///      300-block canonical chain, divergent past height `COMMON`.
+///   4. Node 0 receives chain B's divergent blocks (`COMMON + 1 ..= 300`) via
+///      `submit_block` only ; no per-block FCU. Each block's parent state has
+///      been committed past on node 0's disk and isn't in node 0's layer cache,
+///      so `engine_newPayload` takes the "parent state not materialized" branch
+///      and stashes the block as ACCEPTED in HEADERS + BODIES without execution.
+///   5. Node 0 FCUs chain B's tip. `apply_fork_choice` sees `head_is_canonical
+///      = false`, `reorg_depth = 200`, and `has_state_root(tip) = false`,
+///      returns `StateNotReachable`, and `reorg_apply_deep` takes over with
+///      `pivot = COMMON`, `side_chain_len = 200`. The replay loop calls
+///      `Blockchain::add_block` 200 times against overlay-backed reads, and the
+///      first commit folds the overlay into disk atomically via the Section 9
+///      reconciliation.
+async fn test_deep_reorg_side_chain_replay(simulator: Arc<Mutex<Simulator>>) {
+    const COMMON: usize = 100;
+    const DIVERGENT: usize = 200;
+
+    let mut simulator = simulator.lock().await;
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Phase 1: node 0 builds the common prefix canonical.
+    let base_chain = simulator.get_base_chain();
+    let chain_at_common = node0.extend_chain(base_chain.fork(), COMMON).await;
+    info!(common = COMMON, "Common prefix built canonical on node 0");
+
+    // Phase 2: replicate the common prefix onto node 1 without re-building it
+    // (re-building on node 1 would set a different fee_recipient and produce a
+    // different state root, breaking the "shared prefix" invariant). Skip the
+    // genesis block when iterating ; it's implicitly present on every node.
+    for block in chain_at_common.blocks_from(1) {
+        node1.submit_block(block).await;
+    }
+    node1.update_forkchoice(&chain_at_common).await;
+    info!("Common prefix replayed onto node 1 and made canonical");
+
+    // Phase 3: build chain B (salted) on node 1. Each build_payload FCUs
+    // node 1's canonical forward ; this never touches node 0.
+    let chain_b = node1
+        .extend_chain(chain_at_common.fork().with_salt(1), DIVERGENT)
+        .await;
+    info!(tip_height = chain_b.len() - 1, "Chain B built canonical on node 1");
+
+    // Phase 4: extend chain A on node 0 past the common ancestor. After this,
+    // node 0's canonical is 300 blocks long and node 0's layer cache has
+    // committed the oldest layers (default threshold 128) past height COMMON,
+    // so block COMMON's state is no longer reachable from cache or disk.
+    let chain_a = node0.extend_chain(chain_at_common, DIVERGENT).await;
+    info!(tip_height = chain_a.len() - 1, "Chain A extended canonical on node 0");
+
+    // Phase 5: feed chain B's divergent suffix into node 0 via newPayload only,
+    // no FCU. Each block stashes as ACCEPTED (parent state not materialized) ;
+    // node 0's HEADERS / BODIES grow with chain B's tail but the layer cache
+    // is untouched.
+    for block in chain_b.blocks_from(COMMON + 1) {
+        node0.submit_block(block).await;
+    }
+    info!(
+        stashed = DIVERGENT,
+        "Chain B divergent suffix stashed on node 0 (no FCU)"
+    );
+
+    // Phase 6: drive the deep-reorg replay. FCU to chain B's tip ; expect
+    // exactly one reorg_apply_deep firing with side_chain_len = DIVERGENT.
+    info!(
+        expected_depth = DIVERGENT,
+        "FCUing node 0 to chain B tip -- expect reorg_apply_deep side_chain_len = 200"
+    );
+    node0.update_forkchoice(&chain_b).await;
+
+    info!(
+        canonical_baseline = chain_a.len() - 1,
+        side_chain_replay = DIVERGENT,
+        "Deep reorg with side-chain replay accepted -- test passed"
     );
 }
