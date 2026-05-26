@@ -64,7 +64,6 @@ pub fn encode_eip8025(
 
 // ── canonical SSZ schema ───────────────────────────────────────────
 
-
 const MAX_WITNESS_NODES: usize = 1 << 20;
 
 const MAX_WITNESS_CODES: usize = 1 << 16;
@@ -130,7 +129,6 @@ pub enum DecodedEip8025 {
     },
 }
 
-
 impl core::fmt::Debug for DecodedEip8025 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -173,7 +171,6 @@ pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecode
     }
 }
 
-
 fn decode_eip8025_legacy(
     bytes: &[u8],
 ) -> Result<
@@ -204,7 +201,6 @@ fn decode_eip8025_legacy(
 
     Ok((new_payload_request, execution_witness))
 }
-
 
 fn decode_eip8025_canonical(
     bytes: &[u8],
@@ -247,12 +243,10 @@ fn decode_eip8025_canonical(
     Ok((stateless_input, chain_config))
 }
 
-
 #[derive(Debug)]
 pub enum ProgramInputEncodeError {
     Rkyv(String),
 }
-
 
 impl core::fmt::Display for ProgramInputEncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -262,7 +256,6 @@ impl core::fmt::Display for ProgramInputEncodeError {
     }
 }
 
-
 #[derive(Debug)]
 pub enum ProgramInputDecodeError {
     TooShort,
@@ -270,7 +263,6 @@ pub enum ProgramInputDecodeError {
     Rkyv(String),
     UnknownVersion(u8),
 }
-
 
 impl core::fmt::Display for ProgramInputDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {

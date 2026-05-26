@@ -370,8 +370,7 @@ impl From<Fork> for &str {
 
 impl ChainConfig {
     pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
-        self.hegota_time
-            .is_some_and(|time| time <= block_timestamp)
+        self.hegota_time.is_some_and(|time| time <= block_timestamp)
     }
 
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
@@ -1249,11 +1248,26 @@ mod tests {
     #[test]
     fn chain_config_accepts_heze_and_bogota_aliases_for_hegota_time() {
         let cases = [
-            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "hegotaTime": 1700000000}"#, 1700000000_u64),
-            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "hezeTime":   1700000001}"#, 1700000001),
-            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "heze_time": 1700000002}"#, 1700000002),
-            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "bogotaTime": 1700000003}"#, 1700000003),
-            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "bogota_time": 1700000004}"#, 1700000004),
+            (
+                r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "hegotaTime": 1700000000}"#,
+                1700000000_u64,
+            ),
+            (
+                r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "hezeTime":   1700000001}"#,
+                1700000001,
+            ),
+            (
+                r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "heze_time": 1700000002}"#,
+                1700000002,
+            ),
+            (
+                r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "bogotaTime": 1700000003}"#,
+                1700000003,
+            ),
+            (
+                r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "bogota_time": 1700000004}"#,
+                1700000004,
+            ),
         ];
         for (json, expected) in cases {
             let cfg: ChainConfig = serde_json::from_str(json)

@@ -118,7 +118,6 @@ pub fn execution_program_eip8025(
     }
 }
 
-
 fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usize>(
     transactions: &libssz_types::SszList<libssz_types::SszList<u8, MAX_BYTES_PER_TX>, MAX_TXS>,
 ) -> Result<Vec<ethrex_common::types::Transaction>, String> {
@@ -131,7 +130,6 @@ fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usi
         })
         .collect::<Result<Vec<_>, _>>()
 }
-
 
 fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
     withdrawals: &libssz_types::SszList<
@@ -152,7 +150,6 @@ fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
         .collect()
 }
 
-
 fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
     Ok(u64::from_le_bytes(
         bytes[..8]
@@ -160,7 +157,6 @@ fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
             .map_err(|_| "base_fee_per_gas conversion")?,
     ))
 }
-
 
 fn validate_reconstructed_block_hash(
     block: &ethrex_common::types::Block,
@@ -348,7 +344,6 @@ fn validate_versioned_hashes<'a>(
     Ok(())
 }
 
-
 fn canonical_execution_witness_to_rpc(
     witness: CanonicalExecutionWitness,
 ) -> ethrex_common::types::block_execution_witness::RpcExecutionWitness {
@@ -372,7 +367,6 @@ fn canonical_execution_witness_to_rpc(
         headers: witness.headers.iter().map(copy_ssz_bytes).collect(),
     }
 }
-
 
 fn validate_eip8025_canonical_execution(
     stateless_input: CanonicalStatelessInput,
@@ -399,7 +393,6 @@ fn validate_eip8025_canonical_execution(
         crypto,
     )
 }
-
 
 fn validate_eip8025_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
@@ -431,7 +424,6 @@ fn validate_eip8025_execution(
 
     Ok(())
 }
-
 
 fn validate_eip8025_amsterdam_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
