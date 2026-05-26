@@ -55,7 +55,12 @@ impl ExecBackend {
 
         #[cfg(feature = "l2")]
         {
-            ethrex_guest_program::execution::execution_program(input, crypto)
+            // The L2 program takes rkyv-encoded input bytes (matching the guest
+            // entrypoint); serialize the typed input the same way the real
+            // backends do before handing it over.
+            let input_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(&input)
+                .map_err(BackendError::serialization)?;
+            ethrex_guest_program::execution::execution_program(&input_bytes, crypto)
                 .map_err(BackendError::execution)
         }
     }

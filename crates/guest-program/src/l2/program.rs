@@ -11,12 +11,16 @@ use crate::l2::input::ProgramInput;
 use crate::l2::messages::{compute_message_digests, get_batch_messages};
 use crate::l2::output::ProgramOutput;
 
-/// Execute the L2 stateless validation program.
+/// Execute the L2 stateless validation program from its rkyv-encoded input bytes.
 ///
 /// This validates and executes a batch of L2 blocks, verifying state transitions,
 /// message passing, and blob data without access to the full blockchain state.
+///
+/// Takes raw input bytes (rather than a decoded `ProgramInput`) so the guest
+/// entrypoint is uniform with the L1 program, which decodes its own SSZ wire
+/// format internally.
 pub fn execution_program(
-    input: ProgramInput,
+    input_bytes: &[u8],
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, L2ExecutionError> {
     let ProgramInput {
@@ -26,7 +30,8 @@ pub fn execution_program(
         fee_configs,
         blob_commitment,
         blob_proof,
-    } = input;
+    } = rkyv::from_bytes::<ProgramInput, rkyv::rancor::Error>(input_bytes)
+        .map_err(|e| L2ExecutionError::Internal(format!("input deserialization: {e}")))?;
 
     // Execute blocks using the common execution logic
     let BatchExecutionResult {

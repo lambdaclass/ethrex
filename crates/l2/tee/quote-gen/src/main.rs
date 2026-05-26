@@ -45,7 +45,11 @@ fn sign_eip191(msg: &[u8], private_key: &SecretKey) -> Vec<u8> {
 
 fn calculate_transition(input: ProgramInput) -> Result<Vec<u8>, String> {
     let crypto = Arc::new(NativeCrypto);
-    let output = ethrex_guest_program::execution::execution_program(input, crypto)
+    // The L2 program takes rkyv-encoded input bytes (matching the guest
+    // entrypoint); serialize the typed input before handing it over.
+    let input_bytes =
+        rkyv::to_bytes::<rkyv::rancor::Error>(&input).map_err(|e| e.to_string())?;
+    let output = ethrex_guest_program::execution::execution_program(&input_bytes, crypto)
         .map_err(|e| e.to_string())?;
 
     Ok(output.encode())

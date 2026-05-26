@@ -12,6 +12,7 @@ configfs-tsm = "0.0.1"
 tokio = { version = "1.41.1", features = ["full"] }
 hex = "0.4"
 zerocopy = "0.8"
+rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 serde = { version = "<1.0.220", features = ["derive"] }
 # serde >=1.0.220 contains a breaking change for alloy-consensus
 # https://github.com/alloy-rs/alloy/issues/2876

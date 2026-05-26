@@ -2903,6 +2903,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-vm",
  "hex",
+ "rkyv",
  "secp256k1",
  "serde 0.9.15",
  "serde_json",

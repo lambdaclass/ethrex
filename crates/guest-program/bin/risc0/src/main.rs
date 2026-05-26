@@ -2,7 +2,7 @@ use std::io::Read;
 use std::sync::Arc;
 
 #[cfg(feature = "l2")]
-use ethrex_guest_program::l2::{ProgramInput, execution_program};
+use ethrex_guest_program::l2::execution_program;
 #[cfg(not(feature = "l2"))]
 use ethrex_guest_program::l1::execution_program;
 
@@ -14,21 +14,12 @@ fn main() {
     let start = env::cycle_count();
     let mut input = Vec::new();
     env::stdin().read_to_end(&mut input).unwrap();
-
-    #[cfg(feature = "l2")]
-    let input = {
-        use rkyv::rancor::Error;
-        rkyv::from_bytes::<ProgramInput, Error>(&input).unwrap()
-    };
     let end = env::cycle_count();
     println!("end reading input, cycles: {}", end - start);
 
     let crypto = Arc::new(Risc0Crypto);
 
     println!("start execution");
-    #[cfg(feature = "l2")]
-    let output = execution_program(input, crypto).unwrap();
-    #[cfg(not(feature = "l2"))]
     let output = execution_program(&input, crypto).unwrap();
     let end_exec = env::cycle_count();
     println!("end execution, cycles: {}", end_exec - end);
