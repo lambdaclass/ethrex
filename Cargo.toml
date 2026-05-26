@@ -138,8 +138,8 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "lz4",
 ] }
 
-# libssz — SSZ types for EIP-8025 (Hegotá). Required unconditionally; the EIP
-# is selected at runtime via ChainConfig::is_hegota_activated.
+# libssz — SSZ types for EIP-8025. Required unconditionally; EIP-8025 is the
+# only L1 stateless-proving format.
 libssz = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 libssz-types = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }
 libssz-merkle = { git = "https://github.com/lambdaclass/libssz", rev = "7262a4f" }

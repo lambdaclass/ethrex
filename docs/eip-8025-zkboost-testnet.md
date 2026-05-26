@@ -28,8 +28,8 @@ Lighthouse produces blocks via ethrex, then requests proofs from zkboost. zkboos
 ### Clone repositories
 
 ```bash
-# ethrex (main — EIP-8025 ships activated by the Hegotá fork in chain config,
-# no build flag required)
+# ethrex (main — EIP-8025 is the only L1 stateless-proving format, no build
+# flag required)
 git clone https://github.com/lambdaclass/ethrex.git
 cd ethrex
 
@@ -44,8 +44,8 @@ cd lighthouse && git checkout feat/eip8025
 ### Build
 
 ```bash
-# ethrex — EIP-8025 is activated at runtime via `hegotaTime` in the chain
-# config (genesis.json), so no special build flag is needed.
+# ethrex — EIP-8025 is the only L1 stateless-proving format, so no special
+# build flag is needed.
 cd ethrex
 cargo build --release --bin ethrex
 

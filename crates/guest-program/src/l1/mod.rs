@@ -8,5 +8,5 @@ pub use input::{
     EIP8025_VERSION_CANONICAL, EIP8025_VERSION_LEGACY, decode_eip8025, encode_eip8025,
 };
 pub use input::{ProgramInputDecodeError, ProgramInputEncodeError};
-pub use output::{Eip8025ProgramOutput, LegacyProgramOutput, ProgramOutput};
-pub use program::{execution_program, execution_program_eip8025};
+pub use output::ProgramOutput;
+pub use program::execution_program;

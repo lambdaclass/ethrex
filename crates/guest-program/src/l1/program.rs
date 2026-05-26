@@ -4,56 +4,13 @@ use ethrex_crypto::Crypto;
 
 use crate::common::ExecutionError;
 use crate::common::execute_blocks;
-use crate::l1::input::ProgramInput;
 use crate::l1::input::{CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025};
-use crate::l1::output::{Eip8025ProgramOutput, LegacyProgramOutput};
+use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_vm::Evm;
 
 use libssz_merkle::Sha256Hasher;
-
-use crate::common::BatchExecutionResult;
-
-/// Execute the L1 stateless validation program (legacy / pre-Hegotá path).
-///
-/// This validates and executes a batch of L1 blocks, verifying state transitions
-/// without access to the full blockchain state.
-pub fn execution_program(
-    input: ProgramInput,
-    crypto: Arc<dyn Crypto>,
-) -> Result<LegacyProgramOutput, ExecutionError> {
-    let ProgramInput {
-        blocks,
-        execution_witness,
-    } = input;
-
-    let BatchExecutionResult {
-        receipts: _,
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        non_privileged_count,
-        chain_id,
-    } = execute_blocks(
-        &blocks,
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| {
-            // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
-        },
-        crypto.clone(),
-    )?;
-
-    Ok(LegacyProgramOutput {
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        chain_id: chain_id.into(),
-        transaction_count: non_privileged_count,
-    })
-}
 
 /// Wrapper to bridge `ethrex_crypto::Crypto` to `libssz_merkle::Sha256Hasher`,
 /// so `hash_tree_root` is computed via crypto precompiles in the zkVM.
@@ -67,15 +24,16 @@ impl Sha256Hasher for CryptoWrapper {
 }
 
 /// Decode and execute the L1 stateless validation program from EIP-8025 wire
-/// bytes. Used on Hegotá-active blocks.
+/// bytes.
 ///
+/// EIP-8025 is the only L1 stateless-proving format; there is no legacy path.
 /// The wire format is version-prefixed; see [`super::decode_eip8025`] for the
 /// per-version layout. Legacy and canonical-input payloads both commit to the
 /// decoded `NewPayloadRequest` root and report execution validity as a boolean.
-pub fn execution_program_eip8025(
+pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
-) -> Result<Eip8025ProgramOutput, ExecutionError> {
+) -> Result<ProgramOutput, ExecutionError> {
     use libssz_merkle::HashTreeRoot;
 
     let decoded = super::decode_eip8025(bytes).map_err(|err| {
@@ -92,7 +50,7 @@ pub fn execution_program_eip8025(
             let valid =
                 validate_eip8025_execution(&new_payload_request, execution_witness, crypto).is_ok();
 
-            Ok(Eip8025ProgramOutput {
+            Ok(ProgramOutput {
                 new_payload_request_root: request_root,
                 valid,
                 chain_id,
@@ -109,7 +67,7 @@ pub fn execution_program_eip8025(
             let valid =
                 validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
 
-            Ok(Eip8025ProgramOutput {
+            Ok(ProgramOutput {
                 new_payload_request_root: request_root,
                 valid,
                 chain_id,
@@ -450,11 +408,11 @@ fn validate_eip8025_amsterdam_execution(
 mod tests {
     use std::sync::Arc;
 
-    use crate::{common::ExecutionError, crypto::NativeCrypto, l1::execution_program_eip8025};
+    use crate::{common::ExecutionError, crypto::NativeCrypto, l1::execution_program};
 
     #[test]
     fn execution_program_rejects_invalid_eip8025_wire_bytes() {
-        let err = match execution_program_eip8025(&[], Arc::new(NativeCrypto)) {
+        let err = match execution_program(&[], Arc::new(NativeCrypto)) {
             Ok(_) => panic!("expected invalid EIP-8025 input to fail decoding"),
             Err(err) => err,
         };
