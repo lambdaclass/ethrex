@@ -25,6 +25,9 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{EngineType, Store, error::StoreError, has_valid_db, read_chain_id_from_db};
+use ethrex_crypto::NativeCrypto;
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -831,19 +834,54 @@ pub async fn regenerate_head_state(
         unreachable!("Database is empty, genesis block should be present");
     };
 
+    // Find the actual on-disk top state-trie root. The trie's
+    // `db().get(Nibbles::default())` returns whatever was last committed —
+    // its hash uniquely identifies the latest known-good state. Doing this
+    // lookup ONCE upfront, then comparing each parent's `state_root` against
+    // the resulting hash, avoids `has_state_root`'s per-iteration cost: that
+    // function opens a new layered-trie view each call, which clones the
+    // `trie_cache` and exhausts memory if the back-walk is long (the cause
+    // of past OOMs after ungraceful shutdowns left HEAD far ahead of the
+    // committed top-level root).
+    let actual_root_hash = {
+        let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+        match trie.db().get(Nibbles::default())? {
+            Some(root_bytes) => ethrex_trie::Node::decode(&root_bytes)?
+                .compute_hash(&NativeCrypto)
+                .finalize(&NativeCrypto),
+            None => *EMPTY_TRIE_HASH,
+        }
+    };
+
     // Walk back via parent_hash, collecting headers, until we hit a block
-    // whose state is on disk. Both the back-walk and the forward re-apply
-    // bypass the canonical-by-number map (CANONICAL_BLOCK_HASHES), since
-    // that map can have gaps (e.g., from earlier concurrent
-    // forkchoice_update races); headers are always stored under their
-    // hash, so following parent_hash traces the actual chain regardless
-    // of canonical-map completeness.
+    // whose state_root matches the on-disk top root. Both the back-walk and
+    // the forward re-apply bypass the canonical-by-number map
+    // (CANONICAL_BLOCK_HASHES), since that map can have gaps (e.g., from
+    // earlier concurrent forkchoice_update races); headers are always
+    // stored under their hash, so following parent_hash traces the actual
+    // chain regardless of canonical-map completeness.
+    //
+    // Cap the walk to bound memory: each entry in `chain_to_replay` holds a
+    // full header, so a runaway walk (caused by HEAD pointing far ahead of
+    // committed state) would OOM long before reaching genesis.
+    const MAX_BACK_WALK: usize = 50_000;
+
     let mut chain_to_replay: Vec<BlockHeader> = Vec::new();
     let mut current_last_header = last_header;
-    while !store.has_state_root(current_last_header.state_root)? {
+    while current_last_header.state_root != actual_root_hash {
         if current_last_header.number == 0 {
             return Err(eyre::eyre!(
                 "Unknown state found in DB. Please run `ethrex removedb` and restart node"
+            ));
+        }
+        if chain_to_replay.len() >= MAX_BACK_WALK {
+            return Err(eyre::eyre!(
+                "regenerate_head_state: walked back {} blocks from HEAD={} without finding the \
+                 committed state root {:?}. The HEAD pointer is too far ahead of committed state \
+                 to safely recover; run `ethrex removedb` and restart node",
+                MAX_BACK_WALK,
+                head_block_number,
+                actual_root_hash,
             ));
         }
         let parent_hash = current_last_header.parent_hash;
