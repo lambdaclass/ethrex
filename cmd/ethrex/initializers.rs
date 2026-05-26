@@ -882,19 +882,24 @@ pub async fn regenerate_head_state(
         }
         if chain_to_replay.len() >= MAX_BACK_WALK {
             // Backwards walk exhausted. The committed state root might
-            // actually belong to a block AHEAD of HEAD — this happens when
-            // state was committed for newer blocks but the LatestBlockNumber
-            // pointer wasn't advanced (e.g. crash between state commit and
-            // forkchoice_update). Try walking forward via canonical
-            // hashes; if found, set HEAD to that block and return early.
-            const MAX_FORWARD_WALK: u64 = 200_000;
+            // actually belong to a block AHEAD of HEAD — happens when state
+            // was committed for newer blocks (via NewBlock import) but the
+            // LatestBlockNumber pointer wasn't advanced (e.g. crash between
+            // state commit and forkchoice_update). Try walking forward via
+            // canonical hashes; continue past gaps (the canonical map may
+            // be sparse if FCU didn't run for every newblock).
+            const MAX_FORWARD_WALK: u64 = 1_000_000;
+            let mut forward_checked = 0u64;
+            let mut forward_present = 0u64;
             for forward_n in (head_block_number + 1)..=(head_block_number + MAX_FORWARD_WALK) {
+                forward_checked += 1;
                 let Some(hash) = store.get_canonical_block_hash_sync(forward_n)? else {
-                    // Canonical chain ends here.
-                    break;
+                    // Gap in canonical chain — keep looking.
+                    continue;
                 };
+                forward_present += 1;
                 let Some(header) = store.get_block_header_by_hash(hash)? else {
-                    break;
+                    continue;
                 };
                 if header.state_root == actual_root_hash {
                     info!(
@@ -909,11 +914,13 @@ pub async fn regenerate_head_state(
                 }
             }
             return Err(eyre::eyre!(
-                "regenerate_head_state: walked back {} blocks from HEAD={} and forward {} blocks \
-                 without finding the committed state root {:?}. Run `ethrex removedb` and restart node",
+                "regenerate_head_state: walked back {} blocks from HEAD={}, forward {} blocks \
+                 ({} canonical entries present) without finding the committed state root {:?}. \
+                 Run `ethrex removedb` and restart node",
                 MAX_BACK_WALK,
                 head_block_number,
-                MAX_FORWARD_WALK,
+                forward_checked,
+                forward_present,
                 actual_root_hash,
             ));
         }
