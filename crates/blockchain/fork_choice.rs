@@ -383,6 +383,7 @@ pub async fn apply_fork_choice_with_deep_reorg(
 ///    commit triggers the Section 9 reconciliation that folds overlay +
 ///    layer_T into a single atomic disk write.
 /// 6. Update `CANONICAL_BLOCK_HASHES` via `forkchoice_update`.
+#[tracing::instrument(level = "info", skip_all, fields(namespace = "deep_reorg"))]
 async fn reorg_apply_deep(
     blockchain: &Blockchain,
     head_hash: H256,
@@ -394,6 +395,11 @@ async fn reorg_apply_deep(
     // unwinding). Concurrent FCUs see the flag set and short-circuit to
     // SYNCING (see `apply_fork_choice_with_deep_reorg`).
     let _reorg_guard = blockchain.enter_reorg();
+
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        METRICS_REORG.deep_reorg_attempts_total.inc();
+    );
 
     let store = blockchain.store();
 
@@ -425,6 +431,12 @@ async fn reorg_apply_deep(
         Some((n, _)) => n.saturating_sub(1),
         None => head.number.saturating_sub(1),
     };
+
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        let reorg_depth = head.number.saturating_sub(pivot_number);
+        METRICS_REORG.reorg_depth_hist.observe(reorg_depth as f64);
+    );
 
     // Overlay range is `[pivot+1, edge]` where `edge` is the highest committed
     // block (= highest journal entry).
@@ -459,6 +471,14 @@ async fn reorg_apply_deep(
             InvalidForkChoice::StateNotReachable
         })?;
 
+    // Emit overlay size metrics (O(N) over entries, but only once at install time).
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        let (ov_entries, ov_bytes) = store.reorg_overlay_size_hint().unwrap_or((0, 0));
+        METRICS_REORG.overlay_entries.set(ov_entries as i64);
+        METRICS_REORG.overlay_bytes.set(ov_bytes as i64);
+    );
+
     // From this point on, any error must reset the layer cache to a fresh
     // empty state; a half-installed overlay + partial new-chain layers would
     // leak into subsequent FCU evaluations. The guard fires `abort_reorg`
@@ -484,6 +504,9 @@ async fn reorg_apply_deep(
             .collect()
     };
 
+    #[cfg(feature = "metrics")]
+    let reconcile_start = std::time::Instant::now();
+    let mut first_block = true;
     for (number, block_hash) in replay_iter {
         let block = match store.get_block_by_hash(block_hash).await? {
             Some(b) => b,
@@ -495,6 +518,17 @@ async fn reorg_apply_deep(
         if let Err(e) = blockchain.add_block(block) {
             error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
             return Err(map_chain_error_for_fcu(e));
+        }
+        if first_block {
+            first_block = false;
+            // The first add_block triggers the Section 9 reconciliation that folds the
+            // overlay into the first new-chain disk commit.
+            metrics!(
+                use ethrex_metrics::reorg::METRICS_REORG;
+                METRICS_REORG
+                    .reconcile_duration_hist
+                    .observe(reconcile_start.elapsed().as_secs_f64());
+            );
         }
     }
 
@@ -526,6 +560,22 @@ async fn reorg_apply_deep(
     metrics!(
         use ethrex_metrics::blocks::METRICS_BLOCKS;
         METRICS_BLOCKS.set_head_height(head.number);
+    );
+    metrics!(
+        use ethrex_metrics::reorg::METRICS_REORG;
+        METRICS_REORG.deep_reorg_success_total.inc();
+        // Overlay has been folded into disk by reconciliation; reset gauges.
+        METRICS_REORG.overlay_entries.set(0);
+        METRICS_REORG.overlay_bytes.set(0);
+        // Emit updated journal length (O(1) via first_key / last_key).
+        let journal_len = match (
+            store.lowest_state_history_block_number(),
+            store.highest_state_history_block_number(),
+        ) {
+            (Ok(Some(lo)), Ok(Some(hi))) => hi.saturating_sub(lo).saturating_add(1) as i64,
+            _ => 0,
+        };
+        METRICS_REORG.journal_length.set(journal_len);
     );
 
     info!(
@@ -563,10 +613,16 @@ impl<'a> AbortReorgGuard<'a> {
 
 impl Drop for AbortReorgGuard<'_> {
     fn drop(&mut self) {
-        if self.armed
-            && let Err(e) = self.store.abort_reorg()
-        {
-            error!(error = %e, "AbortReorgGuard: abort_reorg failed during cleanup");
+        if self.armed {
+            metrics!(
+                use ethrex_metrics::reorg::METRICS_REORG;
+                METRICS_REORG.deep_reorg_aborts_total.inc();
+                METRICS_REORG.overlay_entries.set(0);
+                METRICS_REORG.overlay_bytes.set(0);
+            );
+            if let Err(e) = self.store.abort_reorg() {
+                error!(error = %e, "AbortReorgGuard: abort_reorg failed during cleanup");
+            }
         }
     }
 }

@@ -30,7 +30,7 @@ path = "./mod.rs"
 default = ["api"]
 transactions = []
 api = ["dep:axum", "dep:prometheus", "dep:tokio", "dep:tracing"]
-metrics = ["dep:prometheus"]
+metrics = ["dep:prometheus", "dep:tracing"]
 
 [lints]
 workspace = true

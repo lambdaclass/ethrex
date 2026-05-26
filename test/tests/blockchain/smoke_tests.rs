@@ -2,9 +2,9 @@ use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
 use ethrex_blockchain::{
-    Blockchain,
+    Blockchain, BlockchainOptions,
     error::{ChainError, InvalidForkChoice},
-    fork_choice::apply_fork_choice,
+    fork_choice::{apply_fork_choice, apply_fork_choice_with_deep_reorg},
     is_canonical, latest_canonical_block_hash,
     payload::{BuildPayloadArgs, create_payload},
 };
@@ -562,6 +562,75 @@ async fn reorg_depth_bounded_by_journal_extent_pre_merge() {
             })
         ),
         "depth-8 reorg exceeding cap-7 ceiling should return TooDeepReorg, got {result:?}"
+    );
+}
+
+/// Task 3.9: Verifies that `deep_reorg_attempts_total` increments when
+/// `reorg_apply_deep` is entered. The InMemory store has an empty journal
+/// (threshold = 10_000 >> blocks in test), so the deep path exits early with
+/// `StateNotReachable` — but the attempt counter fires unconditionally at the
+/// top of the function before any journal access.
+#[serial_test::serial]
+#[tokio::test]
+async fn metrics_emitted_during_deep_reorg() {
+    use ethrex_metrics::reorg::METRICS_REORG;
+
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let genesis_hash = genesis_header.hash();
+
+    // Chain A: one fake block at height 1 with a random state root so that
+    // `has_state_root` returns false, triggering the deep-reorg path.
+    let a1_state_root = H256::random();
+    let a1_header = BlockHeader {
+        number: 1,
+        parent_hash: genesis_hash,
+        state_root: a1_state_root,
+        timestamp: 12,
+        ..Default::default()
+    };
+    let a1_hash = Block::new(a1_header.clone(), BlockBody::default()).hash();
+    store.add_block_header(a1_hash, a1_header).await.unwrap();
+    store
+        .forkchoice_update(vec![(1, a1_hash)], 1, a1_hash, None, None)
+        .await
+        .unwrap();
+
+    // Chain B: fake block B1 at height 1 with a different random state root,
+    // also diverging from genesis. Its parent is canonical (genesis) but its
+    // own state root is not on disk, so `apply_fork_choice` returns
+    // `StateNotReachable` and hands off to `reorg_apply_deep`.
+    let b1_state_root = H256::random();
+    let b1_header = BlockHeader {
+        number: 1,
+        parent_hash: genesis_hash,
+        state_root: b1_state_root,
+        timestamp: 24,
+        ..Default::default()
+    };
+    let b1_hash = Block::new(b1_header.clone(), BlockBody::default()).hash();
+    store.add_block_header(b1_hash, b1_header).await.unwrap();
+
+    let before = METRICS_REORG.deep_reorg_attempts_total.get();
+
+    // max_reorg_depth = Some(100) so the ceiling check (case 3: no finalized,
+    // no journal) uses 100 instead of 0 and passes the depth-1 reorg.
+    let blockchain = Blockchain::new(
+        store.clone(),
+        BlockchainOptions {
+            max_reorg_depth: Some(100),
+            ..Default::default()
+        },
+    );
+
+    // The call enters `reorg_apply_deep` (incrementing the counter), then
+    // fails because STATE_HISTORY is empty on the InMemory backend.
+    let _ =
+        apply_fork_choice_with_deep_reorg(&blockchain, b1_hash, H256::zero(), H256::zero()).await;
+
+    assert!(
+        METRICS_REORG.deep_reorg_attempts_total.get() > before,
+        "deep_reorg_attempts_total should have incremented (before={before})"
     );
 }
 

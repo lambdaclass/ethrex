@@ -54,6 +54,8 @@ ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
+ethrex-metrics = { workspace = true, features = ["metrics"] }
+serial_test = "3"
 
 [[test]]
 name = "ethrex_tests"
