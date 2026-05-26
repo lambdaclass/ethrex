@@ -3464,6 +3464,18 @@ impl Store {
         Ok(())
     }
 
+    /// Returns `(entry_count, byte_size)` of the currently installed overlay, or
+    /// `(0, 0)` when no overlay is installed. Used by the observability layer in
+    /// `fork_choice.rs` immediately after `install_overlay_for_reorg` to emit
+    /// `ethrex_reorg_overlay_entries` / `ethrex_reorg_overlay_bytes`.
+    pub fn reorg_overlay_size_hint(&self) -> Result<(usize, usize), StoreError> {
+        let guard = self.trie_cache.read().map_err(|_| StoreError::LockError)?;
+        match guard.overlay() {
+            Some(ov) => Ok((ov.len(), ov.byte_size())),
+            None => Ok((0, 0)),
+        }
+    }
+
     /// Removes any installed overlay from the layer cache. Called by the
     /// reconciliation path (Section 9) after the first new-chain commit folds
     /// the overlay into disk. Idempotent.

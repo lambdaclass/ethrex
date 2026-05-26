@@ -715,9 +715,7 @@ impl Overlay {
         map.get(key).cloned()
     }
 
-    /// Total number of overlay entries across all four CFs. Used by tests and
-    /// future observability (PR 4).
-    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
+    /// Total number of overlay entries across all four CFs.
     pub fn len(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
@@ -726,9 +724,24 @@ impl Overlay {
     }
 
     /// Whether the overlay holds any entries.
-    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Approximate byte size of the overlay's key+value data. O(N) over entries;
+    /// intended for one-shot install-time metric emission, NOT per-lookup.
+    pub fn byte_size(&self) -> usize {
+        [
+            &self.account_trie,
+            &self.storage_trie,
+            &self.account_flat,
+            &self.storage_flat,
+        ]
+        .iter()
+        .flat_map(|map| map.iter())
+        .map(|(k, v)| k.len() + v.as_ref().map_or(0, |v| v.len()))
+        .sum()
     }
 
     /// Highest block number covered by the overlay (= cache edge `D` at install time).
