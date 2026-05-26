@@ -215,6 +215,11 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
                     groups_in_batch += 1;
                     if groups_in_batch >= GROUPS_PER_COMMIT {
                         write_batch.commit()?;
+                        // Re-acquire instead of relying on post-commit reuse
+                        // of the trait object (works today via mem::take in
+                        // RocksDB and a no-op InMemory commit, but it's not
+                        // a documented contract on `StorageWriteBatch`).
+                        write_batch = backend.begin_write()?;
                         groups_in_batch = 0;
                     }
                 }
@@ -228,6 +233,9 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
         total_groups += 1;
     }
 
+    // Final commit. `groups_in_batch` is not bumped/reset here intentionally
+    // — the post-loop flush is followed immediately by a commit, after which
+    // the variable goes out of scope.
     write_batch.commit()?;
 
     tracing::info!(

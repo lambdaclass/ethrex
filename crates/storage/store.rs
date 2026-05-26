@@ -290,6 +290,8 @@ pub struct AccountUpdatesList {
 /// the read+stage+write sequence for the TRANSACTION_LOCATIONS slot. The
 /// previous composite-key schema avoided this question by giving concurrent
 /// writers different keys; the new schema can't.
+///
+/// Tracked in [#6727](https://github.com/lambdaclass/ethrex/issues/6727).
 fn stage_tx_location(
     read: &dyn StorageReadView,
     pending: &mut HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
