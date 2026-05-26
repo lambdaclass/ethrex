@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use ethrex_common::H256;
+use ethrex_common::{Address, H256};
 use ethrex_common::{
     serde_utils,
-    tracing::{CallTraceFrame, PrestateResult, StructLoggerEmit, StructLoggerResult},
+    tracing::{CallTraceFrame, CallType, PrestateResult, StructLoggerEmit, StructLoggerResult},
 };
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
@@ -62,8 +62,18 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
-    /// Multiplexer tracer that runs multiple sub-tracers on the same transaction
-    /// and returns a map of `tracerName -> result`.
+    /// Multiplexer tracer that runs multiple sub-tracers on the same
+    /// transaction and returns `{tracerName: result}` per sub-tracer.
+    /// Selected via `"tracer": "muxTracer"`.
+    ///
+    /// **Divergences from geth**:
+    /// - geth attaches all sub-tracers to a single execution; ethrex re-runs
+    ///   the transaction once per sub-tracer (correct output, N× the cost).
+    /// - `debug_traceBlockByNumber` with muxTracer is not yet supported and
+    ///   returns a `BadParams` error.
+    /// - Supported sub-tracers: `callTracer`, `prestateTracer`, `opcodeTracer`,
+    ///   `4byteTracer`, `noopTracer`. Other registered tracers
+    ///   (e.g. `flatCallTracer`) are not yet routable from inside muxTracer.
     MuxTracer,
 }
 
@@ -385,8 +395,10 @@ impl RpcHandler for TraceBlockByNumberRequest {
                     .collect::<Result<_, serde_json::Error>>()?;
                 Ok(serde_json::to_value(block_trace)?)
             }
-            TracerType::MuxTracer => Err(RpcErr::Internal(
-                "muxTracer is not supported for block tracing".to_owned(),
+            TracerType::MuxTracer => Err(RpcErr::BadParams(
+                "muxTracer is not supported for debug_traceBlockByNumber yet \
+                 — use debug_traceTransaction with muxTracer per transaction"
+                    .to_owned(),
             )),
         }
     }
@@ -466,7 +478,7 @@ async fn run_tx_sub_tracer(
             let top_frame = call_trace
                 .into_iter()
                 .next()
-                .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
             let mut selectors = HashMap::new();
             collect_four_byte_selectors(&top_frame, &mut selectors);
             Ok(serde_json::to_value(selectors)?)
@@ -476,16 +488,52 @@ async fn run_tx_sub_tracer(
     }
 }
 
-/// Recursively collects 4-byte function selectors and calldata sizes from a call trace tree.
-fn collect_four_byte_selectors(frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
-    if frame.input.len() >= 4 {
+/// Collects 4-byte function selectors and calldata sizes from a call trace
+/// tree, matching geth's built-in `4byteTracer`
+/// (https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/native/4byte.go):
+///
+/// - The top-level transaction call is **not** counted; only nested calls are.
+/// - Only `CALL` and `DELEGATECALL` are counted — geth's tracer filters on the
+///   opcode and skips STATICCALL, CALLCODE, CREATE*, and SELFDESTRUCT.
+/// - Invocations targeting precompile addresses are skipped.
+/// - The reported size is `len(calldata) - 4` (the argument-bytes length).
+fn collect_four_byte_selectors(top_frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
+    for sub_call in &top_frame.calls {
+        collect_four_byte_recursive(sub_call, selectors);
+    }
+}
+
+fn collect_four_byte_recursive(frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
+    if matches!(frame.call_type, CallType::CALL | CallType::DELEGATECALL)
+        && frame.input.len() >= 4
+        && !is_precompile_address(&frame.to)
+    {
         let selector = hex::encode(&frame.input[..4]);
-        let key = format!("0x{selector}-{}", frame.input.len());
+        let arg_size = frame.input.len() - 4;
+        let key = format!("0x{selector}-{arg_size}");
         *selectors.entry(key).or_insert(0) += 1;
     }
     for sub_call in &frame.calls {
-        collect_four_byte_selectors(sub_call, selectors);
+        collect_four_byte_recursive(sub_call, selectors);
     }
+}
+
+/// Fork-agnostic precompile address check used by `4byteTracer`. Treats any
+/// address that maps to a precompile in some fork ethrex supports as a
+/// precompile — slightly more aggressive than geth's per-fork check but
+/// defensible: calldata to those addresses is never a function selector.
+fn is_precompile_address(addr: &Address) -> bool {
+    let bytes = addr.as_bytes();
+    // L1 precompiles occupy 0x...01 through 0x...11 (BLAKE2F at 0x09, point
+    // evaluation at 0x0a, BLS12 family up to 0x11).
+    if bytes[..19].iter().all(|&b| b == 0) && (1..=0x11).contains(&bytes[19]) {
+        return true;
+    }
+    // L2 P256VERIFY sits at 0x...0100.
+    if bytes[..18].iter().all(|&b| b == 0) && bytes[18] == 0x01 && bytes[19] == 0x00 {
+        return true;
+    }
+    false
 }
 
 #[cfg(test)]
@@ -665,74 +713,124 @@ mod tests {
     }
 
     // --- collect_four_byte_selectors tests ---
+    //
+    // Helpers that build a top-level frame with `calls` children. The tracer
+    // skips the top frame itself (matches geth's depth-0 skip), so the helper
+    // makes that intent explicit in the test bodies.
 
-    #[test]
-    fn four_byte_selectors_empty_input() {
-        let frame = CallTraceFrame {
-            input: Bytes::new(),
+    fn top_frame_with_calls(calls: Vec<CallTraceFrame>) -> CallTraceFrame {
+        CallTraceFrame {
+            call_type: CallType::CALL,
+            input: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef, 0xff]),
+            calls,
             ..Default::default()
-        };
+        }
+    }
+
+    fn collect(top: &CallTraceFrame) -> HashMap<String, u64> {
         let mut selectors = HashMap::new();
-        collect_four_byte_selectors(&frame, &mut selectors);
-        assert!(selectors.is_empty());
+        collect_four_byte_selectors(top, &mut selectors);
+        selectors
     }
 
     #[test]
-    fn four_byte_selectors_short_input_ignored() {
-        let frame = CallTraceFrame {
+    fn four_byte_skips_top_level_call() {
+        let top = top_frame_with_calls(vec![]);
+        assert!(collect(&top).is_empty());
+    }
+
+    #[test]
+    fn four_byte_short_input_subcall_ignored() {
+        let short = CallTraceFrame {
+            call_type: CallType::CALL,
             input: Bytes::from_static(&[0xa9, 0x05, 0x9c]),
             ..Default::default()
         };
-        let mut selectors = HashMap::new();
-        collect_four_byte_selectors(&frame, &mut selectors);
-        assert!(selectors.is_empty());
+        assert!(collect(&top_frame_with_calls(vec![short])).is_empty());
     }
 
     #[test]
-    fn four_byte_selectors_single_call() {
-        let frame = CallTraceFrame {
+    fn four_byte_single_subcall_uses_arg_size() {
+        let child = CallTraceFrame {
+            call_type: CallType::CALL,
             input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x00, 0x01]),
             ..Default::default()
         };
-        let mut selectors = HashMap::new();
-        collect_four_byte_selectors(&frame, &mut selectors);
-        assert_eq!(selectors.len(), 1);
-        assert_eq!(selectors["0xa9059cbb-6"], 1);
+        let s = collect(&top_frame_with_calls(vec![child]));
+        // 6 bytes total → selector + 2 arg bytes → key suffix "-2", not "-6".
+        assert_eq!(s.len(), 1);
+        assert_eq!(s["0xa9059cbb-2"], 1);
     }
 
     #[test]
-    fn four_byte_selectors_nested_calls() {
-        let child = CallTraceFrame {
+    fn four_byte_nested_subcalls() {
+        let grandchild = CallTraceFrame {
+            call_type: CallType::CALL,
             input: Bytes::from_static(&[0x23, 0xb8, 0x72, 0xdd, 0x01, 0x02, 0x03]),
             ..Default::default()
         };
-        let frame = CallTraceFrame {
+        let child = CallTraceFrame {
+            call_type: CallType::CALL,
             input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
-            calls: vec![child],
+            calls: vec![grandchild],
             ..Default::default()
         };
-        let mut selectors = HashMap::new();
-        collect_four_byte_selectors(&frame, &mut selectors);
-        assert_eq!(selectors.len(), 2);
-        assert_eq!(selectors["0xa9059cbb-5"], 1);
-        assert_eq!(selectors["0x23b872dd-7"], 1);
+        let s = collect(&top_frame_with_calls(vec![child]));
+        assert_eq!(s.len(), 2);
+        assert_eq!(s["0xa9059cbb-1"], 1);
+        assert_eq!(s["0x23b872dd-3"], 1);
     }
 
     #[test]
-    fn four_byte_selectors_duplicate_calls_counted() {
-        let child = CallTraceFrame {
+    fn four_byte_duplicate_subcalls_counted() {
+        let mk = || CallTraceFrame {
+            call_type: CallType::CALL,
             input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
             ..Default::default()
         };
-        let frame = CallTraceFrame {
-            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0xaa]),
-            calls: vec![child],
+        let s = collect(&top_frame_with_calls(vec![mk(), mk()]));
+        assert_eq!(s.len(), 1);
+        assert_eq!(s["0xa9059cbb-1"], 2);
+    }
+
+    #[test]
+    fn four_byte_only_counts_call_and_delegatecall() {
+        let mk_with = |call_type: CallType| CallTraceFrame {
+            call_type,
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x01]),
             ..Default::default()
         };
-        let mut selectors = HashMap::new();
-        collect_four_byte_selectors(&frame, &mut selectors);
-        assert_eq!(selectors.len(), 1);
-        assert_eq!(selectors["0xa9059cbb-5"], 2);
+        let top = top_frame_with_calls(vec![
+            mk_with(CallType::CALL),
+            mk_with(CallType::DELEGATECALL),
+            mk_with(CallType::STATICCALL),
+            mk_with(CallType::CALLCODE),
+            mk_with(CallType::CREATE),
+            mk_with(CallType::CREATE2),
+            mk_with(CallType::SELFDESTRUCT),
+        ]);
+        let s = collect(&top);
+        // Only CALL + DELEGATECALL contribute.
+        assert_eq!(s.len(), 1);
+        assert_eq!(s["0xa9059cbb-1"], 2);
+    }
+
+    #[test]
+    fn four_byte_skips_precompile_targets() {
+        let mk = |addr: Address| CallTraceFrame {
+            call_type: CallType::CALL,
+            to: addr,
+            input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x01]),
+            ..Default::default()
+        };
+        let top = top_frame_with_calls(vec![
+            mk(Address::from_low_u64_be(0x01)),  // ECRECOVER
+            mk(Address::from_low_u64_be(0x09)),  // BLAKE2F
+            mk(Address::from_low_u64_be(0x0a)),  // POINT_EVALUATION
+            mk(Address::from_low_u64_be(0x11)),  // BLS12_MAP_FP2_TO_G2
+            mk(Address::from_low_u64_be(0x100)), // P256VERIFY (L2)
+        ]);
+        assert!(collect(&top).is_empty());
     }
 
     // --- MuxTracer parse tests ---
