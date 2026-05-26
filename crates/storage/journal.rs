@@ -25,6 +25,16 @@
 use ethrex_common::H256;
 
 /// Current version of the journal entry codec.
+///
+/// Bumping this constant changes the wire format. The decoder rejects any
+/// other version with [`JournalDecodeError::VersionMismatch`]: a v(N) binary
+/// will refuse to interpret v(N+1) entries (forward safety) and will also
+/// refuse to read v(N-1) entries written by a previous binary (no implicit
+/// fallback). The plan for the rollback consumer (PR 2/3/4) is to drain
+/// the journal at a finality boundary on upgrade, so the v(N) journal
+/// starts empty after the bump; a future bump that needs to keep history
+/// across the upgrade should introduce per-version `decode_vN` arms here
+/// rather than re-encoding existing entries.
 pub const JOURNAL_VERSION: u8 = 1;
 
 /// A single reverse-diff entry: `(on_disk_key, previous_value_or_none)`.

@@ -277,6 +277,12 @@ impl TrieLayerCache {
         // rollback consumer (PR 2/3) would then be unable to reconstruct
         // intermediate pre-images. Single-layer commits are an invariant of the
         // current write path; revisit this if that ever changes.
+        debug_assert!(
+            layers_to_commit.len() == 1,
+            "multi-layer commit would corrupt journal attribution (see ATTRIBUTION NOTE above): \
+             got {} layers, expected 1",
+            layers_to_commit.len()
+        );
         let top_layer = layers_to_commit.first()?;
         let top_layer_id = top_layer.id;
         let committed_block_number = top_layer.block_number;
