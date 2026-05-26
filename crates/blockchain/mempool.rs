@@ -459,21 +459,6 @@ impl Mempool {
         Ok(popped)
     }
 
-    /// Drop the entire alternates list for the given hashes. Per-hash cleanup
-    /// already happens inline in `add_transaction` when a tx lands in the
-    /// pool, so this batch variant has no production caller today —
-    /// `prune_alternates` (10-min TTL sweep) is the only background reaper.
-    /// Kept `pub` for the integration test in `test/tests/blockchain/` and
-    /// for the obvious future wiring (success-path batch cleanup in
-    /// `PooledTransactions::handle`) when that lands.
-    pub fn clear_alternates(&self, hashes: &[H256]) -> Result<(), StoreError> {
-        let mut inner = self.write()?;
-        for hash in hashes {
-            inner.alternates.remove(hash);
-        }
-        Ok(())
-    }
-
     /// Drop alternates entries that haven't been touched in the last `ttl`.
     /// Called periodically to bound the size of the alternates map when
     /// announced txs never make it into the pool.

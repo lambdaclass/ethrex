@@ -678,16 +678,6 @@ mod alternates {
     }
 
     #[test]
-    fn clear_alternates_drops_entries() {
-        let mp = Mempool::new(64);
-        let tx = h(1);
-        reserve(&mp, &[tx], h(99));
-        reserve(&mp, &[tx], h(2));
-        mp.clear_alternates(&[tx]).unwrap();
-        assert!(mp.pop_alternate(tx).unwrap().is_none());
-    }
-
-    #[test]
     fn prune_alternates_drops_stale_entries() {
         let mp = Mempool::new(64);
         let tx = h(0xaa);
