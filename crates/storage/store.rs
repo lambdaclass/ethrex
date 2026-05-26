@@ -3413,6 +3413,23 @@ impl Store {
         let mut fresh = TrieLayerCache::new(threshold);
         fresh.set_overlay(Arc::new(overlay));
 
+        // Wait for the trie-update worker to be idle before swapping the cache.
+        // `apply_trie_updates` reads `trie_cache`, mutates a local clone, and writes
+        // back; if it is mid-flight when we install, its write-back can clobber the
+        // overlay we are about to set. `TrieMessage::Ping` is sent on the same
+        // `sync_channel(0)` and is a rendezvous: `send` returns only after the
+        // worker pulls the message from the channel, which proves the worker has
+        // finished processing the previous Update (it only recvs one message at
+        // a time) and is back at `rx.recv()`. With our subsequent `trie_cache.write()`
+        // serialising any future RCU, the install is now safe.
+        self.trie_update_worker_tx
+            .send(TrieMessage::Ping)
+            .map_err(|e| {
+                StoreError::Custom(format!(
+                    "install_overlay_for_reorg: failed to ping trie-update worker: {e}"
+                ))
+            })?;
+
         let mut guard = self.trie_cache.write().map_err(|_| StoreError::LockError)?;
         *guard = Arc::new(fresh);
         Ok(())
@@ -4193,6 +4210,10 @@ fn commit_trie_layers(
     }
 
     // Phase 3: update diff layers with the removal of bottom layer.
+    //
+    // SAFETY: `install_overlay_for_reorg` rendezvous-pings this worker before
+    // swapping `trie_cache`, so no concurrent RCU can race the write-back here.
+    // See the Ping comment in `install_overlay_for_reorg`.
     *trie_cache.write().map_err(|_| StoreError::LockError)? = Arc::new(trie_mut);
     Ok(())
 }
