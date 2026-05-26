@@ -472,49 +472,61 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
 
 /// Verifies that ethrex accepts a reorg deeper than the legacy 128-block cap.
 ///
-/// Setup:
-///   - Build a 200-block side chain starting from genesis.
-///   - Announce all 200 blocks to the test node via new_payload.
-///   - FCU to the side-chain tip with finalized set to block 50
-///     (so the reorg ceiling = finalized_height + MAX_REORG_DEPTH, well above
-///     128 when the cap was removed).
-///   - Assert the node converges to the side-chain tip (no TooDeepReorg).
+/// `build_payload` issues an FCU on every block so the canonical chain
+/// advances with each call. The original version of this test built a single
+/// 200-block chain from genesis and then FCUd to its tip; at that point the
+/// tip was *already* canonical, so the cap check inside `apply_fork_choice`
+/// saw `reorg_depth = 0` and never exercised the lifted limit.
+///
+/// To actually trigger the cap check, this version builds two parallel
+/// chains:
+///
+///   1. Chain A: 150 blocks from genesis. Each `build_payload` FCUs the new
+///      tip canonical, so after the loop `latest_canonical_block_number = 150`.
+///   2. Chain B: 200 blocks, also from genesis (a sibling of A). The first
+///      `build_payload` on B issues `FCU(head = genesis)`, which lands in
+///      `apply_fork_choice` with `latest = 150`, `canonical_link_height = 0`,
+///      hence `reorg_depth = 150`. The old `REORG_DEPTH_LIMIT = 128` would
+///      have returned `TooDeepReorg`; PR 4's finality-bounded ceiling
+///      (`latest - finalized_number = 150`) accepts it.
 async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
     let mut simulator = simulator.lock().await;
-
-    // One node is enough: it serves as both the block producer and the
-    // node under test. We build blocks directly and push them via the
-    // Engine API, so no peer is required.
     let node = simulator.start_node().await;
-
-    // Build 200 blocks on the side chain. `build_payload` + `notify_new_payload`
-    // tells the node about each block without finalizing yet.
     let base_chain = simulator.get_base_chain();
-    let mut side_chain = base_chain.fork();
 
-    info!("Building 200-block side chain for deep-reorg test");
-    for i in 0..200usize {
-        side_chain = node.build_payload(side_chain).await;
-        node.notify_new_payload(&side_chain).await;
+    // Phase 1: build chain A and make it canonical.
+    let mut chain_a = base_chain.fork();
+    let chain_a_len: usize = std::env::var("DEEP_REORG_CHAIN_A_LEN")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(150);
+    info!(chain_a_len, "Building chain A (canonical baseline)");
+    for i in 0..chain_a_len {
+        chain_a = node.build_payload(chain_a).await;
+        node.notify_new_payload(&chain_a).await;
         if i % 50 == 49 {
-            info!(block = i + 1, "Side chain progress");
+            info!(block = i + 1, "Chain A progress");
+        }
+    }
+    info!(latest = chain_a_len, "Chain A tip is canonical");
+
+    // Phase 2: build chain B from genesis. The first build_payload triggers
+    // the cap-check at reorg_depth = 150 (latest_A - link_to_genesis = 150).
+    // Pre-PR-4 this would return TooDeepReorg{ limit: 128 } and the test
+    // would panic on the build_payload assertion.
+    let mut chain_b = base_chain.fork();
+    info!("Building chain B (200 blocks, forks at genesis -- first FCU is the 150-deep reorg)");
+    for i in 0..200usize {
+        chain_b = node.build_payload(chain_b).await;
+        node.notify_new_payload(&chain_b).await;
+        if i % 50 == 49 {
+            info!(block = i + 1, "Chain B progress");
         }
     }
 
-    // Mark block 50 as finalized. The reorg depth from any previous head to the
-    // 200-block tip is 150 blocks (200 - 50 = 150), exceeding the old 128 cap.
-    // The node must accept this without error.
-    side_chain.set_finalized_height(50);
-
     info!(
-        depth = side_chain.len() - 1 - 50,
-        "Issuing FCU to side-chain tip; expecting successful deep reorg"
+        canonical_baseline = 150,
+        side_chain_len = chain_b.len() - 1,
+        "Deep reorg beyond legacy 128-block cap accepted -- test passed"
     );
-
-    // update_forkchoice sends FCU and polls until the node reports Valid.
-    // If the node incorrectly rejected the reorg, it would never return Valid
-    // and the timeout would trigger a test failure.
-    node.update_forkchoice(&side_chain).await;
-
-    info!("Deep reorg beyond 128 blocks accepted -- test passed");
 }

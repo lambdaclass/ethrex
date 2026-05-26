@@ -24,58 +24,89 @@
 #   (.github/workflows/deep_reorg.yaml). It does NOT run on every PR.
 
 participants:
-  # Majority partition: 3 nodes (geth + reth + lighthouse)
+  # Majority partition: 3 geth nodes. PeerDAS / Fulu needs either a supernode
+  # or one node with 128+ validators; we make the first majority node a
+  # supernode and give it 128 validators to satisfy both paths.
+  #
+  # Note: reth (v2.x) hits MDBX "Remote I/O error (121)" on hosts where the
+  # underlying Docker storage driver / kernel combo doesn't support MAP_SHARED
+  # the way MDBX expects. We use three geths here instead since EL diversity
+  # isn't required for a deep-reorg test (we just need a 3-node majority).
   - el_type: geth
-    el_image: ethereum/client-go:v1.16.1
+    el_image: ethereum/client-go:v1.17.3
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
-    validator_count: 32
-
-  - el_type: reth
-    el_image: ghcr.io/paradigmxyz/reth:v1.3.12
-    cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
-    validator_count: 32
+    cl_image: sigp/lighthouse:v8.1.3
+    supernode: true
+    validator_count: 128
 
   - el_type: geth
-    el_image: ethereum/client-go:v1.16.1
+    el_image: ethereum/client-go:v1.17.3
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
-    validator_count: 32
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 64
 
-  # Minority partition: 1 ethrex node (built from current branch)
+  - el_type: geth
+    el_image: ethereum/client-go:v1.17.3
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v8.1.3
+    validator_count: 64
+
+  # Minority partition: 1 ethrex node (built from current branch). Lower
+  # validator count means the minority cannot finalize on its own during the
+  # partition window; on heal, ethrex must reorg to the majority chain.
   - el_type: ethrex
     el_image: ethrex:local
     cl_type: lighthouse
-    cl_image: sigp/lighthouse:v7.0.1
+    cl_image: sigp/lighthouse:v8.1.3
     validator_count: 32
     el_extra_params:
       - "--http.api=eth,net,web3,debug,admin,txpool"
       - "--metrics"
 
 network_params:
-  # 12-second slots; 200 slots of partition = ~40 minutes total runtime
-  seconds_per_slot: 12
+  # 6-second slots; halves real-time test duration vs mainnet's 12s. Below ~4s
+  # risks missed attestations in small (~4-node) setups; 6s is the sweet spot
+  # for fast iteration while keeping the network stable.
+  seconds_per_slot: 6
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
 
 additional_services:
   # disruptoor: network-partition controller
   # Docs: https://github.com/ethpandaops/disruptoor
   - disruptoor
+  # dora: beacon-chain explorer UI for visualizing the partition + reorg
+  - dora
+
+# Publish stable host ports so dora/disruptoor and the EL/CL endpoints are
+# reachable at predictable URLs instead of randomly-assigned ones.
+#   - additional_services on 36000+ (dora, disruptoor)
+#   - el on 32000+ (JSON-RPC)
+#   - cl on 33000+ (beacon API)
+# `kurtosis enclave inspect deep-reorg` will list the actual host-side ports.
+port_publisher:
+  additional_services:
+    enabled: true
+    public_port_start: 36000
+  el:
+    enabled: true
+    public_port_start: 32000
+  cl:
+    enabled: true
+    public_port_start: 33000
 
 disruptoor_params:
-  image: ethpandaops/disruptoor:latest
-  # disruptoor needs elevated privileges to manipulate network namespaces
-  privileged: true
-  # Mounted so disruptoor can reach Docker containers by name
-  docker_socket_path: /var/run/docker.sock
-  # Required for manipulating peer network namespaces
-  host_pid: true
-  port: 7700
+  # The ethereum-package's disruptoor wrapper sets privileged/host-PID/docker-socket
+  # mounting internally; only app-level keys are accepted here. Allowed fields:
+  # image, min_cpu, max_cpu, min_mem, max_mem, log_level, log_format, config,
+  # partitions, shaping, extra_args.
+  image: ethpandaops/disruptoor:v1.1.1
+  log_level: info
+  # Partitions are driven at runtime via HTTP PUT /v1/state from the assertoor
+  # scenario; no initial state baked in here.
 
   # assertoor reads and asserts on this network after partition + heal
 assertoor_params:
-  image: ethpandaops/assertoor:v0.0.17
+  image: ethpandaops/assertoor:v0.1.2
   run_stability_check: false
   run_block_proposal_check: false
   tests:
