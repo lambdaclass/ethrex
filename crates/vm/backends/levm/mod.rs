@@ -2118,52 +2118,52 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 2: Prefetch storage slots in batch — parallel inner fetch + single write-lock.
-        // Storage is flattened to (address, slot) pairs so rayon can distribute
-        // work across threads regardless of how many slots each account has.
-        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
-        // pool) would monopolize a single thread while others go idle.
-        let slots: Vec<(Address, ethrex_common::H256)> = accounts
-            .iter()
-            .flat_map(|ac| {
-                ac.all_storage_slots()
-                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
-            })
-            .collect();
-        store
-            .prefetch_storage(&slots)
-            .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
-        // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        //
-        // Dedup: factory-deployed contracts (ERC20 clones, proxy templates) share
-        // the same code_hash across many accounts. Without dedup we take the
-        // code-cache write lock once per duplicate hash. `prefetch_codes`
-        // collects all missing hashes, fetches them in parallel from the inner
-        // store, and inserts under a single write-lock.
-        let mut code_seen: rustc_hash::FxHashSet<ethrex_common::H256> =
-            rustc_hash::FxHashSet::default();
-        let code_hashes: Vec<ethrex_common::H256> = accounts
-            .par_iter()
-            .filter_map(|ac| {
-                store
-                    .get_account_state(ac.address)
-                    .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
-                    .map(|s| s.code_hash)
-            })
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter(|h| code_seen.insert(*h))
-            .collect();
-        store
-            .prefetch_codes(&code_hashes)
-            .map_err(|e| EvmError::Custom(format!("prefetch_codes: {e}")))?;
+        // Phases 2 (storage) and 3 (codes) both depend on Phase 1 (accounts)
+        // but not on each other: code hashes come from the Phase-1 cached
+        // account states, storage lookups don't need code. Run them
+        // concurrently via rayon::join so the warmer total approaches
+        // max(storage, codes) rather than the sum.
+        let store_p2 = Arc::clone(&store);
+        let store_p3 = Arc::clone(&store);
+        let (storage_res, code_res) = rayon::join(
+            || -> Result<(), EvmError> {
+                let slots: Vec<(Address, ethrex_common::H256)> = accounts
+                    .iter()
+                    .flat_map(|ac| {
+                        ac.all_storage_slots()
+                            .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
+                    })
+                    .collect();
+                store_p2
+                    .prefetch_storage(&slots)
+                    .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))
+            },
+            || -> Result<(), EvmError> {
+                // Dedup: factory-deployed contracts (ERC20 clones, proxy templates)
+                // share the same code_hash across many accounts; without dedup we
+                // take the code-cache write lock once per duplicate hash.
+                let mut code_seen: rustc_hash::FxHashSet<ethrex_common::H256> =
+                    rustc_hash::FxHashSet::default();
+                let code_hashes: Vec<ethrex_common::H256> = accounts
+                    .par_iter()
+                    .filter_map(|ac| {
+                        store_p3
+                            .get_account_state(ac.address)
+                            .ok()
+                            .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                            .map(|s| s.code_hash)
+                    })
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .filter(|h| code_seen.insert(*h))
+                    .collect();
+                store_p3
+                    .prefetch_codes(&code_hashes)
+                    .map_err(|e| EvmError::Custom(format!("prefetch_codes: {e}")))
+            },
+        );
+        storage_res?;
+        code_res?;
 
         Ok(())
     }
