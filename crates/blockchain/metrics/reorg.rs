@@ -1,5 +1,7 @@
-use prometheus::{Histogram, HistogramOpts, IntCounter, IntGauge};
+use prometheus::{Encoder, Histogram, HistogramOpts, IntCounter, IntGauge, Registry, TextEncoder};
 use std::sync::LazyLock;
+
+use crate::MetricsError;
 
 pub static METRICS_REORG: LazyLock<MetricsReorg> = LazyLock::new(MetricsReorg::new);
 
@@ -81,5 +83,37 @@ impl MetricsReorg {
 impl Default for MetricsReorg {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl MetricsReorg {
+    /// Register all reorg metrics into a fresh registry and encode them as a
+    /// Prometheus text payload. Mirrors `MetricsBlocks::gather_metrics`.
+    pub fn gather_metrics(&self) -> Result<String, MetricsError> {
+        let r = Registry::new();
+        r.register(Box::new(self.overlay_entries.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.overlay_bytes.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.journal_length.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.reorg_depth_hist.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.reconcile_duration_hist.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.deep_reorg_attempts_total.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.deep_reorg_success_total.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        r.register(Box::new(self.deep_reorg_aborts_total.clone()))
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+
+        let encoder = TextEncoder::new();
+        let metric_families = r.gather();
+        let mut buffer = Vec::new();
+        encoder
+            .encode(&metric_families, &mut buffer)
+            .map_err(|e| MetricsError::PrometheusErr(e.to_string()))?;
+        Ok(String::from_utf8(buffer)?)
     }
 }
