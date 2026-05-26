@@ -337,6 +337,21 @@ impl Node {
         chain
     }
 
+    /// Submits a single, externally-built block via `engine_newPayload` without
+    /// touching `Chain` bookkeeping. Use when a test needs to feed blocks built
+    /// on another node into this node ; for the common "build then notify on
+    /// the same node" flow, prefer [`Self::notify_new_payload`].
+    pub async fn submit_block(&self, block: &Block) {
+        let execution_payload = ExecutionPayload::from_block(block.clone(), None);
+        let commitments = vec![];
+        let parent_beacon_block_root = block.header.parent_beacon_block_root.unwrap();
+        let _payload_status = self
+            .engine_client
+            .engine_new_payload_v4(execution_payload, commitments, parent_beacon_block_root)
+            .await
+            .unwrap();
+    }
+
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
         let execution_payload = ExecutionPayload::from_block(head.clone(), None);
@@ -490,6 +505,23 @@ pub struct Chain {
     block_hashes: Vec<H256>,
     blocks: Vec<Block>,
     safe_height: usize,
+    /// Per-chain salt mixed into [`get_next_payload_attributes`] so two `Chain`s
+    /// forked from the same parent produce divergent blocks.
+    ///
+    /// Without a salt, `get_next_payload_attributes` derives `prev_randao` and
+    /// `parent_beacon_block_root` deterministically from the parent hash, so
+    /// `let chain_a = base.fork(); let chain_b = base.fork();` followed by
+    /// independent extensions yields BYTE-IDENTICAL blocks on both chains.
+    /// FCU-ing the second chain then collides with the first chain's headers
+    /// in storage, `engine_newPayload` short-circuits on header-already-known,
+    /// the layer cache is never repopulated after the deep-reorg overlay
+    /// install, and every subsequent FCU loops back through `reorg_apply_deep`
+    /// until the test panics on `Syncing`.
+    ///
+    /// Tests that need two genuinely competing forks (e.g. `deep_reorg_beyond_128`)
+    /// must set distinct salts via [`Self::with_salt`] AFTER `fork()`. Tests that
+    /// only extend a single line keep the default of 0 ; their behavior is unchanged.
+    salt: u8,
 }
 
 impl Chain {
@@ -499,6 +531,7 @@ impl Chain {
             block_hashes: vec![genesis_block.hash()],
             blocks: vec![genesis_block],
             safe_height: 0,
+            salt: 0,
         }
     }
 
@@ -507,12 +540,28 @@ impl Chain {
         self.blocks.push(block);
     }
 
+    /// Slice of blocks from `start` (inclusive) to the chain tip. Used by
+    /// multi-node tests that need to replay divergent blocks built on one
+    /// node into another node via [`Node::submit_block`].
+    pub fn blocks_from(&self, start: usize) -> &[Block] {
+        &self.blocks[start..]
+    }
+
     pub fn fork(&self) -> Self {
         Self {
             block_hashes: self.block_hashes.clone(),
             blocks: self.blocks.clone(),
             safe_height: self.safe_height,
+            salt: self.salt,
         }
+    }
+
+    /// Returns this chain with its salt replaced, so subsequent `build_payload`
+    /// calls produce blocks that diverge from any other `Chain` sharing the same
+    /// prefix but a different salt. See the `salt` field doc for the rationale.
+    pub fn with_salt(mut self, salt: u8) -> Self {
+        self.salt = salt;
+        self
     }
 
     /// Mark the block at `height` as finalized (safe).
@@ -544,8 +593,13 @@ impl Chain {
     fn get_next_payload_attributes(&self) -> PayloadAttributesV3 {
         let timestamp = self.blocks.last().unwrap().header.timestamp + 12;
         let head_hash = self.get_fork_choice_state().head_block_hash;
-        // Generate dummy values by hashing multiple times
-        let parent_beacon_block_root = keccak256(&head_hash.0);
+        // Mix the per-chain salt into the seed so sibling chains forked from the
+        // same parent produce distinct `prev_randao` / `parent_beacon_block_root`
+        // values, and therefore distinct block hashes from block 1 onward.
+        let mut seed = [0u8; 33];
+        seed[..32].copy_from_slice(&head_hash.0);
+        seed[32] = self.salt;
+        let parent_beacon_block_root = keccak256(&seed);
         let prev_randao = keccak256(&parent_beacon_block_root.0);
         let suggested_fee_recipient = Default::default();
         // TODO: add withdrawals
