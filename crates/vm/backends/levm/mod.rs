@@ -1063,72 +1063,65 @@ impl LEVM {
 
         let exec_results: Result<Vec<TxExecResult>, EvmError> = (0..n_txs)
             .into_par_iter()
-            .map(|tx_idx| -> Result<_, EvmError> {
-                let (tx, sender) = &txs_with_sender[tx_idx];
-                let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
-                    store.clone(),
-                    system_seed.clone(),
-                    32,
-                );
-                tx_db.lazy_bal = Some(LazyBalCursor {
-                    bal: arc_bal.clone(),
-                    bal_index: u32::try_from(tx_idx + 1).unwrap_or(u32::MAX),
-                    index: arc_idx.clone(),
-                });
-                // Small capacity: parallel txs rarely nest >8 call frames, and
-                // over-allocating per-tx wastes memory across many rayon tasks.
-                let mut stack_pool = Vec::with_capacity(8);
+            .map_init(
+                || Vec::<Stack>::with_capacity(8),
+                |stack_pool: &mut Vec<Stack>, tx_idx| -> Result<_, EvmError> {
+                    let (tx, sender) = &txs_with_sender[tx_idx];
+                    let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
+                        store.clone(),
+                        system_seed.clone(),
+                        32,
+                    );
+                    tx_db.lazy_bal = Some(LazyBalCursor {
+                        bal: arc_bal.clone(),
+                        bal_index: u32::try_from(tx_idx + 1).unwrap_or(u32::MAX),
+                        index: arc_idx.clone(),
+                    });
 
-                // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
-                // diagnostics. Safe to over-report: used only to REMOVE entries from a
-                // extraneous-entry checklist.
-                tx_db.accessed_accounts =
-                    Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
+                    // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
+                    // diagnostics. Safe to over-report: used only to REMOVE entries from a
+                    // extraneous-entry checklist.
+                    tx_db.accessed_accounts =
+                        Some(FxHashSet::with_capacity_and_hasher(16, Default::default()));
 
-                // Enable a shadow BAL recorder on this per-tx db. The recorder is gated
-                // at the same gas-check points as the builder path, giving us an exact
-                // EIP-7928 access signal (missing-account and missing-storage-read
-                // detection). Per-tx recorder — no cross-task contention.
-                tx_db.enable_bal_recording();
-                let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
-                tx_db.set_bal_index(bal_index);
-                if let Some(recorder) = tx_db.bal_recorder_mut() {
-                    recorder.record_touched_address(*sender);
-                    if let TxKind::Call(to) = tx.to() {
-                        recorder.record_touched_address(to);
+                    // Enable a shadow BAL recorder on this per-tx db. The recorder is gated
+                    // at the same gas-check points as the builder path, giving us an exact
+                    // EIP-7928 access signal (missing-account and missing-storage-read
+                    // detection). Per-tx recorder — no cross-task contention.
+                    tx_db.enable_bal_recording();
+                    let bal_index = u32::try_from(tx_idx + 1).unwrap_or(u32::MAX);
+                    tx_db.set_bal_index(bal_index);
+                    if let Some(recorder) = tx_db.bal_recorder_mut() {
+                        recorder.record_touched_address(*sender);
+                        if let TxKind::Call(to) = tx.to() {
+                            recorder.record_touched_address(to);
+                        }
                     }
-                }
 
-                let report = LEVM::execute_tx_in_block(
-                    tx,
-                    *sender,
-                    header,
-                    &mut tx_db,
-                    vm_type,
-                    &mut stack_pool,
-                    false,
-                    crypto,
-                )?;
+                    let report = LEVM::execute_tx_in_block(
+                        tx, *sender, header, &mut tx_db, vm_type, stack_pool, false, crypto,
+                    )?;
 
-                let current_state = std::mem::take(&mut tx_db.current_accounts_state);
-                let codes = std::mem::take(&mut tx_db.codes);
-                let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
-                let (shadow_touched, shadow_reads) = tx_db
-                    .bal_recorder
-                    .take()
-                    .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
-                    .unwrap_or_default();
-                Ok((
-                    tx_idx,
-                    tx.tx_type(),
-                    report,
-                    current_state,
-                    codes,
-                    tracked,
-                    shadow_touched,
-                    shadow_reads,
-                ))
-            })
+                    let current_state = std::mem::take(&mut tx_db.current_accounts_state);
+                    let codes = std::mem::take(&mut tx_db.codes);
+                    let tracked = tx_db.accessed_accounts.take().unwrap_or_default();
+                    let (shadow_touched, shadow_reads) = tx_db
+                        .bal_recorder
+                        .take()
+                        .map(|mut r| (r.take_touched_addresses(), r.take_storage_reads()))
+                        .unwrap_or_default();
+                    Ok((
+                        tx_idx,
+                        tx.tx_type(),
+                        report,
+                        current_state,
+                        codes,
+                        tracked,
+                        shadow_touched,
+                        shadow_reads,
+                    ))
+                },
+            )
             .collect();
 
         let mut exec_results = exec_results?;
