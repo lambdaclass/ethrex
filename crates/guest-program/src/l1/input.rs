@@ -29,11 +29,11 @@ impl ProgramInput {
 }
 
 /// Wire-format version byte for the legacy EIP-8025 framing.
-#[cfg(feature = "eip-8025")]
+
 pub const EIP8025_VERSION_LEGACY: u8 = 0x00;
 
 /// Wire-format version byte for the canonical EIP-8025 framing.
-#[cfg(feature = "eip-8025")]
+
 pub const EIP8025_VERSION_CANONICAL: u8 = 0x01;
 
 /// Encode a `NewPayloadRequest` (SSZ) and `ExecutionWitness` (rkyv) into the
@@ -42,7 +42,7 @@ pub const EIP8025_VERSION_CANONICAL: u8 = 0x01;
 ///   `[version=0x00] [ssz_len: u32 LE] [ssz_bytes] [rkyv_bytes]`
 ///
 /// Returns an error if rkyv serialization of the execution witness fails.
-#[cfg(feature = "eip-8025")]
+
 pub fn encode_eip8025(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: &ExecutionWitness,
@@ -64,32 +64,32 @@ pub fn encode_eip8025(
 
 // ── canonical SSZ schema ───────────────────────────────────────────
 
-#[cfg(feature = "eip-8025")]
+
 const MAX_WITNESS_NODES: usize = 1 << 20;
-#[cfg(feature = "eip-8025")]
+
 const MAX_WITNESS_CODES: usize = 1 << 16;
-#[cfg(feature = "eip-8025")]
+
 const MAX_WITNESS_HEADERS: usize = 256;
-#[cfg(feature = "eip-8025")]
+
 const MAX_BYTES_PER_WITNESS_NODE: usize = 1 << 20;
-#[cfg(feature = "eip-8025")]
+
 const MAX_BYTES_PER_CODE: usize = 1 << 24;
-#[cfg(feature = "eip-8025")]
+
 const MAX_BYTES_PER_HEADER: usize = 1 << 10;
-#[cfg(feature = "eip-8025")]
+
 const MAX_PUBLIC_KEYS: usize = 1 << 20;
-#[cfg(feature = "eip-8025")]
+
 const MAX_BYTES_PER_PUBLIC_KEY: usize = 65;
 
 /// Mirrors `SszChainConfig` from the Amsterdam stateless-validation spec.
-#[cfg(feature = "eip-8025")]
+
 #[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
 pub struct CanonicalChainConfig {
     pub chain_id: u64,
 }
 
 /// Mirrors `SszExecutionWitness` from the Amsterdam stateless-validation spec.
-#[cfg(feature = "eip-8025")]
+
 #[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
 pub struct CanonicalExecutionWitness {
     pub state: libssz_types::SszList<
@@ -103,7 +103,7 @@ pub struct CanonicalExecutionWitness {
 }
 
 /// Mirrors `SszStatelessInput` from the Amsterdam stateless-validation spec.
-#[cfg(feature = "eip-8025")]
+
 #[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
 pub struct CanonicalStatelessInput {
     pub new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
@@ -116,7 +116,7 @@ pub struct CanonicalStatelessInput {
 }
 
 /// Decoded EIP-8025 wire payload, dispatched by version byte.
-#[cfg(feature = "eip-8025")]
+
 pub enum DecodedEip8025 {
     /// Legacy framing (`version = 0x00`).
     Legacy {
@@ -130,7 +130,7 @@ pub enum DecodedEip8025 {
     },
 }
 
-#[cfg(feature = "eip-8025")]
+
 impl core::fmt::Debug for DecodedEip8025 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -149,7 +149,7 @@ impl core::fmt::Debug for DecodedEip8025 {
 ///   (`[ssz_len: u32 LE] [ssz_bytes] [cfg_len: u32 LE] [rkyv ChainConfig]`).
 ///
 /// Anything else surfaces as [`ProgramInputDecodeError::UnknownVersion`].
-#[cfg(feature = "eip-8025")]
+
 pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecodeError> {
     let (version, rest) = bytes
         .split_first()
@@ -173,7 +173,7 @@ pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecode
     }
 }
 
-#[cfg(feature = "eip-8025")]
+
 fn decode_eip8025_legacy(
     bytes: &[u8],
 ) -> Result<
@@ -205,7 +205,7 @@ fn decode_eip8025_legacy(
     Ok((new_payload_request, execution_witness))
 }
 
-#[cfg(feature = "eip-8025")]
+
 fn decode_eip8025_canonical(
     bytes: &[u8],
 ) -> Result<(CanonicalStatelessInput, ethrex_common::types::ChainConfig), ProgramInputDecodeError> {
@@ -247,13 +247,13 @@ fn decode_eip8025_canonical(
     Ok((stateless_input, chain_config))
 }
 
-#[cfg(feature = "eip-8025")]
+
 #[derive(Debug)]
 pub enum ProgramInputEncodeError {
     Rkyv(String),
 }
 
-#[cfg(feature = "eip-8025")]
+
 impl core::fmt::Display for ProgramInputEncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
@@ -262,7 +262,7 @@ impl core::fmt::Display for ProgramInputEncodeError {
     }
 }
 
-#[cfg(feature = "eip-8025")]
+
 #[derive(Debug)]
 pub enum ProgramInputDecodeError {
     TooShort,
@@ -271,7 +271,7 @@ pub enum ProgramInputDecodeError {
     UnknownVersion(u8),
 }
 
-#[cfg(feature = "eip-8025")]
+
 impl core::fmt::Display for ProgramInputDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

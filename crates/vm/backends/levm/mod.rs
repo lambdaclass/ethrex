@@ -8,16 +8,16 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::H256;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::constants::EMPTY_KECCACK_HASH;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::types::Code;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::types::TxType;
 use ethrex_common::types::block_access_list::BlockAccessList;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::types::block_access_list::{
     BalAddressIndex, find_exact_change_balance, find_exact_change_code, find_exact_change_nonce,
     find_exact_change_storage, has_exact_change_balance, has_exact_change_code,
@@ -25,7 +25,7 @@ use ethrex_common::types::block_access_list::{
 };
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{AuthorizationTuple, EIP7702Transaction};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::utils::u256_from_big_endian_const;
 use ethrex_common::{
     Address, U256,
@@ -35,11 +35,11 @@ use ethrex_common::{
         requests::Requests,
     },
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_common::{BigEndianHash, validate_block_access_list_size, validate_header_bal_indices};
 use ethrex_crypto::Crypto;
 use ethrex_levm::EVMConfig;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_levm::account::{AccountStatus, LevmAccount};
 use ethrex_levm::call_frame::Stack;
 use ethrex_levm::constants::{
@@ -47,7 +47,7 @@ use ethrex_levm::constants::{
     TX_MAX_GAS_LIMIT_AMSTERDAM,
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
@@ -61,14 +61,14 @@ use ethrex_levm::{
     errors::{ExecutionReport, TxResult, VMError},
     vm::VM,
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cmp::min;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use std::sync::Arc;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::Sender;
@@ -154,7 +154,7 @@ pub fn check_2d_gas_allowance(
 
 /// Error type for BAL validation failures, distinguishing state mismatches
 /// from database errors.
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
 #[derive(Debug, thiserror::Error)]
 enum BalValidationError {
     #[error("{0}")]
@@ -379,11 +379,6 @@ impl LEVM {
                     EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
                 })?;
 
-        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
-        // `eip-8025` does not call `execute_block_pipeline` it uses
-        // `execute_block` instead. Adding dummy let to avoid unused warnings.
-        let _ = header_bal;
-        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         // When BAL is provided (Amsterdam+ validation path): use parallel execution
         if let Some(bal) = header_bal {
             // Validate header BAL structural properties before execution.
@@ -739,7 +734,7 @@ impl LEVM {
 
     /// Convert BAL into `Vec<AccountUpdate>` for the merkleizer.
     /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
         if new_code.is_empty() {
             (*EMPTY_KECCACK_HASH, None)
@@ -754,7 +749,7 @@ impl LEVM {
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
     /// State comes entirely from the BAL — no execution needed.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     fn bal_to_account_updates(
         bal: &BlockAccessList,
         store: &dyn Database,
@@ -891,7 +886,7 @@ impl LEVM {
     /// `max_idx` is the BAL block_access_index of the last tx whose effects
     /// should be visible. BAL indexing: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
     /// For tx at index `i`, pass `max_idx = i` (diffs with index <= i = system + txs 0..i-1).
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     fn seed_db_from_bal(
         db: &mut GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -1020,7 +1015,7 @@ impl LEVM {
     /// Each tx runs independently on its own database pre-seeded with BAL
     /// intermediate state (geth-style). State for the merkleizer comes from
     /// `bal_to_account_updates`, not from tx execution.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     fn execute_block_parallel(
         block: &Block,
@@ -1356,7 +1351,7 @@ impl LEVM {
 
     /// Gets the seeded balance for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     fn seeded_balance(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1385,7 +1380,7 @@ impl LEVM {
 
     /// Gets the seeded nonce for an account at `seed_idx` from BAL, falling
     /// back to system_seed/store if no BAL entry exists before that index.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     fn seeded_nonce(
         seed_idx: u32,
         acct: &ethrex_common::types::block_access_list::AccountChanges,
@@ -1427,7 +1422,7 @@ impl LEVM {
     /// `index`: pre-built validation index
     /// `system_seed`: pre-system-call state snapshot (for extraneous entry detection)
     /// `store`: database (fallback for pre-state lookups)
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     #[allow(clippy::too_many_arguments)]
     fn validate_tx_execution(
         bal_idx: u32,
@@ -1785,7 +1780,7 @@ impl LEVM {
     ///         malicious builder could omit a withdrawal recipient from the BAL,
     ///         causing the BAL-derived state root to exclude the withdrawal balance
     ///         change.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     fn validate_bal_withdrawal_index(
         db: &GeneralizedDatabase,
         bal: &BlockAccessList,
@@ -2084,7 +2079,7 @@ impl LEVM {
     /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
     /// parallel workers can benefit from shared caching. The same cache should
     /// be used by the sequential execution phase.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     pub fn warm_block(
         block: &Block,
         store: Arc<dyn Database>,
@@ -2162,7 +2157,7 @@ impl LEVM {
     ///   account cache AND trie layer cache nodes
     /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
     ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
         store: Arc<dyn Database>,

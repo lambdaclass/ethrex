@@ -87,7 +87,6 @@ use ethrex_storage::{
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
 use ethrex_vm::backends::CachingDatabase;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
@@ -470,10 +469,8 @@ impl Blockchain {
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
                     .spawn_scoped(s, move || {
@@ -587,14 +584,11 @@ impl Blockchain {
                         "merkleization thread panicked".to_string(),
                     ))
                 });
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warmer_duration = warm_handle
                     .join()
                     .inspect_err(|e| warn!("Warming thread error: {e:?}"))
                     .ok()
                     .unwrap_or(Duration::ZERO);
-                #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
-                let warmer_duration = Duration::ZERO;
                 Ok((execution_result, merkleization_result, warmer_duration))
             })?;
         let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;

@@ -259,6 +259,20 @@ pub struct ChainConfig {
     pub bpo5_time: Option<u64>,
     pub amsterdam_time: Option<u64>,
 
+    /// EIP-8025 (Execution Layer Triggerable Proofs) activation timestamp.
+    /// Accepts `hegotaTime` (canonical), `hezeTime` / `heze_time`, and
+    /// `bogotaTime` / `bogota_time` as JSON aliases — the upstream community
+    /// has not settled on a final name. Internal field stays `hegota_time`.
+    #[serde(
+        default,
+        alias = "hegotaTime",
+        alias = "hezeTime",
+        alias = "heze_time",
+        alias = "bogotaTime",
+        alias = "bogota_time"
+    )]
+    pub hegota_time: Option<u64>,
+
     /// Amount of total difficulty reached by the network that triggers the consensus upgrade.
     #[serde(default, with = "crate::serde_utils::u128::hex_str_opt")]
     pub terminal_total_difficulty: Option<u128>,
@@ -317,6 +331,7 @@ pub enum Fork {
     BPO4 = 23,
     BPO5 = 24,
     Amsterdam = 25,
+    Hegota = 26,
 }
 
 impl From<Fork> for &str {
@@ -348,11 +363,17 @@ impl From<Fork> for &str {
             Fork::BPO4 => "BPO4",
             Fork::BPO5 => "BPO5",
             Fork::Amsterdam => "Amsterdam",
+            Fork::Hegota => "Hegota",
         }
     }
 }
 
 impl ChainConfig {
+    pub fn is_hegota_activated(&self, block_timestamp: u64) -> bool {
+        self.hegota_time
+            .is_some_and(|time| time <= block_timestamp)
+    }
+
     pub fn is_amsterdam_activated(&self, block_timestamp: u64) -> bool {
         self.amsterdam_time
             .is_some_and(|time| time <= block_timestamp)
@@ -418,6 +439,7 @@ impl ChainConfig {
             ("Verkle", self.verkle_time),
             ("Osaka", self.osaka_time),
             ("Amsterdam", self.amsterdam_time),
+            ("Hegota", self.hegota_time),
         ];
 
         let active_forks: Vec<_> = post_merge_forks
@@ -437,7 +459,9 @@ impl ChainConfig {
     }
 
     pub fn get_fork(&self, block_timestamp: u64) -> Fork {
-        if self.is_amsterdam_activated(block_timestamp) {
+        if self.is_hegota_activated(block_timestamp) {
+            Fork::Hegota
+        } else if self.is_amsterdam_activated(block_timestamp) {
             Fork::Amsterdam
         } else if self.is_bpo5_activated(block_timestamp) {
             Fork::BPO5
@@ -508,8 +532,10 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_amsterdam_activated(block_timestamp) {
+        let next = if self.is_hegota_activated(block_timestamp) {
             None
+        } else if self.is_amsterdam_activated(block_timestamp) && self.hegota_time.is_some() {
+            Some(Fork::Hegota)
         } else if self.is_bpo5_activated(block_timestamp) && self.amsterdam_time.is_some() {
             Some(Fork::Amsterdam)
         } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
@@ -538,7 +564,9 @@ impl ChainConfig {
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
-        if self.amsterdam_time.is_some() {
+        if self.hegota_time.is_some() {
+            Fork::Hegota
+        } else if self.amsterdam_time.is_some() {
             Fork::Amsterdam
         } else if self.bpo5_time.is_some() {
             Fork::BPO5
@@ -572,6 +600,7 @@ impl ChainConfig {
             Fork::BPO4 => self.bpo4_time,
             Fork::BPO5 => self.bpo5_time,
             Fork::Amsterdam => self.amsterdam_time,
+            Fork::Hegota => self.hegota_time,
             Fork::Homestead => self.homestead_block,
             Fork::DaoFork => self.dao_fork_block,
             Fork::Byzantium => self.byzantium_block,
@@ -600,6 +629,7 @@ impl ChainConfig {
             Fork::BPO4 => self.blob_schedule.bpo4,
             Fork::BPO5 => self.blob_schedule.bpo5,
             Fork::Amsterdam => self.blob_schedule.amsterdam,
+            Fork::Hegota => self.blob_schedule.amsterdam,
             _ => None,
         }
     }
@@ -645,6 +675,7 @@ impl ChainConfig {
             self.bpo4_time,
             self.bpo5_time,
             self.amsterdam_time,
+            self.hegota_time,
             self.verkle_time,
         ]
         .into_iter()
@@ -1145,5 +1176,89 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn fork_hegota_follows_amsterdam_in_ordering() {
+        assert!(Fork::Hegota > Fork::Amsterdam);
+        assert_eq!(Fork::Hegota as u8, 26);
+    }
+
+    #[test]
+    fn fork_hegota_display_name() {
+        let s: &str = Fork::Hegota.into();
+        assert_eq!(s, "Hegota");
+    }
+
+    #[test]
+    fn is_hegota_activated_respects_timestamp() {
+        let mut config = ChainConfig::default();
+        config.hegota_time = Some(1000);
+        assert!(!config.is_hegota_activated(999));
+        assert!(config.is_hegota_activated(1000));
+        assert!(config.is_hegota_activated(1001));
+
+        config.hegota_time = None;
+        assert!(!config.is_hegota_activated(0));
+        assert!(!config.is_hegota_activated(u64::MAX));
+    }
+
+    #[test]
+    fn get_fork_returns_hegota_when_both_amsterdam_and_hegota_active() {
+        let mut config = ChainConfig::default();
+        config.amsterdam_time = Some(500);
+        config.hegota_time = Some(1000);
+        assert_eq!(config.get_fork(500), Fork::Amsterdam);
+        assert_eq!(config.get_fork(999), Fork::Amsterdam);
+        assert_eq!(config.get_fork(1000), Fork::Hegota);
+        assert_eq!(config.get_fork(2000), Fork::Hegota);
+    }
+
+    #[test]
+    fn next_fork_points_to_hegota_when_amsterdam_active() {
+        let mut config = ChainConfig::default();
+        config.amsterdam_time = Some(500);
+        config.hegota_time = Some(1000);
+        assert_eq!(config.next_fork(500), Some(Fork::Hegota));
+        assert_eq!(config.next_fork(999), Some(Fork::Hegota));
+        // At hegota timestamp Hegota is current, no further fork
+        assert_eq!(config.next_fork(1000), None);
+    }
+
+    #[test]
+    fn get_last_scheduled_fork_picks_hegota_when_scheduled() {
+        let mut config = ChainConfig::default();
+        config.amsterdam_time = Some(500);
+        config.hegota_time = Some(1000);
+        assert_eq!(config.get_last_scheduled_fork(), Fork::Hegota);
+
+        config.hegota_time = None;
+        assert_eq!(config.get_last_scheduled_fork(), Fork::Amsterdam);
+    }
+
+    #[test]
+    fn get_activation_timestamp_for_hegota() {
+        let mut config = ChainConfig::default();
+        config.hegota_time = Some(1700000000);
+        assert_eq!(
+            config.get_activation_timestamp_for_fork(Fork::Hegota),
+            Some(1700000000)
+        );
+    }
+
+    #[test]
+    fn chain_config_accepts_heze_and_bogota_aliases_for_hegota_time() {
+        let cases = [
+            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "hegotaTime": 1700000000}"#, 1700000000_u64),
+            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "hezeTime":   1700000001}"#, 1700000001),
+            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "heze_time": 1700000002}"#, 1700000002),
+            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "bogotaTime": 1700000003}"#, 1700000003),
+            (r#"{"chainId": 1, "depositContractAddress": "0x0000000000000000000000000000000000000000", "bogota_time": 1700000004}"#, 1700000004),
+        ];
+        for (json, expected) in cases {
+            let cfg: ChainConfig = serde_json::from_str(json)
+                .unwrap_or_else(|e| panic!("failed to parse {json}: {e}"));
+            assert_eq!(cfg.hegota_time, Some(expected), "case: {json}");
+        }
     }
 }
