@@ -135,15 +135,25 @@ gpu=$(detect_gpu)
     done
 
     # Summary stats.
-    count=0; total=0; min=999999999; max=0; total_gas=0; total_txs=0
+    if [[ ${#ms_arr[@]} -eq 0 ]]; then
+        echo "No batches to summarize." >&2
+        exit 0
+    fi
+
+    min=${ms_arr[0]}
+    max=${ms_arr[0]}
+    count=0
+    total=0
+    total_gas=0
+    total_txs=0
     for i in "${!batches[@]}"; do
         ms=${ms_arr[$i]}
         gas=${gas_arr[$i]}
         txs=${txs_arr[$i]}
         count=$((count + 1))
         total=$((total + ms))
-        ((ms < min)) && min=$ms
-        ((ms > max)) && max=$ms
+        if (( ms < min )); then min=$ms; fi
+        if (( ms > max )); then max=$ms; fi
         [[ "$gas" != "-" && -n "$gas" ]] && total_gas=$((total_gas + ${gas%%.*}))
         [[ "$txs" != "-" && -n "$txs" ]] && total_txs=$((total_txs + ${txs%%.*}))
     done
