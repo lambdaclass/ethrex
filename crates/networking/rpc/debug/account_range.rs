@@ -1,14 +1,43 @@
 use std::collections::BTreeMap;
 
 use ethrex_common::{H256, U256};
+use ethrex_storage::Store;
+use ethrex_storage::error::StoreError;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{RpcApiContext, RpcErr, RpcHandler};
+use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifierOrHash};
 
+/// `debug_accountRange` — paginated iteration over the state trie at a block,
+/// matching the shape documented at
+/// https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debug-accountrange.
+///
+/// Params: `[blockNrOrHash, txIndex, start, maxResults]`. The first parameter
+/// accepts a block number, a tag (`latest` / `earliest` / etc.), a 32-byte
+/// hash, or the EIP-1898 object form `{"blockHash": ...}` /
+/// `{"blockNumber": ...}`.
+///
+/// **Known divergences from geth**:
+///
+/// - `txIndex` is currently ignored — the response is always the state at the
+///   *end* of the given block (equivalent to geth's `txIndex == -1`). Returning
+///   the state immediately after the Nth transaction requires rebuilding the
+///   state trie root from an in-memory VM cache, which is a deferred feature.
+///   `code` / `storage` of the accounts are also not emitted; use `eth_getCode`
+///   / `eth_getStorageAt` for those. Consequently geth's `nocode`, `nostorage`,
+///   and `incompletes` booleans (params 5–7) are not implemented and not
+///   accepted — passing more than four parameters errors.
+/// - Account entries always have `key: null` because ethrex has no preimage
+///   store; callers wanting the original address must hash it themselves to
+///   look up by hashed address.
+///
+/// The trie traversal is wrapped in `tokio::task::spawn_blocking` because
+/// `iter_accounts_from` opens long-lived locked DB transactions and performs
+/// synchronous trie I/O.
 pub struct AccountRangeRequest {
-    block_hash: H256,
-    tx_index: usize,
+    block: BlockIdentifierOrHash,
+    /// Currently ignored — see type-level doc.
+    tx_index: i64,
     start: H256,
     max_results: usize,
 }
@@ -17,7 +46,8 @@ pub struct AccountRangeRequest {
 #[serde(rename_all = "camelCase")]
 struct AccountRangeResult {
     accounts: BTreeMap<H256, AccountEntry>,
-    #[serde(rename = "next")]
+    /// First hashed address NOT included in this page. All zeroes means the
+    /// iteration is complete (matches geth's sentinel).
     next: H256,
 }
 
@@ -28,7 +58,7 @@ struct AccountEntry {
     nonce: u64,
     root: H256,
     code_hash: H256,
-    /// The original (unhashed) address. Null when preimage is not available.
+    /// Original (unhashed) address. Always `null` — ethrex has no preimage store.
     key: Option<H256>,
 }
 
@@ -43,12 +73,15 @@ impl RpcHandler for AccountRangeRequest {
                 params.len()
             )));
         }
-        let block_hash: H256 = serde_json::from_value(params[0].clone())?;
-        let tx_index: usize = serde_json::from_value(params[1].clone())?;
-        let start: H256 = serde_json::from_value(params[2].clone())?;
-        let max_results: usize = serde_json::from_value(params[3].clone())?;
+        let block = BlockIdentifierOrHash::parse(params[0].clone(), 0)?;
+        let tx_index: i64 = serde_json::from_value(params[1].clone())
+            .map_err(|e| RpcErr::BadParams(format!("invalid txIndex: {e}")))?;
+        let start: H256 = serde_json::from_value(params[2].clone())
+            .map_err(|e| RpcErr::BadParams(format!("invalid start hash: {e}")))?;
+        let max_results: usize = serde_json::from_value(params[3].clone())
+            .map_err(|e| RpcErr::BadParams(format!("invalid maxResults: {e}")))?;
         Ok(AccountRangeRequest {
-            block_hash,
+            block,
             tx_index,
             start,
             max_results,
@@ -56,50 +89,71 @@ impl RpcHandler for AccountRangeRequest {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let header = context
-            .storage
-            .get_block_header_by_hash(self.block_hash)?
-            .ok_or(RpcErr::Internal("Block not found".to_string()))?;
+        let header = self
+            .block
+            .resolve_block_header(&context.storage)
+            .await?
+            .ok_or_else(|| RpcErr::Internal("Block not found".to_string()))?;
 
-        let _ = self.tx_index; // TODO: re-execute up to tx_index for precise state
+        // `tx_index` is parsed and validated but not honoured yet. Negative
+        // values (geth's `-1` "end of block" sentinel) and any value >= the
+        // block's tx count are equivalent to "end of block" — which is what
+        // we always return, so no error needed. Other values would require
+        // mid-block state reconstruction; documented on the type.
+        let _ = self.tx_index;
 
-        let iter = context
-            .storage
-            .iter_accounts_from(header.state_root, self.start)
-            .map_err(|e| RpcErr::Internal(e.to_string()))?;
+        let state_root = header.state_root;
+        let start = self.start;
+        let max_results = self.max_results;
+        let storage = context.storage.clone();
 
-        let mut accounts = BTreeMap::new();
-        let mut next = H256::zero();
-
-        for (hashed_addr, account_state) in iter {
-            if accounts.len() >= self.max_results {
-                next = hashed_addr;
-                break;
-            }
-            accounts.insert(
-                hashed_addr,
-                AccountEntry {
-                    balance: account_state.balance,
-                    nonce: account_state.nonce,
-                    root: account_state.storage_root,
-                    code_hash: account_state.code_hash,
-                    key: None, // preimage not available
-                },
-            );
-        }
+        let (accounts, next) = tokio::task::spawn_blocking(move || {
+            collect_account_range(&storage, state_root, start, max_results)
+        })
+        .await
+        .map_err(|e| RpcErr::Internal(format!("accountRange task failed: {e}")))??;
 
         Ok(serde_json::to_value(AccountRangeResult { accounts, next })?)
     }
+}
+
+fn collect_account_range(
+    storage: &Store,
+    state_root: H256,
+    start: H256,
+    max_results: usize,
+) -> Result<(BTreeMap<H256, AccountEntry>, H256), StoreError> {
+    let iter = storage.iter_accounts_from(state_root, start)?;
+    let mut accounts = BTreeMap::new();
+    let mut next = H256::zero();
+    for (hashed_addr, account_state) in iter {
+        if accounts.len() >= max_results {
+            next = hashed_addr;
+            break;
+        }
+        accounts.insert(
+            hashed_addr,
+            AccountEntry {
+                balance: account_state.balance,
+                nonce: account_state.nonce,
+                root: account_state.storage_root,
+                code_hash: account_state.code_hash,
+                key: None,
+            },
+        );
+    }
+    Ok((accounts, next))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::RpcHandler;
+    use crate::types::block_identifier::BlockIdentifier;
     use serde_json::json;
 
     #[test]
-    fn parse_valid_params() {
+    fn parse_valid_params_by_hash() {
         let params = Some(vec![
             json!("0x0000000000000000000000000000000000000000000000000000000000000001"),
             json!(0),
@@ -107,10 +161,38 @@ mod tests {
             json!(64),
         ]);
         let req = AccountRangeRequest::parse(&params).unwrap();
-        assert_eq!(req.block_hash, H256::from_low_u64_be(1));
+        assert!(matches!(req.block, BlockIdentifierOrHash::Hash(_)));
         assert_eq!(req.tx_index, 0);
         assert_eq!(req.start, H256::zero());
         assert_eq!(req.max_results, 64);
+    }
+
+    #[test]
+    fn parse_valid_params_by_number() {
+        let params = Some(vec![
+            json!("0xa"),
+            json!(-1),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            json!(64),
+        ]);
+        let req = AccountRangeRequest::parse(&params).unwrap();
+        assert!(matches!(
+            req.block,
+            BlockIdentifierOrHash::Identifier(BlockIdentifier::Number(10))
+        ));
+        assert_eq!(req.tx_index, -1);
+    }
+
+    #[test]
+    fn parse_valid_params_by_tag() {
+        let params = Some(vec![
+            json!("latest"),
+            json!(0),
+            json!("0x0000000000000000000000000000000000000000000000000000000000000000"),
+            json!(64),
+        ]);
+        let req = AccountRangeRequest::parse(&params).unwrap();
+        assert!(matches!(req.block, BlockIdentifierOrHash::Identifier(_)));
     }
 
     #[test]
