@@ -269,51 +269,71 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Code)>,
 }
 
-/// Read-modify-write helper for the TRANSACTION_LOCATIONS table.
-///
-/// The table is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
-/// one entry per block the tx appears in (multiple only in case of reorgs). The
-/// caller stages updates in `pending`, lazily seeded from disk on first touch
-/// of each tx hash. Re-touching the same hash within the batch (e.g. two blocks
-/// in the same batch containing the same tx) replaces any prior entry for the
-/// same `block_hash`, preserving the dedupe semantics of the previous composite-key
-/// schema.
-///
-/// # Concurrency invariant
-///
-/// Callers MUST be serialized at the application layer: the read snapshot and
-/// the write batch are separate, so two concurrent writers on the same tx hash
-/// would both see the pre-write state and the last commit wins — silently
-/// losing the other's entry. In ethrex the blockchain pipeline is sequential
-/// (fork-choice and block import run one block at a time), so this holds
-/// today. If that ever changes, this helper needs an exclusive lock around
-/// the read+stage+write sequence for the TRANSACTION_LOCATIONS slot. The
-/// previous composite-key schema avoided this question by giving concurrent
-/// writers different keys; the new schema can't.
-///
-/// Tracked in [#6727](https://github.com/lambdaclass/ethrex/issues/6727).
-fn stage_tx_location(
-    read: &dyn StorageReadView,
-    pending: &mut HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>>,
-    tx_hash: H256,
+/// Encodes a single tx-location entry as the operand passed to `merge_cf`.
+pub(crate) fn encode_tx_location_operand(
     block_number: BlockNumber,
     block_hash: BlockHash,
     index: Index,
-) -> Result<(), StoreError> {
-    let list = match pending.entry(tx_hash) {
-        Entry::Occupied(e) => e.into_mut(),
-        Entry::Vacant(e) => {
-            let existing = read
-                .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())?
-                .map(|bytes| <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes))
-                .transpose()?
-                .unwrap_or_default();
-            e.insert(existing)
-        }
+) -> Vec<u8> {
+    (block_number, block_hash, index).encode_to_vec()
+}
+
+/// Merge function for the `TRANSACTION_LOCATIONS` column family.
+///
+/// The CF is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
+/// one entry per block the tx appears in (multiple only on reorgs). Writers call
+/// `merge_cf` with a single `(bn, bh, idx)` operand per tx; RocksDB invokes this
+/// function on `get_cf` and during compaction to fold the base value plus
+/// pending operands into the final `Vec`. Each new operand replaces any prior
+/// entry for the same `block_hash`, preserving the dedupe semantics of the
+/// previous composite-key schema.
+///
+/// Used by:
+/// - The RocksDB backend, via `set_merge_operator_associative`.
+/// - The InMemory backend, which dispatches by table name and applies this
+///   inline at `merge()` call time.
+///
+/// Why merge instead of read-modify-write: a per-tx `get_cf` on the write path
+/// is expensive without a bloom filter (~22 ms/block on mainnet). With merge,
+/// the write path is pure `merge_cf` (no read), and the consolidation work is
+/// deferred to compaction or to the next read. As a bonus the merge is
+/// atomic at the RocksDB level — no concurrency assumption is needed at the
+/// application layer.
+pub fn tx_locations_merge(
+    existing: Option<&[u8]>,
+    operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
+) -> Option<Vec<u8>> {
+    let mut list: Vec<(BlockNumber, BlockHash, Index)> = match existing {
+        Some(bytes) => match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
+            Ok(v) => v,
+            Err(e) => {
+                error!(
+                    "tx_locations_merge: failed to decode existing value ({} bytes): {e}; \
+                     resetting to empty",
+                    bytes.len()
+                );
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
     };
-    list.retain(|(_, bh, _)| *bh != block_hash);
-    list.push((block_number, block_hash, index));
-    Ok(())
+    for op in operands {
+        let op_bytes = op.as_ref();
+        match <(BlockNumber, BlockHash, Index)>::decode(op_bytes) {
+            Ok((bn, bh, idx)) => {
+                list.retain(|(_, existing_bh, _)| *existing_bh != bh);
+                list.push((bn, bh, idx));
+            }
+            Err(e) => {
+                error!(
+                    "tx_locations_merge: failed to decode operand ({} bytes): {e}; \
+                     skipping",
+                    op_bytes.len()
+                );
+            }
+        }
+    }
+    Some(list.encode_to_vec())
 }
 
 impl Store {
@@ -351,9 +371,6 @@ impl Store {
     pub async fn add_blocks(&self, blocks: Vec<Block>) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let read = db.begin_read()?;
-            let mut tx_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>> =
-                HashMap::new();
             let mut tx = db.begin_write()?;
 
             // TODO: Same logic in apply_updates
@@ -371,23 +388,12 @@ impl Store {
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    stage_tx_location(
-                        &*read,
-                        &mut tx_locations,
-                        transaction.hash(),
-                        block_number,
-                        block_hash,
-                        index as u64,
+                    tx.merge(
+                        TRANSACTION_LOCATIONS,
+                        transaction.hash().as_bytes(),
+                        &encode_tx_location_operand(block_number, block_hash, index as u64),
                     )?;
                 }
-            }
-
-            for (tx_hash, locations) in tx_locations {
-                tx.put(
-                    TRANSACTION_LOCATIONS,
-                    tx_hash.as_bytes(),
-                    &locations.encode_to_vec(),
-                )?;
             }
 
             tx.commit()
@@ -643,27 +649,12 @@ impl Store {
     ) -> Result<(), StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let read = db.begin_read()?;
-            let mut tx_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>> =
-                HashMap::new();
-
-            for (tx_hash, block_number, block_hash, index) in locations {
-                stage_tx_location(
-                    &*read,
-                    &mut tx_locations,
-                    tx_hash,
-                    block_number,
-                    block_hash,
-                    index,
-                )?;
-            }
-
             let mut tx = db.begin_write()?;
-            for (tx_hash, locs) in tx_locations {
-                tx.put(
+            for (tx_hash, block_number, block_hash, index) in locations {
+                tx.merge(
                     TRANSACTION_LOCATIONS,
                     tx_hash.as_bytes(),
-                    &locs.encode_to_vec(),
+                    &encode_tx_location_operand(block_number, block_hash, index),
                 )?;
             }
             tx.commit()
@@ -1520,8 +1511,6 @@ impl Store {
             .map_err(|e| {
                 StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
             })?;
-        let read = db.begin_read()?;
-        let mut tx_locations: HashMap<H256, Vec<(BlockNumber, BlockHash, Index)>> = HashMap::new();
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1538,23 +1527,12 @@ impl Store {
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                stage_tx_location(
-                    &*read,
-                    &mut tx_locations,
-                    transaction.hash(),
-                    block_number,
-                    block_hash,
-                    index as u64,
+                tx.merge(
+                    TRANSACTION_LOCATIONS,
+                    transaction.hash().as_bytes(),
+                    &encode_tx_location_operand(block_number, block_hash, index as u64),
                 )?;
             }
-        }
-
-        for (tx_hash, locations) in tx_locations {
-            tx.put(
-                TRANSACTION_LOCATIONS,
-                tx_hash.as_bytes(),
-                &locations.encode_to_vec(),
-            )?;
         }
 
         for (block_hash, receipts) in update_batch.receipts {
@@ -3555,5 +3533,68 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn h256(b: u8) -> H256 {
+        H256::from_low_u64_be(b as u64)
+    }
+
+    fn op(bn: BlockNumber, bh: H256, idx: Index) -> Vec<u8> {
+        encode_tx_location_operand(bn, bh, idx)
+    }
+
+    fn decode(v: &[u8]) -> Vec<(BlockNumber, BlockHash, Index)> {
+        <Vec<(BlockNumber, BlockHash, Index)>>::decode(v).unwrap()
+    }
+
+    #[test]
+    fn single_operand_on_empty_base() {
+        let out = tx_locations_merge(None, vec![op(100, h256(0x10), 0)]).unwrap();
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 0)]);
+    }
+
+    #[test]
+    fn operand_appended_to_existing_base() {
+        let base = vec![(100u64, h256(0x10), 0u64)].encode_to_vec();
+        let out = tx_locations_merge(Some(&base), vec![op(101, h256(0x11), 5)]).unwrap();
+        let mut got = decode(&out);
+        got.sort();
+        let mut want = vec![(100, h256(0x10), 0), (101, h256(0x11), 5)];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn multiple_operands_combined() {
+        let out = tx_locations_merge(
+            None,
+            vec![
+                op(100, h256(0x10), 0),
+                op(100, h256(0x11), 1),
+                op(101, h256(0x12), 2),
+            ],
+        )
+        .unwrap();
+        assert_eq!(decode(&out).len(), 3);
+    }
+
+    #[test]
+    fn same_block_hash_is_deduped() {
+        // Two operands with the same block_hash: the later one replaces the earlier.
+        let out =
+            tx_locations_merge(None, vec![op(100, h256(0x10), 0), op(100, h256(0x10), 7)]).unwrap();
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 7)]);
+    }
+
+    #[test]
+    fn malformed_operand_is_skipped() {
+        let out = tx_locations_merge(None, vec![vec![0xff, 0xff], op(100, h256(0x10), 0)]).unwrap();
+        // The malformed operand is skipped; the valid one is applied.
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 0)]);
     }
 }

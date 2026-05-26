@@ -11,13 +11,24 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MergeOperands, MultiThreaded, Options,
     SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+use crate::store::tx_locations_merge;
+
+/// Adapter wrapping `tx_locations_merge` to match RocksDB's expected signature.
+fn tx_locations_merge_op(
+    _new_key: &[u8],
+    existing: Option<&[u8]>,
+    operands: &MergeOperands,
+) -> Option<Vec<u8>> {
+    tx_locations_merge(existing, operands)
+}
 
 /// RocksDB backend
 #[derive(Debug)]
@@ -121,6 +132,25 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
+                    block_opts.set_block_cache(&block_cache);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                TRANSACTION_LOCATIONS => {
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    // The write path uses merge_cf instead of read-modify-write,
+                    // so the per-tx negative get is gone. The merge operator
+                    // folds (block_number, block_hash, index) operands into the
+                    // Vec value on read/compaction.
+                    cf_opts.set_merge_operator_associative(
+                        "tx_locations_merge",
+                        tx_locations_merge_op,
+                    );
+
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -373,6 +403,16 @@ impl StorageWriteBatch for RocksDBWriteTx {
             .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
 
         self.batch.delete_cf(&cf, key);
+        Ok(())
+    }
+
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        self.batch.merge_cf(&cf, key, operand);
         Ok(())
     }
 
