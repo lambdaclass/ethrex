@@ -198,7 +198,7 @@ async fn run(
                     ));
                 }
                 // Advance fork choice to the new head
-                apply_fork_choice(store, hash, hash, hash).await.unwrap();
+                apply_fork_choice(store, hash, hash, hash, None).await.unwrap();
             }
         }
     }
@@ -235,7 +235,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
             .add_block_pipeline_bal(block, None)
             .map_err(|e| format!("Two-pass pass-1 failed for test {test_key}: {e:?}"))?;
 
-        apply_fork_choice(&store1, hash, hash, hash)
+        apply_fork_choice(&store1, hash, hash, hash, None)
             .await
             .map_err(|e| {
                 format!("Two-pass pass-1 fork choice failed for test {test_key}: {e:?}")
@@ -260,7 +260,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
             .add_block_pipeline(block, Some(Arc::clone(bal)))
             .map_err(|e| format!("Two-pass pass-2 (parallel) failed for test {test_key}: {e:?}"))?;
 
-        apply_fork_choice(&store2, hash, hash, hash)
+        apply_fork_choice(&store2, hash, hash, hash, None)
             .await
             .map_err(|e| {
                 format!("Two-pass pass-2 fork choice failed for test {test_key}: {e:?}")
