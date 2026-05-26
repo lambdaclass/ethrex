@@ -1,3 +1,10 @@
+//! Shared setup helpers for the rpc integration tests. Each test file builds
+//! its own in-memory `Store`, funds a known sender, and uses [`rpc_call`] to
+//! drive the dispatcher just like a live request would. Individual test files
+//! only need a subset of the helpers, so the module is permissive about dead
+//! code rather than gating each item separately.
+#![allow(dead_code)]
+
 use std::{fs::File, io::BufReader, path::PathBuf};
 
 use bytes::Bytes;
@@ -15,16 +22,17 @@ use ethrex_common::{
 use ethrex_l2_rpc::signer::{LocalSigner, Signable, Signer};
 use ethrex_rpc::rpc::map_http_requests;
 use ethrex_rpc::test_utils::default_context_with_storage;
-use ethrex_rpc::utils::RpcRequest;
+use ethrex_rpc::utils::{RpcErr, RpcRequest};
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
 use serde_json::{Value, json};
 
-const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
-const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
-const TEST_GAS_LIMIT: u64 = 100_000;
+pub const TEST_PRIVATE_KEY: &str =
+    "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
+pub const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
+pub const TEST_GAS_LIMIT: u64 = 100_000;
 
-fn test_secret_key() -> SecretKey {
+pub fn test_secret_key() -> SecretKey {
     SecretKey::from_slice(&hex::decode(TEST_PRIVATE_KEY).unwrap()).unwrap()
 }
 
@@ -32,11 +40,11 @@ fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
 }
 
-fn sender_from_key(sk: &SecretKey) -> Address {
+pub fn sender_from_key(sk: &SecretKey) -> Address {
     LocalSigner::new(*sk).address
 }
 
-async fn setup_store(sender: Address) -> (Store, u64) {
+pub async fn setup_store(sender: Address) -> (Store, u64) {
     let file = File::open(workspace_root().join("fixtures/genesis/execution-api.json"))
         .expect("Failed to open genesis file");
     let reader = BufReader::new(file);
@@ -61,7 +69,11 @@ async fn setup_store(sender: Address) -> (Store, u64) {
     (store, chain_id)
 }
 
-async fn build_block(store: &Store, blockchain: &Blockchain, parent_header: &BlockHeader) -> Block {
+pub async fn build_block(
+    store: &Store,
+    blockchain: &Blockchain,
+    parent_header: &BlockHeader,
+) -> Block {
     let args = BuildPayloadArgs {
         parent: parent_header.hash(),
         timestamp: parent_header.timestamp + 12,
@@ -79,7 +91,7 @@ async fn build_block(store: &Store, blockchain: &Blockchain, parent_header: &Blo
     result.payload
 }
 
-async fn create_transfer_tx(
+pub async fn create_transfer_tx(
     chain_id: u64,
     nonce: u64,
     to: Address,
@@ -101,7 +113,7 @@ async fn create_transfer_tx(
     tx
 }
 
-async fn build_and_execute_block(
+pub async fn build_and_execute_block(
     store: &Store,
     blockchain: &Blockchain,
     parent_header: &BlockHeader,
@@ -125,27 +137,40 @@ async fn build_and_execute_block(
     block
 }
 
-async fn rpc_call(store: &Store, method: &str, params: Vec<Value>) -> Value {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-    let request: RpcRequest = serde_json::from_value(body).expect("valid RPC request");
+pub async fn rpc_call(store: &Store, method: &str, params: Vec<Value>) -> Value {
+    let request = build_rpc_request(method, params);
     let context = default_context_with_storage(store.clone()).await;
     map_http_requests(&request, context)
         .await
         .expect("RPC call should succeed")
 }
 
-struct TestEnv {
-    store: Store,
-    block: Block,
-    tx_hash: H256,
+pub async fn rpc_call_expect_err(store: &Store, method: &str, params: Vec<Value>) -> RpcErr {
+    let request = build_rpc_request(method, params);
+    let context = default_context_with_storage(store.clone()).await;
+    map_http_requests(&request, context)
+        .await
+        .expect_err("RPC call should fail")
 }
 
-async fn setup_single_transfer_block() -> TestEnv {
+fn build_rpc_request(method: &str, params: Vec<Value>) -> RpcRequest {
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1,
+    });
+    serde_json::from_value(body).expect("valid RPC request")
+}
+
+pub struct TestEnv {
+    pub store: Store,
+    pub block: Block,
+    pub tx_hash: H256,
+    pub sender: Address,
+}
+
+pub async fn setup_single_transfer_block() -> TestEnv {
     let sk = test_secret_key();
     let sender = sender_from_key(&sk);
     let signer: Signer = LocalSigner::new(sk).into();
@@ -161,30 +186,33 @@ async fn setup_single_transfer_block() -> TestEnv {
         store,
         block,
         tx_hash,
+        sender,
     }
 }
 
-#[tokio::test]
-async fn intermediate_roots() {
-    let env = setup_single_transfer_block().await;
-    let block_hash = env.block.hash();
-
-    let result = rpc_call(
-        &env.store,
-        "debug_intermediateRoots",
-        vec![json!(format!("{block_hash:#x}"))],
-    )
-    .await;
-
-    // Returns an array of intermediate state roots (one per tx).
-    let arr = result.as_array().expect("response should be an array");
-    assert_eq!(
-        arr.len(),
-        1,
-        "block has 1 tx so should have 1 intermediate root"
-    );
-
-    // Each root should be a 0x-prefixed hex string.
-    let root_str = arr[0].as_str().expect("root should be a string");
-    assert!(root_str.starts_with("0x"), "root should be hex");
+/// Multi-tx variant: builds a block containing `tx_count` value transfers from
+/// the sender to incrementing recipient addresses. Used by tests that need to
+/// observe per-tx state progression.
+pub async fn setup_multi_transfer_block(tx_count: u64) -> TestEnv {
+    assert!(tx_count >= 1);
+    let sk = test_secret_key();
+    let sender = sender_from_key(&sk);
+    let signer: Signer = LocalSigner::new(sk).into();
+    let (store, chain_id) = setup_store(sender).await;
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let value = U256::from(1_000_000_000_000_000_u64); // 0.001 ETH per tx
+    let mut txs = Vec::with_capacity(tx_count as usize);
+    for i in 0..tx_count {
+        let recipient = Address::from_low_u64_be(0xAA + i);
+        txs.push(create_transfer_tx(chain_id, i, recipient, value, &signer).await);
+    }
+    let first_hash = txs[0].hash();
+    let block = build_and_execute_block(&store, &blockchain, &genesis_header, txs).await;
+    TestEnv {
+        store,
+        block,
+        tx_hash: first_hash,
+        sender,
+    }
 }
