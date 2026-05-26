@@ -201,6 +201,10 @@ Meetings on **Thursdays**. Agendas/notes at [ethereum/pm](https://github.com/eth
    - Summary of EIP discussions
    - Track CFI/SFI status changes
 
+## ACDT Follow-up
+
+All Core Devs — Testing meetings on **Mondays**. Agendas/notes at [ethereum/pm](https://github.com/ethereum/pm). Followed by Edgar.
+
 ---
 
 ## Links
