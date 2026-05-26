@@ -828,43 +828,37 @@ impl BlockAccessListRecorder {
     fn filter_net_zero_storage(&mut self) {
         let current_idx = self.current_index;
 
-        // Collect slots that need to be converted from writes to reads
+        // Writes are appended with monotonically-increasing index, so all
+        // entries for `current_idx` are contiguous at the tail of each slot's
+        // changes vector. That lets us check the final value in O(1) and
+        // remove the tail without scanning the full history.
         let mut slots_to_convert: Vec<(Address, U256)> = Vec::new();
 
         for ((addr, slot), pre_value) in &self.tx_initial_storage {
-            // Check if there are writes for this slot in the current transaction
             if let Some(slots) = self.storage_writes.get(addr)
                 && let Some(changes) = slots.get(slot)
+                && let Some(&(last_idx, last_val)) = changes.last()
+                && last_idx == current_idx
+                && last_val == *pre_value
             {
-                // Find the final value for this transaction
-                // (last entry with current_idx, or no entry means no change in this tx)
-                let final_value = changes
-                    .iter()
-                    .filter(|(idx, _)| *idx == current_idx)
-                    .next_back()
-                    .map(|(_, val)| *val);
-
-                if let Some(final_val) = final_value
-                    && final_val == *pre_value
-                {
-                    // Net-zero: final value equals pre-transaction value
-                    slots_to_convert.push((*addr, *slot));
-                }
+                slots_to_convert.push((*addr, *slot));
             }
         }
 
-        // Convert net-zero writes to reads
         for (addr, slot) in slots_to_convert {
-            // Remove the write entries for the current transaction
             if let Some(slots) = self.storage_writes.get_mut(&addr) {
                 if let Some(changes) = slots.get_mut(&slot) {
-                    changes.retain(|(idx, _)| *idx != current_idx);
-                    // If no changes remain for this slot, remove the slot entry
+                    // Trim the contiguous tail of current_idx entries.
+                    let cutoff = changes
+                        .iter()
+                        .rposition(|(idx, _)| *idx != current_idx)
+                        .map(|p| p + 1)
+                        .unwrap_or(0);
+                    changes.truncate(cutoff);
                     if changes.is_empty() {
                         slots.remove(&slot);
                     }
                 }
-                // If no slots remain for this address, remove the address entry
                 if slots.is_empty() {
                     self.storage_writes.remove(&addr);
                 }
@@ -879,7 +873,6 @@ impl BlockAccessListRecorder {
                 }
             }
 
-            // Add as a read instead
             self.storage_reads.entry(addr).or_default().insert(slot);
         }
     }
