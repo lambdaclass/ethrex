@@ -5,23 +5,40 @@ use crate::MetricsError;
 
 pub static METRICS_REORG: LazyLock<MetricsReorg> = LazyLock::new(MetricsReorg::new);
 
+/// Prometheus metrics for the deep-reorg path.
+///
+/// All metrics are exported under the `ethrex_reorg_*` / `ethrex_deep_reorg_*` namespace
+/// and available at the `/metrics` endpoint. Operators can use these to detect and
+/// diagnose unusual reorg activity:
+/// - Gauge metrics (`overlay_entries`, `overlay_bytes`, `journal_length`) reflect current
+///   in-flight state and return to zero after a successful reorg completes.
+/// - Counter metrics (`deep_reorg_attempts_total`, `deep_reorg_success_total`,
+///   `deep_reorg_aborts_total`) are monotonically increasing.
+/// - Histogram metrics (`reorg_depth_hist`, `reconcile_duration_hist`) record
+///   distribution of individual reorg events.
 #[derive(Debug, Clone)]
 pub struct MetricsReorg {
-    /// Current number of entries in the installed overlay (0 when no reorg in progress).
+    /// Number of entries in the installed overlay, or 0 when no deep reorg is in progress.
+    /// A non-zero value means the node is mid-reorg; watch for it staying elevated.
     pub overlay_entries: IntGauge,
-    /// Current byte size of overlay key+value data.
+    /// Byte size of overlay key+value data, or 0 when no deep reorg is in progress.
+    /// Large values indicate a deep reorg spanning many blocks with high state churn.
     pub overlay_bytes: IntGauge,
-    /// `highest - lowest + 1` of the STATE_HISTORY column family, or 0 if empty.
+    /// Span of the `STATE_HISTORY` column family (`highest - lowest + 1`), or 0 if empty.
+    /// Reflects how many blocks of reorg history are available; shrinks as finality pruning runs.
     pub journal_length: IntGauge,
-    /// Distribution of attempted reorg depths.
+    /// Distribution of reorg depths observed at each fork-choice update.
+    /// Use to gauge whether peers are producing unexpectedly long reorgs.
     pub reorg_depth_hist: Histogram,
-    /// Duration of the first-commit reconciliation in seconds.
+    /// Distribution of first-commit reconciliation latencies in seconds.
+    /// Captures the overlay-fold + disk-write cost on the first block of a new chain.
     pub reconcile_duration_hist: Histogram,
-    /// Total deep reorgs initiated.
+    /// Total number of deep-reorg apply attempts (counter). Incremented before overlay install.
     pub deep_reorg_attempts_total: IntCounter,
-    /// Total deep reorgs that completed successfully.
+    /// Total number of deep reorgs that completed successfully (counter).
     pub deep_reorg_success_total: IntCounter,
-    /// Total deep reorgs that aborted via `AbortReorgGuard`.
+    /// Total number of deep reorgs that aborted via `AbortReorgGuard` (counter).
+    /// A sustained difference from `deep_reorg_attempts_total` indicates persistent failures.
     pub deep_reorg_aborts_total: IntCounter,
 }
 

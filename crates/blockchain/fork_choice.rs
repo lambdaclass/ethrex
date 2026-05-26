@@ -333,17 +333,46 @@ async fn find_link_with_canonical_chain(
 // Deep-reorg apply path (issue #6685, PR 3 orchestration).
 // ===========================================================================
 
-/// Wrapper around [`apply_fork_choice`] that handles the deep-reorg case:
-/// when the head's state is not reachable from the on-disk trie (the link
-/// block's state has been flushed past the layer-cache edge), build an
-/// in-memory overlay from the journal, replay the side chain against it,
-/// and atomically reconcile on the first new-chain commit.
+/// Entry point for engine-API fork-choice updates; handles both shallow and deep reorgs.
 ///
-/// For shallow reorgs and no-op cases the call falls through to
-/// `apply_fork_choice` and behaves identically. The reorg depth ceiling is
-/// finality-bounded (distance to the last known finalized block, or to the
-/// lowest journal entry when no finalized block is known), further capped by
-/// the operator override in `blockchain.options.max_reorg_depth`.
+/// ## Deep-reorg apply flow (issue #6685)
+///
+/// 1. **Operator / CL submits FCU.** `apply_fork_choice_with_deep_reorg` is the
+///    single entry point. It first attempts a normal (shallow) `apply_fork_choice`.
+/// 2. **`StateNotReachable` triggers the deep path.** If the pivot block's state was
+///    flushed past the layer-cache edge `D`, `apply_fork_choice` returns
+///    `StateNotReachable` and `reorg_apply_deep` takes over.
+/// 3. **`ReorgGuard` flag set; concurrent FCUs short-circuit to `SYNCING`.**
+///    `blockchain.enter_reorg()` sets the in-progress flag for the lifetime of this
+///    call. Any concurrent FCU sees the flag and returns `InvalidForkChoice::Syncing`
+///    immediately, preventing a second reorg from racing the first.
+/// 4. **`install_overlay_for_reorg` builds the overlay and swaps the cache.**
+///    Journal entries `[T, D]` (inclusive, where `T = pivot+1`) are replayed in
+///    descending order to produce an `Overlay` that exposes the virtual state at
+///    `pivot`. The layer cache is atomically replaced with a fresh empty cache
+///    carrying the overlay. Reads now cascade: layer cache -> overlay -> disk.
+/// 5. **Side-chain blocks `[T .. new_head]` are executed via the normal path.**
+///    `Blockchain::add_block` is called for each block in ascending order. Reads
+///    hit the layer cache (new-chain diffs) then the overlay (pivot baseline) then
+///    disk (unchanged old-chain state).
+/// 6. **First commit folds the overlay atomically.**
+///    The first new-chain block that triggers a layer commit (via the reconciliation
+///    path added in PR #6689) writes the overlay entries plus the new layer together
+///    in a single RocksDB write batch, then clears the overlay.
+/// 7. **`AbortReorgGuard` resets cache on any failure.**
+///    An `AbortReorgGuard` is armed immediately after overlay install. On any error
+///    (side-chain execution failure, missing block body, fork-choice update error,
+///    or panic via unwinding) the guard calls `Store::abort_reorg`, discarding the
+///    overlay and any partial new-chain layers so the next FCU starts clean.
+///
+/// For shallow reorgs and no-op cases the call falls through to `apply_fork_choice`
+/// and behaves identically.
+///
+/// The reorg depth ceiling is finality-bounded; see [`compute_reorg_ceiling`] for
+/// the three-case logic. The operator can further restrict depth via
+/// `--max-reorg-depth` (`BlockchainOptions::max_reorg_depth`).
+///
+/// Tracking issue: #6685. Merged PRs: #6686, #6687, #6689, and this PR.
 pub async fn apply_fork_choice_with_deep_reorg(
     blockchain: &Blockchain,
     head_hash: H256,

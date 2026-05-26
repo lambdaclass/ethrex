@@ -13,6 +13,23 @@
 //! ensures lexicographic order matches numeric order, which lets finality
 //! pruning use a single `delete_range`.
 //!
+//! ## Pruning model
+//!
+//! When a `forkchoice_update` advances the finalized block, `forkchoice_update_inner`
+//! calls `delete_range(STATE_HISTORY, 0, finalized_number + 1)`, removing all journal
+//! entries at or below the new finality boundary. The surviving entries cover
+//! `[finalized_number+1, cache_edge_D]`, which is exactly the window a future
+//! deep reorg could need. After pruning, `Store::lowest_state_history_block_number`
+//! reflects the new floor.
+//!
+//! ## Batch mode (full sync)
+//!
+//! When `batch_mode == true` (full sync), the commit path skips journaling
+//! entirely. A full-sync import writes one layer per ~1024 blocks and does
+//! not produce the per-block reverse-diffs needed for deep reorgs. Reorg
+//! support is only active after the node transitions to normal block-by-block
+//! execution.
+//!
 //! ## Codec
 //!
 //! Entries use a hand-rolled compact format: a version byte at offset 0, then
@@ -21,6 +38,16 @@
 //! account flat-KV, storage flat-KV. RLP/bincode/postcard are skipped — the
 //! access pattern (write-once, read-on-reorg, large volume) makes encode/decode
 //! cost matter.
+//!
+//! ## Version strategy
+//!
+//! [`JOURNAL_VERSION`] is a single byte at offset 0 of every entry. The decoder
+//! rejects any version other than the current one with
+//! [`JournalDecodeError::VersionMismatch`]. On a codec bump, the journal should
+//! be drained at a finality boundary so the new binary starts with an empty
+//! journal and never encounters old-format entries. A future bump that needs to
+//! keep history across the upgrade should introduce per-version `decode_vN` arms
+//! rather than re-encoding existing entries.
 
 use ethrex_common::H256;
 
