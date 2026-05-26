@@ -103,32 +103,43 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < COMETBFT_VALIDATE_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
-    Ok((COMETBFT_VALIDATE_GAS, run_inner(input).unwrap_or_default()))
+    // bsc-geth's `cometBFTLightBlockValidate.Run` returns an error on
+    // parse/validation failures, and the BSC CALL implementation burns ALL
+    // forwarded gas when a precompile errors. See the matching note in
+    // `tm_header_validate::run`.
+    let output = run_inner(input)?;
+    Ok((COMETBFT_VALIDATE_GAS, output))
 }
 
-fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
+fn run_inner(input: &[u8]) -> Result<Vec<u8>, PrecompileError> {
     if input.is_empty() || input.len() <= CS_LEN_WORD {
-        return None;
+        return Err(PrecompileError::InvalidInput);
     }
 
-    let cs_length = u64::from_be_bytes(input[CS_LEN_OFFSET..CS_LEN_WORD].try_into().ok()?) as usize;
-    let cs_end = CS_LEN_WORD.checked_add(cs_length)?;
+    let cs_length = u64::from_be_bytes(
+        input[CS_LEN_OFFSET..CS_LEN_WORD]
+            .try_into()
+            .map_err(|_| PrecompileError::InvalidInput)?,
+    ) as usize;
+    let cs_end = CS_LEN_WORD
+        .checked_add(cs_length)
+        .ok_or(PrecompileError::InvalidInput)?;
     if input.len() <= cs_end {
-        return None;
+        return Err(PrecompileError::InvalidInput);
     }
 
     let cs_bytes = &input[CS_LEN_WORD..cs_end];
     let light_block_bytes = &input[cs_end..];
 
-    parse_consensus_state_v2(cs_bytes).ok()?;
+    parse_consensus_state_v2(cs_bytes)?;
 
     if light_block_bytes.is_empty() {
-        return None;
+        return Err(PrecompileError::InvalidInput);
     }
 
     // TODO: Decode protobuf LightBlock and run ConsensusState.ApplyLightBlock.
-    // Until then, return None (treated as predictable-failure: empty output).
-    None
+    // Until then, signal failure so bsc-geth's all-gas-burn behavior is matched.
+    Err(PrecompileError::NotImplemented)
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────

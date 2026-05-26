@@ -92,23 +92,31 @@ pub fn run(input: &[u8], gas_limit: u64) -> Result<(u64, Vec<u8>), PrecompileErr
     if gas_limit < IAVL_MERKLE_PROOF_GAS {
         return Err(PrecompileError::NotEnoughGas);
     }
-    Ok((IAVL_MERKLE_PROOF_GAS, run_inner(input).unwrap_or_default()))
+    // bsc-geth's `iavlMerkleProofValidate.Run` returns an error on parse/validation
+    // failures, and the BSC CALL implementation burns ALL forwarded gas when
+    // a precompile errors. See the matching note in `tm_header_validate::run`.
+    let output = run_inner(input)?;
+    Ok((IAVL_MERKLE_PROOF_GAS, output))
 }
 
-fn run_inner(input: &[u8]) -> Option<Vec<u8>> {
+fn run_inner(input: &[u8]) -> Result<Vec<u8>, PrecompileError> {
     if input.len() <= OUTER_META_LENGTH {
-        return None;
+        return Err(PrecompileError::InvalidInput);
     }
-    let payload_length =
-        u64::from_be_bytes(input[PAYLOAD_LEN_OFFSET..OUTER_META_LENGTH].try_into().ok()?) as usize;
+    let payload_length = u64::from_be_bytes(
+        input[PAYLOAD_LEN_OFFSET..OUTER_META_LENGTH]
+            .try_into()
+            .map_err(|_| PrecompileError::InvalidInput)?,
+    ) as usize;
     if input.len() != OUTER_META_LENGTH + payload_length {
-        return None;
+        return Err(PrecompileError::InvalidInput);
     }
     let payload = &input[OUTER_META_LENGTH..];
-    parse_kv_merkle_proof(payload).ok()?;
+    parse_kv_merkle_proof(payload)?;
     // TODO: Port proof verification from bsc-geth lightclient/v1/types.go and
-    // ics23_proof.go. Until implemented, return None (predictable-failure path).
-    None
+    // ics23_proof.go. Until implemented, signal failure so bsc-geth's
+    // all-gas-burn behavior is matched.
+    Err(PrecompileError::NotImplemented)
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
