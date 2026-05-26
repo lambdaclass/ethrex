@@ -32,6 +32,24 @@ pub struct TraceBlockByNumberRequest {
     trace_config: TraceConfig,
 }
 
+/// `debug_traceCall` — trace an arbitrary call against the state at a given
+/// block, matching geth's [debug_traceCall][geth]. The call is executed in
+/// memory only; nothing is persisted.
+///
+/// Params: `[callObject, blockIdOrHash?, traceConfig?]`. Omitting the block
+/// defaults to `"latest"`. The call object follows the `eth_call` shape; the
+/// trace config follows the same shape used by `debug_traceTransaction`.
+///
+/// **Known divergence from geth**: geth's `traceConfig` accepts
+/// `stateOverrides` and `blockOverrides` for hypothetical-state debugging.
+/// ethrex does not yet honour either — they are silently ignored. Pass-through
+/// support requires applying overrides at the VM layer before execution.
+///
+/// State is sourced from `header.state_root` (i.e. the state **after** the
+/// block has been applied), matching geth. Pruned nodes that don't have the
+/// state will get an "Internal: state root missing" error.
+///
+/// [geth]: https://geth.ethereum.org/docs/interacting-with-geth/rpc/ns-debug#debug-tracecall
 pub struct TraceCallRequest {
     transaction: GenericTransaction,
     block: Option<BlockIdentifierOrHash>,
@@ -400,14 +418,13 @@ impl RpcHandler for TraceCallRequest {
         &self,
         context: crate::rpc::RpcApiContext,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
-        let block = self
-            .block
-            .clone()
-            .unwrap_or(BlockIdentifierOrHash::Identifier(BlockIdentifier::default()));
+        // Omitted block parameter defaults to `latest` (matches geth).
+        let default_block = BlockIdentifierOrHash::Identifier(BlockIdentifier::default());
+        let block = self.block.as_ref().unwrap_or(&default_block);
         let header = block
             .resolve_block_header(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or_else(|| RpcErr::Internal("Block not found".to_string()))?;
         let timeout = self.trace_config.timeout.unwrap_or(DEFAULT_TIMEOUT);
         match self.trace_config.tracer {
             TracerType::CallTracer => {
@@ -430,7 +447,7 @@ impl RpcHandler for TraceCallRequest {
                 let top_frame = call_trace
                     .into_iter()
                     .next()
-                    .ok_or(RpcErr::Internal("Empty call trace".to_string()))?;
+                    .ok_or_else(|| RpcErr::Internal("Empty call trace".to_string()))?;
                 Ok(serde_json::to_value(top_frame)?)
             }
             TracerType::PrestateTracer => {
