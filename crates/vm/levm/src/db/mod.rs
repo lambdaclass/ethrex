@@ -40,6 +40,13 @@ pub trait Database: Send + Sync {
         }
         Ok(())
     }
+    /// Prefetch a batch of contract codes into the cache. Default: sequential fallback.
+    fn prefetch_codes(&self, hashes: &[H256]) -> Result<(), DatabaseError> {
+        for &hash in hashes {
+            self.get_account_code(hash)?;
+        }
+        Ok(())
+    }
 }
 
 /// A database wrapper that caches state lookups for parallel pre-warming.
@@ -208,6 +215,32 @@ impl Database for CachingDatabase {
         let mut cache = self.write_storage()?;
         for (key, value) in fetched {
             cache.entry(key).or_insert(value);
+        }
+        Ok(())
+    }
+
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn prefetch_codes(&self, hashes: &[H256]) -> Result<(), DatabaseError> {
+        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
+        // Skip hashes already cached to avoid redundant inner fetches.
+        let missing: Vec<H256> = {
+            let cache = self.read_code()?;
+            hashes
+                .iter()
+                .copied()
+                .filter(|h| !cache.contains_key(h))
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        let fetched: Vec<(H256, Code)> = missing
+            .par_iter()
+            .map(|&h| self.inner.get_account_code(h).map(|c| (h, c)))
+            .collect::<Result<_, _>>()?;
+        let mut cache = self.write_code()?;
+        for (h, code) in fetched {
+            cache.entry(h).or_insert(code);
         }
         Ok(())
     }

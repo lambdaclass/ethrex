@@ -2140,7 +2140,14 @@ impl LEVM {
 
         // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
         // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
-        // Uses par_iter for collection since blocks can have thousands of accounts.
+        //
+        // Dedup: factory-deployed contracts (ERC20 clones, proxy templates) share
+        // the same code_hash across many accounts. Without dedup we take the
+        // code-cache write lock once per duplicate hash. `prefetch_codes`
+        // collects all missing hashes, fetches them in parallel from the inner
+        // store, and inserts under a single write-lock.
+        let mut code_seen: rustc_hash::FxHashSet<ethrex_common::H256> =
+            rustc_hash::FxHashSet::default();
         let code_hashes: Vec<ethrex_common::H256> = accounts
             .par_iter()
             .filter_map(|ac| {
@@ -2150,10 +2157,13 @@ impl LEVM {
                     .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
                     .map(|s| s.code_hash)
             })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .filter(|h| code_seen.insert(*h))
             .collect();
-        code_hashes.par_iter().for_each(|&h| {
-            let _ = store.get_account_code(h);
-        });
+        store
+            .prefetch_codes(&code_hashes)
+            .map_err(|e| EvmError::Custom(format!("prefetch_codes: {e}")))?;
 
         Ok(())
     }
