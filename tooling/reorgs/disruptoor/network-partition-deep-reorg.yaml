@@ -1,0 +1,82 @@
+# Deep-reorg partition scenario for ethrex
+#
+# Purpose:
+#   Drive a deep reorg by partitioning the network into two halves for ~200
+#   slots. The minority side (ethrex) builds a fork that diverges more than
+#   128 blocks from the majority chain; on heal, ethrex must accept the longer
+#   chain without returning TooDeepReorg.
+#
+# Prerequisites:
+#   - Kurtosis CLI installed (https://docs.kurtosis.com/install)
+#   - Docker daemon running
+#   - ethrex Docker image built and tagged as ethrex:local
+#       docker build -t ethrex:local .
+#
+# How to run (manual only -- not a PR gate):
+#   kurtosis run --enclave deep-reorg \
+#     github.com/ethpandaops/ethereum-package \
+#     --args-file tooling/reorgs/disruptoor/network-partition-deep-reorg.yaml
+#
+# To tear down:
+#   kurtosis enclave rm deep-reorg --force
+#
+# Note: this scenario is gated behind workflow_dispatch in CI
+#   (.github/workflows/deep_reorg.yaml). It does NOT run on every PR.
+
+participants:
+  # Majority partition: 3 nodes (geth + reth + lighthouse)
+  - el_type: geth
+    el_image: ethereum/client-go:v1.16.1
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    validator_count: 32
+
+  - el_type: reth
+    el_image: ghcr.io/paradigmxyz/reth:v1.3.12
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    validator_count: 32
+
+  - el_type: geth
+    el_image: ethereum/client-go:v1.16.1
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    validator_count: 32
+
+  # Minority partition: 1 ethrex node (built from current branch)
+  - el_type: ethrex
+    el_image: ethrex:local
+    cl_type: lighthouse
+    cl_image: sigp/lighthouse:v7.0.1
+    validator_count: 32
+    el_extra_params:
+      - "--http.api=eth,net,web3,debug,admin,txpool"
+      - "--metrics"
+
+network_params:
+  # 12-second slots; 200 slots of partition = ~40 minutes total runtime
+  seconds_per_slot: 12
+  deposit_contract_address: "0x4242424242424242424242424242424242424242"
+
+additional_services:
+  # disruptoor: network-partition controller
+  # Docs: https://github.com/ethpandaops/disruptoor
+  - disruptoor
+
+disruptoor_params:
+  image: ethpandaops/disruptoor:latest
+  # disruptoor needs elevated privileges to manipulate network namespaces
+  privileged: true
+  # Mounted so disruptoor can reach Docker containers by name
+  docker_socket_path: /var/run/docker.sock
+  # Required for manipulating peer network namespaces
+  host_pid: true
+  port: 7700
+
+  # assertoor reads and asserts on this network after partition + heal
+assertoor_params:
+  image: ethpandaops/assertoor:v0.0.17
+  run_stability_check: false
+  run_block_proposal_check: false
+  tests:
+    - file: ./tooling/reorgs/disruptoor/assertions.yaml
