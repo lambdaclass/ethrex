@@ -2956,11 +2956,10 @@ impl Store {
     /// O(1) via forward seek on the column family's first key.
     pub fn lowest_state_history_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let read = self.backend.begin_read()?;
-        let Some(entry) = read.prefix_iterator(STATE_HISTORY, &[])?.next() else {
+        let Some(key) = read.first_key(STATE_HISTORY)? else {
             return Ok(None);
         };
-        let (key, _) = entry?;
-        let arr = <[u8; 8]>::try_from(key.as_ref()).map_err(|_| {
+        let arr = <[u8; 8]>::try_from(key.as_slice()).map_err(|_| {
             StoreError::Custom(format!(
                 "STATE_HISTORY key has unexpected length: {}",
                 key.len()
@@ -4237,6 +4236,25 @@ mod state_history_tests {
             store.highest_state_history_block_number().unwrap(),
             Some(11),
             "max over present entries"
+        );
+    }
+
+    /// `lowest_state_history_block_number` SHALL return the min key present in
+    /// `STATE_HISTORY`, or `None` when the table is empty. Phase 2's cap fallback
+    /// depends on this when no finalized hash is known.
+    #[tokio::test]
+    async fn lowest_state_history_block_number_finds_min() {
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::from_backend(backend.clone(), dir.path().to_path_buf(), 1).unwrap();
+
+        assert_eq!(store.lowest_state_history_block_number().unwrap(), None);
+
+        seed_journal_entries(&backend, &[7, 3, 11, 5, 8]);
+        assert_eq!(
+            store.lowest_state_history_block_number().unwrap(),
+            Some(3),
+            "min over present entries"
         );
     }
 
