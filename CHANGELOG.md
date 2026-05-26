@@ -17,6 +17,11 @@
 ### 2026-05-14
 
 - Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
+- BAL optimistic merkleization: synthesize state deltas from the input Block Access List pre-execution and merkleize in parallel with the EVM on the `engine_newPayload` validation path. Includes a parallel state-trie pre-warm and per-account hashed-key-sorted storage inserts to keep the trie node arena hot for Stage B/C [#6655](https://github.com/lambdaclass/ethrex/pull/6655)
+
+### 2026-05-21
+
+- Two-CF receipts migration: copy old RLP-keyed receipts to `receipts_v2` with fixed-width keys; old CF auto-dropped on restart [#6598](https://github.com/lambdaclass/ethrex/pull/6598)
 
 ### 2026-04-27
 

@@ -8,7 +8,7 @@ use crate::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
             EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
             TRANSACTION_LOCATIONS,
         },
     },
@@ -660,10 +660,9 @@ impl Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let key = (block_hash, index).encode_to_vec();
+        let key = receipt_key(&block_hash, index);
         let value = receipt.encode_to_vec();
-        self.write_async(RECEIPTS, key, value).await
+        self.write_async(RECEIPTS_V2, key, value).await
     }
 
     /// Add receipts
@@ -676,12 +675,12 @@ impl Store {
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
                 (key, value)
             })
             .collect();
-        self.write_batch_async(RECEIPTS, batch_items).await
+        self.write_batch_async(RECEIPTS_V2, batch_items).await
     }
 
     /// Obtain receipt for a canonical block represented by the block number.
@@ -703,8 +702,8 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let key = (block_hash, index).encode_to_vec();
-        self.read_async(RECEIPTS, key)
+        let key = receipt_key(&block_hash, index);
+        self.read_async(RECEIPTS_V2, key)
             .await?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
@@ -1102,33 +1101,55 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.get_receipts_for_block_from_index(block_hash, 0).await
+        self.get_receipts_for_block_from_index(block_hash, 0, None)
+            .await
     }
 
-    /// Retrieves receipts for a block starting from the given index.
-    /// Used by eth/70 partial receipt requests (EIP-7975).
+    /// Retrieves receipts for a block starting from the given index,
+    /// optionally limited to `max_count` receipts.
+    ///
+    /// Uses cursor-based prefix iteration over the 32-byte block hash prefix
+    /// for efficient batch retrieval. Used by:
+    /// - eth/70 partial receipt requests (EIP-7975) via p2p
+    /// - `eth_getTransactionReceipt` RPC with a count limit to avoid
+    ///   fetching the entire block's receipts
     pub async fn get_receipts_for_block_from_index(
         &self,
         block_hash: &BlockHash,
         start_index: u64,
+        max_count: Option<usize>,
     ) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts = Vec::new();
-        let mut index = start_index;
+        let backend = self.backend.clone();
+        let block_hash = *block_hash;
 
-        let txn = self.backend.begin_read()?;
-        loop {
-            let key = (*block_hash, index).encode_to_vec();
-            match txn.get(RECEIPTS, key.as_slice())? {
-                Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
-                    receipts.push(receipt);
-                    index += 1;
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            let prefix = block_hash.as_bytes().to_vec();
+            // Seek directly to block_hash || start_index to avoid O(start_index) scan.
+            // Keys are big-endian u64, so lexicographic order matches numeric order.
+            let mut seek_key = prefix.clone();
+            seek_key.extend_from_slice(&start_index.to_be_bytes());
+            let iter = txn.prefix_iterator(RECEIPTS_V2, &seek_key)?;
+            let mut receipts = Vec::new();
+            for result in iter {
+                let (k, v) = result?;
+                if !k.starts_with(&prefix) {
+                    break;
                 }
-                None => break,
+                if k.len() != 40 {
+                    continue;
+                }
+                receipts.push(Receipt::decode(v.as_ref())?);
+                if let Some(max) = max_count
+                    && receipts.len() >= max
+                {
+                    break;
+                }
             }
-        }
-
-        Ok(receipts)
+            Ok(receipts)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Snap State methods
@@ -1473,9 +1494,9 @@ impl Store {
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS, &key, &value)?;
+                tx.put(RECEIPTS_V2, &key, &value)?;
             }
         }
 
@@ -1530,10 +1551,13 @@ impl Store {
                 }
                 #[cfg(feature = "rocksdb")]
                 Some(v) if v < STORE_SCHEMA_VERSION => {
-                    // Open backend, run migrations, then proceed with the same Arc
-                    let backend: Arc<dyn crate::api::StorageBackend> =
-                        Arc::new(RocksDBBackend::open(&path)?);
-                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    // Open backend, run migrations, then drop obsolete CFs.
+                    // Cleanup must happen AFTER migrations so legacy CFs (e.g.
+                    // `receipts`) are still readable during the migration.
+                    let rocksdb = Arc::new(RocksDBBackend::open(&path)?);
+                    crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
+                    rocksdb.drop_obsolete_cfs(&path);
+                    let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
                     return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
                 }
                 Some(_) => {
@@ -1548,7 +1572,9 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let backend = Arc::new(RocksDBBackend::open(path)?);
+                let rocksdb = RocksDBBackend::open(&path)?;
+                rocksdb.drop_obsolete_cfs(&path);
+                let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -3403,6 +3429,14 @@ fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
+}
+
+/// Builds a fixed-width RECEIPTS key: block_hash (32B) || index (8B BE).
+pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(40);
+    key.extend_from_slice(block_hash.as_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {

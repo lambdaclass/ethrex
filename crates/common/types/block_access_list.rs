@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use ethereum_types::{Address, H256, U256};
+use ethereum_types::{Address, BigEndianHash, H256, U256};
 use ethrex_rlp::{
     decode::RLPDecode,
     encode::{RLPEncode, encode_length, list_length},
@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::constants::{EMPTY_BLOCK_ACCESS_LIST_HASH, SYSTEM_ADDRESS};
+use crate::types::Code;
 use crate::utils::{keccak, u256_to_h256};
 
 /// Encode a slice of items in sorted order without cloning.
@@ -1609,6 +1610,73 @@ impl BlockAccessListRecorder {
     }
 }
 
+/// Per-field delta for a single account, synthesized directly from a [`BlockAccessList`].
+///
+/// Each optional field is `Some` only when the BAL records a change for that field.
+/// Fields absent from the BAL are left as `None` so that Stage C writes only the
+/// deltas it knows about, without fabricating defaults for unchanged state.
+#[derive(Debug, Clone, Default)]
+pub struct BalSynthesisItem {
+    pub balance: Option<U256>,
+    pub nonce: Option<u64>,
+    pub code_hash: Option<H256>,
+    pub code: Option<Code>,
+    pub added_storage: FxHashMap<H256, U256>,
+}
+
+/// Converts a [`BlockAccessList`] into a per-account map of field-level deltas.
+///
+/// Accounts that appear only via `storage_reads` (no balance/nonce/code/storage
+/// changes) are omitted: Stage B weight is 0, Stage C field writes all no-op,
+/// and the witness builder captures them from `logger.state_accessed`.
+pub fn synthesize_bal_updates(bal: &BlockAccessList) -> FxHashMap<Address, BalSynthesisItem> {
+    let mut result = FxHashMap::default();
+
+    for account in bal.accounts() {
+        // Skip accounts with no actual changes (storage_reads only).
+        if account.balance_changes.is_empty()
+            && account.nonce_changes.is_empty()
+            && account.code_changes.is_empty()
+            && account.storage_changes.is_empty()
+        {
+            continue;
+        }
+
+        let balance = account.balance_changes.last().map(|c| c.post_balance);
+        let nonce = account.nonce_changes.last().map(|c| c.post_nonce);
+        let code = account.code_changes.last().map(|c| {
+            let hash = keccak(&c.new_code);
+            Code::from_bytecode_unchecked(c.new_code.clone(), hash)
+        });
+        let code_hash = code.as_ref().map(|c| c.hash);
+
+        let mut added_storage: FxHashMap<H256, U256> = FxHashMap::default();
+        for sc in &account.storage_changes {
+            // Canonical BAL ordering requires `slot_changes` to be non-empty, but
+            // wire-format decoding is permissive. Defensively skip empty entries
+            // rather than panic; structural validation belongs upstream.
+            let Some(last) = sc.slot_changes.last() else {
+                continue;
+            };
+            let key = H256::from_uint(&sc.slot);
+            added_storage.insert(key, last.post_value);
+        }
+
+        result.insert(
+            account.address,
+            BalSynthesisItem {
+                balance,
+                nonce,
+                code_hash,
+                code,
+                added_storage,
+            },
+        );
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod decode_tests {
     use super::*;
@@ -1692,5 +1760,241 @@ mod decode_tests {
             "RLP decoder produced wrong post_balance: got {}, expected {}",
             change.post_balance, expected,
         );
+    }
+}
+
+#[cfg(test)]
+mod synthesize_tests {
+    use super::*;
+    use bytes::Bytes;
+    use ethereum_types::Address;
+
+    fn addr(b: u8) -> Address {
+        let mut a = Address::zero();
+        a.0[19] = b;
+        a
+    }
+
+    fn make_bal(account: AccountChanges) -> BlockAccessList {
+        BlockAccessList::from_accounts(vec![account])
+    }
+
+    /// Accounts with only `storage_reads` must be skipped entirely.
+    #[test]
+    fn synthesize_skips_read_only_account() {
+        let mut account = AccountChanges::new(addr(1));
+        account.storage_reads = vec![U256::from(42)];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        assert!(
+            result.is_empty(),
+            "expected empty map for read-only account"
+        );
+    }
+
+    /// A single storage write with no other deltas.
+    #[test]
+    fn synthesize_pure_storage_write() {
+        let sc =
+            SlotChange::with_changes(U256::from(5), vec![StorageChange::new(0, U256::from(42))]);
+        let mut account = AccountChanges::new(addr(2));
+        account.storage_changes = vec![sc];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(2)).expect("expected entry");
+        assert!(item.balance.is_none());
+        assert!(item.nonce.is_none());
+        assert!(item.code_hash.is_none());
+        assert!(item.code.is_none());
+        let key = H256::from_uint(&U256::from(5));
+        assert_eq!(item.added_storage.get(&key), Some(&U256::from(42)));
+    }
+
+    /// Balance-only change: nonce, code, and storage must be None/empty.
+    /// Regression case for partial-info corruption (Blocker 1).
+    #[test]
+    fn synthesize_balance_only_no_nonce_no_code() {
+        let mut account = AccountChanges::new(addr(3));
+        account.balance_changes = vec![BalanceChange::new(2, U256::from(100))];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(3)).expect("expected entry");
+        assert_eq!(item.balance, Some(U256::from(100)));
+        assert!(item.nonce.is_none());
+        assert!(item.code_hash.is_none());
+        assert!(item.code.is_none());
+        assert!(item.added_storage.is_empty());
+    }
+
+    /// Nonce-only change.
+    #[test]
+    fn synthesize_nonce_only() {
+        let mut account = AccountChanges::new(addr(4));
+        account.nonce_changes = vec![NonceChange::new(2, 7)];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(4)).expect("expected entry");
+        assert!(item.balance.is_none());
+        assert_eq!(item.nonce, Some(7));
+        assert!(item.code_hash.is_none());
+        assert!(item.code.is_none());
+        assert!(item.added_storage.is_empty());
+    }
+
+    /// Code-only change: code_hash must equal keccak of the bytecode.
+    #[test]
+    fn synthesize_code_only() {
+        let bytecode = Bytes::from_static(b"\xff\x00");
+        let mut account = AccountChanges::new(addr(5));
+        account.code_changes = vec![CodeChange::new(2, bytecode.clone())];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(5)).expect("expected entry");
+        assert!(item.balance.is_none());
+        assert!(item.nonce.is_none());
+        let expected_hash = keccak(&bytecode);
+        assert_eq!(item.code_hash, Some(expected_hash));
+        assert!(item.code.is_some());
+        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert!(item.added_storage.is_empty());
+    }
+
+    /// When multiple balance changes exist, the last one wins.
+    #[test]
+    fn synthesize_takes_last_balance() {
+        let mut account = AccountChanges::new(addr(6));
+        account.balance_changes = vec![
+            BalanceChange::new(1, U256::from(50)),
+            BalanceChange::new(5, U256::from(200)),
+        ];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(6)).expect("expected entry");
+        assert_eq!(item.balance, Some(U256::from(200)));
+    }
+
+    /// When multiple nonce changes exist, the last one wins.
+    #[test]
+    fn synthesize_takes_last_nonce() {
+        let mut account = AccountChanges::new(addr(7));
+        account.nonce_changes = vec![NonceChange::new(1, 3), NonceChange::new(5, 9)];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(7)).expect("expected entry");
+        assert_eq!(item.nonce, Some(9));
+    }
+
+    /// When multiple code changes exist, the last one determines code_hash and code.
+    #[test]
+    fn synthesize_takes_last_code_and_hashes() {
+        let first = Bytes::from_static(b"\x60\x00");
+        let last = Bytes::from_static(b"\xff\x00");
+        let mut account = AccountChanges::new(addr(8));
+        account.code_changes = vec![CodeChange::new(1, first), CodeChange::new(5, last.clone())];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(8)).expect("expected entry");
+        let expected_hash = keccak(&last);
+        assert_eq!(item.code_hash, Some(expected_hash));
+        assert_eq!(item.code.as_ref().unwrap().bytecode, last);
+    }
+
+    /// When a slot has multiple StorageChanges, the last post_value wins.
+    #[test]
+    fn synthesize_slot_last_post_value() {
+        let sc = SlotChange::with_changes(
+            U256::from(10),
+            vec![
+                StorageChange::new(0, U256::from(1)),
+                StorageChange::new(7, U256::from(99)),
+            ],
+        );
+        let mut account = AccountChanges::new(addr(9));
+        account.storage_changes = vec![sc];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(9)).expect("expected entry");
+        let key = H256::from_uint(&U256::from(10));
+        assert_eq!(item.added_storage.get(&key), Some(&U256::from(99)));
+    }
+
+    /// A storage write ending in zero must be kept (Stage B routes to trie.remove).
+    #[test]
+    fn synthesize_zero_storage_kept() {
+        let sc = SlotChange::with_changes(U256::from(3), vec![StorageChange::new(0, U256::zero())]);
+        let mut account = AccountChanges::new(addr(10));
+        account.storage_changes = vec![sc];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(10)).expect("expected entry");
+        let key = H256::from_uint(&U256::from(3));
+        assert_eq!(
+            item.added_storage.get(&key),
+            Some(&U256::zero()),
+            "zero-value storage must be present so Stage B can call trie.remove"
+        );
+    }
+
+    /// A SlotChange with empty slot_changes is canonically forbidden but
+    /// reachable via permissive wire-format decoding; synthesis must skip it
+    /// without panicking and without polluting `added_storage`.
+    #[test]
+    fn synthesize_skips_when_slot_changes_empty() {
+        let empty_sc = SlotChange::new(U256::from(1));
+        let mut account = AccountChanges::new(addr(11));
+        account.storage_changes = vec![empty_sc];
+        // Add a balance change so the account itself is not skipped.
+        account.balance_changes = vec![BalanceChange::new(1, U256::from(5))];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(11)).expect("expected outer entry");
+        let key = H256::from_uint(&U256::from(1));
+        assert!(
+            !item.added_storage.contains_key(&key),
+            "slot with empty slot_changes must not appear in added_storage"
+        );
+    }
+
+    /// Account creation: all four optionals populated, code_hash matches keccak.
+    #[test]
+    fn synthesize_creation() {
+        let bytecode = Bytes::from_static(b"\x60\x80\x60\x40");
+        let mut account = AccountChanges::new(addr(12));
+        account.balance_changes = vec![BalanceChange::new(1, U256::from(1000))];
+        account.nonce_changes = vec![NonceChange::new(1, 1)];
+        account.code_changes = vec![CodeChange::new(1, bytecode.clone())];
+        let sc =
+            SlotChange::with_changes(U256::from(0), vec![StorageChange::new(2, U256::from(7))]);
+        account.storage_changes = vec![sc];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(12)).expect("expected entry");
+        assert_eq!(item.balance, Some(U256::from(1000)));
+        assert_eq!(item.nonce, Some(1));
+        let expected_hash = keccak(&bytecode);
+        assert_eq!(item.code_hash, Some(expected_hash));
+        assert!(item.code.is_some());
+        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        let key = H256::from_uint(&U256::zero());
+        assert_eq!(item.added_storage.get(&key), Some(&U256::from(7)));
+    }
+
+    /// EIP-6780 same-tx-created selfdestruct: only balance=0 is recorded.
+    /// Stage C writes balance=0 and leaves pre-state nonce/code intact.
+    /// EIP-161 removes the account only if pre-state nonce was 0 and code was empty
+    /// (i.e. a fresh account created in the same block). Otherwise trie keeps the
+    /// entry with balance=0 + original nonce/code, matching the streaming flow.
+    #[test]
+    fn synthesize_selfdestruct_collapses() {
+        let mut account = AccountChanges::new(addr(13));
+        account.balance_changes = vec![BalanceChange::new(5, U256::zero())];
+        let bal = make_bal(account);
+        let result = synthesize_bal_updates(&bal);
+        let item = result.get(&addr(13)).expect("expected entry");
+        assert_eq!(item.balance, Some(U256::zero()));
+        assert!(item.nonce.is_none());
+        assert!(item.code_hash.is_none());
+        assert!(item.code.is_none());
+        assert!(item.added_storage.is_empty());
     }
 }
