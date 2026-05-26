@@ -95,6 +95,29 @@ Also if you have a centralized Prometheus or Grafana setup, you can adapt the pr
 docker compose -f docker-compose-metrics.yaml -f docker-compose-metrics-l1.overrides.yaml up -d ethereum-metrics-exporter 
 ```
 
+## Reorg metrics and deep-reorg cap
+
+Ethrex tracks fork-choice reorg activity through 8 Prometheus metrics under the
+`ethrex_reorg_*` and `ethrex_deep_reorg_*` namespaces.
+
+| Metric | Type | What to watch for |
+|--------|------|-------------------|
+| `ethrex_reorg_overlay_entries` | Gauge | Elevated for more than a few seconds indicates a stalled deep reorg. |
+| `ethrex_reorg_overlay_bytes` | Gauge | Very large values (hundreds of MB) suggest an unusually large reorg. |
+| `ethrex_reorg_journal_length` | Gauge | Decreases as finality pruning runs; should roughly track `head - finalized`. |
+| `ethrex_reorg_depth` | Histogram | Use to detect peers producing unexpectedly long reorgs. |
+| `ethrex_reorg_reconcile_duration_seconds` | Histogram | High tail latency here means a large overlay is being folded. |
+| `ethrex_deep_reorg_attempts_total` | Counter | Should be rare on a healthy network. |
+| `ethrex_deep_reorg_success_total` | Counter | Compared with attempts: a persistent gap means deep reorgs are failing. |
+| `ethrex_deep_reorg_aborts_total` | Counter | Non-zero in production warrants investigation. |
+
+### Limiting reorg depth
+
+The default ceiling is finality-bounded (the distance between the current head and
+the last finalized block). To restrict it further, pass `--max-reorg-depth <N>` when
+starting ethrex. Setting `--max-reorg-depth 0` disables deep reorgs entirely and
+returns `SYNCING` for any fork choice update that would require one.
+
 ---
 
 For manual setup or more details, see the [Prometheus documentation](https://prometheus.io/docs/introduction/overview/) and [Grafana documentation](https://grafana.com/docs/).
