@@ -218,6 +218,58 @@ impl Blockchain {
         Ok(traces)
     }
 
+    /// Re-executes the target transaction (and any preceding txs in its block) with no
+    /// tracer attached, then discards the result. Used by `noopTracer` so the RPC layer
+    /// validates that the tx exists and replays it through the EVM without paying any
+    /// tracing collection cost, matching the benchmarking purpose of geth's `noopTracer`.
+    /// May need to re-execute blocks in order to rebuild the transaction's prestate, up
+    /// to the amount given by `reexec`.
+    pub async fn noop_trace_transaction(
+        &self,
+        tx_hash: H256,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<(), ChainError> {
+        let Some((_, block_hash, tx_index)) =
+            self.storage.get_transaction_location(tx_hash).await?
+        else {
+            return Err(ChainError::Custom("Transaction not Found".to_string()));
+        };
+        let tx_index = tx_index as usize;
+        let Some(block) = self.storage.get_block_by_hash(block_hash).await? else {
+            return Err(ChainError::Custom("Block not Found".to_string()));
+        };
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        // Run every tx up to AND including the target — no tracer attached.
+        let stop = tx_index.saturating_add(1);
+        timeout_trace_operation(timeout, move || vm.rerun_block(&block, Some(stop))).await
+    }
+
+    /// Re-executes every transaction in the block with no tracer attached and returns the
+    /// transaction hashes in order. Used by `noopTracer` for `debug_traceBlockByNumber` so
+    /// the RPC layer can emit `{txHash, result: {}}` per tx without paying tracing cost.
+    /// May need to re-execute blocks in order to rebuild the block's prestate, up to the
+    /// amount given by `reexec`.
+    pub async fn noop_trace_block(
+        &self,
+        block: Block,
+        reexec: u32,
+        timeout: Duration,
+    ) -> Result<Vec<H256>, ChainError> {
+        let mut vm = self
+            .rebuild_parent_state(block.header.parent_hash, reexec)
+            .await?;
+        let block = Arc::new(block);
+        let block_for_exec = block.clone();
+        timeout_trace_operation(timeout, move || {
+            vm.rerun_block(block_for_exec.as_ref(), None)
+        })
+        .await?;
+        Ok(block.body.transactions.iter().map(|tx| tx.hash()).collect())
+    }
+
     /// Rebuild the parent state for a block given its parent hash, returning an `Evm` instance with all changes cached
     /// Will re-execute all ancestor block's which's state is not stored up to a maximum given by `reexec`
     async fn rebuild_parent_state(

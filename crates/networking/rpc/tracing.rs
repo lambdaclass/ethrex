@@ -59,9 +59,10 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
-    /// No-op tracer that returns an empty JSON object `{}`. Useful for
-    /// benchmarking execution overhead without tracing cost.
-    /// Selected via `"tracer": "noopTracer"`.
+    /// No-op tracer that re-executes the transaction(s) through the EVM with no tracer
+    /// attached and returns empty JSON objects, matching geth's `noopTracer`. Useful for
+    /// benchmarking raw execution overhead without tracing cost. Any `tracerConfig` is
+    /// ignored. Selected via `"tracer": "noopTracer"`.
     NoopTracer,
 }
 
@@ -215,11 +216,11 @@ impl RpcHandler for TraceTransactionRequest {
             }
             TracerType::NoopTracer => {
                 // Like geth, noopTracer still executes the transaction (validating
-                // it exists and that parent state can be rebuilt) but discards the
-                // trace result, returning an empty object.
+                // it exists and that parent state can be rebuilt) but with no tracer
+                // attached — so we pay only the raw execution cost, then return {}.
                 context
                     .blockchain
-                    .trace_transaction_calls(self.tx_hash, reexec, timeout, true, false)
+                    .noop_trace_transaction(self.tx_hash, reexec, timeout)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
                 Ok(serde_json::json!({}))
@@ -371,16 +372,16 @@ impl RpcHandler for TraceBlockByNumberRequest {
                 Ok(serde_json::to_value(block_trace)?)
             }
             TracerType::NoopTracer => {
-                // Like geth, noopTracer still re-executes every transaction in
-                // the block but discards the trace data, returning {} per tx.
-                let call_traces = context
+                // Like geth, noopTracer re-executes every transaction in the block
+                // with no tracer attached, then emits {} per tx.
+                let tx_hashes = context
                     .blockchain
-                    .trace_block_calls(block, reexec, timeout, true, false)
+                    .noop_trace_block(block, reexec, timeout)
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
-                let block_trace: BlockTrace<Value> = call_traces
+                let block_trace: BlockTrace<Value> = tx_hashes
                     .into_iter()
-                    .map(|(hash, _)| (hash, serde_json::json!({})).into())
+                    .map(|hash| (hash, serde_json::json!({})).into())
                     .collect();
                 Ok(serde_json::to_value(block_trace)?)
             }

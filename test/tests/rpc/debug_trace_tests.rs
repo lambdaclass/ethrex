@@ -182,3 +182,58 @@ async fn trace_tx_noop_tracer() {
     let obj = result.as_object().expect("response should be an object");
     assert!(obj.is_empty(), "noopTracer should return empty object");
 }
+
+#[tokio::test]
+async fn trace_tx_noop_tracer_unknown_hash_errors() {
+    let env = setup_single_transfer_block().await;
+
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "debug_traceTransaction",
+        "params": [
+            json!(format!("{:#x}", H256::from_low_u64_be(0xdeadbeef))),
+            json!({"tracer": "noopTracer"}),
+        ],
+        "id": 1,
+    });
+    let request: RpcRequest = serde_json::from_value(body).expect("valid RPC request");
+    let context = default_context_with_storage(env.store.clone()).await;
+    let err = map_http_requests(&request, context)
+        .await
+        .expect_err("missing tx should error, not return {}");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("Transaction not Found"),
+        "expected tx-not-found error, got: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn trace_block_noop_tracer() {
+    let env = setup_single_transfer_block().await;
+
+    let result = rpc_call(
+        &env.store,
+        "debug_traceBlockByNumber",
+        vec![
+            json!(format!("{:#x}", env.block.header.number)),
+            json!({"tracer": "noopTracer"}),
+        ],
+    )
+    .await;
+
+    let arr = result.as_array().expect("response should be an array");
+    assert_eq!(arr.len(), 1, "one tx in block");
+    let entry = arr[0].as_object().expect("entry should be an object");
+    assert_eq!(
+        entry["txHash"].as_str().unwrap().to_lowercase(),
+        format!("{:#x}", env.tx_hash).to_lowercase()
+    );
+    assert!(
+        entry["result"]
+            .as_object()
+            .expect("result should be an object")
+            .is_empty(),
+        "noopTracer should return empty object per tx"
+    );
+}
