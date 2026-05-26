@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+#[cfg(feature = "eip-8025")]
+use ethrex_common::Address;
+#[cfg(feature = "eip-8025")]
+use ethrex_common::utils::keccak;
 use ethrex_crypto::Crypto;
 
 use crate::common::ExecutionError;
@@ -7,7 +11,12 @@ use crate::common::execute_blocks;
 #[cfg(not(feature = "eip-8025"))]
 use crate::l1::input::ProgramInput;
 #[cfg(feature = "eip-8025")]
-use crate::l1::input::{CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025};
+use crate::l1::input::{BYTES_PER_PUBLIC_KEY, MAX_PUBLIC_KEYS};
+#[cfg(feature = "eip-8025")]
+use crate::l1::input::{
+    CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025, STATELESS_INPUT_SCHEMA_ID,
+    STATELESS_INPUT_SCHEMA_ID_SIZE,
+};
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
@@ -109,20 +118,71 @@ pub fn execution_program(
         DecodedEip8025::Canonical {
             stateless_input,
             chain_config,
-        } => {
-            let request_root = stateless_input
-                .new_payload_request
-                .hash_tree_root(&CryptoWrapper(crypto.clone()));
-            let chain_id = stateless_input.chain_config.chain_id;
-            let valid =
-                validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
+        } => Ok(execute_canonical_stateless_input_decoded(
+            stateless_input,
+            chain_config,
+            crypto,
+        )),
+    }
+}
 
-            Ok(ProgramOutput {
-                new_payload_request_root: request_root,
-                valid,
-                chain_id,
-            })
-        }
+/// Execute the canonical EIP-8025 stateless program from spec-format wire
+/// bytes (`[BE u16 schema_id][SSZ-encoded SszStatelessInput]`) plus an
+/// out-of-band `ChainConfig`.
+///
+/// Schema-id mismatches and SSZ decode failures surface as
+/// `ExecutionError::Internal`; downstream validation failures (witness
+/// conversion, public-key mismatch, etc.) are folded into
+/// `ProgramOutput.valid = false`.
+#[cfg(feature = "eip-8025")]
+pub fn execute_canonical_stateless_input(
+    bytes: &[u8],
+    chain_config: ethrex_common::types::ChainConfig,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
+    use libssz::SszDecode;
+
+    if bytes.len() < STATELESS_INPUT_SCHEMA_ID_SIZE {
+        return Err(ExecutionError::Internal(
+            "stateless input is missing schema id".to_string(),
+        ));
+    }
+    let (schema_bytes, ssz_bytes) = bytes.split_at(STATELESS_INPUT_SCHEMA_ID_SIZE);
+    let schema_id = u16::from_be_bytes([schema_bytes[0], schema_bytes[1]]);
+    if schema_id != STATELESS_INPUT_SCHEMA_ID {
+        return Err(ExecutionError::Internal(format!(
+            "unsupported stateless input schema id: 0x{schema_id:04x}"
+        )));
+    }
+
+    let stateless_input = CanonicalStatelessInput::from_ssz_bytes(ssz_bytes).map_err(|e| {
+        ExecutionError::Internal(format!("CanonicalStatelessInput SSZ decode: {e:?}"))
+    })?;
+    Ok(execute_canonical_stateless_input_decoded(
+        stateless_input,
+        chain_config,
+        crypto,
+    ))
+}
+
+#[cfg(feature = "eip-8025")]
+fn execute_canonical_stateless_input_decoded(
+    stateless_input: CanonicalStatelessInput,
+    chain_config: ethrex_common::types::ChainConfig,
+    crypto: Arc<dyn Crypto>,
+) -> ProgramOutput {
+    use libssz_merkle::HashTreeRoot;
+
+    let request_root = stateless_input
+        .new_payload_request
+        .hash_tree_root(&CryptoWrapper(crypto.clone()));
+    let chain_id = stateless_input.chain_config.chain_id;
+    let valid = validate_eip8025_canonical_execution(stateless_input, chain_config, crypto).is_ok();
+
+    ProgramOutput {
+        new_payload_request_root: request_root,
+        valid,
+        chain_id,
     }
 }
 
@@ -399,12 +459,24 @@ fn validate_eip8025_canonical_execution(
         .execution_payload
         .block_number;
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
-    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number)?;
+    // Validate the BLOCKHASH ancestor chain in the witness-given order *before*
+    // `into_execution_witness` collapses the headers into a number-keyed map
+    // and loses the original sequence. Spec EIP-8025 §Validation requires the
+    // headers to form a contiguous chain as supplied.
+    ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
+        &rpc_witness.headers,
+        crypto.as_ref(),
+    )?;
+
+    // EIP-8025 stateless validation must reject witnesses that omit any
+    // bytecode the VM reads, instead of defaulting missing codes to empty.
+    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number, true)?;
 
     validate_eip8025_amsterdam_execution(
         &stateless_input.new_payload_request,
         execution_witness,
         crypto,
+        stateless_input.public_keys,
     )
 }
 
@@ -445,11 +517,44 @@ fn validate_eip8025_amsterdam_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
+    public_keys: libssz_types::SszList<
+        libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>,
+        MAX_PUBLIC_KEYS,
+    >,
 ) -> Result<(), ExecutionError> {
     let block = new_payload_request_amsterdam_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;
 
     validate_versioned_hashes(&block, new_payload_request.versioned_hashes.iter())?;
+
+    if public_keys.len() != block.body.transactions.len() {
+        return Err(ExecutionError::Internal(format!(
+            "Found {} public keys in the stateless input, but there are {} transactions",
+            public_keys.len(),
+            block.body.transactions.len()
+        )));
+    }
+    for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
+        // `SszVector<u8, BYTES_PER_PUBLIC_KEY>` is fixed-size by SSZ decode, so only the
+        // 0x04 prefix needs checking: uncompressed secp256k1 is 0x04 || X || Y.
+        let pk_bytes: &[u8] = public_key;
+        if pk_bytes[0] != 0x04 {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
+                    .to_string(),
+            ));
+        }
+        let derived = Address::from_slice(&keccak(&pk_bytes[1..])[12..]);
+        let recovered = tx.sender(crypto.as_ref()).map_err(|e| {
+            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
+        })?;
+        if recovered != derived {
+            return Err(ExecutionError::Internal(
+                "Stateless input public key does not match recovered transaction sender"
+                    .to_string(),
+            ));
+        }
+    }
 
     let _result = execute_blocks(
         &[block],

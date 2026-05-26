@@ -9,13 +9,15 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(not(feature = "stateless"))]
+use ethrex_common::types::block_access_list::BlockAccessList;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError, block_access_list::BlockAccessList,
+        InvalidBlockHeaderError,
     },
 };
 use ethrex_guest_program::input::ProgramInput;
@@ -100,6 +102,12 @@ pub async fn run_ef_test(
     // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
     // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
     // same final state is reached.
+    //
+    // Skipped under `stateless` because enabling `eip-8025` on `ethrex-blockchain` removes
+    // the merkleizer-Sender setup that the parallel BAL path relies on, tripping every
+    // pass-2 with "sequential execution path called without a merkleizer Sender". Parallel
+    // correctness is exercised by the non-stateless test runs, which keep this path active.
+    #[cfg(not(feature = "stateless"))]
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
@@ -189,6 +197,7 @@ async fn run(
 /// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
 /// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
 /// post-state of pass 2 must match the expected post-state.
+#[cfg(not(feature = "stateless"))]
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
@@ -551,10 +560,6 @@ async fn run_stateless_from_fixture(
             continue;
         };
 
-        let Some(witness_json) = block_data.execution_witness.as_ref() else {
-            continue;
-        };
-
         let block: CoreBlock = block_data.clone().into();
         let block_number = block.header.number;
 
@@ -566,6 +571,28 @@ async fn run_stateless_from_fixture(
             })?,
         };
 
+        // Prefer the canonical EIP-8025 wire path when the fixture supplies
+        // `statelessInputBytes`. That path runs the same entry point as the
+        // production guest binary, so it exercises EIP-8025-specific checks
+        // (public_keys, hash_tree_root, etc.) that the legacy ProgramInput
+        // route bypasses. The canonical path is self-contained (witness data
+        // is inside the input bytes), so it does not depend on the fixture's
+        // `executionWitness` field — check it before the legacy-path guard.
+        if let Some(input_hex) = block_data.stateless_input_bytes.as_deref() {
+            run_stateless_from_input_bytes(
+                test_key,
+                &test.network,
+                block_number,
+                input_hex,
+                expected_valid,
+            )?;
+            continue;
+        }
+
+        let Some(witness_json) = block_data.execution_witness.as_ref() else {
+            continue;
+        };
+
         // Parse and conversion errors must always fail; only the execution outcome is
         // matched against `expected_valid` so the (false, Err(_)) arm below cannot
         // absorb regressions in deserialization or witness conversion.
@@ -574,7 +601,7 @@ async fn run_stateless_from_fixture(
                 format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
             })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number)
+            .into_execution_witness(*chain_config, block_number, false)
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;
@@ -603,6 +630,50 @@ async fn run_stateless_from_fixture(
     }
 
     Ok(())
+}
+
+/// Drive the canonical EIP-8025 stateless validation path from a fixture's
+/// `statelessInputBytes` (spec wire format: a 2-byte BE schema-id prefix —
+/// `STATELESS_INPUT_SCHEMA_ID` — followed by the SSZ-encoded
+/// `SszStatelessInput`; no ethrex-internal version byte). The resulting `valid`
+/// flag is compared against `expected_valid` (derived from
+/// `statelessOutputBytes[32]`).
+///
+/// SSZ decode failures are runner errors; downstream validation failures
+/// (witness conversion, public-key mismatch, etc.) are folded into
+/// `valid = false` by [`execute_canonical_stateless_input`].
+#[cfg(feature = "stateless")]
+fn run_stateless_from_input_bytes(
+    test_key: &str,
+    test_network: &crate::fork::Fork,
+    block_number: u64,
+    input_hex: &str,
+    expected_valid: bool,
+) -> Result<(), String> {
+    use ethrex_guest_program::crypto::NativeCrypto;
+    use ethrex_guest_program::l1::execute_canonical_stateless_input;
+    use std::sync::Arc;
+
+    let trimmed = input_hex.strip_prefix("0x").unwrap_or(input_hex);
+    let bytes = hex::decode(trimmed).map_err(|e| {
+        format!("statelessInputBytes hex decode failed for {test_key} block {block_number}: {e}")
+    })?;
+
+    let chain_config = *test_network.chain_config();
+    let crypto = Arc::new(NativeCrypto);
+    let output = execute_canonical_stateless_input(&bytes, chain_config, crypto).map_err(|e| {
+        format!("CanonicalStatelessInput decode failed for {test_key} block {block_number}: {e:?}")
+    })?;
+
+    match (expected_valid, output.valid) {
+        (true, true) | (false, false) => Ok(()),
+        (true, false) => Err(format!(
+            "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed"
+        )),
+        (false, true) => Err(format!(
+            "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid executionWitness)"
+        )),
+    }
 }
 
 /// Decode the `valid` byte (index 32) from a zkevm-fixture `statelessOutputBytes` hex

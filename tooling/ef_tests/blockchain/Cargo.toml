@@ -32,7 +32,12 @@ path = "./lib.rs"
 default = ["c-kzg"]
 c-kzg = ["ethrex-blockchain/c-kzg"]
 sp1 = ["ethrex-guest-program/sp1-build-elf", "ethrex-prover/sp1"]
-stateless = []
+stateless = [
+    "ethrex-blockchain/eip-8025",
+    "ethrex-common/eip-8025",
+    "ethrex-guest-program/eip-8025",
+    "ethrex-prover/eip-8025",
+]
 l2 = ["ethrex-guest-program/l2", "ethrex-prover/l2"]
 
 [[test]]

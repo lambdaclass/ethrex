@@ -77,15 +77,53 @@ const MAX_BYTES_PER_CODE: usize = 1 << 24;
 #[cfg(feature = "eip-8025")]
 const MAX_BYTES_PER_HEADER: usize = 1 << 10;
 #[cfg(feature = "eip-8025")]
-const MAX_PUBLIC_KEYS: usize = 1 << 20;
+pub const MAX_PUBLIC_KEYS: usize = 1 << 20;
 #[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_PUBLIC_KEY: usize = 65;
+pub const BYTES_PER_PUBLIC_KEY: usize = 65;
+#[cfg(feature = "eip-8025")]
+const MAX_OPTIONAL_FORK_ACTIVATION_VALUES: usize = 1;
+#[cfg(feature = "eip-8025")]
+const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
+
+/// Big-endian schema id prefixed onto canonical `SszStatelessInput` wire bytes,
+/// mirroring `STATELESS_INPUT_SCHEMA_ID` in `stateless_ssz.py` (Amsterdam).
+#[cfg(feature = "eip-8025")]
+pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x0001;
+#[cfg(feature = "eip-8025")]
+pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
+
+/// Mirrors `SszBlobSchedule` from the Amsterdam stateless-validation spec.
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct CanonicalBlobSchedule {
+    pub target: u64,
+    pub max: u64,
+    pub base_fee_update_fraction: u64,
+}
+
+/// Mirrors `SszForkActivation` from the Amsterdam stateless-validation spec.
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct CanonicalForkActivation {
+    pub block_number: libssz_types::SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES>,
+    pub timestamp: libssz_types::SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES>,
+}
+
+/// Mirrors `SszForkConfig` from the Amsterdam stateless-validation spec.
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct CanonicalForkConfig {
+    pub fork: u64,
+    pub activation: CanonicalForkActivation,
+    pub blob_schedule: libssz_types::SszList<CanonicalBlobSchedule, MAX_BLOB_SCHEDULES_PER_FORK>,
+}
 
 /// Mirrors `SszChainConfig` from the Amsterdam stateless-validation spec.
 #[cfg(feature = "eip-8025")]
 #[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
 pub struct CanonicalChainConfig {
     pub chain_id: u64,
+    pub active_fork: CanonicalForkConfig,
 }
 
 /// Mirrors `SszExecutionWitness` from the Amsterdam stateless-validation spec.
@@ -109,10 +147,10 @@ pub struct CanonicalStatelessInput {
     pub new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     pub witness: CanonicalExecutionWitness,
     pub chain_config: CanonicalChainConfig,
-    // Currently the specs do not include proper values for this field,
-    // but it is planned to be supported in the next release.
+    /// Per-transaction public keys (uncompressed secp256k1, 65 bytes each).
+    /// Mirrors `SszList[ByteVector[PUBLIC_KEY_BYTES], MAX_PUBLIC_KEYS]` in the spec.
     pub public_keys:
-        libssz_types::SszList<libssz_types::SszList<u8, MAX_BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>,
+        libssz_types::SszList<libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>,
 }
 
 /// Decoded EIP-8025 wire payload, dispatched by version byte.

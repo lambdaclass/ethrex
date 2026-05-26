@@ -29,6 +29,13 @@ pub struct GuestProgramState {
     /// This is computed during guest program execution inside the zkVM,
     /// before the stateless validation.
     pub codes_hashed: BTreeMap<H256, Code>,
+    /// If true, witness-incomplete reads (a code hash the VM looks up that is
+    /// not present in `codes_hashed`) surface as errors. Used by the
+    /// canonical EIP-8025 stateless validation path where the witness must
+    /// contain every byte of code the VM touches. Lenient `false` is the
+    /// default used by the `debug_executionWitness` consumer paths where the
+    /// witness is permitted to omit irrelevant codes.
+    pub strict_codes: bool,
     /// Map of block numbers to their corresponding block headers.
     /// The block headers are pushed to the zkVM RLP-encoded, and then
     /// decoded and stored in this map during guest program execution,
@@ -81,6 +88,10 @@ pub struct ExecutionWitness {
     /// keyed by the keccak256 hash of the account address.
     #[rkyv(with = MapKV<H256Wrapper, Identity>)]
     pub storage_trie_roots: BTreeMap<H256, Node>,
+    /// Whether to fail on witness-incomplete code reads (missing bytecode for
+    /// a code hash the VM looks up). See [`GuestProgramState::strict_codes`].
+    #[serde(default)]
+    pub strict_codes: bool,
 }
 
 /// RPC-friendly representation of an execution witness.
@@ -140,10 +151,15 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
 impl RpcExecutionWitness {
     /// Convert an RPC execution witness into the internal [`ExecutionWitness`]
     /// format by rebuilding trie structures from the flat node list.
+    ///
+    /// `strict_codes` selects between the lenient `debug_executionWitness`
+    /// behavior (missing bytecode defaults to empty) and the canonical
+    /// EIP-8025 stateless behavior (missing bytecode is a hard error).
     pub fn into_execution_witness(
         self,
         chain_config: ChainConfig,
         first_block_number: u64,
+        strict_codes: bool,
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         if first_block_number == 0 {
             return Err(GuestProgramStateError::Custom(
@@ -168,19 +184,24 @@ impl RpcExecutionWitness {
             ))
         })?;
 
+        // Per EIP-8025 §Tolerance, entries in the witness `state` list that are
+        // not reachable from the executed state root must not cause rejection.
+        // We silently drop entries that fail to decode as a trie node; any
+        // *needed* node that ends up missing will surface downstream as
+        // `RootNotFound` from `get_embedded_root`. The `0x80` short-circuit is
+        // kept because some `debug_executionWitness` producers emit it as a
+        // sentinel for "Null" nodes that our decoder doesn't accept.
         let nodes: BTreeMap<H256, Node> = self
             .state
             .into_iter()
             .filter_map(|b| {
                 if b == Bytes::from_static(&[0x80]) {
-                    // other implementations of debug_executionWitness allow for a `Null` node,
-                    // which would fail to decode in ours
                     return None;
                 }
-                let hash = keccak(&b);
-                Some(Node::decode(&b).map(|node| (hash, node)))
+                let node = Node::decode(&b).ok()?;
+                Some((keccak(&b), node))
             })
-            .collect::<Result<_, RLPDecodeError>>()?;
+            .collect();
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
@@ -227,8 +248,39 @@ impl RpcExecutionWitness {
             block_headers_bytes: self.headers.into_iter().map(|b| b.to_vec()).collect(),
             state_trie_root,
             storage_trie_roots,
+            strict_codes,
         })
     }
+}
+
+/// Validate that an SSZ-witness header list (in input order) forms a
+/// contiguous chain — each header's `parent_hash` must equal the keccak hash
+/// of the preceding header's RLP encoding. Returns an error on the first
+/// broken linkage or on any header that fails to RLP-decode.
+///
+/// This is the EIP-8025 §Validation rule for the canonical stateless witness
+/// header sequence (BLOCKHASH ancestors). It is order-sensitive because the
+/// spec verifies the sequence as supplied; reordering the headers (e.g. into
+/// a `BTreeMap` keyed by block number) hides the violation by reshaping the
+/// data. Call this before any sort/dedup of the header list.
+pub fn validate_witness_headers_chain<B: AsRef<[u8]>>(
+    headers_bytes: &[B],
+    crypto: &dyn Crypto,
+) -> Result<(), GuestProgramStateError> {
+    if headers_bytes.len() <= 1 {
+        return Ok(());
+    }
+    let mut prev_hash: Option<H256> = None;
+    for bytes in headers_bytes {
+        let header = BlockHeader::decode(bytes.as_ref())?;
+        if let Some(prev) = prev_hash
+            && header.parent_hash != prev
+        {
+            return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
+        }
+        prev_hash = Some(header.compute_block_hash(crypto));
+    }
+    Ok(())
 }
 
 /// Recursively walks an embedded state trie node and collects
@@ -310,6 +362,8 @@ pub enum GuestProgramStateError {
     MissingParentHeaderOf(u64),
     #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
     NoncontiguousBlockHeaders,
+    #[error("Witness is missing bytecode for code hash {0}")]
+    MissingBytecode(H256),
     #[error("Trie error: {0}")]
     Trie(#[from] TrieError),
     #[error("RLP Decode: {0}")]
@@ -386,6 +440,7 @@ impl GuestProgramState {
             chain_config: value.chain_config,
             account_hashes_by_address: BTreeMap::new(),
             verified_storage_roots: BTreeMap::new(),
+            strict_codes: value.strict_codes,
         })
     }
 }
@@ -589,7 +644,13 @@ impl GuestProgramState {
     }
 
     /// Retrieves the account code for a specific account.
-    /// Returns an Err if the code is not found.
+    ///
+    /// In lenient mode (default), a missing code defaults to empty: the
+    /// `debug_executionWitness` consumer paths emit witnesses that omit codes
+    /// the VM doesn't actually touch, so missing bytecode is informational.
+    /// In strict mode (canonical EIP-8025 stateless validation), the witness
+    /// is required to contain every byte of code the VM reads, so a missing
+    /// entry surfaces as [`GuestProgramStateError::MissingBytecode`].
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
         if code_hash == *EMPTY_KECCACK_HASH {
             return Ok(Code::default());
@@ -597,8 +658,9 @@ impl GuestProgramState {
         match self.codes_hashed.get(&code_hash) {
             Some(code) => Ok(code.clone()),
             None => {
-                // We do this because what usually happens is that the Witness doesn't have the code we asked for but it is because it isn't relevant for that particular case.
-                // In client implementations there are differences and it's natural for some clients to access more/less information in some edge cases.
+                if self.strict_codes {
+                    return Err(GuestProgramStateError::MissingBytecode(code_hash));
+                }
                 // Sidenote: logger doesn't work inside SP1, that's why we use println!
                 println!(
                     "Missing bytecode for hash {} in witness. Defaulting to empty code.", // If there's a state root mismatch and this prints we have to see if it's the cause or not.
@@ -625,7 +687,9 @@ impl GuestProgramState {
                 length: code.bytecode.len() as u64,
             }),
             None => {
-                // Same as get_account_code - default to empty for missing bytecode
+                if self.strict_codes {
+                    return Err(GuestProgramStateError::MissingBytecode(code_hash));
+                }
                 println!(
                     "Missing bytecode for hash {} in witness. Defaulting to empty code metadata.",
                     hex::encode(code_hash)
