@@ -60,6 +60,9 @@ use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::MAX_BLOB_TX_SIZE;
+use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -70,7 +73,6 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{

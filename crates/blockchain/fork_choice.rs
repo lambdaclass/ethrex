@@ -505,7 +505,6 @@ async fn reorg_apply_deep(
     };
 
     #[cfg(feature = "metrics")]
-    let reconcile_start = std::time::Instant::now();
     let mut first_block = true;
     for (number, block_hash) in replay_iter {
         let block = match store.get_block_by_hash(block_hash).await? {
@@ -515,19 +514,24 @@ async fn reorg_apply_deep(
                 return Err(InvalidForkChoice::UnlinkedHead);
             }
         };
+        // The first add_block triggers the Section 9 reconciliation that folds the
+        // overlay into the first new-chain disk commit. Time just the add_block
+        // window so the histogram isolates the reconcile path (overlay-fold +
+        // commit) rather than the bulk side-chain replay.
+        #[cfg(feature = "metrics")]
+        let reconcile_start = first_block.then(std::time::Instant::now);
         if let Err(e) = blockchain.add_block(block) {
             error!(%number, %block_hash, error = %e, "deep-reorg: side-chain block execution failed");
             return Err(map_chain_error_for_fcu(e));
         }
-        if first_block {
+        #[cfg(feature = "metrics")]
+        if let Some(start) = reconcile_start {
             first_block = false;
-            // The first add_block triggers the Section 9 reconciliation that folds the
-            // overlay into the first new-chain disk commit.
             metrics!(
                 use ethrex_metrics::reorg::METRICS_REORG;
                 METRICS_REORG
                     .reconcile_duration_hist
-                    .observe(reconcile_start.elapsed().as_secs_f64());
+                    .observe(start.elapsed().as_secs_f64());
             );
         }
     }
