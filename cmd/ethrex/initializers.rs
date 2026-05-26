@@ -881,12 +881,39 @@ pub async fn regenerate_head_state(
             ));
         }
         if chain_to_replay.len() >= MAX_BACK_WALK {
+            // Backwards walk exhausted. The committed state root might
+            // actually belong to a block AHEAD of HEAD — this happens when
+            // state was committed for newer blocks but the LatestBlockNumber
+            // pointer wasn't advanced (e.g. crash between state commit and
+            // forkchoice_update). Try walking forward via canonical
+            // hashes; if found, set HEAD to that block and return early.
+            const MAX_FORWARD_WALK: u64 = 200_000;
+            for forward_n in (head_block_number + 1)..=(head_block_number + MAX_FORWARD_WALK) {
+                let Some(hash) = store.get_canonical_block_hash_sync(forward_n)? else {
+                    // Canonical chain ends here.
+                    break;
+                };
+                let Some(header) = store.get_block_header_by_hash(hash)? else {
+                    break;
+                };
+                if header.state_root == actual_root_hash {
+                    info!(
+                        "regenerate_head_state: HEAD was behind committed state; \
+                         advancing LatestBlockNumber {} -> {} (state_root {:?})",
+                        head_block_number, forward_n, actual_root_hash
+                    );
+                    store
+                        .forkchoice_update(vec![(forward_n, hash)], forward_n, hash, None, None)
+                        .await?;
+                    return Ok(());
+                }
+            }
             return Err(eyre::eyre!(
-                "regenerate_head_state: walked back {} blocks from HEAD={} without finding the \
-                 committed state root {:?}. The HEAD pointer is too far ahead of committed state \
-                 to safely recover; run `ethrex removedb` and restart node",
+                "regenerate_head_state: walked back {} blocks from HEAD={} and forward {} blocks \
+                 without finding the committed state root {:?}. Run `ethrex removedb` and restart node",
                 MAX_BACK_WALK,
                 head_block_number,
+                MAX_FORWARD_WALK,
                 actual_root_hash,
             ));
         }
