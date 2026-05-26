@@ -45,16 +45,17 @@ async fn compute_reorg_ceiling(
     }
 
     if !finalized_hash.is_zero() {
-        // Case 1: finalized block is known.
-        let finalized_number = store
-            .get_block_header_by_hash(*finalized_hash)?
-            .map(|h| h.number)
-            .unwrap_or(0);
-        let finality_ceiling = latest.saturating_sub(finalized_number);
-        return Ok(match max_reorg_depth {
-            Some(d) => finality_ceiling.min(d),
-            None => finality_ceiling,
-        });
+        // Case 1: finalized block is known AND locally synced.
+        // If the CL sends a finalized hash the EL hasn't synced yet (plausible after
+        // snap sync or a recent restart), fall through to the journal/operator path
+        // rather than treating finalized_number as 0 (which would let any depth pass).
+        if let Some(h) = store.get_block_header_by_hash(*finalized_hash)? {
+            let finality_ceiling = latest.saturating_sub(h.number);
+            return Ok(match max_reorg_depth {
+                Some(d) => finality_ceiling.min(d),
+                None => finality_ceiling,
+            });
+        }
     }
 
     // Case 2 / 3: no finalized block.
@@ -169,8 +170,8 @@ pub async fn apply_fork_choice(
     // is known), capped further by the operator-configured `max_reorg_depth` if set.
     // See `compute_reorg_ceiling` for the three-case logic.
     //
-    // This check is intentionally placed before the connectivity checks so that an
-    // over-depth reorg is rejected immediately without further DB lookups. The CL is
+    // This check is intentionally placed before the finalized/safe connectivity
+    // checks so that an over-depth reorg is rejected without those further reads. The CL is
     // authoritative on fork choice and the EL must honor what the CL sends if it
     // physically can.
     //
