@@ -1720,13 +1720,12 @@ async fn retry_on_alternates(
     }
     // Group hashes by chosen live alternate, carrying their own type/size.
     // We walk per-hash so a dead alternate for hash X doesn't consume the
-    // slot that hash Y could use.
-    //
-    // TODO(#6691-fu): the liveness probe here and the actual lookup at the
-    // enqueue site below race; if the connection drops in between, the
-    // alternate slot is consumed for nothing. Carry the `PeerConnection`
-    // handle in `by_peer` to collapse both into a single lookup.
-    let mut by_peer: FxHashMap<H256, Vec<(H256, u8, usize)>> = FxHashMap::default();
+    // slot that hash Y could use. The `PeerConnection` handle from the
+    // liveness probe is stashed in `by_peer` and reused at enqueue time,
+    // so there's no second lookup (and no race where the connection drops
+    // between probe and use).
+    type AltGroup = (PeerConnection, Vec<(H256, u8, usize)>);
+    let mut by_peer: FxHashMap<H256, AltGroup> = FxHashMap::default();
     for hash in hashes {
         loop {
             let alt = match blockchain.mempool.pop_alternate(*hash) {
@@ -1737,12 +1736,14 @@ async fn retry_on_alternates(
                     break;
                 }
             };
+            // Reuse the connection we already grabbed for this peer.
+            if let Some((_, list)) = by_peer.get_mut(&alt.peer_id) {
+                list.push((*hash, alt.tx_type, alt.tx_size));
+                break;
+            }
             match peer_table.get_peer_connection(alt.peer_id).await {
-                Ok(Some(_)) => {
-                    by_peer
-                        .entry(alt.peer_id)
-                        .or_default()
-                        .push((*hash, alt.tx_type, alt.tx_size));
+                Ok(Some(conn)) => {
+                    by_peer.insert(alt.peer_id, (conn, vec![(*hash, alt.tx_type, alt.tx_size)]));
                     break;
                 }
                 Ok(None) => continue, // dead peer, try next alternate
@@ -1754,7 +1755,7 @@ async fn retry_on_alternates(
         }
     }
 
-    for (alt_peer_id, entries) in by_peer {
+    for (_, (conn, entries)) in by_peer {
         let mut types = Vec::with_capacity(entries.len());
         let mut sizes = Vec::with_capacity(entries.len());
         let mut hash_list = Vec::with_capacity(entries.len());
@@ -1765,10 +1766,7 @@ async fn retry_on_alternates(
         }
         let announcement =
             NewPooledTransactionHashes::from_raw(types.into(), sizes, hash_list.clone());
-        // Look up again: connection could have closed since we checked.
-        if let Ok(Some(conn)) = peer_table.get_peer_connection(alt_peer_id).await
-            && let Err(e) = conn.enqueue_tx_requests(announcement, hash_list)
-        {
+        if let Err(e) = conn.enqueue_tx_requests(announcement, hash_list) {
             warn!(error = %e, "failed to enqueue tx requests on alternate peer");
         }
     }
