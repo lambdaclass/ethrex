@@ -19,28 +19,91 @@ async fn main() {
     // Setup logging
     init_tracing(&Options::default_l1());
 
-    // Fetch the path to the ethrex binary from the command line arguments
-    // If not provided, use the default path
-    let cmd_path: PathBuf = std::env::args()
-        .nth(1)
-        .map(|o| o.parse().unwrap())
-        .unwrap_or_else(|| "../../target/debug/ethrex".parse().unwrap());
+    // Argument parsing:
+    //   cargo run                            -> run all scenarios (legacy default path)
+    //   cargo run -- <binary_path>           -> run all scenarios with given binary
+    //   cargo run -- --scenario <name>       -> run one named scenario (default binary path)
+    //   cargo run -- --scenario <name> <bin> -> run one named scenario with given binary
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    let (scenario_filter, cmd_path) = parse_args(&args);
 
     let version = get_ethrex_version(&cmd_path).await;
 
     info!(%version, binary_path = %cmd_path.display(), "Fetched ethrex binary version");
-    info!("Starting test run");
+    if let Some(ref filter) = scenario_filter {
+        info!(scenario = %filter, "Running single scenario");
+    } else {
+        info!("Starting test run (all scenarios)");
+    }
     info!("");
 
-    run_test(&cmd_path, no_reorgs_full_sync_smoke_test).await;
-    run_test(&cmd_path, test_reorg_back_to_base).await;
+    let all_scenarios: &[(&str, ScenarioFn)] = &[
+        ("no_reorgs_full_sync_smoke_test", |s| {
+            Box::pin(no_reorgs_full_sync_smoke_test(s))
+        }),
+        ("test_reorg_back_to_base", |s| {
+            Box::pin(test_reorg_back_to_base(s))
+        }),
+        ("test_chain_split", |s| Box::pin(test_chain_split(s))),
+        ("test_one_block_reorg_and_back", |s| {
+            Box::pin(test_one_block_reorg_and_back(s))
+        }),
+        ("test_reorg_back_to_base_with_common_ancestor", |s| {
+            Box::pin(test_reorg_back_to_base_with_common_ancestor(s))
+        }),
+        ("test_storage_slots_reorg", |s| {
+            Box::pin(test_storage_slots_reorg(s))
+        }),
+        ("test_many_blocks_reorg", |s| {
+            Box::pin(test_many_blocks_reorg(s))
+        }),
+        ("deep_reorg_beyond_128", |s| {
+            Box::pin(test_deep_reorg_beyond_128(s))
+        }),
+    ];
 
-    run_test(&cmd_path, test_chain_split).await;
+    for (name, scenario_fn) in all_scenarios {
+        if let Some(ref filter) = scenario_filter
+            && *name != filter.as_str()
+        {
+            continue;
+        }
+        run_test_dyn(&cmd_path, name, *scenario_fn).await;
+    }
+}
 
-    run_test(&cmd_path, test_one_block_reorg_and_back).await;
-    run_test(&cmd_path, test_reorg_back_to_base_with_common_ancestor).await;
-    run_test(&cmd_path, test_storage_slots_reorg).await;
-    run_test(&cmd_path, test_many_blocks_reorg).await;
+/// Parse CLI args into an optional scenario filter and a binary path.
+///
+/// Supported invocations:
+///   (none)                          -> all scenarios, default binary
+///   <binary_path>                   -> all scenarios, given binary (arg contains '/')
+///   <scenario_name>                 -> one scenario, default binary (no '/' in arg)
+///   --scenario <name>               -> one scenario, default binary
+///   --scenario <name> <binary_path> -> one scenario, given binary
+fn parse_args(args: &[String]) -> (Option<String>, PathBuf) {
+    let default_bin: PathBuf = "../../target/debug/ethrex".parse().unwrap();
+
+    let mut scenario: Option<String> = None;
+    let mut bin: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--scenario" {
+            i += 1;
+            if i < args.len() {
+                scenario = Some(args[i].clone());
+            }
+        } else if args[i].contains('/') || args[i].starts_with('.') {
+            // Looks like a file path -- treat as binary location.
+            bin = Some(args[i].parse().unwrap());
+        } else {
+            // Plain word without path separator -- treat as scenario name.
+            scenario = Some(args[i].clone());
+        }
+        i += 1;
+    }
+
+    (scenario, bin.unwrap_or(default_bin))
 }
 
 async fn get_ethrex_version(cmd_path: &Path) -> String {
@@ -51,12 +114,11 @@ async fn get_ethrex_version(cmd_path: &Path) -> String {
     String::from_utf8(version_output.stdout).expect("failed to parse version output")
 }
 
-async fn run_test<F, Fut>(cmd_path: &Path, test_fn: F)
-where
-    F: Fn(Arc<Mutex<Simulator>>) -> Fut,
-    Fut: Future<Output = ()> + Send + 'static,
-{
-    let test_name = std::any::type_name::<F>();
+type ScenarioFn =
+    fn(Arc<Mutex<Simulator>>) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+
+/// Run a scenario function identified by a display name.
+async fn run_test_dyn(cmd_path: &Path, test_name: &str, test_fn: ScenarioFn) {
     let start = std::time::Instant::now();
 
     info!(test=%test_name, "Running test");
@@ -406,4 +468,53 @@ async fn test_storage_slots_reorg(simulator: Arc<Mutex<Simulator>>) {
     assert_eq!(value_slot0, U256::zero());
     let value_slot1 = node0.get_storage_at(contract_address, slot_key1).await;
     assert_eq!(value_slot1, slot_value1);
+}
+
+/// Verifies that ethrex accepts a reorg deeper than the legacy 128-block cap.
+///
+/// Setup:
+///   - Build a 200-block side chain starting from genesis.
+///   - Announce all 200 blocks to the test node via new_payload.
+///   - FCU to the side-chain tip with finalized set to block 50
+///     (so the reorg ceiling = finalized_height + MAX_REORG_DEPTH, well above
+///     128 when the cap was removed).
+///   - Assert the node converges to the side-chain tip (no TooDeepReorg).
+async fn test_deep_reorg_beyond_128(simulator: Arc<Mutex<Simulator>>) {
+    let mut simulator = simulator.lock().await;
+
+    // One node is enough: it serves as both the block producer and the
+    // node under test. We build blocks directly and push them via the
+    // Engine API, so no peer is required.
+    let node = simulator.start_node().await;
+
+    // Build 200 blocks on the side chain. `build_payload` + `notify_new_payload`
+    // tells the node about each block without finalizing yet.
+    let base_chain = simulator.get_base_chain();
+    let mut side_chain = base_chain.fork();
+
+    info!("Building 200-block side chain for deep-reorg test");
+    for i in 0..200usize {
+        side_chain = node.build_payload(side_chain).await;
+        node.notify_new_payload(&side_chain).await;
+        if i % 50 == 49 {
+            info!(block = i + 1, "Side chain progress");
+        }
+    }
+
+    // Mark block 50 as finalized. The reorg depth from any previous head to the
+    // 200-block tip is 150 blocks (200 - 50 = 150), exceeding the old 128 cap.
+    // The node must accept this without error.
+    side_chain.set_finalized_height(50);
+
+    info!(
+        depth = side_chain.len() - 1 - 50,
+        "Issuing FCU to side-chain tip; expecting successful deep reorg"
+    );
+
+    // update_forkchoice sends FCU and polls until the node reports Valid.
+    // If the node incorrectly rejected the reorg, it would never return Valid
+    // and the timeout would trigger a test failure.
+    node.update_forkchoice(&side_chain).await;
+
+    info!("Deep reorg beyond 128 blocks accepted -- test passed");
 }

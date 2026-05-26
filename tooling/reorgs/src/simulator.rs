@@ -515,6 +515,22 @@ impl Chain {
         }
     }
 
+    /// Mark the block at `height` as finalized (safe).
+    /// `height` is the block index in this chain (0 = genesis).
+    pub fn set_finalized_height(&mut self, height: usize) {
+        assert!(
+            height < self.block_hashes.len(),
+            "finalized height {height} out of range (chain has {} blocks)",
+            self.block_hashes.len()
+        );
+        self.safe_height = height;
+    }
+
+    /// Number of blocks in this chain (including genesis).
+    pub fn len(&self) -> usize {
+        self.blocks.len()
+    }
+
     fn get_fork_choice_state(&self) -> ForkChoiceState {
         let head_block_hash = *self.block_hashes.last().unwrap();
         let finalized_block_hash = self.block_hashes[self.safe_height];
