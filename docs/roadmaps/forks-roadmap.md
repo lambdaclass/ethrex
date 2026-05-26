@@ -49,7 +49,7 @@
 
 ### Not Implemented — Amsterdam EL candidates
 
-CFI per [EIP-7773] (not PFI as previously labelled):
+Per [EIP-7773]:
 
 | EIP | Title | SFI/CFI | Notes |
 |-----|-------|---------|-------|
