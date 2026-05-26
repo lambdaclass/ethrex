@@ -113,13 +113,17 @@ impl RocksDBBackend {
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
-                CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
+                CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS | TRANSACTION_LOCATIONS => {
                     cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
                     cf_opts.set_max_write_buffer_number(3);
                     cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
+                    // Bloom filter is essential for TRANSACTION_LOCATIONS:
+                    // `stage_tx_location` does a negative `get_cf` per tx-write
+                    // during block import, and without bloom each get walks the
+                    // LSM (~22 ms/block on mainnet). With bloom, ~250 µs/block.
                     block_opts.set_bloom_filter(10.0, false);
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
