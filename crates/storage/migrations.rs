@@ -2,8 +2,13 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::api::StorageBackend;
+use crate::api::tables::{RECEIPTS, RECEIPTS_V2};
 use crate::error::StoreError;
+use crate::store::receipt_key;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
+
+use ethrex_common::H256;
+use ethrex_rlp::decode::RLPDecode;
 
 use super::store::StoreMetadata;
 
@@ -22,10 +27,7 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[
-    // Currently empty — no migrations exist yet.
-    // When STORE_SCHEMA_VERSION is bumped to 2, add migrate_1_to_2 here.
-];
+pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -93,6 +95,69 @@ fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError
     Ok(())
 }
 
+/// Migrates the RECEIPTS table from RLP-encoded `(BlockHash, u64)` keys
+/// to raw `block_hash (32B) || index (8B big-endian u64)` keys in a new
+/// `receipts_v2` column family.
+///
+/// This two-CF approach copies entries from the old `receipts` CF to
+/// `receipts_v2` with the new key format. The old `receipts` CF is **not**
+/// deleted here — `Store::new()` calls `drop_obsolete_cfs()` right after
+/// this migration returns, which drops it in the same startup.
+///
+/// Crash safety: if interrupted, metadata still says v1, so the migration
+/// restarts from scratch on next boot. Duplicate puts to `receipts_v2` are
+/// idempotent.
+fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    const BATCH_SIZE: usize = 10_000;
+
+    let txn = backend.begin_read()?;
+    let iter = txn.prefix_iterator(RECEIPTS, &[])?;
+
+    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+    let mut migrated: u64 = 0;
+
+    for result in iter {
+        let (key, value) = result?;
+
+        let (block_hash, index) = match <(H256, u64)>::decode(&key) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                tracing::warn!(
+                    "Skipping RECEIPTS key that failed RLP decode (len={})",
+                    key.len()
+                );
+                continue;
+            }
+        };
+
+        let new_key = receipt_key(&block_hash, index);
+        batch.push((new_key, value.to_vec()));
+
+        if batch.len() >= BATCH_SIZE {
+            let count = batch.len() as u64;
+            let mut tx = backend.begin_write()?;
+            tx.put_batch(RECEIPTS_V2, std::mem::take(&mut batch))?;
+            tx.commit()?;
+            migrated += count;
+            if migrated.is_multiple_of(100_000) {
+                tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
+            }
+        }
+    }
+
+    // Flush remaining entries.
+    if !batch.is_empty() {
+        let count = batch.len() as u64;
+        let mut tx = backend.begin_write()?;
+        tx.put_batch(RECEIPTS_V2, batch)?;
+        tx.commit()?;
+        migrated += count;
+    }
+
+    tracing::info!("Migration v1→v2 complete: migrated {migrated} RECEIPTS entries total");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,5 +195,64 @@ mod tests {
         let contents = std::fs::read_to_string(&metadata_path).unwrap();
         let metadata: StoreMetadata = serde_json::from_str(&contents).unwrap();
         assert_eq!(metadata.schema_version, STORE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn migrate_1_to_2_converts_rlp_keys_to_fixed_width() {
+        use crate::api::StorageBackend;
+        use ethrex_common::types::{Receipt, TxType};
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        let block_hash = H256::random();
+        let receipts: Vec<Receipt> = (0..5)
+            .map(|i| Receipt::new(TxType::Legacy, true, (i + 1) * 21000, vec![]))
+            .collect();
+
+        // Seed old-format RLP keys: (BlockHash, u64).encode_to_vec()
+        {
+            let mut tx = backend.begin_write().unwrap();
+            let batch: Vec<(Vec<u8>, Vec<u8>)> = receipts
+                .iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let old_key = (block_hash, i as u64).encode_to_vec();
+                    let value = r.encode_to_vec();
+                    (old_key, value)
+                })
+                .collect();
+            tx.put_batch(RECEIPTS, batch).unwrap();
+            tx.commit().unwrap();
+        }
+
+        // Verify old keys exist
+        {
+            let txn = backend.begin_read().unwrap();
+            let old_key = (block_hash, 0u64).encode_to_vec();
+            assert!(txn.get(RECEIPTS, &old_key).unwrap().is_some());
+        }
+
+        // Run migration
+        migrate_1_to_2(&backend).unwrap();
+
+        // Verify new fixed-width keys exist in RECEIPTS_V2
+        let txn = backend.begin_read().unwrap();
+        for i in 0..5u64 {
+            let new_key = receipt_key(&block_hash, i);
+            let value = txn
+                .get(RECEIPTS_V2, &new_key)
+                .unwrap()
+                .expect("new key should exist in RECEIPTS_V2 after migration");
+            let decoded = Receipt::decode(value.as_ref()).unwrap();
+            assert_eq!(decoded, receipts[i as usize]);
+
+            // Old keys should still be in RECEIPTS (drop_obsolete_cfs runs after migration)
+            let old_key = (block_hash, i).encode_to_vec();
+            assert!(
+                txn.get(RECEIPTS, &old_key).unwrap().is_some(),
+                "old key should still exist in RECEIPTS (dropped after migration)"
+            );
+        }
     }
 }
