@@ -401,11 +401,10 @@ fn resolve_p2p_endpoints(
         (Some(addr), None) => {
             let bind: IpAddr = addr.parse().expect("Failed to parse p2p address");
             if bind.is_unspecified() {
-                let external = if bind.is_ipv6() {
-                    local_v6.or(local_v4)
-                } else {
-                    local_v4.or(local_v6)
-                };
+                // Stay in the same address family: an IPv4 socket can't accept
+                // inbound IPv6 connections (and vice versa), so falling back
+                // across families would just advertise an unreachable address.
+                let external = if bind.is_ipv6() { local_v6 } else { local_v4 };
                 match external {
                     Some(ext) => {
                         info!(
@@ -420,7 +419,7 @@ fn resolve_p2p_endpoints(
                             bind = %bind,
                             "--p2p.addr is unspecified and no local IP could be detected; \
                              announcing the unspecified address. Inbound peer connections will fail. \
-                             Set --nat.extip to fix this."
+                             Set --nat.extip=<ip> or --p2p.addr=<ip> to fix."
                         );
                         (bind, bind)
                     }
@@ -914,5 +913,19 @@ mod tests {
         let (bind, ext) = resolve_p2p_endpoints(None, Some("203.0.113.5"), None, None);
         assert_eq!(bind, ip("0.0.0.0"));
         assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v6_announces_local_ipv6() {
+        let local6 = ip("fe80::1");
+        let (bind, ext) = resolve_p2p_endpoints(Some("::"), None, None, Some(local6));
+        assert_eq!(bind, ip("::"));
+        assert_eq!(ext, local6);
+    }
+
+    #[test]
+    #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
+    fn family_mismatch_panics() {
+        let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
     }
 }
