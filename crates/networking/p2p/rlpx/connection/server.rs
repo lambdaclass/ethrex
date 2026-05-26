@@ -1721,6 +1721,11 @@ async fn retry_on_alternates(
     // Group hashes by chosen live alternate, carrying their own type/size.
     // We walk per-hash so a dead alternate for hash X doesn't consume the
     // slot that hash Y could use.
+    //
+    // TODO(#6691-fu): the liveness probe here and the actual lookup at the
+    // enqueue site below race; if the connection drops in between, the
+    // alternate slot is consumed for nothing. Carry the `PeerConnection`
+    // handle in `by_peer` to collapse both into a single lookup.
     let mut by_peer: FxHashMap<H256, Vec<(H256, u8, usize)>> = FxHashMap::default();
     for hash in hashes {
         loop {
