@@ -136,6 +136,9 @@ pub async fn new_payload_v4(
             chain_config.get_fork(block.header.timestamp)
         ));
     }
+    if chain_config.is_osaka_activated(block.header.timestamp) {
+        return EngineError::unprocessable(&format!("{:?}", Fork::Osaka));
+    }
     let expected = ssz_blob_hashes_to_vec(&req.expected_blob_versioned_hashes);
     let status = match handle_new_payload_v3(expected_hash, ctx, block, expected, None).await {
         Ok(s) => s,

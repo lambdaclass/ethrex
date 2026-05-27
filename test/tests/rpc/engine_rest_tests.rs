@@ -734,6 +734,39 @@ async fn new_payload_v4_pre_prague_returns_422() {
 }
 
 #[tokio::test]
+async fn new_payload_v4_post_prague_returns_422() {
+    // Per execution-apis Prague spec, V4 MUST return Unsupported fork if the
+    // payload timestamp does not fall within the time frame of Prague. An
+    // Osaka-activated block sent to V4 must be rejected with 422, not pass
+    // through to block hash validation.
+    let cc = ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        deposit_contract_address: Address::zero(),
+        ..Default::default()
+    };
+    let app = make_router_with_chain_config(cc).await;
+    let req = NewPayloadV4Request {
+        execution_payload: empty_payload_v3(1),
+        expected_blob_versioned_hashes: Vec::<Bytes32>::new().try_into().unwrap(),
+        parent_beacon_block_root: [0u8; 32],
+        execution_requests: Vec::<
+            SszList<u8, { ethrex_rpc::engine_rest::types::common::MAX_BYTES_PER_TRANSACTION }>,
+        >::new()
+        .try_into()
+        .unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post("/engine/v4/payloads", ssz_body(&req)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
 async fn new_payload_v5_pre_amsterdam_returns_422() {
     let cc = ChainConfig {
         chain_id: 1,

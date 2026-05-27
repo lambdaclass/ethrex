@@ -223,6 +223,9 @@ impl RpcHandler for NewPayloadV4Request {
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
+        if chain_config.is_osaka_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(format!("{:?}", Fork::Osaka)));
+        }
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
@@ -512,19 +515,22 @@ impl RpcHandler for GetPayloadV5Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+        // V5 is Osaka-only per execution-apis Osaka spec: the response shape is
+        // `ExecutionPayloadV3`, which has no `blockAccessList`. Amsterdam blocks
+        // must be retrieved via `engine_getPayloadV6`; serving them here would
+        // either drop the BAL (breaking block-hash reconstruction) or leak a
+        // non-spec field into the V5 response.
+        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp)
+            || chain_config.is_amsterdam_activated(payload_bundle.block.header.timestamp)
+        {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
 
-        // V5 supports BAL (Amsterdam fork, EIP-7928)
         let response = ExecutionPayloadResponse {
-            execution_payload: ExecutionPayload::from_block(
-                payload_bundle.block,
-                payload_bundle.block_access_list,
-            ),
+            execution_payload: ExecutionPayload::from_block(payload_bundle.block, None),
             block_value: payload_bundle.block_value,
             blobs_bundle: Some(payload_bundle.blobs_bundle),
             should_override_builder: Some(false),
