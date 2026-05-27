@@ -504,7 +504,7 @@ mod tests {
             .expect("key must exist after merge + compaction");
         let mut got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
         got.sort();
-        let mut want = entries.clone();
+        let mut want = entries;
         want.sort();
         assert_eq!(got, want, "no entries may be dropped through compaction");
     }
