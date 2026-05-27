@@ -245,26 +245,23 @@ fn find_parent_state_root(
         })
 }
 
-/// Check that `headers[1..]` link via `parent_hash == keccak(RLP(prev))`, in
-/// input order. The first header is intentionally unanchored here; the parent
-/// end is bound by the post-execution state-root check in `execute_blocks`.
+/// Check that `headers[1..]` link via `parent_hash == keccak(RLP(prev))` AND
+/// `number == prev.number + 1`, in input order. The first header is
+/// intentionally unanchored here; the parent end is bound by the post-execution
+/// state-root check in `execute_blocks`.
 ///
 /// Call before any sort/dedup, since reordering hides violations.
 pub fn validate_witness_headers_chain(
     headers: &[BlockHeader],
     crypto: &dyn Crypto,
 ) -> Result<(), GuestProgramStateError> {
-    if headers.len() <= 1 {
-        return Ok(());
-    }
-    let mut prev_hash: Option<H256> = None;
-    for header in headers {
-        if let Some(prev) = prev_hash
-            && header.parent_hash != prev
+    for pair in headers.windows(2) {
+        let (prev, next) = (&pair[0], &pair[1]);
+        if next.number != prev.number.saturating_add(1)
+            || next.parent_hash != prev.compute_block_hash(crypto)
         {
             return Err(GuestProgramStateError::NoncontiguousBlockHeaders);
         }
-        prev_hash = Some(header.compute_block_hash(crypto));
     }
     Ok(())
 }

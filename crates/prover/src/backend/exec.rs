@@ -80,6 +80,15 @@ impl ProverBackend for ExecBackend {
         input: ProgramInput,
         _format: ProofFormat,
     ) -> Result<Self::ProofOutput, BackendError> {
+        // The `Direct` variant returns a zero `new_payload_request_root` sentinel
+        // that callers must not interpret as a real commitment. `execute()` is
+        // fine (discards the output) but `prove()` exposes it.
+        #[cfg(feature = "eip-8025")]
+        if matches!(input, ProgramInput::Direct { .. }) {
+            return Err(BackendError::execution(
+                "ExecBackend::prove does not accept ProgramInput::Direct (test-only path)",
+            ));
+        }
         warn!("\"exec\" prover backend generates no proof, only executes");
         Self::execute_core(input)
     }

@@ -487,8 +487,8 @@ fn validate_canonical_chain_config(
         )));
     }
 
-    // `fork` and `activation` are not compared: EELS and ethrex number forks
-    // differently, and the spec stores activation values for canonical-root
+    // TODO: `fork` and `activation` are not compared. EELS and ethrex number
+    // forks differently, and the spec stores activation values for canonical-root
     // determinism rather than verifier cross-checking. The blob-schedule check
     // below is a partial proxy and misses forks with identical blob parameters.
 

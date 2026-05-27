@@ -650,17 +650,21 @@ fn run_stateless_from_input_bytes(
         format!("statelessInputBytes hex decode failed for {test_key} block {block_number}: {e}")
     })?;
 
-    let stateless_input = decode_canonical_stateless_input_bytes(&bytes).map_err(|e| {
-        format!("statelessInputBytes decode failed for {test_key} block {block_number}: {e}")
-    })?;
-
-    let chain_config = *test_network.chain_config();
-    let program_input = ProgramInput::wire(DecodedEip8025::Canonical {
-        stateless_input,
-        chain_config,
-    });
-
-    let exec_result = ExecBackend::new().execute(program_input);
+    // Decode failures count as the canonical-input rejection path: a negative
+    // fixture with malformed top-level SSZ should still match `expected_valid=false`.
+    let exec_result = match decode_canonical_stateless_input_bytes(&bytes) {
+        Ok(stateless_input) => {
+            let chain_config = *test_network.chain_config();
+            let program_input = ProgramInput::wire(DecodedEip8025::Canonical {
+                stateless_input,
+                chain_config,
+            });
+            ExecBackend::new().execute(program_input)
+        }
+        Err(e) => Err(ethrex_prover::BackendError::execution(format!(
+            "statelessInputBytes decode failed: {e}"
+        ))),
+    };
     match (expected_valid, exec_result) {
         (true, Ok(_)) | (false, Err(_)) => Ok(()),
         (true, Err(e)) => Err(format!(
