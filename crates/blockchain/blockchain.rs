@@ -111,6 +111,8 @@ use tokio_util::sync::CancellationToken;
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::bal::METRICS_BAL;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
@@ -1979,6 +1981,17 @@ impl Blockchain {
                 instants,
             );
         }
+
+        metrics!(if let Some(bal_ref) = produced_bal.as_ref().or(bal) {
+            let account_count = bal_ref.accounts().len() as u64;
+            let slot_count = bal_ref.item_count().saturating_sub(account_count);
+            let size_bytes = bal_ref.length() as f64;
+            METRICS_BAL.blocks_total.inc();
+            METRICS_BAL.size_bytes.set(size_bytes);
+            METRICS_BAL.size_bytes_histogram.observe(size_bytes);
+            METRICS_BAL.account_count.set(account_count as i64);
+            METRICS_BAL.slot_count.set(slot_count as i64);
+        });
 
         Ok((produced_bal, result))
     }

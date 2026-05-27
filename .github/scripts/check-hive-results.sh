@@ -58,11 +58,8 @@ rm -rf "${failed_logs_root}"
 mkdir -p "${failed_logs_root}"
 
 # Tests excluded from the failure count (substring match against test case
-# name). Reserved for genuinely flaky hive-framework tests, not ethrex bugs.
+# name).
 KNOWN_EXCLUDED_TESTS=(
-  "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=False, Invalid P8"
-  "Invalid Missing Ancestor Syncing ReOrg, Timestamp, EmptyTxs=False, CanonicalReOrg=True, Invalid P8"
-  "Invalid Missing Ancestor Syncing ReOrg, Transaction Value, EmptyTxs=False, CanonicalReOrg=False, Invalid P9"
 )
 
 # Build a jq filter that excludes the known-excluded tests.
