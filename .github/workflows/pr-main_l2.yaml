@@ -530,6 +530,16 @@ jobs:
 
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
+        with:
+          # crates.io 403s any User-Agent containing "curl/", which is what Nix's
+          # fetchurl sends by default, breaking crate downloads during the image
+          # build. In multi-user (daemon) mode the FOD builds run under the
+          # nix-daemon and don't see the caller's environment, so override the
+          # User-Agent via impure-env (honored because the runner is a trusted
+          # user). Single token (=-form) so it survives word-splitting.
+          extra_nix_config: |
+            extra-experimental-features = configurable-impure-env
+            impure-env = NIX_CURL_FLAGS=--user-agent=ethrex-ci+https://github.com/lambdaclass/ethrex
 
       - name: Set up QEMU
         run: |
