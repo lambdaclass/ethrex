@@ -373,6 +373,7 @@ pub trait PeerTableServerProtocol: Send + Sync {
     ) -> Response<Option<(H256, PeerConnection, RequestPermit)>>;
     fn get_session_info(&self, node_id: H256) -> Response<Option<Session>>;
     fn get_peer_diagnostics(&self) -> Response<Vec<PeerDiagnostics>>;
+    fn get_peer_connection(&self, peer_id: H256) -> Response<Option<PeerConnection>>;
 }
 
 #[derive(Debug)]
@@ -929,6 +930,17 @@ impl PeerTableServer {
             .get(&msg.node_id)
             .cloned()
             .or_else(|| self.contacts.get(&msg.node_id)?.session.clone())
+    }
+
+    #[request_handler]
+    async fn handle_get_peer_connection(
+        &mut self,
+        msg: peer_table_server_protocol::GetPeerConnection,
+        _ctx: &Context<Self>,
+    ) -> Option<PeerConnection> {
+        self.peers
+            .get(&msg.peer_id)
+            .and_then(|peer_data| peer_data.connection.clone())
     }
 
     #[request_handler]

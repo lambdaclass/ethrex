@@ -1,5 +1,4 @@
 use crate::authentication::authenticate;
-use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
@@ -31,6 +30,7 @@ use crate::eth::{
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
         GetRawHeaderRequest, GetRawReceipts,
     },
+    block_access_list::BlockAccessListRequest,
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
@@ -392,6 +392,7 @@ fn get_error_kind(err: &RpcErr) -> &'static str {
         RpcErr::MethodNotFound(_) => "MethodNotFound",
         RpcErr::WrongParam(_) => "WrongParam",
         RpcErr::BadParams(_) => "BadParams",
+        RpcErr::InvalidRequest(_) => "InvalidRequest",
         RpcErr::MissingParam(_) => "MissingParam",
         RpcErr::TooLargeRequest => "TooLargeRequest",
         RpcErr::BadHexFormat(_) => "BadHexFormat",
@@ -645,39 +646,51 @@ pub async fn shutdown_signal() {
         .expect("failed to install Ctrl+C handler");
 }
 
-async fn handle_http_request(
-    State(service_context): State<RpcApiContext>,
-    body: String,
-) -> Result<Json<Value>, StatusCode> {
-    let res = match serde_json::from_str::<RpcRequestWrapper>(&body) {
-        Ok(RpcRequestWrapper::Single(request)) => {
-            let res = map_http_requests(&request, service_context).await;
-            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
-        }
-        Ok(RpcRequestWrapper::Multiple(requests)) => {
-            let mut responses = Vec::new();
-            for req in requests {
-                let res = map_http_requests(&req, service_context.clone()).await;
-                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
-            }
-            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
-        }
-        Err(_) => rpc_response(
-            RpcRequestId::String("".to_string()),
-            Err(RpcErr::BadParams("Invalid request body".to_string())),
-        )
-        .map_err(|_| StatusCode::BAD_REQUEST)?,
-    };
-    Ok(Json(res))
+/// Maximum number of requests accepted in a single JSON-RPC batch on either
+/// the public HTTP port or the engine auth port. Matches geth's
+/// `--engine.batchitemlimit` default. Larger batches are rejected up front
+/// with `-32600 InvalidRequest` before any per-request work runs.
+const MAX_BATCH_SIZE: usize = 1000;
+
+/// JSON-RPC 2.0 §5.1: when the request body is not a valid Request object the
+/// response id MUST be null. Build these transport-level errors directly so we
+/// don't have to encode "no id" through `RpcRequestId`.
+fn null_id_error(err: RpcErr) -> Value {
+    let meta: RpcErrorMetadata = err.into();
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": Value::Null,
+        "error": meta,
+    })
 }
 
-pub async fn handle_authrpc_request(
+/// Validate a batch envelope. Returns `Some(error_value)` for empty or
+/// oversize batches (short-circuits dispatch), `None` if the request is
+/// ok to process.
+fn validate_batch(wrapper: &RpcRequestWrapper) -> Option<Value> {
+    let RpcRequestWrapper::Multiple(requests) = wrapper else {
+        return None;
+    };
+    if requests.is_empty() {
+        return Some(null_id_error(RpcErr::InvalidRequest(
+            "empty batch is not a valid Request".to_string(),
+        )));
+    }
+    if requests.len() > MAX_BATCH_SIZE {
+        return Some(null_id_error(RpcErr::InvalidRequest(format!(
+            "batch too large: {} > {MAX_BATCH_SIZE}",
+            requests.len()
+        ))));
+    }
+    None
+}
+
+pub(crate) async fn handle_http_request(
     State(service_context): State<RpcApiContext>,
-    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
     body: String,
 ) -> Result<Json<Value>, StatusCode> {
-    let req: RpcRequest = match serde_json::from_str(&body) {
-        Ok(req) => req,
+    let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
+        Ok(w) => w,
         Err(_) => {
             return Ok(Json(
                 rpc_response(
@@ -688,18 +701,89 @@ pub async fn handle_authrpc_request(
             ));
         }
     };
-    match authenticate(&service_context.node_data.jwt_secret, auth_header) {
-        Err(error) => Ok(Json(
-            rpc_response(req.id, Err(error)).map_err(|_| StatusCode::BAD_REQUEST)?,
-        )),
-        Ok(()) => {
-            // Proceed with the request
-            let res = map_authrpc_requests(&req, service_context).await;
-            Ok(Json(
-                rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?,
-            ))
-        }
+
+    if let Some(err) = validate_batch(&wrapper) {
+        return Ok(Json(err));
     }
+
+    let res = match wrapper {
+        RpcRequestWrapper::Single(request) => {
+            let res = map_http_requests(&request, service_context).await;
+            rpc_response(request.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+        RpcRequestWrapper::Multiple(requests) => {
+            let mut responses = Vec::with_capacity(requests.len());
+            for req in requests {
+                let res = map_http_requests(&req, service_context.clone()).await;
+                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+    };
+    Ok(Json(res))
+}
+
+pub async fn handle_authrpc_request(
+    State(service_context): State<RpcApiContext>,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: String,
+) -> Result<Json<Value>, StatusCode> {
+    let wrapper: RpcRequestWrapper = match serde_json::from_str(&body) {
+        Ok(w) => w,
+        Err(_) => {
+            return Ok(Json(null_id_error(RpcErr::InvalidRequest(
+                "could not parse JSON-RPC request body".to_string(),
+            ))));
+        }
+    };
+
+    // Reject empty / oversize batches before any auth or dispatch work so a
+    // 100k-request body can't burn JWT crypto or memory.
+    if let Some(err) = validate_batch(&wrapper) {
+        return Ok(Json(err));
+    }
+
+    if let Err(error) = authenticate(&service_context.node_data.jwt_secret, auth_header) {
+        // Auth failed: respond before dispatching anything. For batches, mirror
+        // the batch shape and emit one error response per request so clients
+        // can still correlate by id.
+        let error_meta: RpcErrorMetadata = error.into();
+        let res = match wrapper {
+            RpcRequestWrapper::Single(req) => serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": req.id,
+                "error": error_meta,
+            }),
+            RpcRequestWrapper::Multiple(requests) => {
+                let mut responses = Vec::with_capacity(requests.len());
+                for req in requests {
+                    responses.push(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": req.id,
+                        "error": error_meta.clone(),
+                    }));
+                }
+                serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+            }
+        };
+        return Ok(Json(res));
+    }
+
+    let res = match wrapper {
+        RpcRequestWrapper::Single(req) => {
+            let res = map_authrpc_requests(&req, service_context).await;
+            rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+        RpcRequestWrapper::Multiple(requests) => {
+            let mut responses = Vec::with_capacity(requests.len());
+            for req in requests {
+                let res = map_authrpc_requests(&req, service_context.clone()).await;
+                responses.push(rpc_response(req.id, res).map_err(|_| StatusCode::BAD_REQUEST)?);
+            }
+            serde_json::to_value(responses).map_err(|_| StatusCode::BAD_REQUEST)?
+        }
+    };
+    Ok(Json(res))
 }
 
 /// Handle a WebSocket connection.
@@ -1021,6 +1105,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             GetTransactionByBlockHashAndIndexRequest::call(req, context).await
         }
         "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, context).await,
+        "eth_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context).await,
         "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context).await,
         "eth_createAccessList" => CreateAccessListRequest::call(req, context).await,
@@ -1068,7 +1153,6 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
-        "debug_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),

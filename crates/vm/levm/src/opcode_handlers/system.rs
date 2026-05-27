@@ -1234,7 +1234,11 @@ impl<'a> VM<'a> {
             ..
         } = executed_call_frame;
 
+        #[cfg(not(target_arch = "riscv64"))]
         old_callframe_memory.clean_from_base();
+
+        #[cfg(target_arch = "riscv64")]
+        old_callframe_memory.truncate_to_base();
 
         let parent_call_frame = &mut self.current_call_frame;
 
@@ -1302,7 +1306,11 @@ impl<'a> VM<'a> {
             ..
         } = executed_call_frame;
 
+        #[cfg(not(target_arch = "riscv64"))]
         old_callframe_memory.clean_from_base();
+
+        #[cfg(target_arch = "riscv64")]
+        old_callframe_memory.truncate_to_base();
 
         // Return unused gas
         let unused_gas = gas_limit
