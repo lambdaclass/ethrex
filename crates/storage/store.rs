@@ -269,24 +269,39 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Code)>,
 }
 
-/// Encodes a single tx-location entry as the operand passed to `merge_cf`.
+/// Encodes a tx-location entry as the operand passed to `merge_cf`.
+///
+/// The operand uses the **same encoding as the stored value** — a
+/// `Vec<(BlockNumber, BlockHash, Index)>` with a single element. This is
+/// required for an *associative* merge operator: RocksDB folds operands
+/// together with PartialMerge (during compaction, without a base value), and
+/// the result becomes an operand for a later merge. If the operand format
+/// differed from the merge output (e.g. operand = bare tuple, output = Vec),
+/// the re-fed result would fail to decode and entries would be silently
+/// dropped. Keeping both as `Vec` makes the merge truly associative.
 pub(crate) fn encode_tx_location_operand(
     block_number: BlockNumber,
     block_hash: BlockHash,
     index: Index,
 ) -> Vec<u8> {
-    (block_number, block_hash, index).encode_to_vec()
+    vec![(block_number, block_hash, index)].encode_to_vec()
 }
 
 /// Merge function for the `TRANSACTION_LOCATIONS` column family.
 ///
 /// The CF is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
-/// one entry per block the tx appears in (multiple only on reorgs). Writers call
-/// `merge_cf` with a single `(bn, bh, idx)` operand per tx; RocksDB invokes this
-/// function on `get_cf` and during compaction to fold the base value plus
-/// pending operands into the final `Vec`. Each new operand replaces any prior
-/// entry for the same `block_hash`, preserving the dedupe semantics of the
-/// previous composite-key schema.
+/// one entry per block the tx appears in (multiple only on reorgs). Both the
+/// stored value and every merge operand are encoded as this same `Vec` type.
+/// Writers call `merge_cf` with a single-element `Vec` operand per tx; RocksDB
+/// invokes this function on `get_cf` and during compaction to fold the base
+/// value plus pending operands into one `Vec`. Within the fold, a later entry
+/// replaces any earlier entry with the same `block_hash`, preserving the dedupe
+/// semantics of the previous composite-key schema.
+///
+/// Associativity: because input operands and the output are the same `Vec`
+/// format, PartialMerge (operand-only folding) produces a valid operand that
+/// can be re-merged later. This is essential for correctness — see
+/// `encode_tx_location_operand`.
 ///
 /// Used by:
 /// - The RocksDB backend, via `set_merge_operator_associative`.
@@ -294,44 +309,41 @@ pub(crate) fn encode_tx_location_operand(
 ///   inline at `merge()` call time.
 ///
 /// Why merge instead of read-modify-write: a per-tx `get_cf` on the write path
-/// is expensive without a bloom filter (~22 ms/block on mainnet). With merge,
-/// the write path is pure `merge_cf` (no read), and the consolidation work is
-/// deferred to compaction or to the next read. As a bonus the merge is
-/// atomic at the RocksDB level — no concurrency assumption is needed at the
-/// application layer.
+/// is expensive (~5–20 ms/block on mainnet, dominated by the per-tx point
+/// lookup, not fully fixable by a bloom filter). With merge, the write path is
+/// a pure `merge_cf` append (no read), and consolidation is deferred to
+/// compaction or the next read. As a bonus the merge is atomic at the RocksDB
+/// level — no serialized-writer assumption is needed at the application layer.
 pub fn tx_locations_merge(
     existing: Option<&[u8]>,
     operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
 ) -> Option<Vec<u8>> {
-    let mut list: Vec<(BlockNumber, BlockHash, Index)> = match existing {
-        Some(bytes) => match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
-            Ok(v) => v,
+    let mut list: Vec<(BlockNumber, BlockHash, Index)> = Vec::new();
+
+    // Fold base value + every operand, all decoded as `Vec`. Order matters:
+    // RocksDB delivers operands oldest-first, and within `extend_dedup` a later
+    // entry for the same block_hash wins.
+    let mut extend_dedup =
+        |bytes: &[u8], what: &str| match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
+            Ok(entries) => {
+                for (bn, bh, idx) in entries {
+                    list.retain(|(_, existing_bh, _)| *existing_bh != bh);
+                    list.push((bn, bh, idx));
+                }
+            }
             Err(e) => {
                 error!(
-                    "tx_locations_merge: failed to decode existing value ({} bytes): {e}; \
-                     resetting to empty",
+                    "tx_locations_merge: failed to decode {what} ({} bytes): {e}; skipping",
                     bytes.len()
                 );
-                Vec::new()
             }
-        },
-        None => Vec::new(),
-    };
+        };
+
+    if let Some(bytes) = existing {
+        extend_dedup(bytes, "existing value");
+    }
     for op in operands {
-        let op_bytes = op.as_ref();
-        match <(BlockNumber, BlockHash, Index)>::decode(op_bytes) {
-            Ok((bn, bh, idx)) => {
-                list.retain(|(_, existing_bh, _)| *existing_bh != bh);
-                list.push((bn, bh, idx));
-            }
-            Err(e) => {
-                error!(
-                    "tx_locations_merge: failed to decode operand ({} bytes): {e}; \
-                     skipping",
-                    op_bytes.len()
-                );
-            }
-        }
+        extend_dedup(op.as_ref(), "operand");
     }
     Some(list.encode_to_vec())
 }
@@ -3596,5 +3608,56 @@ mod merge_tests {
         let out = tx_locations_merge(None, vec![vec![0xff, 0xff], op(100, h256(0x10), 0)]).unwrap();
         // The malformed operand is skipped; the valid one is applied.
         assert_eq!(decode(&out), vec![(100, h256(0x10), 0)]);
+    }
+
+    /// Regression for the associative-merge format bug: a PartialMerge result
+    /// must be re-mergeable as an operand. RocksDB folds operands together
+    /// without a base value during compaction, then feeds that result back into
+    /// a later merge. If the operand format differed from the output format,
+    /// the re-fed result would fail to decode and entries would be dropped
+    /// (observed as 1664 silent drops during a compaction pass on mainnet).
+    #[test]
+    fn partial_merge_result_is_a_valid_operand() {
+        // Step 1: PartialMerge — combine operands with NO base value.
+        let partial =
+            tx_locations_merge(None, vec![op(100, h256(0x10), 0), op(101, h256(0x11), 1)]).unwrap();
+
+        // Step 2: the partial result is now itself an operand in a later merge,
+        // on top of an existing base value. This is the path that used to drop
+        // entries.
+        let base = vec![(99u64, h256(0x09), 9u64)].encode_to_vec();
+        let out = tx_locations_merge(Some(&base), vec![partial]).unwrap();
+
+        let mut got = decode(&out);
+        got.sort();
+        let mut want = vec![
+            (99, h256(0x09), 9),
+            (100, h256(0x10), 0),
+            (101, h256(0x11), 1),
+        ];
+        want.sort();
+        assert_eq!(
+            got, want,
+            "no entries may be lost when re-merging a partial result"
+        );
+    }
+
+    /// Operand and stored-value encodings must be byte-identical types, so a
+    /// freshly-encoded operand round-trips through the value decoder.
+    #[test]
+    fn operand_encoding_matches_value_encoding() {
+        let operand = op(100, h256(0x10), 3);
+        // Decoding the operand as the stored Vec type must succeed.
+        assert_eq!(decode(&operand), vec![(100, h256(0x10), 3)]);
+    }
+
+    /// Chained PartialMerges (operand-only folds applied repeatedly) stay valid.
+    #[test]
+    fn chained_partial_merges() {
+        let p1 = tx_locations_merge(None, vec![op(1, h256(0x01), 0)]).unwrap();
+        let p2 = tx_locations_merge(None, vec![p1, op(2, h256(0x02), 0)]).unwrap();
+        let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
+        let out = tx_locations_merge(None, vec![p3]).unwrap();
+        assert_eq!(decode(&out).len(), 3);
     }
 }
