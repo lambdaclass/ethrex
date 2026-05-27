@@ -19,11 +19,9 @@ use crate::types::payload::{
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
 
-// Spec requires supporting request sizes of at least 32 blocks; JSON-RPC is
-// permissive and accepts up to 4× that. The SSZ REST surface enforces the
-// stricter 32 cap because `MAX_PAYLOAD_BODIES_REQUEST` is also the SSZ
-// `List` length bound (`engine_rest::types::common`) — wire data with more
-// entries will not decode.
+// Spec floor is 32. JSON-RPC accepts <128 (the check is `>=`, so the
+// effective max is 127); SSZ REST is capped at 32 because that value is
+// also the SSZ `List` length bound and over-cap wire data won't decode.
 // -> https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#specification-3
 const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: u64 = 128;
 

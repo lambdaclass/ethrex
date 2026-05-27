@@ -14,6 +14,10 @@
 //!   POST /engine/v1/client/version                      getClientVersion
 //!   POST /engine/v1/capabilities                        exchangeCapabilities
 //!
+//! V5/V6 fork mapping (per #764): newPayloadV5 = Amsterdam (ExecutionPayloadV4),
+//! getPayloadV5 = Osaka-only (ExecutionPayloadV3, no BAL), getPayloadV6 =
+//! Amsterdam (ExecutionPayloadV4).
+//!
 //! Per-route body caps follow #764 §Security considerations: tight bounds for
 //! small request types (forkchoice, blobs, bodies, capabilities, client/version)
 //! and a generous cap for `newPayload`. Caps shadow the authrpc-wide 256 MB

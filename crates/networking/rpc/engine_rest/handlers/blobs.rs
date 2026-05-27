@@ -1,8 +1,10 @@
 //! POST /engine/v{1,2,3}/blobs.
 //!
-//! V1 returns `BlobAndProofV1` (single proof, no nullability). V2 returns
-//! `BlobAndProofV2` (cell proofs); all-or-nothing — empty list when any blob
-//! is missing. V3 returns per-element nullable `BlobAndProofV2`.
+//! V1: flat non-nullable list (missing blobs are dropped, response is
+//! positionally compacted — JSON-RPC V1 keeps positional `Option`s; use V3
+//! over either transport for positional info).
+//! V2: all-or-nothing — empty list when any blob or its proofs are missing.
+//! V3: per-element nullable `BlobAndProofV2`.
 
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};

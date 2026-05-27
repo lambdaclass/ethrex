@@ -163,8 +163,3 @@ where
         .try_into()
         .expect("empty list fits in SszOption<T>")
 }
-
-/// Read an SSZ-encoded `Option<T>` back to `Option<T>`.
-pub fn ssz_into_option<T: Clone, const N: usize>(list: &SszList<T, N>) -> Option<T> {
-    list.first().cloned()
-}
