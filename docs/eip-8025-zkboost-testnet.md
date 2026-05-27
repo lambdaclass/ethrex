@@ -28,9 +28,10 @@ Lighthouse produces blocks via ethrex, then requests proofs from zkboost. zkboos
 ### Clone repositories
 
 ```bash
-# ethrex (eip-8025 branch)
+# ethrex (main — EIP-8025 is the only L1 stateless-proving format, no build
+# flag required)
 git clone https://github.com/lambdaclass/ethrex.git
-cd ethrex && git checkout eip-8025
+cd ethrex
 
 # zkboost
 git clone https://github.com/eth-act/zkboost.git
@@ -43,9 +44,10 @@ cd lighthouse && git checkout feat/eip8025
 ### Build
 
 ```bash
-# ethrex
+# ethrex — EIP-8025 is the only L1 stateless-proving format, so no special
+# build flag is needed.
 cd ethrex
-cargo build --release --features eip-8025 --bin ethrex
+cargo build --release --bin ethrex
 
 # zkboost
 cd zkboost

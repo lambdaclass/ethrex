@@ -1,45 +1,10 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(not(feature = "eip-8025"))]
-use ethrex_common::{H256, U256};
-
-/// Output of the L1 stateless validation program.
-#[cfg(not(feature = "eip-8025"))]
-#[derive(Serialize, Deserialize)]
-pub struct ProgramOutput {
-    /// Initial state trie root hash.
-    pub initial_state_hash: H256,
-    /// Final state trie root hash.
-    pub final_state_hash: H256,
-    /// Hash of the last block in the batch.
-    pub last_block_hash: H256,
-    /// Chain ID of the network.
-    pub chain_id: U256,
-    /// Number of transactions in the batch.
-    pub transaction_count: U256,
-}
-
-#[cfg(not(feature = "eip-8025"))]
-impl ProgramOutput {
-    /// Encode the output to bytes for commitment.
-    pub fn encode(&self) -> Vec<u8> {
-        [
-            self.initial_state_hash.to_fixed_bytes(),
-            self.final_state_hash.to_fixed_bytes(),
-            self.last_block_hash.to_fixed_bytes(),
-            self.chain_id.to_big_endian(),
-            self.transaction_count.to_big_endian(),
-        ]
-        .concat()
-    }
-}
-
 /// Output of the L1 stateless validation program (EIP-8025).
 ///
 /// The output is a 41-byte commitment: the `hash_tree_root` of the
 /// `NewPayloadRequest` (32 bytes), a validity flag (1 byte), and
 /// `chain_id` (8 bytes).
-#[cfg(feature = "eip-8025")]
 #[derive(Serialize, Deserialize)]
 pub struct ProgramOutput {
     /// The `hash_tree_root` of the `NewPayloadRequest`.
@@ -50,7 +15,6 @@ pub struct ProgramOutput {
     pub chain_id: u64,
 }
 
-#[cfg(feature = "eip-8025")]
 impl ProgramOutput {
     /// Encode the output to 41 bytes: `root ++ valid ++ chain_id`.
     pub fn encode(&self) -> Vec<u8> {

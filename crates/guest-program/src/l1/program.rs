@@ -4,69 +4,19 @@ use ethrex_crypto::Crypto;
 
 use crate::common::ExecutionError;
 use crate::common::execute_blocks;
-#[cfg(not(feature = "eip-8025"))]
-use crate::l1::input::ProgramInput;
-#[cfg(feature = "eip-8025")]
 use crate::l1::input::{CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025};
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
 use ethrex_vm::Evm;
 
-#[cfg(feature = "eip-8025")]
 use libssz_merkle::Sha256Hasher;
-
-#[cfg(not(feature = "eip-8025"))]
-use crate::common::BatchExecutionResult;
-
-/// Execute the L1 stateless validation program.
-///
-/// This validates and executes a batch of L1 blocks, verifying state transitions
-/// without access to the full blockchain state.
-#[cfg(not(feature = "eip-8025"))]
-pub fn execution_program(
-    input: ProgramInput,
-    crypto: Arc<dyn Crypto>,
-) -> Result<ProgramOutput, ExecutionError> {
-    let ProgramInput {
-        blocks,
-        execution_witness,
-    } = input;
-
-    let BatchExecutionResult {
-        receipts: _,
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        non_privileged_count,
-        chain_id,
-    } = execute_blocks(
-        &blocks,
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| {
-            // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
-        },
-        crypto.clone(),
-    )?;
-
-    Ok(ProgramOutput {
-        initial_state_hash,
-        final_state_hash,
-        last_block_hash,
-        chain_id: chain_id.into(),
-        transaction_count: non_privileged_count,
-    })
-}
 
 /// Wrapper to bridge `ethrex_crypto::Crypto` to `libssz_merkle::Sha256Hasher`,
 /// so `hash_tree_root` is computed via crypto precompiles in the zkVM.
 /// Required because the orphan rule prevents a direct impl on `Arc<dyn Crypto>`.
-#[cfg(feature = "eip-8025")]
 struct CryptoWrapper(Arc<dyn Crypto>);
 
-#[cfg(feature = "eip-8025")]
 impl Sha256Hasher for CryptoWrapper {
     fn hash(&self, data: &[u8]) -> [u8; 32] {
         self.0.sha256(data)
@@ -76,10 +26,10 @@ impl Sha256Hasher for CryptoWrapper {
 /// Decode and execute the L1 stateless validation program from EIP-8025 wire
 /// bytes.
 ///
+/// EIP-8025 is the only L1 stateless-proving format; there is no legacy path.
 /// The wire format is version-prefixed; see [`super::decode_eip8025`] for the
 /// per-version layout. Legacy and canonical-input payloads both commit to the
 /// decoded `NewPayloadRequest` root and report execution validity as a boolean.
-#[cfg(feature = "eip-8025")]
 pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
@@ -126,7 +76,6 @@ pub fn execution_program(
     }
 }
 
-#[cfg(feature = "eip-8025")]
 fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usize>(
     transactions: &libssz_types::SszList<libssz_types::SszList<u8, MAX_BYTES_PER_TX>, MAX_TXS>,
 ) -> Result<Vec<ethrex_common::types::Transaction>, String> {
@@ -140,7 +89,6 @@ fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usi
         .collect::<Result<Vec<_>, _>>()
 }
 
-#[cfg(feature = "eip-8025")]
 fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
     withdrawals: &libssz_types::SszList<
         ethrex_common::types::eip8025_ssz::Withdrawal,
@@ -160,7 +108,6 @@ fn decode_payload_withdrawals<const MAX_WITHDRAWALS: usize>(
         .collect()
 }
 
-#[cfg(feature = "eip-8025")]
 fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
     Ok(u64::from_le_bytes(
         bytes[..8]
@@ -169,7 +116,6 @@ fn base_fee_per_gas_from_le_bytes(bytes: &[u8; 32]) -> Result<u64, String> {
     ))
 }
 
-#[cfg(feature = "eip-8025")]
 fn validate_reconstructed_block_hash(
     block: &ethrex_common::types::Block,
     expected_hash: &[u8; 32],
@@ -187,7 +133,7 @@ fn validate_reconstructed_block_hash(
 }
 
 /// Transform an SSZ `NewPayloadRequest` into a `Block`.
-#[cfg(feature = "eip-8025")]
+
 fn new_payload_request_to_block(
     req: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     crypto: &dyn Crypto,
@@ -251,7 +197,7 @@ fn new_payload_request_to_block(
 }
 
 /// Transform an Amsterdam SSZ `NewPayloadRequest` into a `Block`.
-#[cfg(feature = "eip-8025")]
+
 fn new_payload_request_amsterdam_to_block(
     req: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     crypto: &dyn Crypto,
@@ -327,7 +273,7 @@ fn new_payload_request_amsterdam_to_block(
 
 /// Validate that the blob versioned hashes in the `NewPayloadRequest` match
 /// the blob commitments in the block's transactions.
-#[cfg(feature = "eip-8025")]
+
 fn validate_versioned_hashes<'a>(
     block: &ethrex_common::types::Block,
     versioned_hashes: impl IntoIterator<Item = &'a [u8; 32]>,
@@ -356,7 +302,6 @@ fn validate_versioned_hashes<'a>(
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
 fn canonical_execution_witness_to_rpc(
     witness: CanonicalExecutionWitness,
 ) -> ethrex_common::types::block_execution_witness::RpcExecutionWitness {
@@ -381,7 +326,6 @@ fn canonical_execution_witness_to_rpc(
     }
 }
 
-#[cfg(feature = "eip-8025")]
 fn validate_eip8025_canonical_execution(
     stateless_input: CanonicalStatelessInput,
     chain_config: ethrex_common::types::ChainConfig,
@@ -408,7 +352,6 @@ fn validate_eip8025_canonical_execution(
     )
 }
 
-#[cfg(feature = "eip-8025")]
 fn validate_eip8025_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
@@ -440,7 +383,6 @@ fn validate_eip8025_execution(
     Ok(())
 }
 
-#[cfg(feature = "eip-8025")]
 fn validate_eip8025_amsterdam_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
@@ -462,7 +404,7 @@ fn validate_eip8025_amsterdam_execution(
     Ok(())
 }
 
-#[cfg(all(test, feature = "eip-8025"))]
+#[cfg(test)]
 mod tests {
     use std::sync::Arc;
 

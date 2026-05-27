@@ -1,14 +1,11 @@
 //! BAL lazy-cursor regression tests.
 //!
-//! All three tests exercise the helper functions directly (unit level) because
-//! `seed_one_storage_slot_from_bal` and `seed_one_address_info_from_bal` are
-//! `#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]`-gated; reaching
-//! `execute_block_parallel` from the test crate would require enabling that
-//! feature pair and wiring up a full Amsterdam chain config, block, and signed
-//! transactions. The helper-level tests cover the same off-by-one boundary and
-//! storage-injection invariants that the lazy cursor relies on.
+//! All three tests exercise the helper functions directly (unit level).
+//! Reaching `execute_block_parallel` from the test crate would require wiring
+//! up a full Amsterdam chain config, block, and signed transactions. The
+//! helper-level tests cover the same off-by-one boundary and storage-injection
+//! invariants that the lazy cursor relies on.
 
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 mod inner {
     use ethereum_types::H160;
     use ethrex_common::{
