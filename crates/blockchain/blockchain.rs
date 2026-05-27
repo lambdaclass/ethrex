@@ -490,42 +490,51 @@ impl Blockchain {
             None
         };
 
-        let (execution_result, merkleization_result, warmer_duration) =
+        // Non-BAL warming: synchronous parallel prefetch of the bounded, known
+        // access set (sender + to accounts, EIP-2930 slots, codes) before exec.
+        // Inspired by PR #6732's BAL pattern — avoids the warmer/exec race and
+        // cache lock contention by removing the concurrent warmer from this path.
+        // Slots not in access lists stay cold; exec fetches them on demand.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        let sync_warmer_duration: Duration = if bal.is_none() {
+            let start = Instant::now();
+            if let Err(e) = LEVM::sync_prefetch_non_bal(block, caching_store.clone(), &NativeCrypto)
+            {
+                debug!("Sync non-BAL prefetch failed (non-fatal): {e}");
+            }
+            start.elapsed()
+        } else {
+            Duration::ZERO
+        };
+        #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
+        let sync_warmer_duration: Duration = Duration::ZERO;
+
+        let (execution_result, merkleization_result, concurrent_warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-                let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                // Concurrent warmer runs only for the BAL path. Non-BAL is
+                // handled by the sync prefetch above.
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-                let warm_handle = std::thread::Builder::new()
-                    .name("block_executor_warmer".to_string())
-                    .spawn_scoped(s, move || {
-                        // Warming uses the same caching store, sharing cached state with execution.
-                        // Precompile cache lives inside CachingDatabase, shared automatically.
-                        let start = Instant::now();
-                        if let Some(bal) = bal {
-                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) =
-                                LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
-                            {
-                                debug!("BAL warming failed (non-fatal): {e}");
-                            }
-                        } else {
-                            // Pre-Amsterdam / P2P sync: speculative tx re-execution
-                            if let Err(e) = LEVM::warm_block(
-                                block,
-                                caching_store,
-                                vm_type,
-                                &NativeCrypto,
-                                cancelled_ref,
-                            ) {
-                                debug!("Block warming failed (non-fatal): {e}");
-                            }
-                        }
-                        start.elapsed()
-                    })
-                    .map_err(|e| {
-                        ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
-                    })?;
+                let warm_handle = if let Some(bal) = bal {
+                    Some(
+                        std::thread::Builder::new()
+                            .name("block_executor_warmer".to_string())
+                            .spawn_scoped(s, move || {
+                                let start = Instant::now();
+                                if let Err(e) =
+                                    LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
+                                {
+                                    debug!("BAL warming failed (non-fatal): {e}");
+                                }
+                                start.elapsed()
+                            })
+                            .map_err(|e| {
+                                ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
+                            })?,
+                    )
+                } else {
+                    None
+                };
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel only exists on the streaming (non-BAL) path. On the BAL path the
                 // EVM merkleizes nothing on its own (the synthesized map drives merkleization),
@@ -638,15 +647,23 @@ impl Blockchain {
                     ))
                 });
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-                let warmer_duration = warm_handle
-                    .join()
-                    .inspect_err(|e| warn!("Warming thread error: {e:?}"))
-                    .ok()
+                let concurrent_warmer_duration = warm_handle
+                    .map(|h| {
+                        h.join()
+                            .inspect_err(|e| warn!("Warming thread error: {e:?}"))
+                            .ok()
+                            .unwrap_or(Duration::ZERO)
+                    })
                     .unwrap_or(Duration::ZERO);
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
-                let warmer_duration = Duration::ZERO;
-                Ok((execution_result, merkleization_result, warmer_duration))
+                let concurrent_warmer_duration = Duration::ZERO;
+                Ok((
+                    execution_result,
+                    merkleization_result,
+                    concurrent_warmer_duration,
+                ))
             })?;
+        let warmer_duration = sync_warmer_duration + concurrent_warmer_duration;
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;

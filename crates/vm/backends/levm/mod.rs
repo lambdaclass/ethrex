@@ -2158,6 +2158,74 @@ impl LEVM {
         Ok(())
     }
 
+    /// Synchronous parallel prefetch for the non-BAL path.
+    ///
+    /// Inspired by PR #6732's BAL pattern: rather than racing the executor with
+    /// a concurrent speculative warmer, prefetch a bounded, known access set
+    /// up front using cheap parallel reads. Coverage:
+    /// - Sender + `to` accounts for every transaction.
+    /// - EIP-2930 access list (address, slot) pairs declared in txs.
+    /// - Code for the touched accounts.
+    ///
+    /// Slots not declared in access lists stay cold; exec fetches them on
+    /// demand. This trades the speculative re-execution warmer's full storage
+    /// discovery for a fully-parallel sync prefetch with no warmer/exec race.
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    pub fn sync_prefetch_non_bal(
+        block: &Block,
+        store: Arc<dyn Database>,
+        crypto: &dyn Crypto,
+    ) -> Result<(), EvmError> {
+        let txs_with_sender = block
+            .body
+            .get_transactions_with_sender(crypto)
+            .map_err(|error| {
+                EvmError::Transaction(format!("Couldn't recover addresses with error: {error}"))
+            })?;
+
+        let mut addresses: FxHashSet<Address> = FxHashSet::default();
+        let mut slots: Vec<(Address, H256)> = Vec::new();
+        for (tx, sender) in &txs_with_sender {
+            addresses.insert(*sender);
+            if let TxKind::Call(to) = tx.to() {
+                addresses.insert(to);
+            }
+            for (addr, keys) in tx.access_list() {
+                addresses.insert(*addr);
+                for key in keys {
+                    slots.push((*addr, *key));
+                }
+            }
+        }
+
+        let address_vec: Vec<Address> = addresses.into_iter().collect();
+
+        store
+            .prefetch_accounts(&address_vec)
+            .map_err(|e| EvmError::Custom(format!("sync prefetch_accounts: {e}")))?;
+        if !slots.is_empty() {
+            store
+                .prefetch_storage(&slots)
+                .map_err(|e| EvmError::Custom(format!("sync prefetch_storage: {e}")))?;
+        }
+
+        let code_hashes: Vec<H256> = address_vec
+            .par_iter()
+            .filter_map(|&addr| {
+                store
+                    .get_account_state(addr)
+                    .ok()
+                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                    .map(|s| s.code_hash)
+            })
+            .collect();
+        code_hashes.par_iter().for_each(|&h| {
+            let _ = store.get_account_code(h);
+        });
+
+        Ok(())
+    }
+
     fn send_state_transitions_tx(
         merkleizer: &Sender<Vec<AccountUpdate>>,
         db: &mut GeneralizedDatabase,
