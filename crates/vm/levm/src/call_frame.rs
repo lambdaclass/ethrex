@@ -428,6 +428,17 @@ impl CallFrame {
         Ok(())
     }
 
+    /// Check whether `gas` is available without consuming it. Mirrors EELS' `check_gas`,
+    /// used to gate state reads (e.g. EIP-7702 code lookup) on the static gas budget.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    pub fn check_gas(&self, gas: u64) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 || (self.gas_remaining as u64) < gas {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+        Ok(())
+    }
+
     pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())

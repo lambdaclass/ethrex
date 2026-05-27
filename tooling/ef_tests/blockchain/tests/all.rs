@@ -35,14 +35,7 @@ const EXTRA_SKIPS: &[&str] = &[
     "static_Call1MB1024Calldepth",
 ];
 #[cfg(feature = "stateless")]
-const EXTRA_SKIPS: &[&str] = &[
-    // zkevm@v0.4.1 inconsistency: witness includes 0xbea0...'s account leaf
-    // (codehash 0x26f1..747f) but omits the bytecode, so strict mode fails
-    // with `MissingBytecode`. d9/d10 work by coincidence (leaf also missing →
-    // fallback to empty account). Re-enable once upstream regenerates.
-    "sstore_change_from_external_call_in_init_code[fork_Amsterdam-blockchain_test_from_state_test-d13",
-    "sstore_change_from_external_call_in_init_code[fork_Amsterdam-blockchain_test_from_state_test-d14",
-];
+const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 
