@@ -455,8 +455,9 @@ fn validate_eip8025_canonical_execution(
     let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
         &rpc_witness.headers,
     )?;
-    // EIP-8025 §Validation requires the BLOCKHASH ancestors to form a contiguous
-    // chain in the order supplied. Check before any sort/dedup discards the order.
+    // BLOCKHASH ancestors must form a contiguous chain in the order supplied
+    // (see EELS `test_validation_headers_non_contiguous_chain`). Check before
+    // any sort/dedup discards the order.
     ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
         &decoded_headers,
         crypto.as_ref(),
