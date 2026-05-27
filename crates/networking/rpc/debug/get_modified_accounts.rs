@@ -52,12 +52,12 @@ impl RpcHandler for GetModifiedAccountsByNumberRequest {
             .start_block
             .resolve_block_number(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("Start block not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("Start block not found".to_string()))?;
         let end_number = self
             .end_block
             .resolve_block_number(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("End block not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("End block not found".to_string()))?;
 
         if start_number > end_number {
             return Err(RpcErr::BadParams(format!(
@@ -68,12 +68,12 @@ impl RpcHandler for GetModifiedAccountsByNumberRequest {
         let start_root = context
             .storage
             .get_block_header(start_number)?
-            .ok_or(RpcErr::Internal("Start block header not found".to_string()))?
+            .ok_or(RpcErr::WrongParam("Start block header not found".to_string()))?
             .state_root;
         let end_root = context
             .storage
             .get_block_header(end_number)?
-            .ok_or(RpcErr::Internal("End block header not found".to_string()))?
+            .ok_or(RpcErr::WrongParam("End block header not found".to_string()))?
             .state_root;
 
         diff_state_roots_async(context.storage.clone(), start_root, end_root).await
@@ -101,11 +101,11 @@ impl RpcHandler for GetModifiedAccountsByHashRequest {
         let start_header = context
             .storage
             .get_block_header_by_hash(self.start_hash)?
-            .ok_or(RpcErr::Internal("Start block not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("Start block not found".to_string()))?;
         let end_header = context
             .storage
             .get_block_header_by_hash(self.end_hash)?
-            .ok_or(RpcErr::Internal("End block not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("End block not found".to_string()))?;
 
         if start_header.number > end_header.number {
             return Err(RpcErr::BadParams(format!(
@@ -152,31 +152,36 @@ fn diff_state_roots(
     let mut modified = Vec::new();
 
     loop {
-        match (start_iter.peek(), end_iter.peek()) {
+        // Copy peeked keys/values upfront so borrows on the Peekable
+        // wrappers are released before the mutable next() calls below.
+        let s_entry = start_iter.peek().map(|(h, s)| (*h, s.clone()));
+        let e_entry = end_iter.peek().map(|(h, s)| (*h, s.clone()));
+
+        match (s_entry, e_entry) {
             (None, None) => break,
             (Some((s_hash, _)), None) => {
-                modified.push(*s_hash);
+                modified.push(s_hash);
                 start_iter.next();
             }
             (None, Some((e_hash, _))) => {
-                modified.push(*e_hash);
+                modified.push(e_hash);
                 end_iter.next();
             }
             (Some((s_hash, _)), Some((e_hash, _))) if s_hash < e_hash => {
                 // Account in start but not yet (and never, since iters are
                 // monotonic) seen in end at this position — deleted.
-                modified.push(*s_hash);
+                modified.push(s_hash);
                 start_iter.next();
             }
             (Some((s_hash, _)), Some((e_hash, _))) if s_hash > e_hash => {
                 // New account in end.
-                modified.push(*e_hash);
+                modified.push(e_hash);
                 end_iter.next();
             }
             (Some((s_hash, s_state)), Some((_e_hash, e_state))) => {
                 // Same hashed address on both sides — emit if anything changed.
                 if s_state != e_state {
-                    modified.push(*s_hash);
+                    modified.push(s_hash);
                 }
                 start_iter.next();
                 end_iter.next();
