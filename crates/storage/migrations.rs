@@ -167,14 +167,22 @@ type TxLocation = (BlockNumber, BlockHash, Index);
 /// to the v3 schema (`key = tx_hash`, `value = Vec<(block_number, block_hash, index)>`).
 ///
 /// Streams the old table in lex order, grouping consecutive entries by tx_hash
-/// (composite keys with the same 32-byte prefix are adjacent). Flushes each
-/// group as an atomic write batch (put new key + delete old composite keys),
-/// chunking commits to bound memory. Skips any already-migrated 32-byte keys
-/// it encounters, so partial-crash resume re-runs cleanly.
+/// (composite keys with the same 32-byte prefix are adjacent — both backends
+/// iterate sorted). Flushes each group as an atomic write batch (merge the new
+/// key + delete the old composite keys), chunking commits to bound memory.
+/// Skips any already-migrated 32-byte keys it encounters.
+///
+/// Crash-resume is safe by construction: the new value is written with `merge`,
+/// not `put`, so if a tx_hash ever has both a v3 value and leftover v2 siblings
+/// (e.g. a non-atomic backend), the resumed run unions them (deduping by
+/// block_hash) instead of overwriting. The merge operator that already backs
+/// the live write path makes this free.
 fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     const GROUPS_PER_COMMIT: usize = 50_000;
 
     let read = backend.begin_read()?;
+    // Empty prefix → full-table scan. Both backends yield keys in sorted order,
+    // which the same-prefix grouping below relies on.
     let iter = read.prefix_iterator(TRANSACTION_LOCATIONS, &[])?;
 
     let mut write_batch = backend.begin_write()?;
@@ -252,7 +260,11 @@ fn flush_tx_location_group(
     locations: Vec<TxLocation>,
     composite_keys: Vec<Vec<u8>>,
 ) -> Result<(), StoreError> {
-    write_batch.put(
+    // Use `merge`, not `put`: the operand is the same `Vec` type as the value,
+    // so a re-processed group unions with any existing v3 value (dedup by
+    // block_hash) instead of overwriting it. The composite-key deletes ride in
+    // the same batch, so the group is applied atomically.
+    write_batch.merge(
         TRANSACTION_LOCATIONS,
         tx_hash.as_bytes(),
         &locations.encode_to_vec(),
@@ -504,5 +516,48 @@ mod tests {
             let (key, _) = entry.unwrap();
             assert_eq!(key.len(), 32);
         }
+    }
+
+    /// The pathological case flagged in review: a single tx_hash has BOTH a v3
+    /// value (from a prior partial run) AND leftover v2 composite keys. Because
+    /// `flush_tx_location_group` uses `merge` (not `put`), the resumed migration
+    /// must UNION the leftover entries into the existing v3 value, not overwrite
+    /// it — no locations may be lost.
+    #[test]
+    fn migrate_2_to_3_unions_same_hash_mixed_state() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        let tx = h256(0x42);
+
+        // Pre-existing v3 value for `tx` (one block already migrated).
+        {
+            let v3_value: Vec<(BlockNumber, BlockHash, Index)> = vec![(100, h256(0x10), 0)];
+            let mut batch = backend.begin_write().unwrap();
+            batch
+                .merge(
+                    TRANSACTION_LOCATIONS,
+                    tx.as_bytes(),
+                    &v3_value.encode_to_vec(),
+                )
+                .unwrap();
+            batch.commit().unwrap();
+        }
+        // Leftover v2 composite entries for the SAME tx (different blocks).
+        seed_old_entry(&backend, tx, 101, h256(0x11), 3);
+        seed_old_entry(&backend, tx, 102, h256(0x12), 7);
+
+        migrate_2_to_3(&backend).unwrap();
+
+        let mut got = read_new_entry(&backend, tx).unwrap();
+        got.sort();
+        let mut expected = vec![
+            (100u64, h256(0x10), 0u64), // pre-existing v3 entry survives
+            (101u64, h256(0x11), 3u64),
+            (102u64, h256(0x12), 7u64),
+        ];
+        expected.sort();
+        assert_eq!(
+            got, expected,
+            "merge must union, not overwrite, on mixed state"
+        );
     }
 }

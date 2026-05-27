@@ -149,6 +149,15 @@ impl RocksDBBackend {
                         tx_locations_merge_op,
                     );
 
+                    // No bloom filter, intentionally. Bloom only accelerates
+                    // negative point lookups, and with the merge operator the
+                    // hot write path no longer does per-tx gets. The only
+                    // remaining negative reads are user `eth_getTransactionByHash`
+                    // on missing hashes — rare and not worth the filter's memory
+                    // + the implicit "perf depends on this config" coupling.
+                    // (Benchmarked: bloom didn't help the RMW variant either,
+                    // since deep-level coverage lags and the memtable traversal
+                    // floor is unaffected — see PR #6737.)
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_block_cache(&block_cache);
@@ -407,6 +416,15 @@ impl StorageWriteBatch for RocksDBWriteTx {
     }
 
     fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
+        // Only TRANSACTION_LOCATIONS has a merge operator registered. Merging on
+        // any other CF would enqueue an operand RocksDB can't resolve, deferring
+        // the failure to read/compaction time where it's hard to diagnose — so
+        // fail fast here instead.
+        if table != TRANSACTION_LOCATIONS {
+            return Err(StoreError::Custom(format!(
+                "merge not supported for table {table} (no merge operator registered)"
+            )));
+        }
         let cf = self
             .db
             .cf_handle(table)

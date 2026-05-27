@@ -314,36 +314,55 @@ pub(crate) fn encode_tx_location_operand(
 /// a pure `merge_cf` append (no read), and consolidation is deferred to
 /// compaction or the next read. As a bonus the merge is atomic at the RocksDB
 /// level — no serialized-writer assumption is needed at the application layer.
+///
+/// Failure mode: any RLP decode error (base value or operand) returns `None`,
+/// which makes RocksDB treat the merge as failed and surface a corruption error
+/// on the affected key rather than silently dropping locations. We prefer
+/// failing loud — a corrupt operand signals real DB damage, and a silently
+/// half-populated `Vec` committed at the next compaction would be undetectable.
 pub fn tx_locations_merge(
     existing: Option<&[u8]>,
     operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
 ) -> Option<Vec<u8>> {
-    let mut list: Vec<(BlockNumber, BlockHash, Index)> = Vec::new();
-
-    // Fold base value + every operand, all decoded as `Vec`. Order matters:
-    // RocksDB delivers operands oldest-first, and within `extend_dedup` a later
-    // entry for the same block_hash wins.
-    let mut extend_dedup =
-        |bytes: &[u8], what: &str| match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
+    // Fold one RLP-encoded `Vec` chunk into `list`, deduping by block_hash
+    // (later entry wins). Returns false on decode failure so the caller can
+    // abort the whole merge.
+    fn fold_chunk(
+        list: &mut Vec<(BlockNumber, BlockHash, Index)>,
+        bytes: &[u8],
+        what: &str,
+    ) -> bool {
+        match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
             Ok(entries) => {
                 for (bn, bh, idx) in entries {
                     list.retain(|(_, existing_bh, _)| *existing_bh != bh);
                     list.push((bn, bh, idx));
                 }
+                true
             }
             Err(e) => {
                 error!(
-                    "tx_locations_merge: failed to decode {what} ({} bytes): {e}; skipping",
+                    "tx_locations_merge: failed to decode {what} ({} bytes): {e}; \
+                     aborting merge to avoid silent data loss",
                     bytes.len()
                 );
+                false
             }
-        };
+        }
+    }
 
-    if let Some(bytes) = existing {
-        extend_dedup(bytes, "existing value");
+    let mut list: Vec<(BlockNumber, BlockHash, Index)> = Vec::new();
+
+    // Order matters: RocksDB delivers operands oldest-first.
+    if let Some(bytes) = existing
+        && !fold_chunk(&mut list, bytes, "existing value")
+    {
+        return None;
     }
     for op in operands {
-        extend_dedup(op.as_ref(), "operand");
+        if !fold_chunk(&mut list, op.as_ref(), "operand") {
+            return None;
+        }
     }
     Some(list.encode_to_vec())
 }
@@ -3604,10 +3623,17 @@ mod merge_tests {
     }
 
     #[test]
-    fn malformed_operand_is_skipped() {
-        let out = tx_locations_merge(None, vec![vec![0xff, 0xff], op(100, h256(0x10), 0)]).unwrap();
-        // The malformed operand is skipped; the valid one is applied.
-        assert_eq!(decode(&out), vec![(100, h256(0x10), 0)]);
+    fn malformed_operand_aborts_merge() {
+        // Fail loud: a malformed operand must abort the merge (return None), not
+        // silently drop it and commit a partial result.
+        let out = tx_locations_merge(None, vec![vec![0xff, 0xff], op(100, h256(0x10), 0)]);
+        assert!(out.is_none(), "merge must abort on a malformed operand");
+    }
+
+    #[test]
+    fn malformed_base_value_aborts_merge() {
+        let out = tx_locations_merge(Some(&[0xff, 0xff]), vec![op(100, h256(0x10), 0)]);
+        assert!(out.is_none(), "merge must abort on a corrupt base value");
     }
 
     /// Regression for the associative-merge format bug: a PartialMerge result
