@@ -4151,6 +4151,7 @@ dependencies = [
  "ethrex-common",
  "ethrex-crypto",
  "ethrex-rlp",
+ "lru 0.16.4",
  "malachite 0.6.1",
  "rayon",
  "rustc-hash 2.1.2",

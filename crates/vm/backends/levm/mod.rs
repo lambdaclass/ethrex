@@ -2014,9 +2014,9 @@ impl LEVM {
     /// in parallel. This approach (inspired by Nethermind's per-sender prewarmer)
     /// improves warmup accuracy by avoiding nonce mismatches within sender groups.
     ///
-    /// The `store` parameter should be a `CachingDatabase`-wrapped store so that
-    /// parallel workers can benefit from shared caching. The same cache should
-    /// be used by the sequential execution phase.
+    /// The `store` parameter should be the shared cache handle from
+    /// [`CrossBlockCache::as_database`] so that parallel workers and the
+    /// sequential execution phase see each other's writes.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     pub fn warm_block(
         block: &Block,
@@ -2091,8 +2091,8 @@ impl LEVM {
     /// Block Access List directly, without speculative re-execution.
     ///
     /// Two-phase approach:
-    /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
-    ///   account cache AND trie layer cache nodes
+    /// - Phase 1: Load all account states (parallel via rayon) -> warms the
+    ///   cross-block account cache AND trie layer cache nodes
     /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
     ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -2107,8 +2107,8 @@ impl LEVM {
         }
 
         // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache
-        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
+        // This warms the cross-block account cache and the TrieLayerCache with state
+        // trie nodes, so Phase 2 storage reads benefit from cached lookups.
         let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
         store
             .prefetch_accounts(&account_addresses)

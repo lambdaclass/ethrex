@@ -5,9 +5,11 @@ use ethrex_common::{
     Address, H256, U256, types::Fork, types::Fork::*, utils::u256_from_big_endian,
 };
 use ethrex_crypto::{Crypto, CryptoError};
-use rustc_hash::FxHashMap;
+use lru::LruCache;
+use rustc_hash::FxBuildHasher;
 use std::borrow::Cow;
-use std::sync::RwLock;
+use std::num::NonZeroUsize;
+use std::sync::Mutex;
 
 use crate::gas_cost::{MODEXP_STATIC_COST, P256_VERIFY_COST};
 use crate::vm::VMType;
@@ -259,15 +261,86 @@ pub fn is_precompile(address: &Address, fork: Fork, vm_type: VMType) -> bool {
         || precompiles_for_fork(fork).any(|precompile| precompile.address == *address)
 }
 
-/// Per-block cache for precompile results shared between warmer and executor.
+/// Cross-block cache for precompile results shared between warmer and executor.
+/// Per-precompile slot-array with independent LRUs so heavy users (e.g. BN254
+/// in zk-verifier blocks) keep their working set even when other precompiles
+/// are active. Mirrors the dispatcher's indexing in `execute_precompile`.
+///
+/// Caps are sized above mainnet observed working sets (reth telemetry data
+/// at https://github.com/paradigmxyz/reth/pull/22900) with extra headroom for
+/// cross-block scope. Identity (0x04) bypasses the cache (copy is cheaper
+/// than a hash lookup).
+const ECRECOVER_CAP: usize = 8_192;
+const SHA256_CAP: usize = 1_024;
+const MODEXP_CAP: usize = 8_192;
+const BN254_ADD_CAP: usize = 8_192;
+const BN254_MUL_CAP: usize = 8_192;
+const KZG_CAP: usize = 16;
+// RIPEMD-160, BLAKE2F, and all BLS12-381 ops are intentionally not cached:
+// they're rare enough on mainnet that the memory cost outweighs the hit rate.
+// BN254_PAIRING and P256VERIFY are also uncached, for a different reason:
+// they aren't rare, but repeats with identical inputs are — so an LRU slot
+// would mostly miss.
+
+const PRECOMPILE_INDEX_SPACE: usize = 512;
+
+type PrecompileCacheMap = LruCache<Bytes, (Bytes, u64), FxBuildHasher>;
+
 pub struct PrecompileCache {
-    cache: RwLock<FxHashMap<(Address, Bytes), (Bytes, u64)>>,
+    // Indexed by `u16::from_be_bytes([address[18], address[19]])`, matching the
+    // dispatcher's PRECOMPILES table. `None` slots mean "don't cache this
+    // precompile" (currently identity, plus any future unallocated address).
+    //
+    // `LruCache::get` promotes recency, so it needs `&mut self`. Per-precompile
+    // `Mutex` means cross-precompile lookups are lock-free; warmer/executor
+    // only contend when they hit the same precompile concurrently.
+    slots: Box<[Option<Mutex<PrecompileCacheMap>>; PRECOMPILE_INDEX_SPACE]>,
+}
+
+fn precompile_slot_index(address: &Address) -> Option<usize> {
+    let bytes = address.as_bytes();
+    if bytes.get(0..18) != Some(&[0u8; 18]) {
+        return None;
+    }
+    let hi = *bytes.get(18)?;
+    let lo = *bytes.get(19)?;
+    Some(usize::from(u16::from_be_bytes([hi, lo])))
+}
+
+fn make_slot(cap: usize) -> Mutex<PrecompileCacheMap> {
+    let cap = match NonZeroUsize::new(cap) {
+        Some(c) => c,
+        // Caps are compile-time constants > 0. If this fires, the cap const is
+        // misconfigured — fall back to a tiny non-zero cap to keep the cache
+        // operational while making the bug surface in logs/profiling.
+        None => match NonZeroUsize::new(1) {
+            Some(c) => c,
+            None => unreachable!(),
+        },
+    };
+    Mutex::new(LruCache::with_hasher(cap, FxBuildHasher))
 }
 
 impl Default for PrecompileCache {
+    #[expect(
+        clippy::as_conversions,
+        clippy::indexing_slicing,
+        reason = "mirrors the dispatcher table in execute_precompile; precompile address bytes are static constants"
+    )]
     fn default() -> Self {
+        let mut slots: [Option<Mutex<PrecompileCacheMap>>; PRECOMPILE_INDEX_SPACE] =
+            std::array::from_fn(|_| None);
+        slots[ECRECOVER.address.0[19] as usize] = Some(make_slot(ECRECOVER_CAP));
+        slots[SHA2_256.address.0[19] as usize] = Some(make_slot(SHA256_CAP));
+        // 0x03 RIPEMD-160, 0x04 IDENTITY, 0x08 BN254_PAIRING, 0x09 BLAKE2F,
+        // 0x0b–0x11 BLS12-381 ops, and P256VERIFY intentionally left None.
+        // See the CAP comment above for the rationale.
+        slots[MODEXP.address.0[19] as usize] = Some(make_slot(MODEXP_CAP));
+        slots[ECADD.address.0[19] as usize] = Some(make_slot(BN254_ADD_CAP));
+        slots[ECMUL.address.0[19] as usize] = Some(make_slot(BN254_MUL_CAP));
+        slots[POINT_EVALUATION.address.0[19] as usize] = Some(make_slot(KZG_CAP));
         Self {
-            cache: RwLock::new(FxHashMap::default()),
+            slots: Box::new(slots),
         }
     }
 }
@@ -278,21 +351,27 @@ impl PrecompileCache {
     }
 
     pub fn get(&self, address: &Address, calldata: &Bytes) -> Option<(Bytes, u64)> {
+        let idx = precompile_slot_index(address)?;
+        let slot = self.slots.get(idx)?.as_ref()?;
         // Graceful degradation: if the lock is poisoned (a thread panicked while
         // holding it), skip the cache rather than propagating the panic. The cache
         // is a pure optimization — missing it only costs a recomputation.
-        self.cache
-            .read()
+        slot.lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .get(&(*address, calldata.clone()))
+            .get(calldata.as_ref())
             .cloned()
     }
 
     pub fn insert(&self, address: Address, calldata: Bytes, output: Bytes, gas_cost: u64) {
-        self.cache
-            .write()
+        let Some(idx) = precompile_slot_index(&address) else {
+            return;
+        };
+        let Some(Some(slot)) = self.slots.get(idx) else {
+            return;
+        };
+        slot.lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .insert((address, calldata), (output, gas_cost));
+            .put(calldata, (output, gas_cost));
     }
 }
 

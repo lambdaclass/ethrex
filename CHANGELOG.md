@@ -19,6 +19,7 @@
 ### 2026-05-14
 
 - Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
+- Reuse account, storage, code, and precompile caches across blocks [#6581](https://github.com/lambdaclass/ethrex/pull/6581)
 - BAL optimistic merkleization: synthesize state deltas from the input Block Access List pre-execution and merkleize in parallel with the EVM on the `engine_newPayload` validation path. Includes a parallel state-trie pre-warm and per-account hashed-key-sorted storage inserts to keep the trie node arena hot for Stage B/C [#6655](https://github.com/lambdaclass/ethrex/pull/6655)
 
 ### 2026-05-21

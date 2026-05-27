@@ -65,12 +65,11 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    BlockNumber, ChainConfig, Code, MAX_TX_SIZE, Receipt, Transaction, WrappedEIP4844Transaction,
     synthesize_bal_updates, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
@@ -87,7 +86,7 @@ use ethrex_storage::{
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
-use ethrex_vm::backends::CachingDatabase;
+use ethrex_vm::backends::CrossBlockCache;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
@@ -98,6 +97,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
+use std::sync::Mutex as StdMutex;
 use std::sync::mpsc::Sender;
 use std::sync::{
     Arc, RwLock,
@@ -137,7 +137,7 @@ static DROP_SENDER: LazyLock<Sender<Box<dyn Send>>> = LazyLock::new(|| {
 type BlockExecutionPipelineResult = (
     BlockExecutionResult,
     AccountUpdatesList,
-    Option<Vec<AccountUpdate>>,
+    Vec<AccountUpdate>,
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
     usize,                   // max queue length
     [Instant; 7],            // timing instants
@@ -213,6 +213,9 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     merkle_pool: rayon::ThreadPool,
+    /// Cross-block state cache. Invalidated on parent mismatch. Owns its own
+    /// pipeline lock; see `CrossBlockCache::begin_block`.
+    cross_block_cache: CrossBlockCache,
 }
 
 /// Configuration options for the blockchain.
@@ -337,6 +340,7 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let cross_block_cache = CrossBlockCache::empty(blockchain_opts.precompile_cache_enabled);
         Self {
             storage: store,
             mempool: Mempool::new(blockchain_opts.max_mempool_size),
@@ -344,17 +348,21 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+            cross_block_cache,
         }
     }
 
     pub fn default_with_store(store: Store) -> Self {
+        let options = BlockchainOptions::default();
+        let cross_block_cache = CrossBlockCache::empty(options.precompile_cache_enabled);
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
-            options: BlockchainOptions::default(),
+            options,
             merkle_pool: Self::build_merkle_pool(),
+            cross_block_cache,
         }
     }
 
@@ -460,40 +468,31 @@ impl Blockchain {
         let queue_length_ref = &queue_length;
         let mut max_queue_length = 0;
 
-        // Wrap the store with CachingDatabase so both warming and execution
-        // can benefit from shared caching of state lookups
-        let original_store = vm.db.store.clone();
-        let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = Arc::new(
-            CachingDatabase::new(original_store, self.options.precompile_cache_enabled),
-        );
-
-        // Replace the VM's store with the caching version
-        vm.db.store = caching_store.clone();
-
         let cancelled = AtomicBool::new(false);
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
             bal.map(synthesize_bal_updates);
-        let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
-            optimistic_updates.as_ref().map(|m| {
-                m.iter()
-                    .map(|(addr, item)| AccountUpdate {
-                        address: *addr,
-                        added_storage: item.added_storage.clone(),
-                        ..Default::default()
-                    })
-                    .collect()
-            })
-        } else {
-            None
-        };
+        // Always compute the optimistic witness when BAL is present: the
+        // cross-block cache uses it to promote post-state regardless of
+        // `precompute_witnesses`.
+        let optimistic_witness: Option<Vec<AccountUpdate>> = optimistic_updates.as_ref().map(|m| {
+            m.iter()
+                .map(|(addr, item)| AccountUpdate {
+                    address: *addr,
+                    added_storage: item.added_storage.clone(),
+                    ..Default::default()
+                })
+                .collect()
+        });
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let caching_store: Arc<dyn ethrex_vm::backends::LevmDatabase> = vm.db.store.clone();
                 let cancelled_ref = &cancelled;
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
@@ -589,16 +588,11 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
                 let parent_header_ref = &parent_header; // Avoid moving to thread
-                // Merkleizer returns (list, streaming witness or None on BAL path, merkle_start, merkle_end).
-                type MerkleResult = Result<
-                    (
-                        AccountUpdatesList,
-                        Option<Vec<AccountUpdate>>,
-                        Instant,
-                        Instant,
-                    ),
-                    StoreError,
-                >;
+                // Merkleizer returns (list, streaming witness, merkle_start, merkle_end).
+                // On the BAL path the streaming witness is empty: the
+                // pre-scope `optimistic_witness` is the source of truth.
+                type MerkleResult =
+                    Result<(AccountUpdatesList, Vec<AccountUpdate>, Instant, Instant), StoreError>;
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> MerkleResult {
@@ -609,7 +603,7 @@ impl Blockchain {
                                     prepared,
                                     parent_header_ref,
                                 )?;
-                                (list, None)
+                                (list, Vec::new())
                             } else {
                                 self.handle_merkleization(
                                     rx_for_merkle.expect("rx is Some on non-BAL path"),
@@ -652,7 +646,7 @@ impl Blockchain {
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
         // Synthesized witness wins when BAL is present; streaming witness wins otherwise.
-        let accumulated_updates = optimistic_witness.or(streaming_witness);
+        let accumulated_updates = optimistic_witness.unwrap_or(streaming_witness);
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -687,7 +681,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+    ) -> Result<(AccountUpdatesList, Vec<AccountUpdate>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
         // Create 16 worker channels (crossbeam for select! support)
@@ -708,7 +702,7 @@ impl Blockchain {
         // Workers and watcher are spawned as pool tasks; the coordination logic
         // (dispatching messages, collecting results) runs on the calling thread
         // via in_place_scope, so it executes concurrently with the pool tasks.
-        let watcher_error: Arc<std::sync::Mutex<Option<StoreError>>> = Default::default();
+        let watcher_error: Arc<StdMutex<Option<StoreError>>> = Default::default();
         let result = self.merkle_pool.in_place_scope(|s| {
             // Spawn 16 unified workers (each gets clone of all 16 senders)
             for (i, rx) in workers_rx.into_iter().enumerate() {
@@ -758,27 +752,18 @@ impl Blockchain {
             let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            // Accumulator for witness generation (only used if precompute_witnesses is true)
-            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                if self.options.precompute_witnesses {
-                    Some(FxHashMap::default())
-                } else {
-                    None
-                };
+            let mut accumulator: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
                 *max_queue_length = current_length.max(*max_queue_length);
-                // Accumulate updates for witness generation if enabled
-                if let Some(acc) = &mut accumulator {
-                    for update in updates.clone() {
-                        match acc.entry(update.address) {
-                            Entry::Vacant(e) => {
-                                e.insert(update);
-                            }
-                            Entry::Occupied(mut e) => {
-                                e.get_mut().merge(update);
-                            }
+                for update in updates.clone() {
+                    match accumulator.entry(update.address) {
+                        Entry::Vacant(e) => {
+                            e.insert(update);
+                        }
+                        Entry::Occupied(mut e) => {
+                            e.get_mut().merge(update);
                         }
                     }
                 }
@@ -877,7 +862,7 @@ impl Blockchain {
                 *EMPTY_TRIE_HASH
             };
 
-            let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+            let accumulated_updates: Vec<AccountUpdate> = accumulator.into_values().collect();
 
             Ok((
                 AccountUpdatesList {
@@ -1550,7 +1535,7 @@ impl Blockchain {
 
     pub fn generate_witness_from_account_updates(
         &self,
-        account_updates: Vec<AccountUpdate>,
+        account_updates: &[AccountUpdate],
         block: &Block,
         parent_header: BlockHeader,
         logger: &DatabaseLogger,
@@ -1576,7 +1561,7 @@ impl Blockchain {
 
         let mut codes = Vec::new();
 
-        for account_update in &account_updates {
+        for account_update in account_updates {
             touched_account_storage_slots.insert(
                 account_update.address,
                 account_update
@@ -1662,7 +1647,7 @@ impl Blockchain {
         let (storage_tries_after_update, _account_updates_list) =
             self.storage.apply_account_updates_from_trie_with_witness(
                 trie,
-                &account_updates,
+                account_updates,
                 used_storage_tries,
             )?;
 
@@ -1919,6 +1904,17 @@ impl Blockchain {
             (vm, None)
         };
 
+        // Acquire the cross-block pipeline session: takes the lock, invalidates
+        // the cache on parent mismatch, and points its inner at the parent
+        // state. The session must be either `promote`-d on success or dropped
+        // on failure (drop releases the lock without writing post-state).
+        let session = self.cross_block_cache.begin_block(
+            parent_header.number,
+            parent_header.hash(),
+            vm.db.store.clone(),
+        );
+        vm.db.store = session.as_database();
+
         let (
             res,
             account_updates_list,
@@ -1927,7 +1923,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+        ) = self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)?;
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -1936,12 +1932,11 @@ impl Blockchain {
             block.body.transactions.len(),
         );
 
-        if let Some(logger) = logger
-            && let Some(account_updates) = accumulated_updates
-        {
-            let block_hash = block.hash();
+        let block_hash = block.hash();
+
+        if let Some(logger) = logger {
             let witness = self.generate_witness_from_account_updates(
-                account_updates,
+                &accumulated_updates,
                 &block,
                 parent_header,
                 &logger,
@@ -1961,6 +1956,13 @@ impl Blockchain {
         let result = self.store_block(block, account_updates_list, res);
 
         let stored = Instant::now();
+
+        // Promote the post-state only after store_block succeeded; failure
+        // earlier drops the session, leaving the cache reflecting the previous
+        // block — the next block's parent-mismatch check handles invalidation.
+        if result.is_ok() {
+            session.promote(block_number, block_hash, &accumulated_updates);
+        }
 
         let instants = std::array::from_fn(move |i| {
             if i < instants.len() {
@@ -2397,20 +2399,6 @@ impl Blockchain {
             return Ok(hash);
         }
 
-        // Wire-wrapper size cap for blob txs. Matches geth `txMaxSize = 1 MiB`
-        // (blobpool) and nethermind `MaxBlobTxSize`, which both bound the
-        // wire-wrapper form including the sidecar. ethrex stores the core tx
-        // and the bundle in separate structs, so sum the two encoded sizes
-        // (the ±few bytes of outer list framing are rounding error at this
-        // scale).
-        let wrapper_len = transaction.encode_canonical_len() + blobs_bundle.length();
-        if wrapper_len > MAX_BLOB_TX_SIZE {
-            return Err(MempoolError::TxSizeExceeded {
-                actual: wrapper_len,
-                limit: MAX_BLOB_TX_SIZE,
-            });
-        }
-
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
             blobs_bundle.validate(transaction, fork)?;
@@ -2439,18 +2427,6 @@ impl Blockchain {
         // Blob transactions should be submitted via add_blob_transaction along with the corresponding blobs bundle
         if matches!(transaction, Transaction::EIP4844Transaction(_)) {
             return Err(MempoolError::BlobTxNoBlobsBundle);
-        }
-        // Wire size cap: run before sender recovery so oversized txs don't
-        // force secp256k1 work. Matches geth's `txMaxSize` admission order
-        // (size-checked at `ValidateTransaction` entry, well before any
-        // crypto). The same check sits in `validate_transaction` so direct
-        // callers (tests, L2 paths) keep the guarantee.
-        let encoded_len = transaction.encode_canonical_len();
-        if encoded_len > MAX_TX_SIZE {
-            return Err(MempoolError::TxSizeExceeded {
-                actual: encoded_len,
-                limit: MAX_TX_SIZE,
-            });
         }
         let hash = transaction.hash();
         if self.mempool.contains_tx(hash)? {
@@ -2532,21 +2508,7 @@ impl Blockchain {
             .ok_or(MempoolError::NoBlockHeaderError)?;
         let config = self.storage.get_chain_config();
 
-        // Wire size cap for non-blob txs: peer-policy default, not consensus.
-        // Matches geth `txMaxSize` (legacypool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
-        // nethermind `MaxTxSize`. Blob txs are bounded by their own
-        // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
-        // which sums the core tx and the sidecar to match geth/nethermind/erigon
-        // scope.
-        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
-            let encoded_len = tx.encode_canonical_len();
-            if encoded_len > MAX_TX_SIZE {
-                return Err(MempoolError::TxSizeExceeded {
-                    actual: encoded_len,
-                    limit: MAX_TX_SIZE,
-                });
-            }
-        }
+        // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size
         // [EIP-7954] - Amsterdam increases the limit
@@ -2560,6 +2522,21 @@ impl Blockchain {
             && tx.data().len() > max_initcode_size as usize
         {
             return Err(MempoolError::TxMaxInitCodeSizeError);
+        }
+
+        // Matches geth `txMaxSize` (legacypool), reth `DEFAULT_MAX_TX_INPUT_BYTES`,
+        // nethermind `MaxTxSize`. Blob txs are bounded by their own
+        // wire-wrapper cap (`MAX_BLOB_TX_SIZE`) in `add_blob_transaction_to_pool`,
+        // which sums the core tx and the sidecar to match geth/nethermind/erigon
+        // scope.
+        if !matches!(tx, Transaction::EIP4844Transaction(_)) {
+            let encoded_len = tx.encode_canonical_len();
+            if encoded_len > MAX_TX_SIZE {
+                return Err(MempoolError::TxSizeExceeded {
+                    actual: encoded_len,
+                    limit: MAX_TX_SIZE,
+                });
+            }
         }
 
         if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
