@@ -4,8 +4,7 @@
 //! are fetched via p2p eth requests and executed to rebuild the state.
 
 use std::cmp::min;
-use std::io::IsTerminal;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ethrex_blockchain::{
@@ -36,21 +35,6 @@ const STALE_FORKCHOICE_HEAD_SECS: u64 = 1800;
 /// Below this we suppress the per-cycle sync-target logging to avoid noise on an
 /// already-synced node, which runs a sync cycle on every slot.
 const FOLLOW_DISTANCE: u64 = 8;
-
-/// Whether stdout is a color-capable TTY. Honors the `NO_COLOR` convention and
-/// matches the writer used by the tracing fmt layer, so logs piped to a file or
-/// to journald stay plain. Note: this does not read the `--log.color` CLI flag.
-static STDOUT_COLOR: LazyLock<bool> =
-    LazyLock::new(|| std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal());
-
-/// Wrap `text` in bold-yellow ANSI when stdout supports color, otherwise return it as-is.
-fn highlight(text: &str) -> String {
-    if *STDOUT_COLOR {
-        format!("\x1b[1;33m{text}\x1b[0m")
-    } else {
-        text.to_string()
-    }
-}
 
 /// Render a duration in seconds as a compact human string, e.g. "13d 4h".
 fn humanize_secs(secs: u64) -> String {
@@ -160,12 +144,9 @@ pub async fn sync_cycle_full(
                 let age = now.saturating_sub(target_ts);
                 if age > STALE_FORKCHOICE_HEAD_SECS {
                     warn!(
-                        "{}",
-                        highlight(&format!(
-                            "Consensus forkchoice head (block {target}) is {} old. This can happen while the consensus client is still catching up to chain head; \
-                             if so, execution will only advance as fast as it does. If sync seems slow, it may be worth checking the consensus client's sync status.",
-                            humanize_secs(age)
-                        ))
+                        "Consensus forkchoice head (block {target}) is {} old. This can happen while the consensus client is still catching up to chain head; \
+                         if so, execution will only advance as fast as it does. If sync seems slow, it may be worth checking the consensus client's sync status.",
+                        humanize_secs(age)
                     );
                 }
             }
