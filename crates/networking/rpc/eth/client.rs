@@ -60,16 +60,20 @@ impl RpcHandler for Syncing {
         } else {
             let current_block = context.storage.get_latest_block_number().await?;
             // `get_last_fcu_head` returns the head *hash* from the last forkchoiceUpdated.
-            // Resolve it to a block number; if the head's header isn't stored yet (e.g.
-            // mid snap-sync), fall back to the current block instead of reporting garbage.
+            // Resolve it to a block number. If the header isn't canonical yet it may still
+            // be a pending block whose number we can read; only when neither is available
+            // (e.g. mid snap-sync, target not downloaded) fall back to the current block
+            // instead of reporting garbage.
             let head_hash = syncer
                 .get_last_fcu_head()
                 .map_err(|error| RpcErr::Internal(error.to_string()))?;
-            let highest_block = context
-                .storage
-                .get_block_number(head_hash)
-                .await?
-                .unwrap_or(current_block);
+            let highest_block = match context.storage.get_block_number(head_hash).await? {
+                Some(number) => number,
+                None => match context.storage.get_pending_block(head_hash).await? {
+                    Some(block) => block.header.number,
+                    None => current_block,
+                },
+            };
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,
                 current_block,

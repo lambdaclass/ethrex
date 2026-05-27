@@ -75,6 +75,13 @@ pub async fn sync_cycle_full(
         pending_blocks.insert(0, block);
     }
 
+    // The consensus-provided forkchoice head, captured before `sync_head` is rewound
+    // over the pending blocks above. Used for sync-target diagnostics so we report the
+    // actual head rather than the rewound ancestor we end up requesting headers from.
+    let fcu_head = pending_blocks
+        .last()
+        .map(|block| (block.header.number, block.header.timestamp));
+
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
@@ -128,8 +135,8 @@ pub async fn sync_cycle_full(
         // warn if that head is stale (a strong signal the consensus client is behind).
         if !sync_target_logged {
             sync_target_logged = true;
-            let target = first_header.number;
-            let target_ts = first_header.timestamp;
+            let (target, target_ts) =
+                fcu_head.unwrap_or((first_header.number, first_header.timestamp));
             let local_head = store.get_latest_block_number().await?;
             let behind = target.saturating_sub(local_head);
             if behind > FOLLOW_DISTANCE {
