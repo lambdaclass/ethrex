@@ -643,13 +643,14 @@ async fn run_stateless_from_fixture(
 /// Drive the canonical EIP-8025 stateless validation path from a fixture's
 /// `statelessInputBytes` (spec wire format: a 2-byte BE schema-id prefix —
 /// `STATELESS_INPUT_SCHEMA_ID` — followed by the SSZ-encoded
-/// `SszStatelessInput`; no ethrex-internal version byte). The resulting `valid`
-/// flag is compared against `expected_valid` (derived from
-/// `statelessOutputBytes[32]`).
+/// `SszStatelessInput`; no ethrex-internal version byte).
 ///
-/// SSZ decode failures are runner errors; downstream validation failures
-/// (witness conversion, public-key mismatch, etc.) are folded into
-/// `valid = false` by [`execute_canonical_stateless_input`].
+/// SSZ-decodes the bytes once here, wraps the result in
+/// [`ProgramInput::Wire(DecodedEip8025::Canonical { .. })`], and runs it
+/// through `ExecBackend::new().execute(...)` — the same call shape used by the
+/// non-canonical fixture path. `valid = false` is surfaced as
+/// `Err(BackendError)` by `ExecBackend` so the `(expected_valid, exec_result)`
+/// match below mirrors `run_stateless_from_fixture`.
 #[cfg(feature = "stateless")]
 fn run_stateless_from_input_bytes(
     test_key: &str,
@@ -658,27 +659,30 @@ fn run_stateless_from_input_bytes(
     input_hex: &str,
     expected_valid: bool,
 ) -> Result<(), String> {
-    use ethrex_guest_program::crypto::NativeCrypto;
-    use ethrex_guest_program::l1::execute_canonical_stateless_input;
-    use std::sync::Arc;
+    use ethrex_guest_program::l1::{DecodedEip8025, decode_canonical_stateless_input_bytes};
 
     let trimmed = input_hex.strip_prefix("0x").unwrap_or(input_hex);
     let bytes = hex::decode(trimmed).map_err(|e| {
         format!("statelessInputBytes hex decode failed for {test_key} block {block_number}: {e}")
     })?;
 
-    let chain_config = *test_network.chain_config();
-    let crypto = Arc::new(NativeCrypto);
-    let output = execute_canonical_stateless_input(&bytes, chain_config, crypto).map_err(|e| {
-        format!("CanonicalStatelessInput decode failed for {test_key} block {block_number}: {e:?}")
+    let stateless_input = decode_canonical_stateless_input_bytes(&bytes).map_err(|e| {
+        format!("statelessInputBytes decode failed for {test_key} block {block_number}: {e}")
     })?;
 
-    match (expected_valid, output.valid) {
-        (true, true) | (false, false) => Ok(()),
-        (true, false) => Err(format!(
-            "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed"
+    let chain_config = *test_network.chain_config();
+    let program_input = ProgramInput::wire(DecodedEip8025::Canonical {
+        stateless_input,
+        chain_config,
+    });
+
+    let exec_result = ExecBackend::new().execute(program_input);
+    match (expected_valid, exec_result) {
+        (true, Ok(_)) | (false, Err(_)) => Ok(()),
+        (true, Err(e)) => Err(format!(
+            "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed: {e}"
         )),
-        (false, true) => Err(format!(
+        (false, Ok(_)) => Err(format!(
             "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid statelessInputBytes)"
         )),
     }

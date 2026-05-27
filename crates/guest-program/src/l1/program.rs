@@ -8,15 +8,11 @@ use ethrex_crypto::Crypto;
 
 use crate::common::ExecutionError;
 use crate::common::execute_blocks;
-#[cfg(not(feature = "eip-8025"))]
 use crate::l1::input::ProgramInput;
 #[cfg(feature = "eip-8025")]
 use crate::l1::input::{BYTES_PER_PUBLIC_KEY, MAX_PUBLIC_KEYS};
 #[cfg(feature = "eip-8025")]
-use crate::l1::input::{
-    CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025, STATELESS_INPUT_SCHEMA_ID,
-    STATELESS_INPUT_SCHEMA_ID_SIZE,
-};
+use crate::l1::input::{CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025};
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
@@ -93,17 +89,53 @@ pub fn execution_program(
     bytes: &[u8],
     crypto: Arc<dyn Crypto>,
 ) -> Result<ProgramOutput, ExecutionError> {
-    use libssz_merkle::HashTreeRoot;
-
     let decoded = super::decode_eip8025(bytes).map_err(|err| {
         ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
     })?;
 
-    match decoded {
-        DecodedEip8025::Legacy {
-            new_payload_request,
+    execute_decoded(ProgramInput::Wire(decoded), crypto)
+}
+
+/// Execute an already-built [`ProgramInput`].
+///
+/// This is the unified entry point used by `ExecBackend` so the test runner and
+/// production guest binary share a single dispatch over the input variants:
+///
+/// * [`ProgramInput::Direct`] — in-memory blocks + witness, no spec wire bytes
+///   ever existed. Returns a sentinel `ProgramOutput` (zero request_root,
+///   `valid = true`) since there's no `NewPayloadRequest` to root.
+/// * [`ProgramInput::Wire`] — wraps a [`DecodedEip8025`] that came from spec
+///   wire bytes. Dispatches to the legacy or canonical validator.
+#[cfg(feature = "eip-8025")]
+pub fn execute_decoded(
+    input: ProgramInput,
+    crypto: Arc<dyn Crypto>,
+) -> Result<ProgramOutput, ExecutionError> {
+    use libssz_merkle::HashTreeRoot;
+
+    match input {
+        ProgramInput::Direct {
+            blocks,
             execution_witness,
         } => {
+            let chain_id = execution_witness.chain_config.chain_id;
+            execute_blocks(
+                &blocks,
+                execution_witness,
+                ELASTICITY_MULTIPLIER,
+                |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+                crypto.clone(),
+            )?;
+            Ok(ProgramOutput {
+                new_payload_request_root: [0u8; 32],
+                valid: true,
+                chain_id,
+            })
+        }
+        ProgramInput::Wire(DecodedEip8025::Legacy {
+            new_payload_request,
+            execution_witness,
+        }) => {
             let request_root = new_payload_request.hash_tree_root(&CryptoWrapper(crypto.clone()));
             let chain_id = execution_witness.chain_config.chain_id;
             let valid =
@@ -115,54 +147,15 @@ pub fn execution_program(
                 chain_id,
             })
         }
-        DecodedEip8025::Canonical {
+        ProgramInput::Wire(DecodedEip8025::Canonical {
             stateless_input,
             chain_config,
-        } => Ok(execute_canonical_stateless_input_decoded(
+        }) => Ok(execute_canonical_stateless_input_decoded(
             stateless_input,
             chain_config,
             crypto,
         )),
     }
-}
-
-/// Execute the canonical EIP-8025 stateless program from spec-format wire
-/// bytes (`[BE u16 schema_id][SSZ-encoded SszStatelessInput]`) plus an
-/// out-of-band `ChainConfig`.
-///
-/// Schema-id mismatches and SSZ decode failures surface as
-/// `ExecutionError::Internal`; downstream validation failures (witness
-/// conversion, public-key mismatch, etc.) are folded into
-/// `ProgramOutput.valid = false`.
-#[cfg(feature = "eip-8025")]
-pub fn execute_canonical_stateless_input(
-    bytes: &[u8],
-    chain_config: ethrex_common::types::ChainConfig,
-    crypto: Arc<dyn Crypto>,
-) -> Result<ProgramOutput, ExecutionError> {
-    use libssz::SszDecode;
-
-    if bytes.len() < STATELESS_INPUT_SCHEMA_ID_SIZE {
-        return Err(ExecutionError::Internal(
-            "stateless input is missing schema id".to_string(),
-        ));
-    }
-    let (schema_bytes, ssz_bytes) = bytes.split_at(STATELESS_INPUT_SCHEMA_ID_SIZE);
-    let schema_id = u16::from_be_bytes([schema_bytes[0], schema_bytes[1]]);
-    if schema_id != STATELESS_INPUT_SCHEMA_ID {
-        return Err(ExecutionError::Internal(format!(
-            "unsupported stateless input schema id: 0x{schema_id:04x}"
-        )));
-    }
-
-    let stateless_input = CanonicalStatelessInput::from_ssz_bytes(ssz_bytes).map_err(|e| {
-        ExecutionError::Internal(format!("CanonicalStatelessInput SSZ decode: {e:?}"))
-    })?;
-    Ok(execute_canonical_stateless_input_decoded(
-        stateless_input,
-        chain_config,
-        crypto,
-    ))
 }
 
 #[cfg(feature = "eip-8025")]

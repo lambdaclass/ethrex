@@ -2,6 +2,7 @@ use ethrex_common::types::Block;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
 /// Input for the L1 stateless validation program.
+#[cfg(not(feature = "eip-8025"))]
 #[derive(
     Clone,
     Default,
@@ -18,6 +19,7 @@ pub struct ProgramInput {
     pub execution_witness: ExecutionWitness,
 }
 
+#[cfg(not(feature = "eip-8025"))]
 impl ProgramInput {
     /// Creates a new ProgramInput with the given blocks and execution witness.
     pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
@@ -25,6 +27,46 @@ impl ProgramInput {
             blocks,
             execution_witness,
         }
+    }
+}
+
+/// Input for the L1 stateless validation program (EIP-8025 build).
+///
+/// `Direct` carries in-memory blocks + witness for the ad-hoc test path that
+/// regenerates a witness from blockchain execution. `Wire` carries an already
+/// decoded EIP-8025 stateless input that originated from spec wire bytes.
+#[cfg(feature = "eip-8025")]
+pub enum ProgramInput {
+    Direct {
+        blocks: Vec<Block>,
+        execution_witness: ExecutionWitness,
+    },
+    Wire(DecodedEip8025),
+}
+
+#[cfg(feature = "eip-8025")]
+impl Default for ProgramInput {
+    fn default() -> Self {
+        Self::Direct {
+            blocks: Vec::new(),
+            execution_witness: ExecutionWitness::default(),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl ProgramInput {
+    /// Creates a `Direct` ProgramInput with the given blocks and execution witness.
+    pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
+        Self::Direct {
+            blocks,
+            execution_witness,
+        }
+    }
+
+    /// Wraps an already-decoded EIP-8025 stateless input into a `Wire` ProgramInput.
+    pub fn wire(decoded: DecodedEip8025) -> Self {
+        Self::Wire(decoded)
     }
 }
 
@@ -214,6 +256,32 @@ pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecode
     }
 }
 
+/// Decode a spec-format canonical stateless input blob:
+/// `[BE u16 STATELESS_INPUT_SCHEMA_ID][SSZ-encoded CanonicalStatelessInput]`.
+///
+/// Unlike [`decode_eip8025`] this is the EIP-8025 Amsterdam *spec* wire format
+/// (no ethrex-internal version byte, no rkyv-appended chain config). The
+/// caller supplies `chain_config` out-of-band.
+///
+/// Used by ef_tests to drive fixtures that ship `statelessInputBytes` through
+/// the same `ExecBackend::execute(...)` path the production guest binary uses.
+#[cfg(feature = "eip-8025")]
+pub fn decode_canonical_stateless_input_bytes(
+    bytes: &[u8],
+) -> Result<CanonicalStatelessInput, ProgramInputDecodeError> {
+    use libssz::SszDecode;
+
+    if bytes.len() < STATELESS_INPUT_SCHEMA_ID_SIZE {
+        return Err(ProgramInputDecodeError::TooShort);
+    }
+    let (schema_bytes, ssz_bytes) = bytes.split_at(STATELESS_INPUT_SCHEMA_ID_SIZE);
+    let schema_id = u16::from_be_bytes([schema_bytes[0], schema_bytes[1]]);
+    if schema_id != STATELESS_INPUT_SCHEMA_ID {
+        return Err(ProgramInputDecodeError::UnknownSchemaId(schema_id));
+    }
+    CanonicalStatelessInput::from_ssz_bytes(ssz_bytes).map_err(ProgramInputDecodeError::Ssz)
+}
+
 #[cfg(feature = "eip-8025")]
 fn decode_eip8025_legacy(
     bytes: &[u8],
@@ -310,6 +378,7 @@ pub enum ProgramInputDecodeError {
     Ssz(libssz::DecodeError),
     Rkyv(String),
     UnknownVersion(u8),
+    UnknownSchemaId(u16),
 }
 
 #[cfg(feature = "eip-8025")]
@@ -320,6 +389,9 @@ impl core::fmt::Display for ProgramInputDecodeError {
             Self::Ssz(e) => write!(f, "SSZ decode error: {e}"),
             Self::Rkyv(e) => write!(f, "rkyv decode error: {e}"),
             Self::UnknownVersion(v) => write!(f, "unknown EIP-8025 wire version: {v:#04x}"),
+            Self::UnknownSchemaId(v) => {
+                write!(f, "unknown stateless input schema id: {v:#06x}")
+            }
         }
     }
 }
