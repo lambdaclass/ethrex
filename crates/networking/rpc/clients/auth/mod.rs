@@ -2,7 +2,7 @@ use crate::{
     engine::{
         ExchangeCapabilitiesRequest,
         fork_choice::ForkChoiceUpdatedV3,
-        payload::{GetPayloadV5Request, NewPayloadV4Request},
+        payload::{GetPayloadV5Request, NewPayloadV4Request, NewPayloadV5Request},
     },
     types::{
         fork_choice::{ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3},
@@ -128,6 +128,39 @@ impl EngineClient {
             expected_blob_versioned_hashes,
             parent_beacon_block_root,
             execution_requests: vec![],
+        }
+        .into();
+
+        match self.send_request(request).await? {
+            RpcResponse::Success(result) => serde_json::from_value(result.result)
+                .map_err(NewPayloadError::SerdeJSONError)
+                .map_err(EngineClientError::from),
+            RpcResponse::Error(error_response) => {
+                let error_message = if let Some(data) = error_response.error.data {
+                    format!("{}: {:?}", error_response.error.message, data)
+                } else {
+                    error_response.error.message.to_string()
+                };
+                Err(NewPayloadError::RPCError(error_message).into())
+            }
+        }
+    }
+
+    /// Amsterdam (EIP-7928) variant. The Block Access List travels inside
+    /// `execution_payload.block_access_list`; the server derives its hash from
+    /// the raw payload bytes, so no separate BAL argument is needed here.
+    pub async fn engine_new_payload_v5(
+        &self,
+        execution_payload: ExecutionPayload,
+        expected_blob_versioned_hashes: Vec<H256>,
+        parent_beacon_block_root: H256,
+    ) -> Result<PayloadStatus, EngineClientError> {
+        let request = NewPayloadV5Request {
+            payload: execution_payload,
+            expected_blob_versioned_hashes,
+            parent_beacon_block_root,
+            execution_requests: vec![],
+            raw_bal_hash: None,
         }
         .into();
 
