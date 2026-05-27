@@ -95,7 +95,7 @@ impl RpcHandler for StorageRangeAtRequest {
             .block
             .resolve_block_header(&context.storage)
             .await?
-            .ok_or_else(|| RpcErr::Internal("Block not found".to_string()))?;
+            .ok_or_else(|| RpcErr::WrongParam("Block not found".to_string()))?;
 
         // `tx_index` is accepted (geth's `-1` sentinel works since it's `i64`)
         // but not honoured — see type-level doc.
