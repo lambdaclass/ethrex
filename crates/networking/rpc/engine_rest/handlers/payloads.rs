@@ -348,7 +348,13 @@ pub async fn get_payload_v5(
         Err(e) => return e.into(),
     };
     let chain_config = ctx.storage.get_chain_config();
-    if !chain_config.is_osaka_activated(bundle.block.header.timestamp) {
+    // V5 is Osaka-only (execution-apis #764): the response carries
+    // `ExecutionPayloadV3`, which has no `block_access_list` / `slot_number`.
+    // Amsterdam blocks must be retrieved via getPayloadV6; serving them here
+    // would silently drop the BAL and prevent block-hash reconstruction.
+    if !chain_config.is_osaka_activated(bundle.block.header.timestamp)
+        || chain_config.is_amsterdam_activated(bundle.block.header.timestamp)
+    {
         return EngineError::unprocessable(&format!(
             "{:?}",
             chain_config.get_fork(bundle.block.header.timestamp)
@@ -363,7 +369,8 @@ pub async fn get_payload_v5(
         Ok(r) => r,
         Err(e) => return e.into(),
     };
-    let json = JsonExecutionPayload::from_block(bundle.block, bundle.block_access_list);
+    // BAL intentionally not propagated: V5 = Osaka, pre-BAL fork.
+    let json = JsonExecutionPayload::from_block(bundle.block, None);
     let payload = match json_to_execution_payload_v3(&json) {
         Ok(p) => p,
         Err(e) => return e.into(),
