@@ -80,6 +80,11 @@ impl RpcHandler for AccountRangeRequest {
             .map_err(|e| RpcErr::BadParams(format!("invalid start hash: {e}")))?;
         let max_results: usize = serde_json::from_value(params[3].clone())
             .map_err(|e| RpcErr::BadParams(format!("invalid maxResults: {e}")))?;
+        if max_results == 0 {
+            return Err(RpcErr::BadParams(
+                "maxResults must be greater than 0".to_owned(),
+            ));
+        }
         Ok(AccountRangeRequest {
             block,
             tx_index,
@@ -93,7 +98,7 @@ impl RpcHandler for AccountRangeRequest {
             .block
             .resolve_block_header(&context.storage)
             .await?
-            .ok_or_else(|| RpcErr::Internal("Block not found".to_string()))?;
+            .ok_or_else(|| RpcErr::WrongParam("Block not found".to_string()))?;
 
         // `tx_index` is parsed and validated but not honoured yet. Negative
         // values (geth's `-1` "end of block" sentinel) and any value >= the
