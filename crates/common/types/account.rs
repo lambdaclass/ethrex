@@ -55,6 +55,19 @@ impl Code {
         }
     }
 
+    /// Returns true iff `target` indexes a valid JUMPDEST in this bytecode.
+    ///
+    /// `jump_targets` is built by [`Self::compute_jump_targets`] and contains every
+    /// position whose byte is `JUMPDEST` (0x5B) and that is not inside a PUSH
+    /// literal; its entries are `u32` (bytecode length fits in `u32`).
+    ///
+    /// Uses `u32::try_from` rather than `target as u32` so that a `target` with
+    /// nonzero upper bits (e.g. `2^32 + k` for a real JUMPDEST at `k`) is
+    /// rejected instead of aliasing down to a valid-looking low-32-bit index.
+    pub fn is_valid_jump_target(&self, target: usize) -> bool {
+        u32::try_from(target).is_ok_and(|t| self.jump_targets.binary_search(&t).is_ok())
+    }
+
     fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
         debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
