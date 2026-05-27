@@ -33,9 +33,14 @@ use ethrex_rpc::engine_rest::types::common::{
     Bytes32, ForkchoiceStateV1, ForkchoiceUpdatedResponseV1, MAX_CAPABILITY_NAME_LENGTH,
     PayloadStatusV1,
 };
-use ethrex_rpc::engine_rest::types::execution_payload::{ExecutionPayloadV1, ExecutionPayloadV2};
+use ethrex_rpc::engine_rest::types::execution_payload::{
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4,
+};
 use ethrex_rpc::engine_rest::types::forkchoice::ForkchoiceUpdatedV1Request;
-use ethrex_rpc::engine_rest::types::new_payload::{NewPayloadV1Request, NewPayloadV2Request};
+use ethrex_rpc::engine_rest::types::new_payload::{
+    NewPayloadV1Request, NewPayloadV2Request, NewPayloadV3Request, NewPayloadV4Request,
+    NewPayloadV5Request,
+};
 use ethrex_rpc::engine_rest::types::withdrawal::WithdrawalV1;
 use ethrex_rpc::rpc::{ClientVersion, NodeData, RpcApiContext};
 use ethrex_rpc::test_utils::{
@@ -501,4 +506,259 @@ async fn new_payload_v2_pre_shanghai_empty_withdrawals_accepted() {
     // We accept any status except 422 — the pre-Shanghai-with-withdrawals
     // rejection should NOT fire when the withdrawals list is empty.
     assert_ne!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+// --- JWT iat boundary tests ---
+
+fn make_jwt_with_iat(iat: i64) -> String {
+    #[derive(Serialize)]
+    struct Claims {
+        iat: i64,
+    }
+    encode(
+        &Header::default(),
+        &Claims { iat },
+        &EncodingKey::from_secret(TEST_SECRET),
+    )
+    .unwrap()
+}
+
+fn auth_post_with_jwt(path: &str, body: Vec<u8>, jwt: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {jwt}")).unwrap(),
+        )
+        .body(Body::from(body))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn jwt_expired_iat_rejected() {
+    // `validate_jwt_authentication` rejects JWTs whose `iat` is more than 60s off.
+    let app = make_router().await;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let jwt = make_jwt_with_iat(now - 120);
+    let req = ExchangeCapabilitiesRequest {
+        capabilities: Vec::<SszList<u8, MAX_CAPABILITY_NAME_LENGTH>>::new()
+            .try_into()
+            .unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post_with_jwt(
+            "/engine/v1/capabilities",
+            ssz_body(&req),
+            &jwt,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn jwt_future_iat_rejected() {
+    let app = make_router().await;
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let jwt = make_jwt_with_iat(now + 120);
+    let req = ExchangeCapabilitiesRequest {
+        capabilities: Vec::<SszList<u8, MAX_CAPABILITY_NAME_LENGTH>>::new()
+            .try_into()
+            .unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post_with_jwt(
+            "/engine/v1/capabilities",
+            ssz_body(&req),
+            &jwt,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// --- Blob hash batch boundary (catches the >= vs > off-by-one) ---
+
+#[tokio::test]
+async fn blobs_v1_at_max_hashes_accepted() {
+    // Exactly MAX_BLOB_HASHES_REQUEST (128) entries must be accepted: the cap
+    // is inclusive. A `>=` check (the pre-fix behavior) would reject this.
+    use ethrex_rpc::engine_rest::types::common::MAX_BLOB_HASHES_REQUEST;
+    let app = make_router().await;
+    let hashes: Vec<Bytes32> = (0..MAX_BLOB_HASHES_REQUEST as u8)
+        .map(|i| [i; 32])
+        .collect();
+    let req = GetBlobsV1Request {
+        blob_versioned_hashes: hashes.try_into().unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post("/engine/v1/blobs", ssz_body(&req)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+// --- Per-route body cap ---
+
+#[tokio::test]
+async fn bodies_by_range_body_too_large_returns_413() {
+    // The bodies/by-range endpoint has a 1 KB body cap. A 4 KB payload of
+    // valid Content-Type must be rejected with 413 before any SSZ decoding.
+    let app = make_router().await;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/engine/v1/payloads/bodies/by-range")
+        .header(header::CONTENT_TYPE, "application/octet-stream")
+        .header(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {}", make_jwt())).unwrap(),
+        )
+        .body(Body::from(vec![0u8; 4 * 1024]))
+        .unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+// --- newPayload V3/V4/V5 end-to-end fork gating ---
+
+fn empty_payload_v3(timestamp: u64) -> ExecutionPayloadV3 {
+    ExecutionPayloadV3 {
+        parent_hash: [0u8; 32],
+        fee_recipient: [0u8; 20],
+        state_root: [0u8; 32],
+        receipts_root: [0u8; 32],
+        logs_bloom: [0u8; 256],
+        prev_randao: [0u8; 32],
+        block_number: 1,
+        gas_limit: 30_000_000,
+        gas_used: 0,
+        timestamp,
+        extra_data: Vec::new().try_into().unwrap(),
+        base_fee_per_gas: [0u8; 32],
+        block_hash: [0u8; 32],
+        transactions: Vec::<
+            SszList<u8, { ethrex_rpc::engine_rest::types::common::MAX_BYTES_PER_TRANSACTION }>,
+        >::new()
+        .try_into()
+        .unwrap(),
+        withdrawals: Vec::<WithdrawalV1>::new().try_into().unwrap(),
+        blob_gas_used: 0,
+        excess_blob_gas: 0,
+    }
+}
+
+fn empty_payload_v4(timestamp: u64) -> ExecutionPayloadV4 {
+    ExecutionPayloadV4 {
+        parent_hash: [0u8; 32],
+        fee_recipient: [0u8; 20],
+        state_root: [0u8; 32],
+        receipts_root: [0u8; 32],
+        logs_bloom: [0u8; 256],
+        prev_randao: [0u8; 32],
+        block_number: 1,
+        gas_limit: 30_000_000,
+        gas_used: 0,
+        timestamp,
+        extra_data: Vec::new().try_into().unwrap(),
+        base_fee_per_gas: [0u8; 32],
+        block_hash: [0u8; 32],
+        transactions: Vec::<
+            SszList<u8, { ethrex_rpc::engine_rest::types::common::MAX_BYTES_PER_TRANSACTION }>,
+        >::new()
+        .try_into()
+        .unwrap(),
+        withdrawals: Vec::<WithdrawalV1>::new().try_into().unwrap(),
+        blob_gas_used: 0,
+        excess_blob_gas: 0,
+        block_access_list: Vec::<u8>::new().try_into().unwrap(),
+        slot_number: 0,
+    }
+}
+
+#[tokio::test]
+async fn new_payload_v3_pre_cancun_returns_422() {
+    let cc = ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: None,
+        deposit_contract_address: Address::zero(),
+        ..Default::default()
+    };
+    let app = make_router_with_chain_config(cc).await;
+    let req = NewPayloadV3Request {
+        execution_payload: empty_payload_v3(1),
+        expected_blob_versioned_hashes: Vec::<Bytes32>::new().try_into().unwrap(),
+        parent_beacon_block_root: [0u8; 32],
+    };
+    let resp = app
+        .oneshot(auth_post("/engine/v3/payloads", ssz_body(&req)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn new_payload_v4_pre_prague_returns_422() {
+    let cc = ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: None,
+        deposit_contract_address: Address::zero(),
+        ..Default::default()
+    };
+    let app = make_router_with_chain_config(cc).await;
+    let req = NewPayloadV4Request {
+        execution_payload: empty_payload_v3(1),
+        expected_blob_versioned_hashes: Vec::<Bytes32>::new().try_into().unwrap(),
+        parent_beacon_block_root: [0u8; 32],
+        execution_requests: Vec::<
+            SszList<u8, { ethrex_rpc::engine_rest::types::common::MAX_BYTES_PER_TRANSACTION }>,
+        >::new()
+        .try_into()
+        .unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post("/engine/v4/payloads", ssz_body(&req)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn new_payload_v5_pre_amsterdam_returns_422() {
+    let cc = ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        amsterdam_time: None,
+        deposit_contract_address: Address::zero(),
+        ..Default::default()
+    };
+    let app = make_router_with_chain_config(cc).await;
+    let req = NewPayloadV5Request {
+        execution_payload: empty_payload_v4(1),
+        expected_blob_versioned_hashes: Vec::<Bytes32>::new().try_into().unwrap(),
+        parent_beacon_block_root: [0u8; 32],
+        execution_requests: Vec::<
+            SszList<u8, { ethrex_rpc::engine_rest::types::common::MAX_BYTES_PER_TRANSACTION }>,
+        >::new()
+        .try_into()
+        .unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post("/engine/v5/payloads", ssz_body(&req)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
