@@ -4,6 +4,36 @@ This directory contains the Kurtosis enclave config and assertoor task spec
 for driving a deep reorg (>128 blocks) on a live EL+CL network and validating
 that ethrex converges correctly.
 
+## Known limitation: this harness does not reliably hit the deep-reorg path
+
+The network-partition approach has proven flaky at actually exercising the
+deep-reorg apply path, so it is `workflow_dispatch`-only and not the primary
+test. The deterministic in-process simulator is (run from `tooling/reorgs`):
+
+```sh
+cargo run -- deep_reorg_beyond_128 /abs/path/target/release/ethrex
+cargo run -- deep_reorg_side_chain_replay /abs/path/target/release/ethrex
+```
+
+Those drive `engine_newPayload` + `forkchoiceUpdated` directly and gate on the
+node returning `VALID` at a head 150/200 blocks deep, so they reach the code
+under test every run. Use this harness only for live-network sanity checks.
+
+Why the partition harness is unreliable, observed end to end:
+
+1. After disruptoor removes the partition wall, the two CLs had already scored
+   each other as bad peers during the split and refuse to re-peer.
+2. Restarting the CLs to force re-peering makes ethrex sync to the longer chain
+   via full/snap sync instead of taking the FCU deep-reorg apply path.
+3. ethrex was behind because on its isolated fork its slots were sparse, so it
+   produced blocks slower and its chain ended up shorter than the peer's; on
+   reconnect, sync-to-longer-chain wins over a reorg.
+
+The orchestration only fires on the FCU `StateNotReachable` deep-reorg path; a
+sync-to-longer-chain sidesteps it entirely. Making this harness deterministic
+would require forcing the partitioned chains to equal length (or ethrex's fork
+to be the longer one) and a CL that re-peers cleanly after a heal.
+
 ## Files
 
 | File | Purpose |
