@@ -454,3 +454,97 @@ impl Drop for RocksDBLocked {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::encode_tx_location_operand;
+    use ethrex_common::H256;
+    use ethrex_common::types::{BlockHash, BlockNumber, Index};
+    use ethrex_rlp::decode::RLPDecode;
+
+    /// End-to-end guard for the associative merge operator at the real RocksDB
+    /// layer: write many operands for the same key, each flushed into its own
+    /// SST file, then force a compaction (which exercises the merge operator,
+    /// including PartialMerge). Before the operand/value format fix this dropped
+    /// entries during compaction (observed as 1664 silent drops on mainnet).
+    #[test]
+    fn merge_operator_survives_flush_and_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
+
+        let tx_hash = H256::from_low_u64_be(0xabcd);
+        let entries: Vec<(BlockNumber, BlockHash, Index)> = (0..6u64)
+            .map(|i| (100 + i, H256::from_low_u64_be(0x10 + i), i))
+            .collect();
+
+        // Each operand in its own committed batch + flush → separate SST files.
+        for (bn, bh, idx) in &entries {
+            let mut tx = backend.begin_write().unwrap();
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &encode_tx_location_operand(*bn, *bh, *idx),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            backend.db.flush_cf(&cf).unwrap();
+        }
+
+        // Force compaction — consolidates operands across the SST files.
+        backend
+            .db
+            .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()
+            .expect("key must exist after merge + compaction");
+        let mut got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
+        got.sort();
+        let mut want = entries.clone();
+        want.sort();
+        assert_eq!(got, want, "no entries may be dropped through compaction");
+    }
+
+    /// Same-block_hash operands must dedupe to the latest, even across a
+    /// flush+compaction boundary.
+    #[test]
+    fn merge_operator_dedupes_across_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
+
+        let tx_hash = H256::from_low_u64_be(0x1234);
+        let bh = H256::from_low_u64_be(0xaa);
+        // Same block_hash written twice (e.g. re-import); later index must win.
+        for idx in [3u64, 7u64] {
+            let mut tx = backend.begin_write().unwrap();
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &encode_tx_location_operand(200, bh, idx),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            backend.db.flush_cf(&cf).unwrap();
+        }
+        backend
+            .db
+            .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        let got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
+        assert_eq!(
+            got,
+            vec![(200, bh, 7)],
+            "later write for same block_hash wins"
+        );
+    }
+}
