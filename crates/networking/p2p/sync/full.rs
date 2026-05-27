@@ -4,8 +4,9 @@
 //! are fetched via p2p eth requests and executed to rebuild the state.
 
 use std::cmp::min;
-use std::sync::Arc;
-use std::time::Duration;
+use std::io::IsTerminal;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ethrex_blockchain::{
     BatchBlockProcessingFailure, Blockchain,
@@ -24,6 +25,46 @@ use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
+
+/// Forkchoice heads older than this (in seconds) trigger a "consensus is behind"
+/// warning during sync. A synced consensus client always advertises a head only
+/// a few seconds old, so a large age means the consensus client itself is lagging
+/// chain head and is the sync bottleneck.
+const STALE_FORKCHOICE_HEAD_SECS: u64 = 1800;
+
+/// Distance (in blocks) below which the node is considered to be following head.
+/// Below this we suppress the per-cycle sync-target logging to avoid noise on an
+/// already-synced node, which runs a sync cycle on every slot.
+const FOLLOW_DISTANCE: u64 = 8;
+
+/// Whether stdout is a color-capable TTY. Honors the `NO_COLOR` convention and
+/// matches the writer used by the tracing fmt layer, so logs piped to a file or
+/// to journald stay plain. Note: this does not read the `--log.color` CLI flag.
+static STDOUT_COLOR: LazyLock<bool> =
+    LazyLock::new(|| std::env::var_os("NO_COLOR").is_none() && std::io::stdout().is_terminal());
+
+/// Wrap `text` in bold-yellow ANSI when stdout supports color, otherwise return it as-is.
+fn highlight(text: &str) -> String {
+    if *STDOUT_COLOR {
+        format!("\x1b[1;33m{text}\x1b[0m")
+    } else {
+        text.to_string()
+    }
+}
+
+/// Render a duration in seconds as a compact human string, e.g. "13d 4h".
+fn humanize_secs(secs: u64) -> String {
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let mins = (secs % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
@@ -60,6 +101,12 @@ pub async fn sync_cycle_full(
 
     let mut attempts = 0;
 
+    // Tracks whether this cycle started meaningfully behind the consensus-provided
+    // head, so we can log progress and a final "caught up" message without spamming
+    // a synced node. Set on the first batch of headers we fetch.
+    let mut started_behind = false;
+    let mut sync_target_logged = false;
+
     // Request and store all block headers from the advertised sync head
     loop {
         let Some(mut block_headers) = peers
@@ -92,6 +139,38 @@ pub async fn sync_cycle_full(
             first_header.number,
             last_header.number,
         );
+
+        // On the first batch, report the distance to the consensus-provided head and
+        // warn if that head is stale (a strong signal the consensus client is behind).
+        if !sync_target_logged {
+            sync_target_logged = true;
+            let target = first_header.number;
+            let target_ts = first_header.timestamp;
+            let local_head = store.get_latest_block_number().await?;
+            let behind = target.saturating_sub(local_head);
+            if behind > FOLLOW_DISTANCE {
+                started_behind = true;
+                info!(
+                    "Sync target from consensus forkchoice: block {target} ({behind} blocks ahead of local head {local_head})"
+                );
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let age = now.saturating_sub(target_ts);
+                if age > STALE_FORKCHOICE_HEAD_SECS {
+                    warn!(
+                        "{}",
+                        highlight(&format!(
+                            "Consensus forkchoice head (block {target}) is {} old. This can happen while the consensus client is still catching up to chain head; \
+                             if so, execution will only advance as fast as it does. If sync seems slow, it may be worth checking the consensus client's sync status.",
+                            humanize_secs(age)
+                        ))
+                    );
+                }
+            }
+        }
+
         end_block_number = end_block_number.max(first_header.number);
         start_block_number = last_header.number;
 
@@ -264,6 +343,15 @@ pub async fn sync_cycle_full(
             peers,
         )
         .await?;
+    }
+
+    // If this cycle started behind, announce that we've caught up to the head the
+    // consensus client gave us, so the operator can tell idle-waiting from a hang.
+    if started_behind {
+        let local_head = store.get_latest_block_number().await?;
+        info!(
+            "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
+        );
     }
 
     store.clear_fullsync_headers().await?;

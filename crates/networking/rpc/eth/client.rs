@@ -58,13 +58,22 @@ impl RpcHandler for Syncing {
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
+            let current_block = context.storage.get_latest_block_number().await?;
+            // `get_last_fcu_head` returns the head *hash* from the last forkchoiceUpdated.
+            // Resolve it to a block number; if the head's header isn't stored yet (e.g.
+            // mid snap-sync), fall back to the current block instead of reporting garbage.
+            let head_hash = syncer
+                .get_last_fcu_head()
+                .map_err(|error| RpcErr::Internal(error.to_string()))?;
+            let highest_block = context
+                .storage
+                .get_block_number(head_hash)
+                .await?
+                .unwrap_or(current_block);
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,
-                current_block: context.storage.get_latest_block_number().await?,
-                highest_block: syncer
-                    .get_last_fcu_head()
-                    .map_err(|error| RpcErr::Internal(error.to_string()))?
-                    .to_low_u64_be(),
+                current_block,
+                highest_block,
             };
             serde_json::to_value(syncing_status)
                 .map_err(|error| RpcErr::Internal(error.to_string()))
