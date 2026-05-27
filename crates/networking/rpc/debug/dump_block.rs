@@ -100,11 +100,11 @@ impl RpcHandler for DumpBlockRequest {
             .block
             .resolve_block_number(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("Block not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("Block not found".to_string()))?;
         let header = context
             .storage
             .get_block_header(block_number)?
-            .ok_or(RpcErr::Internal("Block header not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("Block header not found".to_string()))?;
 
         let state_root = header.state_root;
         let start = self.config.start.unwrap_or_else(H256::zero);
