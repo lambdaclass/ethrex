@@ -10,9 +10,9 @@ use crate::common::ExecutionError;
 use crate::common::execute_blocks;
 use crate::l1::input::ProgramInput;
 #[cfg(feature = "eip-8025")]
-use crate::l1::input::{BYTES_PER_PUBLIC_KEY, MAX_PUBLIC_KEYS};
-#[cfg(feature = "eip-8025")]
-use crate::l1::input::{CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025};
+use crate::l1::input::{
+    CanonicalExecutionWitness, CanonicalStatelessInput, DecodedEip8025, PublicKeysList,
+};
 use crate::l1::output::ProgramOutput;
 
 use ethrex_common::types::ELASTICITY_MULTIPLIER;
@@ -98,14 +98,8 @@ pub fn execution_program(
 
 /// Execute an already-built [`ProgramInput`].
 ///
-/// This is the unified entry point used by `ExecBackend` so the test runner and
-/// production guest binary share a single dispatch over the input variants:
-///
-/// * [`ProgramInput::Direct`] — in-memory blocks + witness, no spec wire bytes
-///   ever existed. Returns a sentinel `ProgramOutput` (zero request_root,
-///   `valid = true`) since there's no `NewPayloadRequest` to root.
-/// * [`ProgramInput::Wire`] — wraps a [`DecodedEip8025`] that came from spec
-///   wire bytes. Dispatches to the legacy or canonical validator.
+/// `Direct` returns a sentinel `ProgramOutput` (zero request_root, `valid = true`)
+/// since there is no `NewPayloadRequest` to root in that path.
 #[cfg(feature = "eip-8025")]
 pub fn execute_decoded(
     input: ProgramInput,
@@ -478,9 +472,8 @@ fn validate_eip8025_canonical_execution(
     )
 }
 
-/// Validate `chain_id` and the `active_fork.blob_schedule` from the prover's
-/// `CanonicalChainConfig` against the verifier's `ChainConfig`. The
-/// `active_fork.fork` discriminator is intentionally skipped (see inline).
+/// Validate `chain_id` and `active_fork.blob_schedule` from the prover's
+/// `CanonicalChainConfig` against the verifier's `ChainConfig`.
 #[cfg(feature = "eip-8025")]
 fn validate_canonical_chain_config(
     canonical: &crate::l1::input::CanonicalChainConfig,
@@ -494,9 +487,12 @@ fn validate_canonical_chain_config(
         )));
     }
 
-    // `CanonicalForkConfig.fork` uses an EELS-internal numbering that diverges
-    // from ethrex's `Fork` enum (e.g. Amsterdam = 24 in EELS, 25 here). The
-    // blob-schedule check below catches semantic fork divergence anyway.
+    // `CanonicalForkConfig.fork` uses EELS-internal numbering (e.g. Amsterdam = 24
+    // in EELS, 25 here), so the discriminator is not compared. The blob-schedule
+    // check below is a partial proxy: a fork that keeps identical blob parameters
+    // would not be caught here. `active_fork.activation` is SSZ-decoded for
+    // canonical-root determinism but not cross-checked — the spec stores those
+    // values in the wire payload, not as something the verifier validates.
 
     let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
     let expected_schedule = expected.get_fork_blob_schedule(block_timestamp);
@@ -576,10 +572,7 @@ fn validate_eip8025_amsterdam_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,
-    public_keys: libssz_types::SszList<
-        libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>,
-        MAX_PUBLIC_KEYS,
-    >,
+    public_keys: PublicKeysList,
 ) -> Result<(), ExecutionError> {
     let block = new_payload_request_amsterdam_to_block(new_payload_request, crypto.as_ref())
         .map_err(|e| ExecutionError::Internal(format!("payload conversion: {e}")))?;

@@ -115,9 +115,8 @@ pub async fn run_ef_test(
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
-        // Use the fixture's witness directly when available; otherwise regenerate
-        // by re-running execution. Either `executionWitness` or `statelessInputBytes`
-        // counts — canonical-only fixtures may ship without `executionWitness`.
+        // Use the fixture's witness when present (either `executionWitness` or
+        // `statelessInputBytes`); otherwise regenerate by re-running execution.
         #[cfg(feature = "stateless")]
         {
             let has_fixture_witness = test.blocks.iter().any(|bf| {
@@ -572,13 +571,10 @@ async fn run_stateless_from_fixture(
             })?,
         };
 
-        // Prefer the canonical EIP-8025 wire path when the fixture supplies
-        // `statelessInputBytes`. That path runs the same entry point as the
-        // production guest binary, so it exercises EIP-8025-specific checks
-        // (public_keys, hash_tree_root, etc.) that the legacy ProgramInput
-        // route bypasses. The canonical path is self-contained (witness data
-        // is inside the input bytes), so it does not depend on the fixture's
-        // `executionWitness` field — check it before the legacy-path guard.
+        // Prefer the canonical EIP-8025 wire path: same entry point as the
+        // production guest binary, exercising public_keys / hash_tree_root checks
+        // the legacy ProgramInput route bypasses. Self-contained, so check it
+        // before the `executionWitness` guard.
         if let Some(input_hex) = block_data.stateless_input_bytes.as_deref() {
             run_stateless_from_input_bytes(
                 test_key,
@@ -640,17 +636,9 @@ async fn run_stateless_from_fixture(
     Ok(())
 }
 
-/// Drive the canonical EIP-8025 stateless validation path from a fixture's
-/// `statelessInputBytes` (spec wire format: a 2-byte BE schema-id prefix —
-/// `STATELESS_INPUT_SCHEMA_ID` — followed by the SSZ-encoded
-/// `SszStatelessInput`; no ethrex-internal version byte).
-///
-/// SSZ-decodes the bytes once here, wraps the result in
-/// [`ProgramInput::Wire(DecodedEip8025::Canonical { .. })`], and runs it
-/// through `ExecBackend::new().execute(...)` — the same call shape used by the
-/// non-canonical fixture path. `valid = false` is surfaced as
-/// `Err(BackendError)` by `ExecBackend` so the `(expected_valid, exec_result)`
-/// match below mirrors `run_stateless_from_fixture`.
+/// Run a fixture's `statelessInputBytes` (2-byte BE schema-id followed by
+/// SSZ-encoded `SszStatelessInput`) through the canonical-input path the
+/// production guest binary uses.
 #[cfg(feature = "stateless")]
 fn run_stateless_from_input_bytes(
     test_key: &str,

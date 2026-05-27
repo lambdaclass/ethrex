@@ -28,10 +28,8 @@ impl ExecBackend {
         {
             let output = ethrex_guest_program::l1::execute_decoded(input, crypto)
                 .map_err(BackendError::execution)?;
-            // Surface canonical/legacy `valid = false` as an Err so callers that
-            // only inspect the Result (e.g. ef_tests' `(expected_valid, exec_result)`
-            // match) treat it as execution failure, matching the legacy-path
-            // semantics where invalid blocks bubble out as ExecutionError.
+            // Surface `valid = false` as Err so result-only callers (e.g. ef_tests)
+            // treat it as execution failure, matching the legacy path's semantics.
             if !output.valid {
                 return Err(BackendError::execution(
                     "eip-8025 stateless execution: valid=false",

@@ -32,9 +32,8 @@ impl ProgramInput {
 
 /// Input for the L1 stateless validation program (EIP-8025 build).
 ///
-/// `Direct` carries in-memory blocks + witness for the ad-hoc test path that
-/// regenerates a witness from blockchain execution. `Wire` carries an already
-/// decoded EIP-8025 stateless input that originated from spec wire bytes.
+/// `Direct` carries in-memory blocks + witness (test path). `Wire` carries an
+/// already-decoded EIP-8025 stateless input from spec wire bytes.
 #[cfg(feature = "eip-8025")]
 pub enum ProgramInput {
     Direct {
@@ -56,7 +55,6 @@ impl Default for ProgramInput {
 
 #[cfg(feature = "eip-8025")]
 impl ProgramInput {
-    /// Creates a `Direct` ProgramInput with the given blocks and execution witness.
     pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
         Self::Direct {
             blocks,
@@ -64,7 +62,6 @@ impl ProgramInput {
         }
     }
 
-    /// Wraps an already-decoded EIP-8025 stateless input into a `Wire` ProgramInput.
     pub fn wire(decoded: DecodedEip8025) -> Self {
         Self::Wire(decoded)
     }
@@ -119,21 +116,23 @@ const MAX_BYTES_PER_CODE: usize = 1 << 24;
 #[cfg(feature = "eip-8025")]
 const MAX_BYTES_PER_HEADER: usize = 1 << 10;
 #[cfg(feature = "eip-8025")]
-pub const MAX_PUBLIC_KEYS: usize = 1 << 20;
+const MAX_PUBLIC_KEYS: usize = 1 << 20;
 #[cfg(feature = "eip-8025")]
-pub const BYTES_PER_PUBLIC_KEY: usize = 65;
+const BYTES_PER_PUBLIC_KEY: usize = 65;
+
+/// SSZ shape of the per-tx public key list in `CanonicalStatelessInput`:
+/// one fixed-size 65-byte uncompressed secp256k1 key per transaction.
+#[cfg(feature = "eip-8025")]
+pub type PublicKeysList =
+    libssz_types::SszList<libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>;
 #[cfg(feature = "eip-8025")]
 const MAX_OPTIONAL_FORK_ACTIVATION_VALUES: usize = 1;
 #[cfg(feature = "eip-8025")]
 const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 
-/// Big-endian schema id prefixed onto canonical `SszStatelessInput` wire bytes,
-/// mirroring `STATELESS_INPUT_SCHEMA_ID` from the EIP-8025 Amsterdam spec
-/// (see <https://github.com/ethereum/execution-specs/blob/master/src/ethereum/amsterdam/stateless_ssz.py>).
+/// Big-endian schema-id prefix on canonical `SszStatelessInput` wire bytes.
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x0001;
-/// Byte length of the schema-id prefix (`STATELESS_INPUT_SCHEMA_ID` encoded as
-/// big-endian `u16`) at the start of a canonical EIP-8025 wire payload.
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 
@@ -194,8 +193,7 @@ pub struct CanonicalStatelessInput {
     pub chain_config: CanonicalChainConfig,
     /// Per-transaction public keys (uncompressed secp256k1, 65 bytes each).
     /// Mirrors `SszList[ByteVector[PUBLIC_KEY_BYTES], MAX_PUBLIC_KEYS]` in the spec.
-    pub public_keys:
-        libssz_types::SszList<libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>,
+    pub public_keys: PublicKeysList,
 }
 
 /// Decoded EIP-8025 wire payload, dispatched by version byte.
@@ -258,13 +256,7 @@ pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecode
 
 /// Decode a spec-format canonical stateless input blob:
 /// `[BE u16 STATELESS_INPUT_SCHEMA_ID][SSZ-encoded CanonicalStatelessInput]`.
-///
-/// Unlike [`decode_eip8025`] this is the EIP-8025 Amsterdam *spec* wire format
-/// (no ethrex-internal version byte, no rkyv-appended chain config). The
-/// caller supplies `chain_config` out-of-band.
-///
-/// Used by ef_tests to drive fixtures that ship `statelessInputBytes` through
-/// the same `ExecBackend::execute(...)` path the production guest binary uses.
+/// Caller supplies `chain_config` out-of-band (unlike [`decode_eip8025`]).
 #[cfg(feature = "eip-8025")]
 pub fn decode_canonical_stateless_input_bytes(
     bytes: &[u8],
