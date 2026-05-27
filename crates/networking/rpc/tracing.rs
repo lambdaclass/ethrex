@@ -45,6 +45,10 @@ pub struct TraceBlockByNumberRequest {
 /// ethrex does not yet honour either — they are silently ignored. Pass-through
 /// support requires applying overrides at the VM layer before execution.
 ///
+/// The `reexec` field in `traceConfig` is also accepted but has no effect:
+/// state is read directly from the block header's state root rather than
+/// being rebuilt by re-executing ancestor blocks.
+///
 /// State is sourced from `header.state_root` (i.e. the state **after** the
 /// block has been applied), matching geth. Pruned nodes that don't have the
 /// state will get an "Internal: state root missing" error.
