@@ -99,7 +99,8 @@ pub fn execution_program(
 /// Execute an already-built [`ProgramInput`].
 ///
 /// `Direct` returns a sentinel `ProgramOutput` (zero request_root, `valid = true`)
-/// since there is no `NewPayloadRequest` to root in that path.
+/// since there is no `NewPayloadRequest` to root in that path. `ExecBackend`
+/// promotes `valid = false` to `Err` for result-only callers.
 #[cfg(feature = "eip-8025")]
 pub fn execute_decoded(
     input: ProgramInput,
@@ -494,6 +495,7 @@ fn validate_canonical_chain_config(
     // canonical-root determinism but not cross-checked — the spec stores those
     // values in the wire payload, not as something the verifier validates.
 
+    // Single-entry check is sound because `MAX_BLOB_SCHEDULES_PER_FORK = 1`.
     let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
     let expected_schedule = expected.get_fork_blob_schedule(block_timestamp);
     match (canonical_schedule, expected_schedule) {

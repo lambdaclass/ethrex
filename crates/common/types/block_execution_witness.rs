@@ -149,11 +149,11 @@ impl RpcExecutionWitness {
         decoded_headers: &[BlockHeader],
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
-        // EIP-8025 requires un-reachable witness entries not to cause rejection.
-        // Un-decodable nodes are silently dropped; any *needed* node that ends up
-        // missing surfaces downstream as `RootNotFound` from `get_embedded_root`.
-        // The `0x80` short-circuit handles `debug_executionWitness` producers that
-        // emit it as a sentinel for "Null" nodes our decoder doesn't accept.
+        // `0x80` is a Null-node sentinel emitted by some `debug_executionWitness`
+        // producers that our decoder doesn't accept; skip it.
+        // Per EIP-8025 §Tolerance, unreachable witness entries must not cause
+        // rejection — undecodable nodes are dropped; missing needed nodes surface
+        // later as `RootNotFound` from `get_embedded_root`.
         let nodes: BTreeMap<H256, Node> = self
             .state
             .into_iter()
@@ -246,13 +246,11 @@ fn find_parent_state_root(
         })
 }
 
-/// Validate that an SSZ-witness header list (in input order) forms a contiguous
-/// chain: each header's `parent_hash` must equal the keccak of the preceding
-/// header's RLP encoding.
+/// Check that `headers[1..]` link via `parent_hash == keccak(RLP(prev))`, in
+/// input order. The first header is intentionally unanchored here; the parent
+/// end is bound by the post-execution state-root check in `execute_blocks`.
 ///
-/// Order-sensitive: the spec verifies the sequence as supplied. Reordering the
-/// headers (e.g. into a `BTreeMap` keyed by block number) hides the violation.
-/// Call this before any sort/dedup of the list.
+/// Call before any sort/dedup, since reordering hides violations.
 pub fn validate_witness_headers_chain(
     headers: &[BlockHeader],
     crypto: &dyn Crypto,
@@ -351,7 +349,7 @@ pub enum GuestProgramStateError {
     MissingParentHeaderOf(u64),
     #[error("Non-contiguous block headers")]
     NoncontiguousBlockHeaders,
-    #[error("Witness is missing bytecode for code hash {0}")]
+    #[error("Bytecode for code hash {0} was not found in witness")]
     MissingBytecode(H256),
     #[error("Trie error: {0}")]
     Trie(#[from] TrieError),
