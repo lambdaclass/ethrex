@@ -41,6 +41,20 @@ impl LevmDatabase for DatabaseLogger {
         Ok(state)
     }
 
+    fn get_account_state_with_hashed_address(
+        &self,
+        address: CoreAddress,
+    ) -> Result<(AccountState, CoreH256), DatabaseError> {
+        self.state_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .entry(address)
+            .or_default();
+        self.store
+            .as_ref()
+            .get_account_state_with_hashed_address(address)
+    }
+
     fn get_storage_value(
         &self,
         address: CoreAddress,
@@ -112,6 +126,24 @@ impl LevmDatabase for DynVmDatabase {
             .unwrap_or_default();
 
         Ok(acc_state)
+    }
+
+    fn get_account_state_with_hashed_address(
+        &self,
+        address: CoreAddress,
+    ) -> Result<(AccountState, CoreH256), DatabaseError> {
+        let (state, hashed_address) =
+            <dyn VmDatabase>::get_account_state_with_hashed_address(self.as_ref(), address)
+                .map_err(|e| DatabaseError::Custom(e.to_string()))?
+                .unwrap_or_else(|| {
+                    (
+                        AccountState::default(),
+                        CoreH256::from(ethrex_crypto::keccak::keccak_hash(
+                            address.to_fixed_bytes(),
+                        )),
+                    )
+                });
+        Ok((state, hashed_address))
     }
 
     fn get_storage_value(

@@ -4,9 +4,23 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
+use ethrex_crypto::keccak::keccak_hash;
 
 pub trait VmDatabase: Send + Sync + DynClone {
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError>;
+    /// Fetch account state and return its `keccak(address)` alongside. Lets callers
+    /// reuse the hash the underlying database already computed (e.g. when its
+    /// internal cache stores both), avoiding a redundant keccak in the caller.
+    /// Default impl computes the hash locally.
+    fn get_account_state_with_hashed_address(
+        &self,
+        address: Address,
+    ) -> Result<Option<(AccountState, H256)>, EvmError> {
+        let hashed_address = H256::from(keccak_hash(address.to_fixed_bytes()));
+        Ok(self
+            .get_account_state(address)?
+            .map(|state| (state, hashed_address)))
+    }
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
     /// Storage slot read with caller-provided `keccak(address)` and `storage_root`.
     /// Lets callers that already have the hashed address (e.g. via a higher-level

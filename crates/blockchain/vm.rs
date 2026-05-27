@@ -122,6 +122,18 @@ impl VmDatabase for StoreVmDatabase {
             .map(|entry| entry.state))
     }
 
+    /// Returns the cached `keccak(address)` alongside the account state so callers
+    /// (e.g. `CachingDatabase`) don't need to recompute the hash they will need
+    /// for subsequent storage reads.
+    fn get_account_state_with_hashed_address(
+        &self,
+        address: Address,
+    ) -> Result<Option<(AccountState, H256)>, EvmError> {
+        Ok(self
+            .get_cached_account_state_entry(address)?
+            .map(|entry| (entry.state, entry.hashed_address)))
+    }
+
     #[instrument(
         level = "trace",
         name = "Storage read",

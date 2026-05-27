@@ -27,6 +27,17 @@ type CodeCache = FxHashMap<H256, Code>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
+    /// Fetch account state and return its `keccak(address)` alongside. Lets callers
+    /// reuse the hash the underlying database already computed (avoids a redundant
+    /// keccak in the caller). Default impl computes the hash locally.
+    fn get_account_state_with_hashed_address(
+        &self,
+        address: Address,
+    ) -> Result<(AccountState, H256), DatabaseError> {
+        let state = self.get_account_state(address)?;
+        let hashed_address = H256::from(keccak_hash(address.to_fixed_bytes()));
+        Ok((state, hashed_address))
+    }
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
     /// Storage read with caller-provided `keccak(address)` and `storage_root`.
     /// Lets implementations that wrap a higher-level cache (e.g. `CachingDatabase`)
@@ -131,18 +142,6 @@ fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
 }
 
 impl CachingDatabase {
-    /// Compute and cache `keccak(address)` alongside the account state.
-    fn cache_account(&self, address: Address, state: AccountState) -> Result<(), DatabaseError> {
-        let hashed_address = H256::from(keccak_hash(address.to_fixed_bytes()));
-        self.write_accounts()?
-            .entry(address)
-            .or_insert(CachedAccount {
-                state,
-                hashed_address,
-            });
-        Ok(())
-    }
-
     /// Look up the cached `(hashed_address, storage_root)` for an account if present.
     fn cached_account_hash_and_root(
         &self,
@@ -162,10 +161,33 @@ impl Database for CachingDatabase {
             return Ok(cached.state);
         }
 
-        // Cache miss: query underlying database
-        let state = self.inner.get_account_state(address)?;
-        self.cache_account(address, state)?;
+        // Cache miss: fetch state + hash from inner (which already has them) so
+        // we don't recompute keccak(address) at this layer.
+        let (state, hashed_address) = self.inner.get_account_state_with_hashed_address(address)?;
+        self.write_accounts()?
+            .entry(address)
+            .or_insert(CachedAccount {
+                state,
+                hashed_address,
+            });
         Ok(state)
+    }
+
+    fn get_account_state_with_hashed_address(
+        &self,
+        address: Address,
+    ) -> Result<(AccountState, H256), DatabaseError> {
+        if let Some(cached) = self.read_accounts()?.get(&address).copied() {
+            return Ok((cached.state, cached.hashed_address));
+        }
+        let (state, hashed_address) = self.inner.get_account_state_with_hashed_address(address)?;
+        self.write_accounts()?
+            .entry(address)
+            .or_insert(CachedAccount {
+                state,
+                hashed_address,
+            });
+        Ok((state, hashed_address))
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
@@ -261,20 +283,23 @@ impl Database for CachingDatabase {
 
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), compute keccak(address)
-        // in the same parallel pass, then single write-lock to populate cache.
+        // Fetch (state, hashed_address) from inner in parallel — the inner
+        // (e.g. `StoreVmDatabase`) already computes/caches the keccak, so this
+        // avoids recomputing it at this layer.
         let fetched: Vec<(Address, CachedAccount)> = addresses
             .par_iter()
             .map(|&addr| {
-                self.inner.get_account_state(addr).map(|state| {
-                    (
-                        addr,
-                        CachedAccount {
-                            state,
-                            hashed_address: H256::from(keccak_hash(addr.to_fixed_bytes())),
-                        },
-                    )
-                })
+                self.inner.get_account_state_with_hashed_address(addr).map(
+                    |(state, hashed_address)| {
+                        (
+                            addr,
+                            CachedAccount {
+                                state,
+                                hashed_address,
+                            },
+                        )
+                    },
+                )
             })
             .collect::<Result<_, _>>()?;
         let mut cache = self.write_accounts()?;
