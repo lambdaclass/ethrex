@@ -102,11 +102,8 @@ pub async fn run_ef_test(
     // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
     // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
     // same final state is reached.
-    //
-    // Skipped under `stateless` because enabling `eip-8025` on `ethrex-blockchain` removes
-    // the merkleizer-Sender setup that the parallel BAL path relies on, tripping every
-    // pass-2 with "sequential execution path called without a merkleizer Sender". Parallel
-    // correctness is exercised by the non-stateless test runs, which keep this path active.
+    // Skipped under `stateless`: `eip-8025` on `ethrex-blockchain` drops the merkleizer
+    // Sender the parallel path needs; the non-stateless runs still cover this.
     #[cfg(not(feature = "stateless"))]
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
@@ -571,10 +568,9 @@ async fn run_stateless_from_fixture(
             })?,
         };
 
-        // Prefer the canonical EIP-8025 wire path: same entry point as the
-        // production guest binary, exercising public_keys / hash_tree_root checks
-        // the legacy ProgramInput route bypasses. Self-contained, so check it
-        // before the `executionWitness` guard.
+        // Prefer the canonical EIP-8025 wire path (production guest binary entry
+        // point) which exercises the public_keys / hash_tree_root checks the
+        // legacy `ProgramInput` route bypasses.
         if let Some(input_hex) = block_data.stateless_input_bytes.as_deref() {
             run_stateless_from_input_bytes(
                 test_key,

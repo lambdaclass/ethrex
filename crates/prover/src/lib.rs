@@ -1,6 +1,5 @@
-// SP1/Risc0/OpenVM/Zisk backends serialize `ProgramInput` via rkyv, which the
-// `eip-8025` variant of `ProgramInput` doesn't implement. Combining them would
-// fail to compile in `serialize_input`; reject it explicitly.
+// Non-exec backends rkyv-serialize `ProgramInput`, which the `eip-8025` variant
+// doesn't implement.
 #[cfg(all(
     feature = "eip-8025",
     any(

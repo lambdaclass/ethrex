@@ -48,8 +48,7 @@ impl OpcodeHandler for OpCallHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // Static gas phase (see OpStaticCallHandler for the EELS reference).
-        // EELS' first check_gas excludes `create_cost`; that's added later.
+        // Static gas: check before any state read (mirrors EELS `staticcall`).
         let value_cost = if !value.is_zero() {
             gas_cost::CALL_POSITIVE_VALUE
         } else {
@@ -72,7 +71,6 @@ impl OpcodeHandler for OpCallHandler {
             .ok_or(ExceptionalHalt::OutOfGas)?;
         vm.current_call_frame.check_gas(static_cost)?;
 
-        // State-access phase: warm, then read account state and resolve delegation.
         vm.substate.add_accessed_address(callee);
         let address_is_empty = vm.db.get_account(callee)?.is_empty();
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
@@ -83,8 +81,8 @@ impl OpcodeHandler for OpCallHandler {
             0
         };
 
-        // Record BAL before the delegation check_gas so the target is still
-        // touched when only the delegate-access check fails.
+        // BAL touches the target before the delegation gas check, so a failed
+        // delegate-access check still leaves the target recorded.
         vm.record_bal_call_touch(
             callee,
             code_address,
@@ -97,8 +95,6 @@ impl OpcodeHandler for OpCallHandler {
             create_cost,
         );
 
-        // EELS extends the second check with `create_cost` for CALL (the
-        // create cost is computed AFTER state access).
         if is_delegation_7702 {
             vm.current_call_frame.check_gas(
                 static_cost
@@ -223,7 +219,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Static gas phase (see OpStaticCallHandler for the EELS reference).
+        // Static gas: check before any state read (mirrors EELS `callcode`).
         let value_cost = if !value.is_zero() {
             gas_cost::CALLCODE_POSITIVE_VALUE
         } else {
@@ -246,13 +242,11 @@ impl OpcodeHandler for OpCallCodeHandler {
             .ok_or(ExceptionalHalt::OutOfGas)?;
         vm.current_call_frame.check_gas(static_cost)?;
 
-        // State-access phase.
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Record BAL before the delegation check_gas so the target is still
-        // touched when only the delegate-access check fails.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -348,7 +342,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Static gas phase (see OpStaticCallHandler for the EELS reference).
+        // Static gas: check before any state read (mirrors EELS `delegatecall`).
         let new_memory_size = calculate_memory_size(args_offset, args_len)?
             .max(calculate_memory_size(return_offset, return_len)?);
         let address_was_cold = !vm.substate.is_address_accessed(&address);
@@ -364,13 +358,11 @@ impl OpcodeHandler for OpDelegateCallHandler {
             .ok_or(ExceptionalHalt::OutOfGas)?;
         vm.current_call_frame.check_gas(static_cost)?;
 
-        // State-access phase.
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Record BAL before the delegation check_gas so the target is still
-        // touched when only the delegate-access check fails.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -467,9 +459,8 @@ impl OpcodeHandler for OpStaticCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Static gas phase (no state reads). Mirrors EELS' `check_gas` before
-        // `calculate_delegation_cost` so a state-read OOG can't precede the
-        // static gas check.
+        // Static gas: check before any state read (mirrors EELS `staticcall`,
+        // so the EIP-7702 code lookup can't precede the gas check).
         let new_memory_size = calculate_memory_size(args_offset, args_len)?
             .max(calculate_memory_size(return_offset, return_len)?);
         let address_was_cold = !vm.substate.is_address_accessed(&address);
@@ -485,13 +476,11 @@ impl OpcodeHandler for OpStaticCallHandler {
             .ok_or(ExceptionalHalt::OutOfGas)?;
         vm.current_call_frame.check_gas(static_cost)?;
 
-        // State-access phase: warm the address, then resolve EIP-7702 delegation.
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Record BAL before the delegation check_gas so the target is still
-        // touched when only the delegate-access check fails.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,

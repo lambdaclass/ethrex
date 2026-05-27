@@ -98,8 +98,8 @@ pub fn execution_program(
 
 /// Execute an already-built [`ProgramInput`].
 ///
-/// `Direct` returns a sentinel `ProgramOutput` (zero request_root, `valid = true`)
-/// since there is no `NewPayloadRequest` to root in that path. `ExecBackend`
+/// The `Direct` arm has no `NewPayloadRequest`, so it returns a sentinel
+/// `ProgramOutput` with zero request_root and `valid = true`. `ExecBackend`
 /// promotes `valid = false` to `Err` for result-only callers.
 #[cfg(feature = "eip-8025")]
 pub fn execute_decoded(
@@ -450,14 +450,12 @@ fn validate_eip8025_canonical_execution(
         .execution_payload
         .block_number;
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
-    // Decode the ancestor headers once; both the chain-linkage check and
-    // `into_execution_witness` reuse the result.
+    // Decode headers once; reused by the chain-linkage check and `into_execution_witness`.
     let decoded_headers = ethrex_common::types::block_execution_witness::decode_witness_headers(
         &rpc_witness.headers,
     )?;
-    // BLOCKHASH ancestors must form a contiguous chain in the order supplied
-    // (see EELS `test_validation_headers_non_contiguous_chain`). Check before
-    // any sort/dedup discards the order.
+    // EELS `test_validation_headers_non_contiguous_chain`: check chain linkage
+    // in input order, before any sort/dedup.
     ethrex_common::types::block_execution_witness::validate_witness_headers_chain(
         &decoded_headers,
         crypto.as_ref(),
@@ -489,12 +487,10 @@ fn validate_canonical_chain_config(
         )));
     }
 
-    // `CanonicalForkConfig.fork` uses EELS-internal numbering (e.g. Amsterdam = 24
-    // in EELS, 25 here), so the discriminator is not compared. The blob-schedule
-    // check below is a partial proxy: a fork that keeps identical blob parameters
-    // would not be caught here. `active_fork.activation` is SSZ-decoded for
-    // canonical-root determinism but not cross-checked — the spec stores those
-    // values in the wire payload, not as something the verifier validates.
+    // `fork` and `activation` are not compared: EELS and ethrex number forks
+    // differently, and the spec stores activation values for canonical-root
+    // determinism rather than verifier cross-checking. The blob-schedule check
+    // below is a partial proxy and misses forks with identical blob parameters.
 
     // Single-entry check is sound because `MAX_BLOB_SCHEDULES_PER_FORK = 1`.
     let canonical_schedule = canonical.active_fork.blob_schedule.iter().next();
@@ -590,8 +586,7 @@ fn validate_eip8025_amsterdam_execution(
         )));
     }
     for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
-        // `SszVector<u8, BYTES_PER_PUBLIC_KEY>` is fixed-size by SSZ decode, so only the
-        // 0x04 prefix needs checking: uncompressed secp256k1 is 0x04 || X || Y.
+        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
         let pk_bytes: &[u8] = public_key;
         if pk_bytes[0] != 0x04 {
             return Err(ExecutionError::Internal(

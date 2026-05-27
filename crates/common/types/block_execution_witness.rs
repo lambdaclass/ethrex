@@ -149,12 +149,10 @@ impl RpcExecutionWitness {
         decoded_headers: &[BlockHeader],
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
-        // `0x80` is a Null-node sentinel emitted by some `debug_executionWitness`
-        // producers that our decoder doesn't accept; skip it.
-        // Extra/unused witness entries must validate (see EELS
-        // `test_validation_state_extra_unused_trie_node`), so undecodable nodes
-        // are dropped; missing needed nodes surface later as `RootNotFound` from
-        // `get_embedded_root`.
+        // Drop the `0x80` Null-node sentinel some `debug_executionWitness` producers emit.
+        // Undecodable/unused nodes are dropped per EELS
+        // `test_validation_state_extra_unused_trie_node`; missing needed nodes surface
+        // later as `RootNotFound` from `get_embedded_root`.
         let nodes: BTreeMap<H256, Node> = self
             .state
             .into_iter()
