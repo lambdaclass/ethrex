@@ -181,9 +181,9 @@ pub fn json_to_execution_payload_v4(
         }
         None => Vec::new(),
     };
-    let bal_ssz = bal_bytes
-        .try_into()
-        .map_err(|_| ConversionError::internal("BAL RLP exceeds MAX_BYTES_PER_TRANSACTION"))?;
+    let bal_ssz = bal_bytes.try_into().map_err(|_| {
+        ConversionError::internal("block_access_list RLP exceeds MAX_BYTES_PER_TRANSACTION cap")
+    })?;
     Ok(ExecutionPayloadV4 {
         parent_hash: p.parent_hash.0,
         fee_recipient: p.fee_recipient.0,

@@ -24,8 +24,8 @@ pub async fn engine_auth_middleware(
         return error_response(StatusCode::UNAUTHORIZED, "missing bearer token");
     };
 
-    if let Err(e) = validate_jwt_authentication(token, &secret) {
-        return error_response(StatusCode::UNAUTHORIZED, &format!("auth failed: {e:?}"));
+    if validate_jwt_authentication(token, &secret).is_err() {
+        return error_response(StatusCode::UNAUTHORIZED, "authentication failed");
     }
 
     next.run(request).await

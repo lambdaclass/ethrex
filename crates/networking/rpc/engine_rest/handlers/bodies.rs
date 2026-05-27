@@ -57,9 +57,11 @@ fn body_to_v2(
         Some(b) => {
             let mut buf = Vec::new();
             b.encode(&mut buf);
-            let inner: SszList<u8, MAX_BYTES_PER_TRANSACTION> = buf
-                .try_into()
-                .map_err(|_| EngineRestError::internal("BAL exceeds MAX_BYTES_PER_TRANSACTION"))?;
+            let inner: SszList<u8, MAX_BYTES_PER_TRANSACTION> = buf.try_into().map_err(|_| {
+                EngineRestError::internal(
+                    "block_access_list RLP exceeds MAX_BYTES_PER_TRANSACTION cap",
+                )
+            })?;
             ssz_some(inner)
         }
         None => ssz_none(),

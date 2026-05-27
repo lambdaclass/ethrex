@@ -22,7 +22,7 @@ use crate::engine_rest::types::common::{
 use crate::rpc::RpcApiContext;
 
 fn check_count(n: usize) -> Result<(), EngineRestError> {
-    if n >= MAX_BLOB_HASHES_REQUEST {
+    if n > MAX_BLOB_HASHES_REQUEST {
         return Err(EngineRestError::payload_too_large(format!(
             "request exceeds MAX_BLOB_HASHES_REQUEST ({MAX_BLOB_HASHES_REQUEST})"
         )));
@@ -84,12 +84,14 @@ async fn require_osaka_tip(ctx: &RpcApiContext, version: u8) -> Result<(), Engin
     let header = ctx
         .storage
         .get_block_header(latest)
-        .map_err(|e| EngineRestError::internal(format!("storage: {e}")))?;
-    if let Some(h) = header
-        && !ctx
-            .storage
-            .get_chain_config()
-            .is_osaka_activated(h.timestamp)
+        .map_err(|e| EngineRestError::internal(format!("storage: {e}")))?
+        .ok_or_else(|| {
+            EngineRestError::internal(format!("missing header for latest block {latest}"))
+        })?;
+    if !ctx
+        .storage
+        .get_chain_config()
+        .is_osaka_activated(header.timestamp)
     {
         return Err(EngineRestError::unprocessable(format!(
             "getBlobsV{version} engine only supported for Osaka"
