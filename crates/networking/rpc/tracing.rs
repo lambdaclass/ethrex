@@ -252,12 +252,12 @@ impl RpcHandler for TraceBlockByNumberRequest {
             .block
             .resolve_block_number(&context.storage)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
         let block = context
             .storage
             .get_block_by_number(block_number)
             .await?
-            .ok_or(RpcErr::Internal("Block not Found".to_string()))?;
+            .ok_or(RpcErr::BadParams("Block not Found".to_string()))?;
         trace_block(block, &self.trace_config, &context).await
     }
 }
@@ -270,8 +270,14 @@ impl RpcHandler for TraceBlockRequest {
         if params.is_empty() || params.len() > 2 {
             return Err(RpcErr::BadParams("Expected 1 or 2 params".to_owned()));
         }
-        // First param is hex-encoded RLP block
+        // First param is hex-encoded RLP block.
+        // Cap input size to 5 MB of hex (≈ 2.5 MB decoded) to prevent OOM on
+        // absurdly large payloads.  A mainnet block's RLP is well under 2 MB.
+        const MAX_HEX_LEN: usize = 5 * 1024 * 1024;
         let hex_str: String = serde_json::from_value(params[0].clone())?;
+        if hex_str.len() > MAX_HEX_LEN {
+            return Err(RpcErr::TooLargeRequest);
+        }
         let hex_str = hex_str.strip_prefix("0x").ok_or(RpcErr::BadParams(
             "Block data must be 0x-prefixed".to_owned(),
         ))?;
