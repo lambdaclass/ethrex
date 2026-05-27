@@ -24,8 +24,8 @@ impl RpcHandler for PreimageRequest {
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
         // ethrex does not maintain a keccak preimage store.
-        // Return null to indicate the preimage is not available.
-        Ok(Value::Null)
+        // Geth returns {"code": -32000, "message": "unknown preimage"} in this case.
+        Err(RpcErr::BadParams("unknown preimage".to_owned()))
     }
 }
 
@@ -56,13 +56,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_returns_null() {
+    async fn handle_returns_unknown_preimage_error() {
         let req = PreimageRequest {
             _hash: H256::zero(),
         };
         let storage = crate::test_utils::setup_store().await;
         let context = crate::test_utils::default_context_with_storage(storage).await;
-        let result = req.handle(context).await.unwrap();
-        assert_eq!(result, Value::Null);
+        let result = req.handle(context).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, RpcErr::BadParams(ref msg) if msg == "unknown preimage"));
     }
 }

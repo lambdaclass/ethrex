@@ -11,7 +11,7 @@ use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::utils::RpcRequest;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
-use serde_json::{Value, json};
+use serde_json::json;
 
 const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
 
@@ -51,33 +51,28 @@ async fn setup_store(sender: Address) -> Store {
     store
 }
 
-async fn rpc_call(store: &Store, method: &str, params: Vec<Value>) -> Value {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "method": method,
-        "params": params,
-        "id": 1
-    });
-    let request: RpcRequest = serde_json::from_value(body).expect("valid RPC request");
-    let context = default_context_with_storage(store.clone()).await;
-    map_http_requests(&request, context)
-        .await
-        .expect("RPC call should succeed")
-}
-
 #[tokio::test]
-async fn preimage() {
+async fn preimage_returns_unknown_preimage_error() {
     let sk = test_secret_key();
     let sender = sender_from_key(&sk);
     let store = setup_store(sender).await;
 
-    let result = rpc_call(
-        &store,
-        "debug_preimage",
-        vec![json!(format!("{:#x}", H256::zero()))],
-    )
-    .await;
+    let body = json!({
+        "jsonrpc": "2.0",
+        "method": "debug_preimage",
+        "params": [format!("{:#x}", H256::zero())],
+        "id": 1
+    });
+    let request: RpcRequest = serde_json::from_value(body).expect("valid RPC request");
+    let context = default_context_with_storage(store.clone()).await;
+    let result = map_http_requests(&request, context).await;
 
-    // ethrex does not maintain a preimage store, so always returns null.
-    assert!(result.is_null(), "should return null");
+    // Geth returns {"code": -32000, "message": "unknown preimage"} when
+    // the preimage is not available.  ethrex does not maintain a preimage
+    // store, so this should always be an error.
+    let err = result.expect_err("should return an error, not null");
+    assert!(
+        matches!(err, ethrex_rpc::utils::RpcErr::BadParams(ref msg) if msg == "unknown preimage"),
+        "expected BadParams(\"unknown preimage\"), got {err:?}"
+    );
 }
