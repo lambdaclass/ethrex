@@ -88,6 +88,21 @@ impl RocksDBBackend {
         // blocks in userspace, reducing kernel I/O for hot data (trie nodes, accounts).
         let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
 
+        // Configures a CF's block-based table to keep its index and bloom-filter blocks
+        // inside the shared (bounded) block cache rather than pinning them per open file.
+        //
+        // With `max_open_files(-1)` every SST stays open, and RocksDB's default
+        // (`cache_index_and_filter_blocks = false`) pins each file's index + filter blocks
+        // in heap for the lifetime of the reader. On a large state DB this grows without
+        // bound with the number of SST files (on a 490 GB mainnet DB the pinned filters
+        // alone reached ~6 GB). Caching them instead bounds total table memory to the block
+        // cache size; pinning L0 keeps the hottest level resident to avoid a read-latency cliff.
+        let configure_block_cache = |block_opts: &mut BlockBasedOptions| {
+            block_opts.set_block_cache(&block_cache);
+            block_opts.set_cache_index_and_filter_blocks(true);
+            block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        };
+
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
             let mut cf_opts = Options::default();
@@ -110,7 +125,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
@@ -121,7 +136,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
@@ -134,7 +149,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -147,7 +162,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {
@@ -162,7 +177,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 RECEIPTS_V2 => {
@@ -172,7 +187,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -183,7 +198,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }
