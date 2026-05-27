@@ -55,10 +55,12 @@ jobs:
           # build. In multi-user (daemon) mode the FOD builds run under the
           # nix-daemon and don't see the caller's environment, so override the
           # User-Agent via impure-env (honored because the runner is a trusted
-          # user). Single token (=-form) so it survives word-splitting.
+          # user). Use curl's glued short option `-A<value>`: a single space-free
+          # token that survives impure-env's space-separated parsing and
+          # fetchurl's unquoted word-split (curl rejects the --user-agent=value form).
           extra_nix_config: |
             extra-experimental-features = configurable-impure-env
-            impure-env = NIX_CURL_FLAGS=--user-agent=ethrex-ci+https://github.com/lambdaclass/ethrex
+            impure-env = NIX_CURL_FLAGS=-Aethrex-ci+https://github.com/lambdaclass/ethrex
 
       - name: Build image
         run: |
