@@ -235,6 +235,10 @@ impl RpcHandler for TraceTransactionRequest {
                         ));
                     };
                 let mut results = serde_json::Map::new();
+                // NOTE: each sub-tracer receives the full `timeout`, not a
+                // proportional share — with N sub-tracers the wall-clock budget
+                // is up to N × timeout. This matches geth (which also re-executes
+                // per tracer in its JS tracer path) and is documented on MuxTracer.
                 for (tracer_name, sub_config) in &mux_config {
                     let result = run_tx_sub_tracer(
                         tracer_name,
@@ -470,6 +474,7 @@ async fn run_tx_sub_tracer(
             })?)
         }
         "4byteTracer" => {
+            // 4byteTracer accepts no configuration; any supplied sub_config is ignored.
             let call_trace = context
                 .blockchain
                 .trace_transaction_calls(tx_hash, reexec, timeout, false, false)
@@ -493,8 +498,10 @@ async fn run_tx_sub_tracer(
 /// (https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/native/4byte.go):
 ///
 /// - The top-level transaction call is **not** counted; only nested calls are.
-/// - Only `CALL` and `DELEGATECALL` are counted — geth's tracer filters on the
-///   opcode and skips STATICCALL, CALLCODE, CREATE*, and SELFDESTRUCT.
+/// - `CALL`, `DELEGATECALL`, `STATICCALL`, and `CALLCODE` are counted
+///   (matching geth's `CaptureEnter`, which fires for all call types).
+///   `CREATE`, `CREATE2`, and `SELFDESTRUCT` are skipped because their
+///   input is init-code, not an ABI-encoded call.
 /// - Invocations targeting precompile addresses are skipped.
 /// - The reported size is `len(calldata) - 4` (the argument-bytes length).
 fn collect_four_byte_selectors(top_frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
@@ -504,7 +511,7 @@ fn collect_four_byte_selectors(top_frame: &CallTraceFrame, selectors: &mut HashM
 }
 
 fn collect_four_byte_recursive(frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
-    if matches!(frame.call_type, CallType::CALL | CallType::DELEGATECALL)
+    if matches!(frame.call_type, CallType::CALL | CallType::DELEGATECALL | CallType::STATICCALL | CallType::CALLCODE)
         && frame.input.len() >= 4
         && !is_precompile_address(&frame.to)
     {
@@ -794,7 +801,7 @@ mod tests {
     }
 
     #[test]
-    fn four_byte_only_counts_call_and_delegatecall() {
+    fn four_byte_counts_all_call_types_except_create_and_selfdestruct() {
         let mk_with = |call_type: CallType| CallTraceFrame {
             call_type,
             input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x01]),
@@ -810,9 +817,9 @@ mod tests {
             mk_with(CallType::SELFDESTRUCT),
         ]);
         let s = collect(&top);
-        // Only CALL + DELEGATECALL contribute.
+        // CALL + DELEGATECALL + STATICCALL + CALLCODE = 4 hits.
         assert_eq!(s.len(), 1);
-        assert_eq!(s["0xa9059cbb-1"], 2);
+        assert_eq!(s["0xa9059cbb-1"], 4);
     }
 
     #[test]
