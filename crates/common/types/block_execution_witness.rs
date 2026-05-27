@@ -349,7 +349,7 @@ pub enum GuestProgramStateError {
     NoBlockHeaders,
     #[error("Parent block header of block {0} was not found")]
     MissingParentHeaderOf(u64),
-    #[error("Non-contiguous block headers (there's a gap in the block headers list)")]
+    #[error("Non-contiguous block headers")]
     NoncontiguousBlockHeaders,
     #[error("Witness is missing bytecode for code hash {0}")]
     MissingBytecode(H256),

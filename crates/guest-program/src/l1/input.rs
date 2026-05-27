@@ -55,6 +55,7 @@ impl Default for ProgramInput {
 
 #[cfg(feature = "eip-8025")]
 impl ProgramInput {
+    /// Creates a `Direct` ProgramInput from in-memory blocks and execution witness.
     pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
         Self::Direct {
             blocks,
@@ -62,6 +63,7 @@ impl ProgramInput {
         }
     }
 
+    /// Creates a `Wire` ProgramInput from an already-decoded EIP-8025 payload.
     pub fn wire(decoded: DecodedEip8025) -> Self {
         Self::Wire(decoded)
     }
@@ -133,6 +135,7 @@ const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
 /// Big-endian schema-id prefix on canonical `SszStatelessInput` wire bytes.
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x0001;
+/// Byte length of [`STATELESS_INPUT_SCHEMA_ID`] on the wire.
 #[cfg(feature = "eip-8025")]
 pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
 

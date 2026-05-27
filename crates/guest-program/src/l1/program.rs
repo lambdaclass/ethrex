@@ -180,8 +180,7 @@ fn decode_payload_transactions<const MAX_TXS: usize, const MAX_BYTES_PER_TX: usi
     transactions
         .iter()
         .map(|tx_bytes| {
-            let raw: Vec<u8> = tx_bytes.iter().copied().collect();
-            ethrex_common::types::Transaction::decode_canonical(&raw)
+            ethrex_common::types::Transaction::decode_canonical(tx_bytes)
                 .map_err(|e| format!("tx decode: {e}"))
         })
         .collect::<Result<Vec<_>, _>>()
@@ -258,15 +257,15 @@ fn new_payload_request_to_block(
     let requests_hash = compute_requests_hash(&execution_requests);
 
     let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
+    let logs_bloom = Bloom::from_slice(&payload.logs_bloom);
 
-    // Build logs_bloom from SszVector<u8, 256>
-    let bloom_bytes: Vec<u8> = payload.logs_bloom.iter().copied().collect();
-    let logs_bloom = Bloom::from_slice(&bloom_bytes);
+    let transactions_root = compute_transactions_root(&transactions, crypto);
+    let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
 
     let body = BlockBody {
-        transactions: transactions.clone(),
+        transactions,
         ommers: vec![],
-        withdrawals: Some(withdrawals.clone()),
+        withdrawals: Some(withdrawals),
     };
 
     let header = BlockHeader {
@@ -274,7 +273,7 @@ fn new_payload_request_to_block(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
         state_root: H256::from_slice(&payload.state_root),
-        transactions_root: compute_transactions_root(&body.transactions, crypto),
+        transactions_root,
         receipts_root: H256::from_slice(&payload.receipts_root),
         logs_bloom,
         difficulty: 0.into(),
@@ -282,11 +281,11 @@ fn new_payload_request_to_block(
         gas_limit: payload.gas_limit,
         gas_used: payload.gas_used,
         timestamp: payload.timestamp,
-        extra_data: Bytes::from(payload.extra_data.iter().copied().collect::<Vec<u8>>()),
+        extra_data: Bytes::copy_from_slice(&payload.extra_data),
         prev_randao: H256::from_slice(&payload.prev_randao),
         nonce: 0,
         base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(compute_withdrawals_root(&withdrawals, crypto)),
+        withdrawals_root: Some(withdrawals_root),
         blob_gas_used: Some(payload.blob_gas_used),
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
@@ -318,26 +317,27 @@ fn new_payload_request_amsterdam_to_block(
     let transactions = decode_payload_transactions(&payload.transactions)?;
     let withdrawals = decode_payload_withdrawals(&payload.withdrawals);
 
-    let bal_bytes: Vec<u8> = payload.block_access_list.iter().copied().collect();
-    let block_access_list = BlockAccessList::decode(&bal_bytes)
+    let block_access_list = BlockAccessList::decode(&payload.block_access_list)
         .map_err(|e| format!("block access list decode: {e}"))?;
     block_access_list
         .validate_ordering()
         .map_err(|e| format!("block access list ordering: {e}"))?;
-    if block_access_list.encode_to_vec() != bal_bytes {
+    if block_access_list.encode_to_vec().as_slice() != &payload.block_access_list[..] {
         return Err("block access list is not canonically encoded".to_string());
     }
 
     let execution_requests = req.execution_requests.to_encoded_requests();
     let requests_hash = compute_requests_hash(&execution_requests);
     let base_fee_per_gas = base_fee_per_gas_from_le_bytes(&payload.base_fee_per_gas)?;
-    let bloom_bytes: Vec<u8> = payload.logs_bloom.iter().copied().collect();
-    let logs_bloom = Bloom::from_slice(&bloom_bytes);
+    let logs_bloom = Bloom::from_slice(&payload.logs_bloom);
+
+    let transactions_root = compute_transactions_root(&transactions, crypto);
+    let withdrawals_root = compute_withdrawals_root(&withdrawals, crypto);
 
     let body = BlockBody {
-        transactions: transactions.clone(),
+        transactions,
         ommers: vec![],
-        withdrawals: Some(withdrawals.clone()),
+        withdrawals: Some(withdrawals),
     };
 
     let header = BlockHeader {
@@ -345,7 +345,7 @@ fn new_payload_request_amsterdam_to_block(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: Address::from_slice(&payload.fee_recipient.0),
         state_root: H256::from_slice(&payload.state_root),
-        transactions_root: compute_transactions_root(&body.transactions, crypto),
+        transactions_root,
         receipts_root: H256::from_slice(&payload.receipts_root),
         logs_bloom,
         difficulty: 0.into(),
@@ -353,11 +353,11 @@ fn new_payload_request_amsterdam_to_block(
         gas_limit: payload.gas_limit,
         gas_used: payload.gas_used,
         timestamp: payload.timestamp,
-        extra_data: Bytes::from(payload.extra_data.iter().copied().collect::<Vec<u8>>()),
+        extra_data: Bytes::copy_from_slice(&payload.extra_data),
         prev_randao: H256::from_slice(&payload.prev_randao),
         nonce: 0,
         base_fee_per_gas: Some(base_fee_per_gas),
-        withdrawals_root: Some(compute_withdrawals_root(&withdrawals, crypto)),
+        withdrawals_root: Some(withdrawals_root),
         blob_gas_used: Some(payload.blob_gas_used),
         excess_blob_gas: Some(payload.excess_blob_gas),
         parent_beacon_block_root: Some(H256::from_slice(&req.parent_beacon_block_root)),
@@ -412,7 +412,7 @@ fn canonical_execution_witness_to_rpc(
     fn copy_ssz_bytes<const MAX_BYTES: usize>(
         bytes: &libssz_types::SszList<u8, MAX_BYTES>,
     ) -> Bytes {
-        Bytes::from(bytes.iter().copied().collect::<Vec<u8>>())
+        Bytes::copy_from_slice(bytes)
     }
 
     ethrex_common::types::block_execution_witness::RpcExecutionWitness {

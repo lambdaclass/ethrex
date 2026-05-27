@@ -642,7 +642,7 @@ async fn run_stateless_from_fixture(
 #[cfg(feature = "stateless")]
 fn run_stateless_from_input_bytes(
     test_key: &str,
-    test_network: &crate::fork::Fork,
+    test_network: &Fork,
     block_number: u64,
     input_hex: &str,
     expected_valid: bool,
