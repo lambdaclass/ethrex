@@ -252,7 +252,11 @@ impl Blockchain {
                     EvmError::Custom(format!("Failed to get state transitions: {e}"))
                 })?;
 
-                // Apply cumulative updates to a fresh trie from the parent state root
+                // TODO: this is O(N^2) — each iteration opens a fresh trie and
+                // re-applies ALL cumulative updates from tx 0..=index. For a block
+                // with N txs, total work is ~N*(N+1)/2 trie mutations. An incremental
+                // approach (reuse the trie, apply only per-tx deltas) would make this
+                // O(N) but requires a delta-tracking API in peek_state_transitions.
                 let mut state_trie = store
                     .open_state_trie(parent_state_root)
                     .map_err(|e| EvmError::Custom(format!("Failed to open state trie: {e}")))?;

@@ -52,7 +52,7 @@ impl RpcHandler for IntermediateRootsRequest {
             .storage
             .get_block_by_hash(self.block_hash)
             .await?
-            .ok_or(RpcErr::Internal("Block not found".to_string()))?;
+            .ok_or(RpcErr::WrongParam("Block not found".to_string()))?;
 
         let roots = context
             .blockchain
