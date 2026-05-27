@@ -2,7 +2,8 @@
 
 use axum::body::Bytes;
 use axum::extract::FromRequest;
-use axum::http::{self, HeaderMap, Request};
+use axum::http::{self, HeaderMap, Request, StatusCode};
+use axum::response::IntoResponse;
 use libssz::SszDecode;
 
 use crate::engine_rest::error::EngineRestError;
@@ -45,9 +46,16 @@ where
         state: &S,
     ) -> Result<Self, Self::Rejection> {
         check_ssz_content_type(req.headers())?;
-        let bytes = Bytes::from_request(req, state)
-            .await
-            .map_err(|e| EngineRestError::bad_request(format!("failed to read body: {e}")))?;
+        let bytes = Bytes::from_request(req, state).await.map_err(|e| {
+            // Preserve `413 Payload Too Large` from `DefaultBodyLimit`; map
+            // everything else (encoding/IO errors) to `400 Bad Request`.
+            let status = e.into_response().status();
+            if status == StatusCode::PAYLOAD_TOO_LARGE {
+                EngineRestError::payload_too_large("request body exceeds endpoint limit")
+            } else {
+                EngineRestError::bad_request("failed to read request body")
+            }
+        })?;
         let value = decode_ssz::<T>(&bytes)?;
         Ok(Ssz(value))
     }
