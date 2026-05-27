@@ -28,8 +28,12 @@ const DEFAULT_MAX_RESULTS: usize = 100_000;
 /// - Emits hashed keys only; addresses and trie preimages are not exposed.
 /// - `code` and `storage` are not included. Use `eth_getCode` /
 ///   `eth_getStorageAt` for those.
-/// - Default `maxResults` is [`DEFAULT_MAX_RESULTS`] rather than unbounded;
-///   pass `{"start": ..., "maxResults": ...}` to page through larger states.
+/// - `balance` is serialized as a hex string (`"0x..."`) whereas geth uses a
+///   decimal string. Callers parsing the balance field should handle both.
+/// - `maxResults` is clamped to [`DEFAULT_MAX_RESULTS`] even if the caller
+///   provides a larger value, to protect the RPC server from unbounded
+///   responses. Pass `{"start": ..., "maxResults": ...}` to page through
+///   larger states.
 ///
 /// Iteration caveat: `Store::iter_accounts_from` silently stops on a node
 /// decode failure (see `crates/storage/store.rs`). A truncated response with
@@ -104,7 +108,11 @@ impl RpcHandler for DumpBlockRequest {
 
         let state_root = header.state_root;
         let start = self.config.start.unwrap_or_else(H256::zero);
-        let max_results = self.config.max_results.unwrap_or(DEFAULT_MAX_RESULTS);
+        let max_results = self
+            .config
+            .max_results
+            .unwrap_or(DEFAULT_MAX_RESULTS)
+            .min(DEFAULT_MAX_RESULTS);
         let storage = context.storage.clone();
 
         // The trie iterator opens long-lived locked DB transactions and walks
