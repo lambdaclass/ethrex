@@ -46,7 +46,6 @@ pub struct StorageRangeAtRequest {
 #[serde(rename_all = "camelCase")]
 struct StorageRangeResult {
     storage: BTreeMap<H256, StorageEntry>,
-    #[serde(rename = "nextKey")]
     next_key: Option<H256>,
 }
 
@@ -77,6 +76,11 @@ impl RpcHandler for StorageRangeAtRequest {
             .map_err(|e| RpcErr::BadParams(format!("invalid startKey: {e}")))?;
         let max_result: usize = serde_json::from_value(params[4].clone())
             .map_err(|e| RpcErr::BadParams(format!("invalid maxResult: {e}")))?;
+        if max_result == 0 {
+            return Err(RpcErr::BadParams(
+                "maxResult must be greater than 0".to_owned(),
+            ));
+        }
         Ok(StorageRangeAtRequest {
             block,
             tx_index,
