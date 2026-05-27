@@ -413,9 +413,10 @@ impl RpcHandler for TraceBlockByNumberRequest {
 /// (https://github.com/ethereum/go-ethereum/blob/master/eth/tracers/native/4byte.go):
 ///
 /// - The top-level transaction call is **not** counted; only nested calls are.
-/// - Only `CALL` and `DELEGATECALL` are counted. `STATICCALL`, `CALLCODE`,
-///   `CREATE`, `CREATE2`, and `SELFDESTRUCT` are skipped — geth's tracer
-///   filters on the opcode the same way.
+/// - `CALL`, `DELEGATECALL`, `STATICCALL`, and `CALLCODE` are counted
+///   (matching geth's `CaptureEnter`, which fires for all call types).
+///   `CREATE`, `CREATE2`, and `SELFDESTRUCT` are skipped because their
+///   input is init-code, not an ABI-encoded call.
 /// - Invocations targeting precompile addresses are skipped.
 /// - The reported size is `len(calldata) - 4` (the argument bytes), not the
 ///   full input length.
@@ -426,7 +427,7 @@ fn collect_four_byte_selectors(top_frame: &CallTraceFrame, selectors: &mut HashM
 }
 
 fn collect_four_byte_recursive(frame: &CallTraceFrame, selectors: &mut HashMap<String, u64>) {
-    if matches!(frame.call_type, CallType::CALL | CallType::DELEGATECALL)
+    if matches!(frame.call_type, CallType::CALL | CallType::DELEGATECALL | CallType::STATICCALL | CallType::CALLCODE)
         && frame.input.len() >= 4
         && !is_precompile_address(&frame.to)
     {
@@ -595,8 +596,9 @@ mod tests {
     }
 
     #[test]
-    fn four_byte_only_counts_call_and_delegatecall() {
-        // STATICCALL, CALLCODE, CREATE, CREATE2, SELFDESTRUCT all skipped.
+    fn four_byte_counts_all_call_types_except_create_and_selfdestruct() {
+        // CALL, DELEGATECALL, STATICCALL, CALLCODE are counted (matching geth).
+        // CREATE, CREATE2, SELFDESTRUCT are skipped (init-code, not ABI calls).
         let mk_with = |call_type: CallType| CallTraceFrame {
             call_type,
             input: Bytes::from_static(&[0xa9, 0x05, 0x9c, 0xbb, 0x01]),
@@ -612,9 +614,9 @@ mod tests {
             mk_with(CallType::SELFDESTRUCT),
         ]);
         let selectors = collect(&top);
-        // Only the two valid ones contribute.
+        // CALL + DELEGATECALL + STATICCALL + CALLCODE = 4 hits.
         assert_eq!(selectors.len(), 1);
-        assert_eq!(selectors["0xa9059cbb-1"], 2);
+        assert_eq!(selectors["0xa9059cbb-1"], 4);
     }
 
     #[test]
