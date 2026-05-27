@@ -112,36 +112,29 @@ impl Blockchain {
         timeout_trace_operation(timeout, move || vm.trace_tx_noop(&block, tx_index)).await
     }
 
-    /// Re-executes every transaction in `block` with tracing disabled (noopTracer).
-    /// Returns one entry per tx (hash + empty unit) so callers can emit a uniform empty result per tx.
+    /// Re-executes every transaction in `block` with tracing disabled (noopTracer)
+    /// and returns the transaction hashes in order, so callers can emit a uniform
+    /// empty result per tx. Runs the whole block in a single pass (no per-tx VM
+    /// reconstruction), which is both simpler and a cleaner benchmark for the
+    /// noop path than tracing each tx individually.
     /// May need to re-execute ancestor blocks to rebuild the parent state, up to the amount given by `reexec`.
     pub async fn trace_block_noop(
         &self,
         block: Block,
         reexec: u32,
         timeout: Duration,
-    ) -> Result<Vec<(H256, ())>, ChainError> {
+    ) -> Result<Vec<H256>, ChainError> {
         let mut vm = self
             .rebuild_parent_state(block.header.parent_hash, reexec)
             .await?;
-        // Run system calls but stop before tx 0
-        vm.rerun_block(&block, Some(0))?;
-        let vm = Arc::new(Mutex::new(vm));
         let block = Arc::new(block);
-        let mut results = Vec::with_capacity(block.body.transactions.len());
-        for index in 0..block.body.transactions.len() {
-            let block = block.clone();
-            let vm = vm.clone();
-            let tx_hash = block.as_ref().body.transactions[index].hash();
-            timeout_trace_operation(timeout, move || {
-                vm.lock()
-                    .map_err(|_| EvmError::Custom("Unexpected Runtime Error".to_string()))?
-                    .trace_tx_noop(block.as_ref(), index)
-            })
-            .await?;
-            results.push((tx_hash, ()));
-        }
-        Ok(results)
+        let block_for_exec = block.clone();
+        // `None` runs every tx (and withdrawals) in one pass, no tracer attached.
+        timeout_trace_operation(timeout, move || {
+            vm.rerun_block(block_for_exec.as_ref(), None)
+        })
+        .await?;
+        Ok(block.body.transactions.iter().map(|tx| tx.hash()).collect())
     }
 
     /// Outputs the prestate trace for the given transaction.
