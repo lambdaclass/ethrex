@@ -59,10 +59,12 @@ enum TracerType {
     /// `structLogger` wrapper shape (`{failed, gas, returnValue, structLogs}`).
     /// Selected via `"tracer": "opcodeTracer"`.
     OpcodeTracer,
-    /// No-op tracer that re-executes the transaction(s) through the EVM with no tracer
-    /// attached and returns empty JSON objects, matching geth's `noopTracer`. Useful for
-    /// benchmarking raw execution overhead without tracing cost. Any `tracerConfig` is
-    /// ignored. Selected via `"tracer": "noopTracer"`.
+    /// No-op tracer: re-executes the transaction(s) through the EVM with no tracer
+    /// attached and returns empty JSON objects. The output shape matches geth's
+    /// `noopTracer` (`{}` per tx), but the mechanism differs: geth runs an
+    /// empty-hook tracer (paying per-opcode dispatch), whereas ethrex skips tracer
+    /// hooks entirely, isolating raw execution cost. Any `tracerConfig` is ignored.
+    /// Selected via `"tracer": "noopTracer"`.
     NoopTracer,
 }
 
