@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, VecDeque, hash_map::Entry},
     sync::RwLock,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -116,6 +117,11 @@ pub struct Mempool {
     /// Signaled on transaction and blobs bundle insertions so payload
     /// builders can await new work instead of busy-looping.
     tx_added: tokio::sync::Notify,
+    /// Monotonic counter incremented on every transaction insertion. Used by
+    /// the payload builder to detect whether new txs landed since it last
+    /// snapshotted the mempool, so it can decide whether a stale build is safe
+    /// to return.
+    tx_seq: AtomicU64,
 }
 
 impl Mempool {
@@ -123,11 +129,16 @@ impl Mempool {
         Mempool {
             inner: RwLock::new(MempoolInner::new(max_mempool_size)),
             tx_added: tokio::sync::Notify::new(),
+            tx_seq: AtomicU64::new(0),
         }
     }
 
     pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
         &self.tx_added
+    }
+
+    pub(crate) fn tx_seq(&self) -> u64 {
+        self.tx_seq.load(Ordering::Acquire)
     }
 
     fn write(&self) -> Result<std::sync::RwLockWriteGuard<'_, MempoolInner>, StoreError> {
@@ -168,6 +179,12 @@ impl Mempool {
         inner.broadcast_pool.insert(hash);
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);
+        // Bump `tx_seq` *after* releasing the write lock. The payload builder
+        // snapshots `tx_seq` before reading the mempool; with this ordering,
+        // any reader that observes the new tx is guaranteed to also observe a
+        // bumped seq on its next load, so the builder never misses a tx it
+        // already incorporated as "new since last build".
+        self.tx_seq.fetch_add(1, Ordering::Release);
         self.tx_added.notify_waiters();
 
         Ok(())
