@@ -142,6 +142,27 @@ impl VmDatabase for StoreVmDatabase {
             .map_err(|e| EvmError::DB(e.to_string()))
     }
 
+    /// Caller has already hashed the address and knows the account's storage_root
+    /// (e.g. from a higher-level account cache), so skip the local
+    /// `account_state_cache` RwLock acquisition entirely and go straight to the
+    /// FKV lookup. Hot path for parallel executor storage reads.
+    fn get_storage_slot_with_known_hash(
+        &self,
+        _address: Address,
+        hashed_address: H256,
+        storage_root: H256,
+        key: H256,
+    ) -> Result<Option<U256>, EvmError> {
+        self.store
+            .get_storage_at_root_with_known_storage_root(
+                self.state_root,
+                hashed_address,
+                storage_root,
+                key,
+            )
+            .map_err(|e| EvmError::DB(e.to_string()))
+    }
+
     #[instrument(
         level = "trace",
         name = "Block hash read",

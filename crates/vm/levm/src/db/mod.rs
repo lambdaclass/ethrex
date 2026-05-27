@@ -3,6 +3,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
+use ethrex_crypto::keccak::keccak_hash;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
@@ -10,14 +11,36 @@ use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWrite
 
 pub mod gen_db;
 
+/// Cached account state plus its `keccak(address)`. Hoisting the hash here lets
+/// downstream storage reads skip the inner database's own address-to-hash lookup
+/// (and its associated lock).
+#[derive(Clone, Copy)]
+pub struct CachedAccount {
+    pub state: AccountState,
+    pub hashed_address: H256,
+}
+
 // Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, AccountState>;
+type AccountCache = FxHashMap<Address, CachedAccount>;
 type StorageCache = FxHashMap<(Address, H256), U256>;
 type CodeCache = FxHashMap<H256, Code>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError>;
+    /// Storage read with caller-provided `keccak(address)` and `storage_root`.
+    /// Lets implementations that wrap a higher-level cache (e.g. `CachingDatabase`)
+    /// bypass the inner database's own address-to-hash lookup on the hot read path.
+    /// Default impl ignores the hints and falls back to `get_storage_value`.
+    fn get_storage_value_with_known_hash(
+        &self,
+        address: Address,
+        _hashed_address: H256,
+        _storage_root: H256,
+        key: H256,
+    ) -> Result<U256, DatabaseError> {
+        self.get_storage_value(address, key)
+    }
     fn get_block_hash(&self, block_number: u64) -> Result<H256, DatabaseError>;
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError>;
@@ -107,19 +130,41 @@ fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
     DatabaseError::Custom(format!("Cache lock poisoned: {err}"))
 }
 
+impl CachingDatabase {
+    /// Compute and cache `keccak(address)` alongside the account state.
+    fn cache_account(&self, address: Address, state: AccountState) -> Result<(), DatabaseError> {
+        let hashed_address = H256::from(keccak_hash(address.to_fixed_bytes()));
+        self.write_accounts()?
+            .entry(address)
+            .or_insert(CachedAccount {
+                state,
+                hashed_address,
+            });
+        Ok(())
+    }
+
+    /// Look up the cached `(hashed_address, storage_root)` for an account if present.
+    fn cached_account_hash_and_root(
+        &self,
+        address: Address,
+    ) -> Result<Option<(H256, H256)>, DatabaseError> {
+        Ok(self
+            .read_accounts()?
+            .get(&address)
+            .map(|cached| (cached.hashed_address, cached.state.storage_root)))
+    }
+}
+
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
         // Check cache first
-        if let Some(state) = self.read_accounts()?.get(&address).copied() {
-            return Ok(state);
+        if let Some(cached) = self.read_accounts()?.get(&address).copied() {
+            return Ok(cached.state);
         }
 
         // Cache miss: query underlying database
         let state = self.inner.get_account_state(address)?;
-
-        // Populate cache (AccountState is Copy, no clone needed)
-        self.write_accounts()?.insert(address, state);
-
+        self.cache_account(address, state)?;
         Ok(state)
     }
 
@@ -129,12 +174,46 @@ impl Database for CachingDatabase {
             return Ok(value);
         }
 
-        // Cache miss: query underlying database
-        let value = self.inner.get_storage_value(address, key)?;
+        // Cache miss: if the account is already cached, use its hashed address
+        // and storage_root to skip the inner database's address-to-hash lookup
+        // (and its associated lock acquisition).
+        let value = if let Some((hashed_address, storage_root)) =
+            self.cached_account_hash_and_root(address)?
+        {
+            self.inner.get_storage_value_with_known_hash(
+                address,
+                hashed_address,
+                storage_root,
+                key,
+            )?
+        } else {
+            self.inner.get_storage_value(address, key)?
+        };
 
         // Populate cache (U256 is Copy, no clone needed)
         self.write_storage()?.insert((address, key), value);
 
+        Ok(value)
+    }
+
+    fn get_storage_value_with_known_hash(
+        &self,
+        address: Address,
+        hashed_address: H256,
+        storage_root: H256,
+        key: H256,
+    ) -> Result<U256, DatabaseError> {
+        // Honour the storage cache first; otherwise forward the precomputed hash.
+        if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
+            return Ok(value);
+        }
+        let value = self.inner.get_storage_value_with_known_hash(
+            address,
+            hashed_address,
+            storage_root,
+            key,
+        )?;
+        self.write_storage()?.insert((address, key), value);
         Ok(value)
     }
 
@@ -182,27 +261,55 @@ impl Database for CachingDatabase {
 
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<(Address, AccountState)> = addresses
+        // Fetch from inner in parallel (no lock contention), compute keccak(address)
+        // in the same parallel pass, then single write-lock to populate cache.
+        let fetched: Vec<(Address, CachedAccount)> = addresses
             .par_iter()
-            .map(|&addr| self.inner.get_account_state(addr).map(|s| (addr, s)))
+            .map(|&addr| {
+                self.inner.get_account_state(addr).map(|state| {
+                    (
+                        addr,
+                        CachedAccount {
+                            state,
+                            hashed_address: H256::from(keccak_hash(addr.to_fixed_bytes())),
+                        },
+                    )
+                })
+            })
             .collect::<Result<_, _>>()?;
         let mut cache = self.write_accounts()?;
-        for (addr, state) in fetched {
-            cache.entry(addr).or_insert(state);
+        for (addr, cached) in fetched {
+            cache.entry(addr).or_insert(cached);
         }
         Ok(())
     }
 
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
+        // Snapshot hashed_address + storage_root per account so the parallel
+        // fetchers can use the precomputed hash and bypass the inner database's
+        // address-to-hash lookup on every slot.
+        let account_hints: FxHashMap<Address, (H256, H256)> = self
+            .read_accounts()?
+            .iter()
+            .map(|(addr, cached)| (*addr, (cached.hashed_address, cached.state.storage_root)))
+            .collect();
+
         let fetched: Vec<((Address, H256), U256)> = keys
             .par_iter()
             .map(|&(addr, key)| {
-                self.inner
-                    .get_storage_value(addr, key)
-                    .map(|v| ((addr, key), v))
+                let value = if let Some(&(hashed_address, storage_root)) = account_hints.get(&addr)
+                {
+                    self.inner.get_storage_value_with_known_hash(
+                        addr,
+                        hashed_address,
+                        storage_root,
+                        key,
+                    )?
+                } else {
+                    self.inner.get_storage_value(addr, key)?
+                };
+                Ok(((addr, key), value))
             })
             .collect::<Result<_, _>>()?;
         let mut cache = self.write_storage()?;

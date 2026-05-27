@@ -55,6 +55,27 @@ impl LevmDatabase for DatabaseLogger {
         self.store.as_ref().get_storage_value(address, key)
     }
 
+    fn get_storage_value_with_known_hash(
+        &self,
+        address: CoreAddress,
+        hashed_address: CoreH256,
+        storage_root: CoreH256,
+        key: CoreH256,
+    ) -> Result<CoreU256, DatabaseError> {
+        self.state_accessed
+            .lock()
+            .map_err(|_| DatabaseError::Custom("Could not lock mutex".to_string()))?
+            .entry(address)
+            .and_modify(|keys| keys.push(key))
+            .or_insert(vec![key]);
+        self.store.as_ref().get_storage_value_with_known_hash(
+            address,
+            hashed_address,
+            storage_root,
+            key,
+        )
+    }
+
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
         let block_hash = self.store.as_ref().get_block_hash(block_number)?;
         self.block_hashes_accessed
@@ -103,6 +124,24 @@ impl LevmDatabase for DynVmDatabase {
                 .map_err(|e| DatabaseError::Custom(e.to_string()))?
                 .unwrap_or_default(),
         )
+    }
+
+    fn get_storage_value_with_known_hash(
+        &self,
+        address: CoreAddress,
+        hashed_address: CoreH256,
+        storage_root: CoreH256,
+        key: CoreH256,
+    ) -> Result<ethrex_common::U256, DatabaseError> {
+        Ok(<dyn VmDatabase>::get_storage_slot_with_known_hash(
+            self.as_ref(),
+            address,
+            hashed_address,
+            storage_root,
+            key,
+        )
+        .map_err(|e| DatabaseError::Custom(e.to_string()))?
+        .unwrap_or_default())
     }
 
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {

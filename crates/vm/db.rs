@@ -8,6 +8,19 @@ use ethrex_common::{
 pub trait VmDatabase: Send + Sync + DynClone {
     fn get_account_state(&self, address: Address) -> Result<Option<AccountState>, EvmError>;
     fn get_storage_slot(&self, address: Address, key: H256) -> Result<Option<U256>, EvmError>;
+    /// Storage slot read with caller-provided `keccak(address)` and `storage_root`.
+    /// Lets callers that already have the hashed address (e.g. via a higher-level
+    /// account cache) skip the implementation's own address-to-hash lookup. Default
+    /// impl ignores the hints and falls back to `get_storage_slot`.
+    fn get_storage_slot_with_known_hash(
+        &self,
+        address: Address,
+        _hashed_address: H256,
+        _storage_root: H256,
+        key: H256,
+    ) -> Result<Option<U256>, EvmError> {
+        self.get_storage_slot(address, key)
+    }
     fn get_block_hash(&self, block_number: u64) -> Result<H256, EvmError>;
     fn get_chain_config(&self) -> Result<ChainConfig, EvmError>;
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError>;
