@@ -76,9 +76,14 @@ pub async fn apply_fork_choice(
     let head_is_canonical = is_canonical(store, head.number, head_hash).await?;
 
     // execution-apis PR 786: the no-reorg skip is only allowed when there is a known
-    // finalized block and the head references a VALID ancestor of it. Skipping for
+    // finalized block and the head is at or below it on the canonical chain. Skipping for
     // unfinalized canonical ancestors is no longer permitted - those must trigger a reorg.
+    //
+    // `head.number < latest` is the strict-ancestor check; equality (head IS the current
+    // canonical head) falls through to normal FCU so the CL can still build a payload on
+    // top, mirroring geth's `head == current_head` carve-out in `eth/catalyst/api.go`.
     if let Some(stored_finalized) = store.get_finalized_block_number().await?
+        && head.number < latest
         && head.number <= stored_finalized
         && head_is_canonical
     {
