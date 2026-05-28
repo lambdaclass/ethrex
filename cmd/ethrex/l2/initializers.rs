@@ -230,6 +230,7 @@ pub async fn init_l2(
         precompile_cache_enabled: true,
         bal_parallel_exec_enabled: true,
         bal_prefetch_enabled: true,
+        bal_parallel_trie_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());

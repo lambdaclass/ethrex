@@ -241,6 +241,11 @@ pub struct BlockchainOptions {
     /// prefetches accounts, storage slots, and codes listed in the header BAL.
     /// Set to false (via `--no-bal-prefetch`) to skip prefetching on the BAL path.
     pub bal_prefetch_enabled: bool,
+    /// If true (default), Amsterdam+ validation merkleizes optimistically from
+    /// `synthesize_bal_updates` in parallel with execution. Set to false (via
+    /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
+    /// the executor and merkleizing post-execution.
+    pub bal_parallel_trie_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -254,6 +259,7 @@ impl Default for BlockchainOptions {
             precompile_cache_enabled: true,
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
+            bal_parallel_trie_enabled: true,
         }
     }
 }
@@ -485,8 +491,15 @@ impl Blockchain {
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
+        // `--no-bal-parallel-trie` opts out: leave `optimistic_updates = None` so
+        // the merkleizer takes the streaming branch (fed by the EVM-side
+        // `bal_to_account_updates` send over the channel below).
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
-            bal.map(synthesize_bal_updates);
+            if self.options.bal_parallel_trie_enabled {
+                bal.map(synthesize_bal_updates)
+            } else {
+                None
+            };
         let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
             optimistic_updates.as_ref().map(|m| {
                 m.iter()
@@ -557,10 +570,12 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
-                // Channel only exists on the streaming (non-BAL) path. On the BAL path the
-                // EVM merkleizes nothing on its own (the synthesized map drives merkleization),
+                // Channel exists whenever the merkleizer takes the streaming branch:
+                // pre-Amsterdam (no BAL) and `--no-bal-parallel-trie` on the BAL path.
+                // When optimistic merkleization runs, the synthesized map drives the
+                // merkleizer and the EVM-side `bal_to_account_updates` send is skipped,
                 // so no Sender / drain thread are needed.
-                let (tx, rx_for_merkle) = if bal.is_some() {
+                let (tx, rx_for_merkle) = if optimistic_updates.is_some() {
                     (None, None)
                 } else {
                     let (tx, rx) = channel();

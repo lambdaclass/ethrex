@@ -90,6 +90,11 @@ Node options:
           
           [env: ETHREX_NO_BAL_PREFETCH=]
 
+      --no-bal-parallel-trie
+          Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).
+          
+          [env: ETHREX_NO_BAL_PARALLEL_TRIE=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
 

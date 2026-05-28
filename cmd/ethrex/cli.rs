@@ -183,6 +183,14 @@ pub struct Options {
     )]
     pub no_bal_prefetch: bool,
     #[arg(
+        long = "no-bal-parallel-trie",
+        action = ArgAction::SetTrue,
+        help = "Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PARALLEL_TRIE"
+    )]
+    pub no_bal_parallel_trie: bool,
+    #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
         help = "Directory to store log files.",
@@ -704,6 +712,7 @@ impl Subcommand {
                         precompile_cache_enabled: !opts.no_precompile_cache,
                         bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
                         bal_prefetch_enabled: !opts.no_bal_prefetch,
+                        bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
                         ..Default::default()
                     },
                     export_bal.as_deref(),
