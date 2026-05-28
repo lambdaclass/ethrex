@@ -544,12 +544,12 @@ impl Blockchain {
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-        if self.options.bal_prefetch_enabled {
-            if let Some(bal) = bal {
-                let slots = LEVM::bal_storage_slots(bal);
-                if !slots.is_empty() {
-                    let _ = caching_store.prefetch_storage(&slots);
-                }
+        if self.options.bal_prefetch_enabled
+            && let Some(bal) = bal
+        {
+            let slots = LEVM::bal_storage_slots(bal);
+            if !slots.is_empty() {
+                let _ = caching_store.prefetch_storage(&slots);
             }
         }
 
