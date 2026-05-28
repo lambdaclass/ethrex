@@ -39,6 +39,10 @@ let
       lockFile = ./Cargo.lock;
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
+        "libssz-0.2.1" = "sha256-5btt/O1qqPnj6z3FKkCqWEtxqDPZ3Du62xnV6Sevfwc=";
+        "libssz-derive-0.2.1" = "sha256-5btt/O1qqPnj6z3FKkCqWEtxqDPZ3Du62xnV6Sevfwc=";
+        "libssz-types-0.2.1" = "sha256-5btt/O1qqPnj6z3FKkCqWEtxqDPZ3Du62xnV6Sevfwc=";
+        "libssz-merkle-0.2.1" = "sha256-5btt/O1qqPnj6z3FKkCqWEtxqDPZ3Du62xnV6Sevfwc=";
       };
     };
 
