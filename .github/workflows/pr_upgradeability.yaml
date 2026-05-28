@@ -25,6 +25,13 @@ jobs:
         with:
           node-version: 20
 
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
+
       - name: Install dependencies
         run: |
           npm install

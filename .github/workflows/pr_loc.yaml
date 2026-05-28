@@ -26,6 +26,13 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
 
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
+
       - name: Find merge base
         id: find_merge_base
         env:
@@ -42,6 +49,13 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ steps.find_merge_base.outputs.merge_base }}
+
+      - name: Checkout ethrex-tooling (base)
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -60,6 +74,13 @@ jobs:
         with:
           clean: "false" # Don't clean the workspace, so we can keep the previous report
           ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Checkout ethrex-tooling (PR)
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust

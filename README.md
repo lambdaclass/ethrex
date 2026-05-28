@@ -105,6 +105,11 @@ We take security seriously. If you discover a vulnerability in this project, ple
 
 For more details, please refer to our [Security Policy](./.github/SECURITY.md).
 
+## Tooling
+
+Development tools (EF tests, load tests, monitor TUI, REPL, benchmarks, etc.)
+live in the [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling) repository.
+
 ## Contributing
 
 We welcome contributions!  

@@ -27,9 +27,6 @@ docs/
 # Local development
 hive/
 ethereum-package/
-tooling/ef_tests/blockchain/vectors
-tooling/ef_tests/blockchain/vectors_zkevm
-tooling/ef_tests/state/vectors
-tooling/sync/multisync_logs/
+tooling/
 dev_ethrex_l1/
 dev_ethrex_l2/

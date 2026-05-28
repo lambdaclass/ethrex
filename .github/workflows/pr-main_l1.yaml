@@ -87,6 +87,13 @@ jobs:
         run: |
           cargo fmt --all -- --check
 
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
+
       - name: Run tooling cargo check
         run: cargo check --workspace --all-targets
         working-directory: tooling
@@ -120,6 +127,13 @@ jobs:
       - name: Run unit tests
         run: |
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
+
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -499,6 +513,13 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
 
       - name: Compile ethrex binary
         run: cargo build --bin ethrex

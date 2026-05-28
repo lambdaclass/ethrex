@@ -91,8 +91,8 @@ Build the `ethrex` binary with the features needed for the chosen backend. The `
 # Build ethrex (adjust --features for your backend)
 ssh <server> "bash -l -c 'cd ~/ethrex && COMPILE_CONTRACTS=true cargo build --release --features <features> --bin ethrex'"
 
-# Build load test
-ssh <server> "bash -l -c 'cd ~/ethrex && cargo build --release --manifest-path ./tooling/load_test/Cargo.toml'"
+# Clone ethrex-tooling (if not already present) and build load test
+ssh <server> "bash -l -c 'cd ~/ethrex && [ -d tooling ] || git clone https://github.com/lambdaclass/ethrex-tooling tooling && cargo build --release --manifest-path ./tooling/load_test/Cargo.toml'"
 ```
 
 `COMPILE_CONTRACTS=true` compiles the Solidity contracts and embeds them in the binary. This only needs to happen once — the same binary is used for deploying, running the L2, and proving.

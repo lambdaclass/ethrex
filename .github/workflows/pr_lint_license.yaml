@@ -37,6 +37,13 @@ jobs:
           fi
           echo "License files present: LICENSE-MIT, LICENSE-APACHE"
 
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: main
+          path: tooling
+
       - name: Check all packages have correct license
         run: |
           # Check main workspace
