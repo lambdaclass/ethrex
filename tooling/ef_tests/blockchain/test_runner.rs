@@ -158,8 +158,12 @@ async fn run(
                         "Warning: Returned exception {error:?} does not match expected {expected_exception:?}",
                     );
                 }
-                // Expected exception matched — stop processing further blocks of this test.
-                break;
+                // Expected exception matched — block was rejected, but the test may
+                // still expect subsequent blocks to be processed (e.g. fork-transition
+                // tests where a block at the pre-fork timestamp fails and a block at
+                // the post-fork timestamp succeeds, both built on the same parent).
+                // Continue with the next block in the fixture.
+                continue;
             }
             Ok(_) => {
                 if expects_exception {
@@ -554,29 +558,71 @@ async fn run_stateless_from_fixture(
         let block: CoreBlock = block_data.clone().into();
         let block_number = block.header.number;
 
+        // Absent bytes means "expected to succeed"; malformed bytes are a hard error.
+        let expected_valid = match block_data.stateless_output_bytes.as_deref() {
+            None => true,
+            Some(bytes) => parse_expected_valid_flag(bytes).map_err(|e| {
+                format!("Malformed statelessOutputBytes for {test_key} block {block_number}: {e}")
+            })?,
+        };
+
+        // Parse and conversion errors must always fail; only the execution outcome is
+        // matched against `expected_valid` so the (false, Err(_)) arm below cannot
+        // absorb regressions in deserialization or witness conversion.
         let rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
             .map_err(|e| {
-                format!("Failed to parse executionWitness for block {block_number}: {e}")
+                format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
             })?;
-
         let execution_witness = rpc_witness
             .into_execution_witness(*chain_config, block_number)
-            .map_err(|e| format!("Witness conversion failed for block {block_number}: {e}"))?;
+            .map_err(|e| {
+                format!("witness conversion failed for {test_key} block {block_number}: {e}")
+            })?;
 
         let program_input = ProgramInput::new(vec![block], execution_witness);
-
-        let execute_result = match backend_type {
+        let exec_result = match backend_type {
             BackendType::Exec => ExecBackend::new().execute(program_input),
             #[cfg(feature = "sp1")]
             BackendType::SP1 => Sp1Backend::new().execute(program_input),
         };
 
-        if let Err(e) = execute_result {
-            return Err(format!(
-                "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
-            ));
+        match (expected_valid, exec_result) {
+            (true, Ok(_)) | (false, Err(_)) => {}
+            (true, Err(e)) => {
+                return Err(format!(
+                    "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
+                ));
+            }
+            (false, Ok(_)) => {
+                return Err(format!(
+                    "Stateless execution from fixture succeeded for {test_key} block \
+                     {block_number} but fixture expected it to fail (invalid executionWitness)"
+                ));
+            }
         }
     }
 
     Ok(())
+}
+
+/// Decode the `valid` byte (index 32) from a zkevm-fixture `statelessOutputBytes` hex
+/// string, encoded as `new_payload_request_root (32 B) ++ valid (1 B) ++ padding`.
+#[cfg(feature = "stateless")]
+fn parse_expected_valid_flag(hex: &str) -> Result<bool, String> {
+    let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
+    let byte_hex = trimmed.get(64..66).ok_or_else(|| {
+        format!(
+            "expected at least 33 bytes (66 hex chars), got {} hex chars",
+            trimmed.len()
+        )
+    })?;
+    let byte = u8::from_str_radix(byte_hex, 16)
+        .map_err(|e| format!("invalid hex at byte 32 ({byte_hex:?}): {e}"))?;
+    match byte {
+        0 => Ok(false),
+        1 => Ok(true),
+        n => Err(format!(
+            "invalid validity byte 0x{n:02x} (expected 0x00 or 0x01)"
+        )),
+    }
 }

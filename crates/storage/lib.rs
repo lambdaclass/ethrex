@@ -68,6 +68,7 @@ pub mod api;
 pub mod backend;
 pub mod error;
 mod layering;
+pub mod migrations;
 pub mod rlp;
 pub mod store;
 pub mod trie;
@@ -81,9 +82,10 @@ pub use store::{
 
 /// Store Schema Version, must be updated on any breaking change.
 ///
-/// An upgrade to a newer schema version invalidates currently stored data,
-/// requiring a re-sync from genesis or a snapshot.
-pub const STORE_SCHEMA_VERSION: u64 = 1;
+/// When bumping this version, add a corresponding migration function to
+/// `migrations::MIGRATIONS`. The migration framework will automatically
+/// upgrade existing databases instead of requiring a full resync.
+pub const STORE_SCHEMA_VERSION: u64 = 2;
 
 /// Name of the file storing the metadata about the database.
 ///
