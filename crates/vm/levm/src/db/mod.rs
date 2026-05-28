@@ -103,13 +103,21 @@ pub struct CachingDatabase {
     chain_config: OnceLock<ChainConfig>,
 }
 
+// Per-block cache capacity hints. Picked to cover typical L1 mainnet blocks
+// (a few hundred unique accounts, a few thousand slots, ~100 unique codes)
+// without forcing the DashMaps to rehash mid-block. Cheap memory; the cache
+// is reallocated per block.
+const ACCOUNTS_CAPACITY_HINT: usize = 512;
+const STORAGE_CAPACITY_HINT: usize = 4096;
+const CODE_CAPACITY_HINT: usize = 128;
+
 impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
         Self {
             inner,
-            accounts: DashMap::with_hasher(FxBuildHasher),
-            storage: DashMap::with_hasher(FxBuildHasher),
-            code: DashMap::with_hasher(FxBuildHasher),
+            accounts: DashMap::with_capacity_and_hasher(ACCOUNTS_CAPACITY_HINT, FxBuildHasher),
+            storage: DashMap::with_capacity_and_hasher(STORAGE_CAPACITY_HINT, FxBuildHasher),
+            code: DashMap::with_capacity_and_hasher(CODE_CAPACITY_HINT, FxBuildHasher),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
