@@ -48,28 +48,19 @@ impl OpcodeHandler for OpCallHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // Static gas: check before any state read (mirrors EELS `staticcall`).
         let value_cost = if !value.is_zero() {
             gas_cost::CALL_POSITIVE_VALUE
         } else {
             0
         };
-        let new_memory_size = calculate_memory_size(args_offset, args_len)?
-            .max(calculate_memory_size(return_offset, return_len)?);
-        let address_was_cold = !vm.substate.is_address_accessed(&callee);
-        let memory_expansion_cost =
-            memory::expansion_cost(new_memory_size, vm.current_call_frame.memory.len())?;
-        let access_gas_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
-        } else {
-            gas_cost::WARM_ADDRESS_ACCESS_COST
-        };
-        let static_cost = memory_expansion_cost
-            .checked_add(access_gas_cost)
-            .ok_or(ExceptionalHalt::OutOfGas)?
-            .checked_add(value_cost)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
-        vm.current_call_frame.check_gas(static_cost)?;
+        let (new_memory_size, address_was_cold, static_cost) = vm.check_call_static_gas(
+            args_offset,
+            args_len,
+            return_offset,
+            return_len,
+            callee,
+            value_cost,
+        )?;
 
         vm.substate.add_accessed_address(callee);
         let address_is_empty = vm.db.get_account(callee)?.is_empty();
@@ -219,28 +210,19 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Static gas: check before any state read (mirrors EELS `callcode`).
         let value_cost = if !value.is_zero() {
             gas_cost::CALLCODE_POSITIVE_VALUE
         } else {
             0
         };
-        let new_memory_size = calculate_memory_size(args_offset, args_len)?
-            .max(calculate_memory_size(return_offset, return_len)?);
-        let address_was_cold = !vm.substate.is_address_accessed(&address);
-        let memory_expansion_cost =
-            memory::expansion_cost(new_memory_size, vm.current_call_frame.memory.len())?;
-        let access_gas_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
-        } else {
-            gas_cost::WARM_ADDRESS_ACCESS_COST
-        };
-        let static_cost = memory_expansion_cost
-            .checked_add(access_gas_cost)
-            .ok_or(ExceptionalHalt::OutOfGas)?
-            .checked_add(value_cost)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
-        vm.current_call_frame.check_gas(static_cost)?;
+        let (new_memory_size, address_was_cold, static_cost) = vm.check_call_static_gas(
+            args_offset,
+            args_len,
+            return_offset,
+            return_len,
+            address,
+            value_cost,
+        )?;
 
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
@@ -342,21 +324,8 @@ impl OpcodeHandler for OpDelegateCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Static gas: check before any state read (mirrors EELS `delegatecall`).
-        let new_memory_size = calculate_memory_size(args_offset, args_len)?
-            .max(calculate_memory_size(return_offset, return_len)?);
-        let address_was_cold = !vm.substate.is_address_accessed(&address);
-        let memory_expansion_cost =
-            memory::expansion_cost(new_memory_size, vm.current_call_frame.memory.len())?;
-        let access_gas_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
-        } else {
-            gas_cost::WARM_ADDRESS_ACCESS_COST
-        };
-        let static_cost = memory_expansion_cost
-            .checked_add(access_gas_cost)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
-        vm.current_call_frame.check_gas(static_cost)?;
+        let (new_memory_size, address_was_cold, static_cost) =
+            vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
 
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
@@ -459,22 +428,8 @@ impl OpcodeHandler for OpStaticCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Static gas: check before any state read (mirrors EELS `staticcall`,
-        // so the EIP-7702 code lookup can't precede the gas check).
-        let new_memory_size = calculate_memory_size(args_offset, args_len)?
-            .max(calculate_memory_size(return_offset, return_len)?);
-        let address_was_cold = !vm.substate.is_address_accessed(&address);
-        let memory_expansion_cost =
-            memory::expansion_cost(new_memory_size, vm.current_call_frame.memory.len())?;
-        let access_gas_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
-        } else {
-            gas_cost::WARM_ADDRESS_ACCESS_COST
-        };
-        let static_cost = memory_expansion_cost
-            .checked_add(access_gas_cost)
-            .ok_or(ExceptionalHalt::OutOfGas)?;
-        vm.current_call_frame.check_gas(static_cost)?;
+        let (new_memory_size, address_was_cold, static_cost) =
+            vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
 
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
@@ -965,6 +920,39 @@ impl<'a> VM<'a> {
         }
 
         Ok(OpcodeResult::Continue)
+    }
+
+    /// Static gas prelude for CALL/CALLCODE/DELEGATECALL/STATICCALL: compute
+    /// `(new_memory_size, address_was_cold, static_cost)` and `check_gas` it
+    /// before any state read, mirroring EELS' `# check static gas before state
+    /// access`. `value_cost` is the per-opcode positive-value cost (0 when
+    /// none).
+    fn check_call_static_gas(
+        &mut self,
+        args_offset: usize,
+        args_len: usize,
+        return_offset: usize,
+        return_len: usize,
+        address: Address,
+        value_cost: u64,
+    ) -> Result<(usize, bool, u64), VMError> {
+        let new_memory_size = calculate_memory_size(args_offset, args_len)?
+            .max(calculate_memory_size(return_offset, return_len)?);
+        let address_was_cold = !self.substate.is_address_accessed(&address);
+        let memory_expansion_cost =
+            memory::expansion_cost(new_memory_size, self.current_call_frame.memory.len())?;
+        let access_gas_cost = if address_was_cold {
+            gas_cost::COLD_ADDRESS_ACCESS_COST
+        } else {
+            gas_cost::WARM_ADDRESS_ACCESS_COST
+        };
+        let static_cost = memory_expansion_cost
+            .checked_add(access_gas_cost)
+            .ok_or(ExceptionalHalt::OutOfGas)?
+            .checked_add(value_cost)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
+        self.current_call_frame.check_gas(static_cost)?;
+        Ok((new_memory_size, address_was_cold, static_cost))
     }
 
     /// Record BAL touched addresses for CALL-family opcodes per EIP-7928.
