@@ -511,6 +511,11 @@ impl ChainConfig {
         // Pick the scheduled fork with the smallest activation timestamp strictly
         // greater than `block_timestamp`. Iterating all timestamp-based forks avoids
         // bugs when intermediate forks (e.g. BPOs) are skipped in a network's schedule.
+        //
+        // NOTE: every timestamp-based fork MUST appear here in chronological order.
+        // Omitting a fork will silently cause `next_fork` to skip it; ties are
+        // broken by array position, so the order also encodes the canonical
+        // schedule independent of the `Fork` enum's discriminants.
         [
             Fork::Shanghai,
             Fork::Cancun,
@@ -524,13 +529,14 @@ impl ChainConfig {
             Fork::Amsterdam,
         ]
         .into_iter()
-        .filter_map(|fork| {
+        .enumerate()
+        .filter_map(|(pos, fork)| {
             self.get_activation_timestamp_for_fork(fork)
                 .filter(|&t| t > block_timestamp)
-                .map(|t| (fork, t))
+                .map(|t| (fork, t, pos))
         })
-        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| (a.0 as u8).cmp(&(b.0 as u8))))
-        .map(|(fork, _)| fork)
+        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
+        .map(|(fork, _, _)| fork)
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
