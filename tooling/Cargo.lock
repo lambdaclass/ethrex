@@ -3123,9 +3123,9 @@ version = "4.0.0"
 dependencies = [
  "bytes",
  "criterion",
- "ethrex-common 12.0.0",
+ "ethrex-common 13.0.0",
  "ethrex-rpc",
- "ethrex-storage 12.0.0",
+ "ethrex-storage 13.0.0",
  "futures",
  "libssz",
  "libssz-types",
