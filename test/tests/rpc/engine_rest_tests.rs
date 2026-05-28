@@ -18,6 +18,8 @@ use tower::ServiceExt;
 
 use ethrex_common::Address;
 use ethrex_common::types::ChainConfig;
+use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_rlp::encode::RLPEncode;
 use ethrex_rpc::engine_rest::SSZ_REST_CAPABILITIES;
 use ethrex_rpc::engine_rest::types::blobs::{GetBlobsV1Request, GetBlobsV1Response};
 use ethrex_rpc::engine_rest::types::bodies::{
@@ -733,6 +735,12 @@ async fn new_payload_v4_pre_prague_returns_422() {
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
+fn rlp_empty_bal() -> Vec<u8> {
+    let mut buf = Vec::new();
+    BlockAccessList::new().encode(&mut buf);
+    buf
+}
+
 #[tokio::test]
 async fn new_payload_v5_pre_amsterdam_returns_422() {
     let cc = ChainConfig {
@@ -742,6 +750,42 @@ async fn new_payload_v5_pre_amsterdam_returns_422() {
         prague_time: Some(0),
         osaka_time: Some(0),
         amsterdam_time: None,
+        deposit_contract_address: Address::zero(),
+        ..Default::default()
+    };
+    let app = make_router_with_chain_config(cc).await;
+    let mut payload = empty_payload_v4(1);
+    // V5 requires a non-empty BAL field; use a valid (empty-list) BAL so the
+    // fork check is what fires.
+    payload.block_access_list = rlp_empty_bal().try_into().unwrap();
+    let req = NewPayloadV5Request {
+        execution_payload: payload,
+        expected_blob_versioned_hashes: Vec::<Bytes32>::new().try_into().unwrap(),
+        parent_beacon_block_root: [0u8; 32],
+        execution_requests: Vec::<
+            SszList<u8, { ethrex_rpc::engine_rest::types::common::MAX_BYTES_PER_TRANSACTION }>,
+        >::new()
+        .try_into()
+        .unwrap(),
+    };
+    let resp = app
+        .oneshot(auth_post("/engine/v5/payloads", ssz_body(&req)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn new_payload_v5_empty_bal_returns_400() {
+    // EIP-7928: V5 payloads MUST carry block_access_list; absence is a
+    // structural error, matching the JSON-RPC engine_newPayloadV5 behavior.
+    let cc = ChainConfig {
+        chain_id: 1,
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        prague_time: Some(0),
+        osaka_time: Some(0),
+        amsterdam_time: Some(0),
         deposit_contract_address: Address::zero(),
         ..Default::default()
     };
@@ -760,5 +804,5 @@ async fn new_payload_v5_pre_amsterdam_returns_422() {
         .oneshot(auth_post("/engine/v5/payloads", ssz_body(&req)))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

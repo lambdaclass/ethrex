@@ -136,6 +136,20 @@ pub async fn new_payload_v4(
             chain_config.get_fork(block.header.timestamp)
         ));
     }
+    // EIP-7928 fork-boundary detector: see engine/payload.rs (V4 variant).
+    // V4 has no block_access_list_hash; if the CL sent a V5-shaped header,
+    // the alt with the field zeroed will reproduce the payload's block_hash.
+    if block.hash() != expected_hash {
+        let mut alt_header = block.header.clone();
+        alt_header.block_access_list_hash = Some(H256::zero());
+        let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+        if alt_hash == expected_hash {
+            return EngineRestError::bad_request(
+                "engine_newPayloadV4 received header with Amsterdam block_access_list_hash field",
+            )
+            .into();
+        }
+    }
     let expected = ssz_blob_hashes_to_vec(&req.expected_blob_versioned_hashes);
     let status = match handle_new_payload_v3(expected_hash, ctx, block, expected, None).await {
         Ok(s) => s,
@@ -149,13 +163,15 @@ pub async fn new_payload_v5(
     Ssz(req): Ssz<NewPayloadV5Request>,
 ) -> Response {
     let expected_hash = H256::from(req.execution_payload.block_hash);
+    // EIP-7928 / Amsterdam: V5 payloads MUST include the BAL field — its
+    // absence is a structural error, not a block-validity failure.
+    if req.execution_payload.block_access_list.is_empty() {
+        return EngineRestError::bad_request("block_access_list required in engine_newPayloadV5")
+            .into();
+    }
     // Hash the raw BAL bytes as-received: re-encoding through RLP can change
     // ordering and break the block-hash check.
-    let raw_bal_hash = if req.execution_payload.block_access_list.is_empty() {
-        None
-    } else {
-        Some(keccak(&req.execution_payload.block_access_list[..]))
-    };
+    let raw_bal_hash = Some(keccak(&req.execution_payload.block_access_list[..]));
 
     let exec_requests = ssz_to_encoded_requests(&req.execution_requests);
     if let Err(e) = validate_execution_requests(&exec_requests) {
@@ -178,6 +194,21 @@ pub async fn new_payload_v5(
             "{:?}",
             chain_config.get_fork(block.header.timestamp)
         ));
+    }
+    // EIP-7928 fork-boundary detector: see engine/payload.rs (V5 variant).
+    // V5 requires block_access_list_hash; if the CL sent a V4-shaped header
+    // (field absent), the alt with the field cleared reproduces the payload's
+    // block_hash.
+    if block.hash() != expected_hash {
+        let mut alt_header = block.header.clone();
+        alt_header.block_access_list_hash = None;
+        let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+        if alt_hash == expected_hash {
+            return EngineRestError::bad_request(
+                "engine_newPayloadV5 received header missing block_access_list_hash field",
+            )
+            .into();
+        }
     }
     let expected = ssz_blob_hashes_to_vec(&req.expected_blob_versioned_hashes);
     let status = match handle_new_payload_v4(expected_hash, ctx, block, expected, bal).await {
