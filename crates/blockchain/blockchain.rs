@@ -64,8 +64,9 @@ use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
-    AccountInfo, AccountState, AccountUpdate, Block, BlockHash, BlockHeader, BlockNumber,
-    ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction, validate_block_body,
+    AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
+    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    synthesize_bal_updates, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -110,6 +111,8 @@ use tokio_util::sync::CancellationToken;
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::bal::METRICS_BAL;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
@@ -137,7 +140,7 @@ type BlockExecutionPipelineResult = (
     Option<Vec<AccountUpdate>>,
     Option<BlockAccessList>, // produced BAL (Some on Amsterdam+ blocks)
     usize,                   // max queue length
-    [Instant; 6],            // timing instants
+    [Instant; 7],            // timing instants
     Duration,                // warmer duration
 );
 
@@ -230,6 +233,19 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// If true (default), Amsterdam+ validation runs transactions in parallel
+    /// using the header BAL to seed per-tx databases. Set to false (via
+    /// `--no-bal-parallel-exec`) to fall back to sequential execution.
+    pub bal_parallel_exec_enabled: bool,
+    /// If true (default), Amsterdam+ validation spawns a warmer thread that
+    /// prefetches accounts, storage slots, and codes listed in the header BAL.
+    /// Set to false (via `--no-bal-prefetch`) to skip prefetching on the BAL path.
+    pub bal_prefetch_enabled: bool,
+    /// If true (default), Amsterdam+ validation merkleizes optimistically from
+    /// `synthesize_bal_updates` in parallel with execution. Set to false (via
+    /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
+    /// the executor and merkleizing post-execution.
+    pub bal_parallel_trie_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -241,6 +257,9 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            bal_parallel_exec_enabled: true,
+            bal_prefetch_enabled: true,
+            bal_parallel_trie_enabled: true,
         }
     }
 }
@@ -317,8 +336,9 @@ struct PreMerkelizedAccountState {
 /// Work item for BAL state trie shard workers.
 struct BalStateWorkItem {
     hashed_address: H256,
-    info: Option<AccountInfo>,
-    removed: bool,
+    nonce: Option<u64>,
+    balance: Option<U256>,
+    code_hash: Option<H256>,
     /// Pre-computed storage root from Stage B, or None to keep existing.
     storage_root: Option<H256>,
 }
@@ -467,12 +487,40 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled;
+
+        // Synthesize BAL updates pre-scope so the merkleizer thread can start
+        // trie work immediately, in parallel with execution.
+        // `--no-bal-parallel-trie` opts out: leave `optimistic_updates = None` so
+        // the merkleizer takes the streaming branch (fed by the EVM-side
+        // `bal_to_account_updates` send over the channel below).
+        let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
+            if self.options.bal_parallel_trie_enabled {
+                bal.map(synthesize_bal_updates)
+            } else {
+                None
+            };
+        let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
+            optimistic_updates.as_ref().map(|m| {
+                m.iter()
+                    .map(|(addr, item)| AccountUpdate {
+                        address: *addr,
+                        added_storage: item.added_storage.clone(),
+                        ..Default::default()
+                    })
+                    .collect()
+            })
+        } else {
+            None
+        };
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
@@ -481,11 +529,28 @@ impl Blockchain {
                         // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
                         if let Some(bal) = bal {
-                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) =
-                                LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
-                            {
-                                debug!("BAL warming failed (non-fatal): {e}");
+                            if bal_prefetch_enabled {
+                                // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
+                                if let Err(e) =
+                                    LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
+                                {
+                                    debug!("BAL warming failed (non-fatal): {e}");
+                                }
+                            } else if !bal_parallel_exec_enabled {
+                                // --no-bal-prefetch combined with --no-bal-parallel-exec:
+                                // mirror the pre-Amsterdam setup where a parallel speculative
+                                // warmer races ahead of the serial executor. With parallel
+                                // exec still on, we skip warming instead — two parallel passes
+                                // over the same txs would just fight for cores.
+                                if let Err(e) = LEVM::warm_block(
+                                    block,
+                                    caching_store,
+                                    vm_type,
+                                    &NativeCrypto,
+                                    cancelled_ref,
+                                ) {
+                                    debug!("Block warming failed (non-fatal): {e}");
+                                }
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
@@ -505,11 +570,33 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
-                let (tx, rx) = channel();
+                // Channel is needed whenever the merkleizer takes the streaming
+                // branch OR LEVM falls into the sequential path:
+                // - sequential LEVM (`!bal_parallel_exec_enabled`) sends per-tx
+                //   updates via `send_state_transitions_tx`; errors if Sender is None.
+                // - streaming merkleizer (`!bal_parallel_trie_enabled` or no BAL)
+                //   reads updates from `rx`.
+                // Only the default `bal=Some && parallel_exec && parallel_trie` case
+                // can skip both: parallel LEVM doesn't stream when its Sender is None,
+                // and the merkleizer uses the synthesized optimistic map directly.
+                let (tx, rx_for_merkle) =
+                    if optimistic_updates.is_some() && bal_parallel_exec_enabled {
+                        (None, None)
+                    } else {
+                        let (tx, rx) = channel();
+                        (Some(tx), Some(rx))
+                    };
+
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
+                        let result = vm.execute_block_pipeline(
+                            block,
+                            tx,
+                            queue_length_ref,
+                            bal,
+                            bal_parallel_exec_enabled,
+                        );
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 
@@ -535,6 +622,13 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
+                        // Amsterdam validation path uses the header BAL directly to drive
+                        // execution; it doesn't rebuild a BAL, so produced_bal is None.
+                        // BAL correctness on that path is enforced inside
+                        // execute_block_pipeline (header-BAL index/size/withdrawal-index
+                        // checks plus unread_storage_reads / unaccessed_pure_accounts).
+                        // Pre-Amsterdam / streaming paths return Some(produced_bal) and
+                        // the hash check below still runs.
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -551,28 +645,40 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn execution thread: {e}"))
                     })?;
                 let parent_header_ref = &parent_header; // Avoid moving to thread
+                // Merkleizer returns (list, streaming witness or None on BAL path, merkle_start, merkle_end).
+                type MerkleResult = Result<
+                    (
+                        AccountUpdatesList,
+                        Option<Vec<AccountUpdate>>,
+                        Instant,
+                        Instant,
+                    ),
+                    StoreError,
+                >;
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
-                    .spawn_scoped(s, move || -> Result<_, StoreError> {
-                        let (account_updates_list, accumulated_updates) = if bal.is_some() {
-                            self.handle_merkleization_bal(
-                                rx,
-                                parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                            )?
-                        } else {
-                            self.handle_merkleization(
-                                rx,
-                                parent_header_ref,
-                                queue_length_ref,
-                                max_queue_length_ref,
-                            )?
-                        };
+                    .spawn_scoped(s, move || -> MerkleResult {
+                        let merkle_start_instant = Instant::now();
+                        let (account_updates_list, streaming_witness) =
+                            if let Some(prepared) = optimistic_updates {
+                                let list = self.handle_merkleization_bal_from_updates(
+                                    prepared,
+                                    parent_header_ref,
+                                )?;
+                                (list, None)
+                            } else {
+                                self.handle_merkleization(
+                                    rx_for_merkle.expect("rx is Some on non-BAL path"),
+                                    parent_header_ref,
+                                    queue_length_ref,
+                                    max_queue_length_ref,
+                                )?
+                            };
                         let merkle_end_instant = Instant::now();
                         Ok((
                             account_updates_list,
-                            accumulated_updates,
+                            streaming_witness,
+                            merkle_start_instant,
                             merkle_end_instant,
                         ))
                     })
@@ -597,8 +703,12 @@ impl Blockchain {
                 let warmer_duration = Duration::ZERO;
                 Ok((execution_result, merkleization_result, warmer_duration))
             })?;
-        let (account_updates_list, accumulated_updates, merkle_end_instant) = merkleization_result?;
+        let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
+            merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
+
+        // Synthesized witness wins when BAL is present; streaming witness wins otherwise.
+        let accumulated_updates = optimistic_witness.or(streaming_witness);
 
         let exec_merkle_end_instant = Instant::now();
 
@@ -612,6 +722,7 @@ impl Blockchain {
                 start_instant,
                 block_validated_instant,
                 exec_merkle_start,
+                merkle_start_instant,
                 exec_end_instant,
                 merkle_end_instant,
                 exec_merkle_end_instant,
@@ -843,64 +954,40 @@ impl Blockchain {
         result
     }
 
-    /// BAL-specific merkleization handler.
-    ///
-    /// When the Block Access List is available (Amsterdam+), all dirty accounts
-    /// and storage slots are known upfront. This enables computing storage roots
-    /// in parallel across accounts before feeding final results into state trie
-    /// shards.
+    /// Validation path synthesizes `BalSynthesisItem`s from the input BAL pre-execution and
+    /// merkleizes optimistically in parallel with EVM execution. Two gates guard the result:
+    /// (1) `validate_block_access_list_hash` against the produced BAL post-execution, and
+    /// (2) the downstream `state_root` comparison against the block header. A missing
+    /// `produced_bal` on this path is treated as a hard error so gate (1) is never silently
+    /// skipped. On any mismatch the optimistic merkle output is discarded via `?` on the
+    /// execution thread's join result.
     #[instrument(
         level = "trace",
         name = "Trie update (BAL)",
         skip_all,
         fields(namespace = "block_execution")
     )]
-    fn handle_merkleization_bal(
+    fn handle_merkleization_bal_from_updates(
         &self,
-        rx: Receiver<Vec<AccountUpdate>>,
+        prepared: FxHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
-        queue_length: &AtomicUsize,
-        max_queue_length: &mut usize,
-    ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
+    ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;
         let parent_state_root = parent_header.state_root;
 
-        // === Stage A: Drain + accumulate all AccountUpdates ===
-        // BAL guarantees completeness, so we block until execution finishes.
-        let mut all_updates: FxHashMap<Address, AccountUpdate> = FxHashMap::default();
-        for updates in rx {
-            let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
-            *max_queue_length = current_length.max(*max_queue_length);
-            for update in updates {
-                match all_updates.entry(update.address) {
-                    Entry::Vacant(e) => {
-                        e.insert(update);
-                    }
-                    Entry::Occupied(mut e) => {
-                        e.get_mut().merge(update);
-                    }
-                }
-            }
-        }
-
-        // Extract witness accumulator before consuming updates
-        let accumulated_updates = if self.options.precompute_witnesses {
-            Some(all_updates.values().cloned().collect::<Vec<_>>())
-        } else {
-            None
-        };
-
-        // Extract code updates and build work items with pre-hashed addresses
+        // Build code updates and work items with pre-hashed addresses from the
+        // pre-synthesized map. No Stage A drain needed: the synthesis happened
+        // pre-scope at the call site.
         let mut code_updates: Vec<(H256, Code)> = Vec::new();
-        let mut accounts: Vec<(H256, AccountUpdate)> = Vec::with_capacity(all_updates.len());
-        for (addr, update) in all_updates {
+        let mut accounts: Vec<(H256, BalSynthesisItem)> = Vec::with_capacity(prepared.len());
+        for (addr, item) in prepared {
             let hashed = keccak(addr);
-            if let Some(info) = &update.info
-                && let Some(code) = &update.code
+            if let Some(ch) = item.code_hash
+                && let Some(ref code) = item.code
             {
-                code_updates.push((info.code_hash, code.clone()));
+                code_updates.push((ch, code.clone()));
             }
-            accounts.push((hashed, update));
+            accounts.push((hashed, item));
         }
 
         // === Stage B: Parallel per-account storage root computation ===
@@ -909,19 +996,18 @@ impl Blockchain {
         // Every item with real Stage B work MUST have weight >= 1: the greedy
         // algorithm does `bin_weights[min] += weight`, so weight-0 items never
         // change the bin weight and `min_by_key` keeps returning the same bin,
-        // piling ALL of them into a single worker. Removed accounts are cheap
-        // individually (just push EMPTY_TRIE_HASH) but must still be distributed.
+        // piling ALL of them into a single worker.
+        // Synthesis never sets `removed`/`removed_storage`, so weight is purely
+        // based on storage slot count.
         let mut work_indices: Vec<(usize, usize)> = accounts
             .iter()
             .enumerate()
-            .map(|(i, (_, update))| {
-                let weight =
-                    if update.removed || update.removed_storage || !update.added_storage.is_empty()
-                    {
-                        1.max(update.added_storage.len())
-                    } else {
-                        0
-                    };
+            .map(|(i, (_, item))| {
+                let weight = if !item.added_storage.is_empty() {
+                    1.max(item.added_storage.len())
+                } else {
+                    0
+                };
                 (i, weight)
             })
             .collect();
@@ -965,42 +1051,32 @@ impl Blockchain {
                                     let state_trie =
                                         self.storage.open_state_trie(parent_state_root)?;
                                     for idx in bin {
-                                        let (hashed_address, update) = &accounts_ref[idx];
-                                        let has_storage_changes = update.removed
-                                            || update.removed_storage
-                                            || !update.added_storage.is_empty();
-                                        if !has_storage_changes {
+                                        let (hashed_address, item) = &accounts_ref[idx];
+                                        if item.added_storage.is_empty() {
                                             continue;
                                         }
 
-                                        if update.removed {
-                                            results.push((
-                                                idx,
-                                                *EMPTY_TRIE_HASH,
-                                                vec![(Nibbles::default(), vec![RLP_NULL])],
-                                            ));
-                                            continue;
-                                        }
-
-                                        let mut trie = if update.removed_storage {
-                                            Trie::new_temp()
-                                        } else {
-                                            let storage_root =
-                                                match state_trie.get(hashed_address.as_bytes())? {
-                                                    Some(rlp) => {
-                                                        AccountState::decode(&rlp)?.storage_root
-                                                    }
-                                                    None => *EMPTY_TRIE_HASH,
-                                                };
-                                            self.storage.open_storage_trie(
-                                                *hashed_address,
-                                                parent_state_root,
-                                                storage_root,
-                                            )?
+                                        let storage_root = match state_trie
+                                            .get(hashed_address.as_bytes())?
+                                        {
+                                            Some(rlp) => AccountState::decode(&rlp)?.storage_root,
+                                            None => *EMPTY_TRIE_HASH,
                                         };
+                                        let mut trie = self.storage.open_storage_trie(
+                                            *hashed_address,
+                                            parent_state_root,
+                                            storage_root,
+                                        )?;
 
-                                        for (key, value) in &update.added_storage {
-                                            let hashed_key = keccak(key);
+                                        // Pre-hash and sort by trie path so per-slot inserts
+                                        // walk the node arena in order, improving cache locality.
+                                        let mut hashed_storage: Vec<(H256, U256)> = item
+                                            .added_storage
+                                            .iter()
+                                            .map(|(k, v)| (keccak(k), *v))
+                                            .collect();
+                                        hashed_storage.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+                                        for (hashed_key, value) in &hashed_storage {
                                             if value.is_zero() {
                                                 trie.remove(hashed_key.as_bytes())?;
                                             } else {
@@ -1039,12 +1115,13 @@ impl Blockchain {
 
         // Build per-shard work items
         let mut shards: Vec<Vec<BalStateWorkItem>> = (0..NUM_WORKERS).map(|_| Vec::new()).collect();
-        for (idx, (hashed_address, update)) in accounts.iter().enumerate() {
+        for (idx, (hashed_address, item)) in accounts.iter().enumerate() {
             let bucket = (hashed_address.as_fixed_bytes()[0] >> 4) as usize;
             shards[bucket].push(BalStateWorkItem {
                 hashed_address: *hashed_address,
-                info: update.info.clone(),
-                removed: update.removed,
+                nonce: item.nonce,
+                balance: item.balance,
+                code_hash: item.code_hash,
                 storage_root: storage_roots[idx],
             });
         }
@@ -1086,17 +1163,17 @@ impl Blockchain {
                                         None => AccountState::default(),
                                     };
 
-                                    if item.removed {
-                                        account_state = AccountState::default();
-                                    } else {
-                                        if let Some(ref info) = item.info {
-                                            account_state.nonce = info.nonce;
-                                            account_state.balance = info.balance;
-                                            account_state.code_hash = info.code_hash;
-                                        }
-                                        if let Some(storage_root) = item.storage_root {
-                                            account_state.storage_root = storage_root;
-                                        }
+                                    if let Some(n) = item.nonce {
+                                        account_state.nonce = n;
+                                    }
+                                    if let Some(b) = item.balance {
+                                        account_state.balance = b;
+                                    }
+                                    if let Some(ch) = item.code_hash {
+                                        account_state.code_hash = ch;
+                                    }
+                                    if let Some(storage_root) = item.storage_root {
+                                        account_state.storage_root = storage_root;
                                     }
 
                                     // EIP-161: remove empty accounts (zero nonce, zero balance,
@@ -1139,15 +1216,12 @@ impl Blockchain {
                 *EMPTY_TRIE_HASH
             };
 
-        Ok((
-            AccountUpdatesList {
-                state_trie_hash,
-                state_updates,
-                storage_updates,
-                code_updates,
-            },
-            accumulated_updates,
-        ))
+        Ok(AccountUpdatesList {
+            state_trie_hash,
+            state_updates,
+            storage_updates,
+            code_updates,
+        })
     }
 
     fn collapse_root_node(
@@ -1964,6 +2038,17 @@ impl Blockchain {
             );
         }
 
+        metrics!(if let Some(bal_ref) = produced_bal.as_ref().or(bal) {
+            let account_count = bal_ref.accounts().len() as u64;
+            let slot_count = bal_ref.item_count().saturating_sub(account_count);
+            let size_bytes = bal_ref.length() as f64;
+            METRICS_BAL.blocks_total.inc();
+            METRICS_BAL.size_bytes.set(size_bytes);
+            METRICS_BAL.size_bytes_histogram.observe(size_bytes);
+            METRICS_BAL.account_count.set(account_count as i64);
+            METRICS_BAL.slot_count.set(slot_count as i64);
+        });
+
         Ok((produced_bal, result))
     }
 
@@ -2033,11 +2118,12 @@ impl Blockchain {
             start_instant,
             block_validated_instant,
             exec_merkle_start,
+            merkle_start_instant,
             exec_end_instant,
             merkle_end_instant,
             exec_merkle_end_instant,
             stored_instant,
-        ]: [Instant; 7],
+        ]: [Instant; 8],
     ) {
         let total_ms = stored_instant.duration_since(start_instant).as_secs_f64() * 1000.0;
         if total_ms == 0.0 {
@@ -2136,6 +2222,11 @@ impl Blockchain {
             "after exec"
         };
 
+        let merkle_start_delay_ms = merkle_start_instant
+            .duration_since(exec_merkle_start)
+            .as_secs_f64()
+            * 1000.0;
+
         info!("{}", header);
         info!(
             "  |- validate: {:>7.2} ms  ({:>2}%){}",
@@ -2150,7 +2241,7 @@ impl Blockchain {
             bottleneck_marker("exec")
         );
         info!(
-            "  |- merkle:   {:>7.2} ms  ({:>2}%){}  [concurrent: {:.2} ms, drain: {:.2} ms, overlap: {:.0}%, queue: {}]",
+            "  |- merkle:   {:>7.2} ms  ({:>2}%){}  [concurrent: {:.2} ms, drain: {:.2} ms, overlap: {:.0}%, queue: {}, start_delay: {:.2} ms]",
             merkle_drain_ms,
             pct(merkle_drain_ms),
             bottleneck_marker("merkle"),
@@ -2158,6 +2249,7 @@ impl Blockchain {
             merkle_drain_ms,
             overlap_pct,
             merkle_queue_length,
+            merkle_start_delay_ms,
         );
         info!(
             "  |- store:    {:>7.2} ms  ({:>2}%){}",
@@ -2211,14 +2303,40 @@ impl Blockchain {
 
         let chain_config: ChainConfig = self.storage.get_chain_config();
 
-        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
-        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+        // Cache block hashes for the full batch so we can access them during
+        // execution without having to store the blocks beforehand.
+        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
+            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let parent_header = self
             .storage
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
+
+        // Walk the parent chain to cache the last 256 block hashes so that
+        // BLOCKHASH can resolve references to blocks from previous batches
+        // (they may not be canonical yet during import).
+        block_hash_cache
+            .entry(parent_header.number)
+            .or_insert_with(|| parent_header.hash());
+        let mut hash = parent_header.parent_hash;
+        let mut number = parent_header.number.saturating_sub(1);
+        let lookback = first_block_header.number.saturating_sub(256);
+        while number > lookback {
+            block_hash_cache.entry(number).or_insert(hash);
+            match self.storage.get_block_header_by_hash(hash) {
+                Ok(Some(header)) => {
+                    hash = header.parent_hash;
+                    number = number.saturating_sub(1);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
+                    break;
+                }
+            }
+        }
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,

@@ -5,6 +5,7 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
+#[cfg(feature = "eip-8025")]
 pub mod eip8025_ssz;
 mod fork_id;
 mod genesis;
@@ -20,6 +21,7 @@ pub use account::*;
 pub use account_update::*;
 pub use blobs_bundle::*;
 pub use block::*;
+pub use block_access_list::{BalSynthesisItem, synthesize_bal_updates};
 pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;

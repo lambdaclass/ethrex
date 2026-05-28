@@ -192,6 +192,15 @@ impl RpcHandler for NewPayloadV4Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // EIP-7928 / Amsterdam: V4 payloads MUST NOT include the BAL field — that
+        // field belongs to V5. Per engine-API spec, structurally-invalid payloads
+        // return JSON-RPC -32602 (Invalid params), not PayloadStatus.INVALID.
+        if self.payload.block_access_list.is_some() {
+            return Err(RpcErr::WrongParam(
+                "block_access_list not allowed in engine_newPayloadV4".to_string(),
+            ));
+        }
+
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
 
@@ -212,12 +221,43 @@ impl RpcHandler for NewPayloadV4Request {
 
         let chain_config = context.storage.get_chain_config();
 
+        // Amsterdam-active timestamps must use V5, not V4. Per engine-API spec
+        // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
+        // if the timestamp of payload is greater than or equal to the Amsterdam
+        // activation timestamp."
+        if chain_config.is_amsterdam_activated(block.header.timestamp) {
+            return Err(RpcErr::UnsupportedFork(format!(
+                "{:?}",
+                chain_config.get_fork(block.header.timestamp)
+            )));
+        }
+
         if !chain_config.is_prague_activated(block.header.timestamp) {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
+
+        // EIP-7928 fork-boundary detector: V4 doesn't carry block_access_list_hash
+        // in its header schema. If the payload's block_hash matches what a V5-style
+        // header (with block_access_list_hash injected) would produce, the sender
+        // used the wrong API version; reject with -32602 (InvalidParams) to match
+        // the EELS fixture test_invalid_pre_fork_block_with_bal_hash_field
+        // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine]. Real value-mismatch
+        // tests don't match this alternate and fall through to PayloadStatus.INVALID.
+        if block.hash() != self.payload.block_hash {
+            let mut alt_header = block.header.clone();
+            alt_header.block_access_list_hash = Some(H256::zero());
+            let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+            if alt_hash == self.payload.block_hash {
+                return Err(RpcErr::WrongParam(
+                    "engine_newPayloadV4 received header with Amsterdam block_access_list_hash field"
+                        .to_string(),
+                ));
+            }
+        }
+
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
         let payload_status = handle_new_payload_v3(
@@ -295,6 +335,15 @@ impl RpcHandler for NewPayloadV5Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        // EIP-7928 / Amsterdam: V5 payloads MUST include the BAL field — its
+        // absence is a structural error, not a block-validity failure. Per
+        // engine-API spec, this returns JSON-RPC -32602 (Invalid params).
+        if self.payload.block_access_list.is_none() {
+            return Err(RpcErr::WrongParam(
+                "block_access_list required in engine_newPayloadV5".to_string(),
+            ));
+        }
+
         validate_execution_payload_v4(&self.payload)?;
 
         // validate the received requests
@@ -322,11 +371,35 @@ impl RpcHandler for NewPayloadV5Request {
 
         let chain_config = context.storage.get_chain_config();
 
+        // Pre-Amsterdam timestamps must use V4, not V5. Per engine-API spec
+        // (amsterdam.md): "Client software MUST return -38005: Unsupported fork
+        // if the timestamp of the payload does not fall within the time frame of
+        // the Amsterdam activation." Symmetric with the V4+Amsterdam case above.
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(block.header.timestamp)
             )));
+        }
+
+        // EIP-7928 fork-boundary detector: V5 requires block_access_list_hash in
+        // the header. If the payload's block_hash matches what a V4-style header
+        // (without the field) would produce, the sender used the wrong API
+        // version; reject with -32602 (InvalidParams) to match the EELS fixture
+        // test_invalid_post_fork_block_without_bal_hash_field
+        // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine]. Real
+        // value-mismatch tests don't match this alternate and fall through to
+        // PayloadStatus.INVALID.
+        if block.hash() != self.payload.block_hash {
+            let mut alt_header = block.header.clone();
+            alt_header.block_access_list_hash = None;
+            let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+            if alt_hash == self.payload.block_hash {
+                return Err(RpcErr::WrongParam(
+                    "engine_newPayloadV5 received header missing block_access_list_hash field"
+                        .to_string(),
+                ));
+            }
         }
 
         let bal = self.payload.block_access_list.clone();
