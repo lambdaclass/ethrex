@@ -280,19 +280,22 @@ async fn batch_cross_batch_blockhash_regression() {
         // Init code: CODECOPY runtime into memory, then RETURN it.
         // PUSH1 rt_len  PUSH1 init_len  PUSH1 0  CODECOPY  PUSH1 rt_len  PUSH1 0  RETURN
         let init_len = 12;
-        let mut init = Vec::new();
-        init.push(0x60);
-        init.push(rt_len as u8); // PUSH1 rt_len
-        init.push(0x60);
-        init.push(init_len as u8); // PUSH1 init_code_len (offset of runtime in full code)
-        init.push(0x60);
-        init.push(0x00); // PUSH1 0 (dest offset in memory)
-        init.push(0x39); // CODECOPY
-        init.push(0x60);
-        init.push(rt_len as u8); // PUSH1 rt_len
-        init.push(0x60);
-        init.push(0x00); // PUSH1 0
-        init.push(0xF3); // RETURN
+        // PUSH1 rt_len | PUSH1 init_code_len | PUSH1 0 | CODECOPY
+        // PUSH1 rt_len | PUSH1 0             | RETURN
+        let mut init = vec![
+            0x60,
+            rt_len as u8,
+            0x60,
+            init_len as u8,
+            0x60,
+            0x00,
+            0x39,
+            0x60,
+            rt_len as u8,
+            0x60,
+            0x00,
+            0xF3,
+        ];
         assert_eq!(init.len(), init_len as usize);
         init.extend_from_slice(&runtime);
         Bytes::from(init)
