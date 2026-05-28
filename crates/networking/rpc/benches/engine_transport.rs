@@ -1,5 +1,7 @@
 //! Engine REST/SSZ vs JSON-RPC microbenchmarks.
 
+#![allow(clippy::unwrap_used)]
+
 #[path = "fixtures.rs"]
 mod fixtures;
 

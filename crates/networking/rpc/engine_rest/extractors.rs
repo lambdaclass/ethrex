@@ -79,7 +79,7 @@ pub fn decode_ssz<T: libssz::SszDecode>(bytes: &[u8]) -> Result<T, ProblemJson> 
 /// When `with_limited_body()` wraps the body and the limit is exceeded, axum
 /// re-boxes the error once (via `Body::new` → `map_err(axum_core::Error::new)`),
 /// so the `LengthLimitError` may be one or two source levels deep.
-fn is_length_limit_error(err: &axum::Error) -> bool {
+pub(crate) fn is_length_limit_error(err: &axum::Error) -> bool {
     let mut source: Option<&dyn std::error::Error> = std::error::Error::source(err);
     while let Some(s) = source {
         if s.downcast_ref::<LengthLimitError>().is_some() {

@@ -6,14 +6,19 @@ use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, Withdrawal as InternalWithdrawal};
 use ethrex_common::{Address, Bloom, H256, U256};
 
+use crate::engine::payload::validate_execution_requests;
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::types::common::Bytes20;
 use crate::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
 use crate::types::payload::{EncodedTransaction, ExecutionPayload as JsonExecutionPayload};
 
 /// Dispatch tag selecting which existing `handle_new_payload_*` helper to call.
+/// Variant fields are baked into the reconstructed `Block` upstream and so are
+/// not read at dispatch time, but tests inspect them and they remain useful for
+/// debug logging — silence dead-code lints rather than drop them.
 #[derive(Debug, Clone)]
-pub enum EngineCall {
+#[allow(dead_code)]
+pub(crate) enum EngineCall {
     V1V2,
     V3 {
         parent_beacon_block_root: H256,
@@ -32,14 +37,14 @@ pub enum EngineCall {
 /// Outcome of converting an SSZ envelope: the reconstructed `Block`, the
 /// CL-claimed `block_hash` (preserved separately for `validate_block_hash`,
 /// since the field is not stored on `Block`), and the dispatch tag.
-pub struct DecodedNewPayload {
+pub(crate) struct DecodedNewPayload {
     pub block: Block,
     pub expected_block_hash: H256,
     pub call: EngineCall,
 }
 
 /// Implemented by each per-fork `ExecutionPayloadEnvelope`.
-pub trait IntoEngineCall {
+pub(crate) trait IntoEngineCall {
     fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson>;
 }
 
@@ -299,6 +304,10 @@ impl IntoEngineCall for prague::ExecutionPayloadEnvelope {
         let pbbr = H256::from(self.parent_beacon_block_root);
         let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let execution_requests = ssz_requests(&self.execution_requests);
+        // Spec: execution_requests MUST be ordered ascending by request_type and
+        // each entry MUST be non-empty. Mirror the JSON-RPC V4 path.
+        validate_execution_requests(&execution_requests)
+            .map_err(|err| ProblemJson::bad_request(&err.to_string()))?;
         let requests_hash = compute_requests_hash(&execution_requests);
         let json = prague_payload_to_json(self.execution_payload)?;
         let block = json
@@ -356,6 +365,10 @@ impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
         let pbbr = H256::from(self.parent_beacon_block_root);
         let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let execution_requests = ssz_requests(&self.execution_requests);
+        // Spec: execution_requests MUST be ordered ascending by request_type and
+        // each entry MUST be non-empty. Mirror the JSON-RPC V5 path.
+        validate_execution_requests(&execution_requests)
+            .map_err(|err| ProblemJson::bad_request(&err.to_string()))?;
         let requests_hash = compute_requests_hash(&execution_requests);
         let (json, raw_bal_hash) = amsterdam_payload_to_json(self.execution_payload)?;
         let block = json

@@ -67,18 +67,19 @@ pub async fn blobs_v1(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsReque
 }
 
 pub async fn blobs_v2(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsRequest>) -> Response {
-    blobs_v2_v3_inner(ctx, req, /* all_or_nothing */ true).await
+    blobs_v2_v3_inner(ctx, req).await
 }
 
 pub async fn blobs_v3(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsRequest>) -> Response {
-    blobs_v2_v3_inner(ctx, req, /* all_or_nothing */ false).await
+    blobs_v2_v3_inner(ctx, req).await
 }
 
-async fn blobs_v2_v3_inner(
-    ctx: RpcApiContext,
-    req: BlobsRequest,
-    all_or_nothing: bool,
-) -> Response {
+// V2 (Cancun) and V3 (Osaka) differ in the spec: V2 is all-or-nothing across the
+// requested set, V3 allows partial returns of per-blob cell proofs. The current
+// mempool stores complete proof sets atomically per blob, so partial state
+// doesn't occur and both endpoints behave identically. Reintroduce a flag here
+// when the mempool gains Osaka-aware partial storage.
+async fn blobs_v2_v3_inner(ctx: RpcApiContext, req: BlobsRequest) -> Response {
     if req.versioned_hashes.len() > BLOBS_MAX_COUNT as usize {
         return ProblemJson::payload_too_large(&format!(
             "request exceeds BLOBS_MAX_COUNT ({BLOBS_MAX_COUNT})"
@@ -101,11 +102,9 @@ async fn blobs_v2_v3_inner(
         Err(e) => return ProblemJson::internal(&format!("mempool: {e}")).into_response(),
     };
 
-    // V2: all-or-nothing — if the blob exists but has no proofs, treat as missing.
-    // V3: partial — same policy with current mempool (no sub-blob partial state).
-    // Both require non-empty proofs to return Some.
-    //
-    // Note: distinguishing Cancun (1 proof) vs Osaka cell proofs (128) is a
+    // Both V2 and V3 require non-empty proofs to return Some — the mempool
+    // doesn't expose partial proof state, so the two endpoints currently share
+    // behavior. Distinguishing Cancun (1 proof) vs Osaka cell proofs (128) is a
     // follow-up; the mempool stores whatever was inserted at transaction time.
     let response_items: Vec<OptBlobAndProofV2> = tuples
         .into_iter()
@@ -115,10 +114,6 @@ async fn blobs_v2_v3_inner(
                 if proofs.is_empty() {
                     return OptBlobAndProofV2::none();
                 }
-                // For V2 all_or_nothing, we require proofs present (already checked above).
-                // Enforcing exactly 128 cell proofs is deferred to SP4 when the mempool
-                // gains Osaka-aware blob storage.
-                let _ = all_or_nothing;
                 let blob_bytes: Vec<u8> = blob.as_ref().to_vec();
                 let blob_ssz = match blob_bytes.try_into() {
                     Ok(b) => b,

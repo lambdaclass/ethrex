@@ -1,5 +1,6 @@
 //! POST /{fork}/forkchoice — forkchoice update + optional payload build.
 
+use axum::RequestExt;
 use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use ethrex_blockchain::error::ChainError;
@@ -10,7 +11,7 @@ use tracing::{error, info};
 
 use crate::engine::fork_choice::handle_forkchoice;
 use crate::engine_rest::error::ProblemJson;
-use crate::engine_rest::extractors::decode_ssz;
+use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
 use crate::engine_rest::fork_path::ForkPath;
 use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
@@ -43,9 +44,16 @@ pub async fn forkchoice_update(
     if let Err(p) = check_content_type(req.headers()) {
         return p.into_response();
     }
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+    // `with_limited_body()` honours the DefaultBodyLimit middleware. Reading via
+    // `req.into_body()` would bypass the cap and let an authenticated caller
+    // buffer arbitrarily-large bodies in memory.
+    let body = match axum::body::to_bytes(req.with_limited_body().into_body(), usize::MAX).await {
         Ok(b) => b,
         Err(e) => {
+            if is_length_limit_error(&e) {
+                return ProblemJson::payload_too_large("request body exceeds configured limit")
+                    .into_response();
+            }
             return ProblemJson::bad_request(&format!("failed to read body: {e}")).into_response();
         }
     };
@@ -191,6 +199,36 @@ fn amsterdam_to_v4(
     }
 }
 
+// ── RpcErr → ProblemJson mapping ──────────────────────────────────────────────
+//
+// `handle_forkchoice` returns CL-driven conditions (unknown head during sync,
+// too-deep reorg, attrs validation failures) as `RpcErr` variants that the
+// JSON-RPC path translates into engine-API error codes (-38002/-38003/-38005/
+// -38006). These are not server faults, so the REST path must not collapse them
+// to HTTP 500 — that breaks CL retry/diagnostic logic.
+
+fn rpc_err_to_problem(err: RpcErr) -> ProblemJson {
+    match err {
+        RpcErr::InvalidForkChoiceState(msg) => {
+            ProblemJson::unprocessable_entity(&format!("invalid forkchoice state: {msg}"))
+        }
+        RpcErr::InvalidPayloadAttributes(msg) => {
+            ProblemJson::unprocessable_entity(&format!("invalid payload attributes: {msg}"))
+        }
+        RpcErr::TooDeepReorg(msg) => {
+            ProblemJson::conflict(&format!("reorg deeper than allowed: {msg}"))
+        }
+        RpcErr::UnsupportedFork(msg) => {
+            ProblemJson::bad_request(&format!("unsupported fork: {msg}"))
+        }
+        RpcErr::BadParams(msg) | RpcErr::WrongParam(msg) | RpcErr::MissingParam(msg) => {
+            ProblemJson::bad_request(&msg)
+        }
+        RpcErr::Internal(msg) => ProblemJson::internal(&format!("forkchoice failed: {msg}")),
+        other => ProblemJson::internal(&format!("forkchoice failed: {other}")),
+    }
+}
+
 // ── Core forkchoice execution ────────────────────────────────────────────────
 
 async fn run_forkchoice(
@@ -208,9 +246,7 @@ async fn run_forkchoice(
     let (head_header, mut response) =
         match handle_forkchoice(&internal_state, ctx.clone(), version).await {
             Ok(r) => r,
-            Err(err) => {
-                return ProblemJson::internal(&format!("forkchoice failed: {err}")).into_response();
-            }
+            Err(err) => return rpc_err_to_problem(err).into_response(),
         };
 
     // If payload_attributes were provided and we have a known head, kick off a build.
@@ -223,10 +259,7 @@ async fn run_forkchoice(
         };
         match build_result {
             Ok(payload_id) => response.set_id(payload_id),
-            Err(err) => {
-                return ProblemJson::internal(&format!("payload build failed: {err}"))
-                    .into_response();
-            }
+            Err(err) => return rpc_err_to_problem(err).into_response(),
         }
     }
 

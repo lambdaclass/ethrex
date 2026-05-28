@@ -2,18 +2,20 @@
 
 use std::str::FromStr;
 
+use axum::RequestExt;
 use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::{Block, Fork};
+use ethrex_rlp::encode::RLPEncode;
 use libssz_types::SszList;
 
 use crate::engine::payload::{
     handle_new_payload_v1_v2, handle_new_payload_v3, handle_new_payload_v4,
 };
 use crate::engine_rest::error::ProblemJson;
-use crate::engine_rest::extractors::decode_ssz;
+use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
 use crate::engine_rest::fork_path::{ForkPath, parse_fork_segment};
 use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
@@ -35,9 +37,15 @@ pub async fn submit_payload(
     if let Err(p) = check_content_type(req.headers()) {
         return p.into_response();
     }
-    let body = match axum::body::to_bytes(req.into_body(), usize::MAX).await {
+    // `with_limited_body()` honours the DefaultBodyLimit middleware (256 MiB on
+    // the auth port). Reading via `req.into_body()` would bypass that cap.
+    let body = match axum::body::to_bytes(req.with_limited_body().into_body(), usize::MAX).await {
         Ok(b) => b,
         Err(e) => {
+            if is_length_limit_error(&e) {
+                return ProblemJson::payload_too_large("request body exceeds configured limit")
+                    .into_response();
+            }
             return ProblemJson::bad_request(&format!("failed to read body: {e}")).into_response();
         }
     };
@@ -47,7 +55,7 @@ pub async fn submit_payload(
         Fork::Cancun => decode_and_submit::<cancun::ExecutionPayloadEnvelope>(body, ctx).await,
         Fork::Prague => decode_and_submit::<prague::ExecutionPayloadEnvelope>(body, ctx).await,
         Fork::Osaka => {
-            // Osaka envelope is a type alias for Prague envelope.
+            // Osaka re-exports Prague's envelope (see types/osaka.rs); same shape.
             decode_and_submit::<prague::ExecutionPayloadEnvelope>(body, ctx).await
         }
         Fork::Amsterdam => {
@@ -177,6 +185,8 @@ pub async fn get_payload(
     };
 
     // 4. Convert Block → fork-specific SSZ envelope and return.
+    //    Prague+ forks need `requests`; Amsterdam additionally needs the BAL
+    //    raw RLP bytes. Both come from the existing PayloadBuildResult.
     let block = &result.payload;
     match fork {
         Fork::Paris => match paris_envelope_from_block(block) {
@@ -191,18 +201,22 @@ pub async fn get_payload(
             Ok(env) => SszBody(env).into_response(),
             Err(p) => p.into_response(),
         },
-        Fork::Prague => match prague_envelope_from_block(block) {
+        Fork::Prague => match prague_envelope_from_block(block, &result.requests) {
             Ok(env) => SszBody(env).into_response(),
             Err(p) => p.into_response(),
         },
         Fork::Osaka => {
-            // Osaka envelope is the same shape as Prague.
-            match prague_envelope_from_block(block) {
+            // Osaka envelope is structurally identical to Prague.
+            match prague_envelope_from_block(block, &result.requests) {
                 Ok(env) => SszBody(env).into_response(),
                 Err(p) => p.into_response(),
             }
         }
-        Fork::Amsterdam => match amsterdam_envelope_from_block(block) {
+        Fork::Amsterdam => match amsterdam_envelope_from_block(
+            block,
+            &result.requests,
+            result.block_access_list.as_ref(),
+        ) {
             Ok(env) => SszBody(env).into_response(),
             Err(p) => p.into_response(),
         },
@@ -440,50 +454,65 @@ fn prague_payload_from_block(block: &Block) -> Result<prague::ExecutionPayload, 
     })
 }
 
+/// Build the `execution_requests` SSZ list from the built payload's encoded
+/// requests, filtering out empty entries per EIP-7685 (matches the JSON-RPC
+/// `GetPayloadV4/V5/V6` handlers).
+fn ssz_execution_requests(
+    requests: &[ethrex_common::types::requests::EncodedRequests],
+) -> Result<
+    SszList<
+        SszList<u8, { crate::engine_rest::types::common::MAX_REQUEST_BYTES }>,
+        { crate::engine_rest::types::common::MAX_EXECUTION_REQUESTS_PER_PAYLOAD },
+    >,
+    ProblemJson,
+> {
+    use crate::engine_rest::types::common::MAX_REQUEST_BYTES;
+    let inner: Result<Vec<SszList<u8, MAX_REQUEST_BYTES>>, _> = requests
+        .iter()
+        .filter(|r| !r.0.is_empty())
+        .map(|r| {
+            r.0.to_vec().try_into().map_err(|_| {
+                ProblemJson::internal("execution_request entry exceeds MAX_REQUEST_BYTES")
+            })
+        })
+        .collect();
+    inner?
+        .try_into()
+        .map_err(|_| ProblemJson::internal("execution_requests list overflow"))
+}
+
 fn prague_envelope_from_block(
     block: &Block,
+    requests: &[ethrex_common::types::requests::EncodedRequests],
 ) -> Result<prague::ExecutionPayloadEnvelope, ProblemJson> {
-    use crate::engine_rest::types::common::{
-        MAX_EXECUTION_REQUESTS_PER_PAYLOAD, MAX_REQUEST_BYTES,
-    };
-
     let h = &block.header;
-    // Sub-project 2: execution_requests are empty in the response (populated in sub-project 3).
-    let execution_requests: SszList<
-        SszList<u8, MAX_REQUEST_BYTES>,
-        MAX_EXECUTION_REQUESTS_PER_PAYLOAD,
-    > = vec![]
-        .try_into()
-        .map_err(|_| ProblemJson::internal("execution_requests list overflow"))?;
-
     Ok(prague::ExecutionPayloadEnvelope {
         execution_payload: prague_payload_from_block(block)?,
         parent_beacon_block_root: h.parent_beacon_block_root.unwrap_or_default().0,
-        execution_requests,
+        execution_requests: ssz_execution_requests(requests)?,
     })
 }
 
 fn amsterdam_envelope_from_block(
     block: &Block,
+    requests: &[ethrex_common::types::requests::EncodedRequests],
+    bal: Option<&ethrex_common::types::block_access_list::BlockAccessList>,
 ) -> Result<amsterdam::ExecutionPayloadEnvelope, ProblemJson> {
-    use crate::engine_rest::types::common::{
-        MAX_BLOCK_ACCESS_LIST_BYTES, MAX_EXECUTION_REQUESTS_PER_PAYLOAD, MAX_REQUEST_BYTES,
-    };
+    use crate::engine_rest::types::common::MAX_BLOCK_ACCESS_LIST_BYTES;
 
     let h = &block.header;
-    // Sub-project 2: execution_requests are empty in the response (populated in sub-project 3).
-    let execution_requests: SszList<
-        SszList<u8, MAX_REQUEST_BYTES>,
-        MAX_EXECUTION_REQUESTS_PER_PAYLOAD,
-    > = vec![]
-        .try_into()
-        .map_err(|_| ProblemJson::internal("execution_requests list overflow"))?;
-
-    // The raw BAL bytes are not stored directly on the Block in ethrex's internal types;
-    // only the hash is. Return empty bytes — sub-project 3 will populate this.
-    let block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES> = vec![]
-        .try_into()
-        .map_err(|_| ProblemJson::internal("block_access_list overflow"))?;
+    // EIP-7928: serialize the BAL as its canonical RLP encoding. The CL recomputes
+    // `block_access_list_hash = keccak(rlp_bytes)` and matches it against the
+    // hash baked into the header. An empty/missing BAL would invalidate the
+    // built payload at the CL.
+    let bal_bytes: Vec<u8> = match bal {
+        Some(b) => b.encode_to_vec(),
+        None => Vec::new(),
+    };
+    let block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES> =
+        bal_bytes.try_into().map_err(|_| {
+            ProblemJson::internal("block_access_list exceeds MAX_BLOCK_ACCESS_LIST_BYTES")
+        })?;
 
     use crate::engine_rest::types::common::{
         MAX_BYTES_PER_TRANSACTION, MAX_TRANSACTIONS_PER_PAYLOAD,
@@ -525,6 +554,6 @@ fn amsterdam_envelope_from_block(
             slot_number: h.slot_number.unwrap_or(0),
         },
         parent_beacon_block_root: h.parent_beacon_block_root.unwrap_or_default().0,
-        execution_requests,
+        execution_requests: ssz_execution_requests(requests)?,
     })
 }

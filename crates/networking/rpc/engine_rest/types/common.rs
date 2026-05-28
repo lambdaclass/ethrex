@@ -332,12 +332,7 @@ pub struct PayloadId(pub [u8; 8]);
 impl PayloadId {
     /// Render as `0x`-prefixed lowercase hex (16 hex chars).
     pub fn to_hex_string(&self) -> String {
-        let mut s = String::with_capacity(18);
-        s.push_str("0x");
-        for b in &self.0 {
-            s.push_str(&format!("{b:02x}"));
-        }
-        s
+        format!("0x{}", hex::encode(self.0))
     }
 
     /// Big-endian u64 view (for legacy interop with `Blockchain::get_payload`).

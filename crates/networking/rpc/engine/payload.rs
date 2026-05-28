@@ -1052,7 +1052,9 @@ pub(crate) async fn handle_new_payload_v4(
 
 // Elements of the list MUST be ordered by request_type in ascending order.
 // Elements with empty request_data MUST be excluded from the list.
-fn validate_execution_requests(execution_requests: &[EncodedRequests]) -> Result<(), RpcErr> {
+pub(crate) fn validate_execution_requests(
+    execution_requests: &[EncodedRequests],
+) -> Result<(), RpcErr> {
     let mut last_type: i32 = -1;
     for requests in execution_requests {
         if requests.0.len() < 2 {
