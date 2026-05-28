@@ -2194,6 +2194,21 @@ impl Store {
         }
     }
 
+    /// Fetches block access lists for a slice of block hashes, preserving order.
+    ///
+    /// Returns `None` at any position where the BAL is unavailable (unknown block,
+    /// pre-Amsterdam block, or pruned data). Never errors for individual missing entries.
+    pub fn iter_block_access_lists_by_hashes(
+        &self,
+        hashes: &[BlockHash],
+    ) -> Result<Vec<Option<BlockAccessList>>, StoreError> {
+        let mut out = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            out.push(self.get_block_access_list(*hash)?);
+        }
+        Ok(out)
+    }
+
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 

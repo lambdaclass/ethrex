@@ -374,3 +374,39 @@ fn example_chain_config() -> ChainConfig {
         ..Default::default()
     }
 }
+
+#[test]
+fn iter_block_access_lists_by_hashes_empty_input() {
+    let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
+    let result = store
+        .iter_block_access_lists_by_hashes(&[])
+        .expect("should succeed");
+    assert!(result.is_empty(), "empty input should return empty vec");
+}
+
+#[test]
+fn iter_block_access_lists_by_hashes_returns_in_order() {
+    use ethrex_common::types::block_access_list::BlockAccessList;
+
+    let store = Store::new("memory", EngineType::InMemory).expect("in-memory store");
+    let hash_a = H256::from([0x01u8; 32]);
+    let hash_b = H256::from([0x02u8; 32]);
+    let hash_c = H256::from([0x03u8; 32]);
+
+    // Store BALs for A and C; B is intentionally left absent.
+    store
+        .store_block_access_list(hash_a, &BlockAccessList::new())
+        .expect("store A");
+    store
+        .store_block_access_list(hash_c, &BlockAccessList::new())
+        .expect("store C");
+
+    let result = store
+        .iter_block_access_lists_by_hashes(&[hash_a, hash_b, hash_c])
+        .expect("should succeed");
+
+    assert_eq!(result.len(), 3, "should return one entry per hash");
+    assert!(result[0].is_some(), "A should be Some");
+    assert!(result[1].is_none(), "B should be None (not stored)");
+    assert!(result[2].is_some(), "C should be Some");
+}

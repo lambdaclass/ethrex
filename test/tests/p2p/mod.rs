@@ -1,5 +1,10 @@
 mod backend_tests;
+mod bal_healing_tests;
 mod discovery;
 mod rlpx;
 mod snap_server_tests;
+mod snap_v2_codec_tests;
+mod snap_v2_e2e_tests;
+mod snap_v2_message_tests;
+mod snap_v2_server_tests;
 mod types_tests;
