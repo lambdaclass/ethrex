@@ -167,8 +167,8 @@ pub const STATE_BYTES_PER_STORAGE_SET: u64 = 64;
 pub const STATE_BYTES_PER_AUTH_BASE: u64 = 23; // 23-byte delegation indicator slot
 pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 143; // 120 account + 23 auth-specific
 
-/// EIP-8037 cost_per_state_byte. Pinned to the bal-devnet-7 fixed value 1530
-/// (execution-specs#2827). The dynamic formula derived from the block gas limit
+/// EIP-8037 cost_per_state_byte. Pinned to the fixed value 1530.
+/// The dynamic formula derived from the block gas limit
 /// is not active.
 pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
     1530

@@ -109,9 +109,10 @@ impl Evm {
     pub fn execute_block_pipeline(
         &mut self,
         block: &Block,
-        merkleizer: Sender<Vec<AccountUpdate>>,
+        merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         bal: Option<&BlockAccessList>,
+        bal_parallel_exec_enabled: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         LEVM::execute_block_pipeline(
             block,
@@ -121,6 +122,7 @@ impl Evm {
             queue_length,
             self.crypto.as_ref(),
             bal,
+            bal_parallel_exec_enabled,
         )
     }
 

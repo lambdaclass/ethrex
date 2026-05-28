@@ -131,7 +131,7 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
-            // Per EIP-684 + EELS bal-devnet-7: a tx-level CREATE collision burns the
+            // Per EIP-684: a tx-level CREATE collision burns the
             // full forwarded execution gas as `regular_gas_used`. Zero `gas_remaining`
             // so `raw_consumed = gas_limit` for the downstream regular-gas formula in
             // `default_hook::refund_sender`; otherwise the post-intrinsic leftover

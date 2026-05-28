@@ -80,6 +80,21 @@ Node options:
           
           [env: ETHREX_NO_PRECOMPILE_CACHE=]
 
+      --no-bal-parallel-exec
+          Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).
+          
+          [env: ETHREX_NO_BAL_PARALLEL_EXEC=]
+
+      --no-bal-prefetch
+          Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.
+          
+          [env: ETHREX_NO_BAL_PREFETCH=]
+
+      --no-bal-parallel-trie
+          Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).
+          
+          [env: ETHREX_NO_BAL_PARALLEL_TRIE=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
 
@@ -222,7 +237,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 12.0.0"]
+          [default: "ethrex 13.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
@@ -432,7 +447,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 12.0.0"]
+          [default: "ethrex 13.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

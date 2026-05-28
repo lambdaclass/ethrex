@@ -48,6 +48,10 @@ use ethrex_levm::constants::{
 };
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+use ethrex_levm::db::gen_db::{
+    LazyBalCursor, code_from_bal, post_value_at_or_before, seed_one_address_info_from_bal,
+};
+#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
 #[cfg(feature = "perf_opcode_timings")]
@@ -353,14 +357,19 @@ impl LEVM {
         ))
     }
 
+    /// `merkleizer` is `Some` on the streaming (non-BAL) path; the BAL validation path
+    /// passes `None` because the caller merkleizes optimistically from the input BAL and
+    /// the EVM-side `bal_to_account_updates` send is then redundant work.
+    #[allow(clippy::too_many_arguments)]
     pub fn execute_block_pipeline(
         block: &Block,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
-        merkleizer: Sender<Vec<AccountUpdate>>,
+        merkleizer: Option<Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         crypto: &dyn Crypto,
         header_bal: Option<&BlockAccessList>,
+        bal_parallel_exec_enabled: bool,
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
@@ -382,10 +391,17 @@ impl LEVM {
         #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
         // `eip-8025` does not call `execute_block_pipeline` it uses
         // `execute_block` instead. Adding dummy let to avoid unused warnings.
-        let _ = header_bal;
+        let _ = (header_bal, bal_parallel_exec_enabled);
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-        // When BAL is provided (Amsterdam+ validation path): use parallel execution
-        if let Some(bal) = header_bal {
+        // When BAL is provided (Amsterdam+ validation path): use parallel execution.
+        // The `is_amsterdam` gate is required: `execute_block_parallel` (and the
+        // optimistic merkleization it feeds) is only correct on Amsterdam+; a
+        // pre-Amsterdam call here in release would skip the inner debug_assert.
+        // `--no-bal-parallel-exec` opts out and falls through to the sequential pipeline below.
+        if let Some(bal) = header_bal
+            && is_amsterdam
+            && bal_parallel_exec_enabled
+        {
             // Validate header BAL structural properties before execution.
             // This catches index-out-of-bounds early, before wasting execution time.
             // Note: size cap validation is deferred until after transaction processing
@@ -411,7 +427,7 @@ impl LEVM {
                 db,
                 vm_type,
                 bal,
-                &merkleizer,
+                merkleizer.as_ref(),
                 queue_length,
                 system_seed,
                 crypto,
@@ -455,6 +471,7 @@ impl LEVM {
             // Withdrawal index is n_txs+1 in BAL; we use n_txs to avoid double-applying
             // withdrawal balances (process_withdrawals handles those below).
             let last_tx_idx = u32::try_from(block.body.transactions.len()).unwrap_or(u32::MAX);
+            // Eager seed retained: lazy_bal cursor is per-tx only; outer DB has no cursor.
             Self::seed_db_from_bal(
                 db,
                 bal,
@@ -548,7 +565,16 @@ impl LEVM {
             ));
         }
 
-        // Sequential path (existing code, for block production and non-Amsterdam)
+        // Sequential path (existing code, for block production and non-Amsterdam).
+        // The non-BAL caller always provides a Sender; the BAL path returned above.
+        // Surface a missing Sender as a normal error instead of panicking, so a
+        // future refactor that reshapes the BAL branch can't silently break the
+        // contract and bring down the executor thread.
+        let Some(merkleizer) = merkleizer else {
+            return Err(EvmError::Custom(
+                "sequential execution path called without a merkleizer Sender".to_string(),
+            ));
+        };
         if is_amsterdam {
             db.enable_bal_recording();
             // Set index 0 for pre-execution phase (system contracts)
@@ -737,19 +763,6 @@ impl LEVM {
         ))
     }
 
-    /// Convert BAL into `Vec<AccountUpdate>` for the merkleizer.
-    /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-    fn code_from_bal(new_code: &Bytes) -> (H256, Option<Code>) {
-        if new_code.is_empty() {
-            (*EMPTY_KECCACK_HASH, None)
-        } else {
-            let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
-            let hash = code_obj.hash;
-            (hash, Some(code_obj))
-        }
-    }
-
     ///
     /// For each account in the BAL, extracts the **final** post-block state
     /// (highest `block_access_index` entry per field) and builds an AccountUpdate.
@@ -812,7 +825,7 @@ impl LEVM {
 
             // Final code: last entry or prestate
             let (code_hash, code) = if let Some(c) = acct_changes.code_changes.last() {
-                Self::code_from_bal(&c.new_code)
+                code_from_bal(&c.new_code)
             } else {
                 (prestate.code_hash, None)
             };
@@ -881,6 +894,12 @@ impl LEVM {
         Ok(updates)
     }
 
+    /// Eager BAL prefix seed — used only by the outer DB path (parallel-execution
+    /// fallback recovery and post-tx outer seed before request extraction).
+    /// Per-tx parallel execution uses `LazyBalCursor` in `execute_block_parallel`;
+    /// see also `seed_one_address_info_from_bal` and `seed_one_storage_slot_from_bal`
+    /// in `ethrex_levm::db::gen_db`.
+    ///
     /// Pre-seed a GeneralizedDatabase with BAL-derived state for a specific tx.
     ///
     /// For each BAL-modified account, applies accumulated diffs with
@@ -898,117 +917,37 @@ impl LEVM {
         max_idx: u32,
         accounts_by_min_index: &[(u32, usize)],
     ) -> Result<(), EvmError> {
-        // Only visit accounts whose minimum change index <= max_idx.
         let end = accounts_by_min_index.partition_point(|(min_idx, _)| *min_idx <= max_idx);
         let bal_accounts = bal.accounts();
         for &(_, acct_idx) in &accounts_by_min_index[..end] {
-            let acct_changes = &bal_accounts[acct_idx];
-            let addr = acct_changes.address;
+            seed_one_address_info_from_bal(db, bal, acct_idx, max_idx)
+                .map_err(|e| EvmError::Custom(format!("seed_db_from_bal: {e}")))?;
 
-            // Binary search (slices are sorted ascending by block_access_index):
-            // partition_point returns the number of elements <= max_idx.
-            let balance_pos = acct_changes
-                .balance_changes
-                .partition_point(|c| c.block_access_index <= max_idx);
-            let nonce_pos = acct_changes
-                .nonce_changes
-                .partition_point(|c| c.block_access_index <= max_idx);
-            let code_pos = acct_changes
-                .code_changes
-                .partition_point(|c| c.block_access_index <= max_idx);
-            // Each slot's slot_changes are sorted ascending by block_access_index,
-            // so if the first entry is <= max_idx, at least one change is in scope.
+            let acct_changes = &bal_accounts[acct_idx];
+            if acct_changes.storage_changes.is_empty() {
+                continue;
+            }
             let any_storage = acct_changes.storage_changes.iter().any(|sc| {
                 sc.slot_changes
                     .first()
                     .is_some_and(|c| c.block_access_index <= max_idx)
             });
-
-            if balance_pos == 0 && nonce_pos == 0 && !any_storage && code_pos == 0 {
+            if !any_storage {
                 continue;
             }
-
-            // Compute code update before borrowing acc (borrow checker: can't access
-            // db.codes while acc holds a mutable borrow of db)
-            let code_update = if code_pos > 0 {
-                Some(Self::code_from_bal(
-                    &acct_changes.code_changes[code_pos - 1].new_code,
-                ))
-            } else {
-                None
-            };
-
-            // When BAL covers all account info fields (balance + nonce + code), insert
-            // a default LevmAccount directly to skip the store/shared_base lookup.
-            // For partial coverage, load from store to fill missing fields.
-            let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
-            if has_all_info {
-                use ethrex_common::types::AccountInfo;
-                let balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
-                let nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
-                let code_hash = code_update
-                    .as_ref()
-                    .map(|(h, _)| *h)
-                    .unwrap_or(*EMPTY_KECCACK_HASH);
-                // NOTE: has_storage is false for newly inserted accounts. This is safe
-                // because this DB is only used for the parallel execution path (state
-                // comes from BAL, not get_state_transitions_tx). Do not reuse this DB
-                // for sequential fallback without fixing has_storage.
-                let acc = db
-                    .current_accounts_state
-                    .entry(addr)
-                    .or_insert_with(|| LevmAccount {
-                        info: AccountInfo::default(),
-                        storage: FxHashMap::default(),
-                        has_storage: false,
-                        status: AccountStatus::Modified,
-                        exists: true,
-                    });
-                acc.info.balance = balance;
-                acc.info.nonce = nonce;
-                acc.info.code_hash = code_hash;
-                acc.mark_modified();
-            } else {
-                // Partial BAL coverage — load from store/shared_base, then overwrite
-                // the covered fields. get_account already caches, so get_account_mut
-                // will be a cache hit.
+            let addr = acct_changes.address;
+            if !db.current_accounts_state.contains_key(&addr) {
                 db.get_account(addr)
-                    .map_err(|e| EvmError::Custom(format!("seed_db_from_bal load: {e}")))?;
-                let acc = db
-                    .get_account_mut(addr)
-                    .map_err(|e| EvmError::Custom(format!("seed bal: {e}")))?;
-
-                if balance_pos > 0 {
-                    acc.info.balance = acct_changes.balance_changes[balance_pos - 1].post_balance;
-                }
-                if nonce_pos > 0 {
-                    acc.info.nonce = acct_changes.nonce_changes[nonce_pos - 1].post_nonce;
-                }
-                if let Some((hash, _)) = &code_update {
-                    acc.info.code_hash = *hash;
-                }
+                    .map_err(|e| EvmError::Custom(format!("seed storage: {e}")))?;
             }
-
-            // Apply storage changes (works for both paths since acc is now in current_accounts_state)
-            if any_storage {
-                let acc = db
-                    .current_accounts_state
-                    .get_mut(&addr)
-                    .expect("account was just inserted");
-                for sc in &acct_changes.storage_changes {
-                    let pos = sc
-                        .slot_changes
-                        .partition_point(|c| c.block_access_index <= max_idx);
-                    if pos > 0 {
-                        let key = ethrex_common::utils::u256_to_h256(sc.slot);
-                        acc.storage.insert(key, sc.slot_changes[pos - 1].post_value);
-                    }
+            let acc = db
+                .get_account_mut(addr)
+                .map_err(|e| EvmError::Custom(format!("seed storage mut: {e}")))?;
+            for sc in &acct_changes.storage_changes {
+                if let Some(value) = post_value_at_or_before(sc, max_idx) {
+                    acc.storage
+                        .insert(ethrex_common::utils::u256_to_h256(sc.slot), value);
                 }
-            }
-
-            // Insert code object after acc borrow is released
-            if let Some((hash, Some(code_obj))) = code_update {
-                db.codes.entry(hash).or_insert(code_obj);
             }
         }
         Ok(())
@@ -1028,7 +967,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         bal: &BlockAccessList,
-        merkleizer: &Sender<Vec<AccountUpdate>>,
+        merkleizer: Option<&Sender<Vec<AccountUpdate>>>,
         queue_length: &AtomicUsize,
         system_seed: Arc<CacheDB>,
         crypto: &dyn Crypto,
@@ -1057,13 +996,16 @@ impl LEVM {
             "execute_block_parallel invoked on non-Amsterdam block"
         );
 
-        // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch)
-        //    This covers ALL state changes: system calls, txs, withdrawals.
-        let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
-        merkleizer
-            .send(account_updates)
-            .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
-        queue_length.fetch_add(1, Ordering::Relaxed);
+        // 1. Convert BAL → AccountUpdates and send to merkleizer (single batch).
+        // Skipped when the caller merkleizes optimistically from the input BAL; the
+        // conversion is then redundant work (and does pre-state reads we don't need).
+        if let Some(merkleizer) = merkleizer {
+            let account_updates = Self::bal_to_account_updates(bal, store.as_ref())?;
+            merkleizer
+                .send(account_updates)
+                .map_err(|e| EvmError::Custom(format!("merkleizer send failed: {e}")))?;
+            queue_length.fetch_add(1, Ordering::Relaxed);
+        }
 
         // Build a checklist of all BAL storage_reads. Entries are removed as they
         // are actually read during execution phases. Anything left over is extraneous.
@@ -1105,8 +1047,9 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Pre-compute capacity hint for per-tx DBs from BAL account count.
-        let bal_account_count = bal.accounts().len();
+        // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
+        let arc_bal = Arc::new(bal.clone());
+        let arc_idx = Arc::new(validation_index.clone());
 
         // 2. Execute all txs in parallel (embarrassingly parallel, BAL-seeded).
         //    BAL validation is deferred to after the gas limit check (step 3) so that
@@ -1129,22 +1072,16 @@ impl LEVM {
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
-                    bal_account_count,
+                    32,
                 );
+                tx_db.lazy_bal = Some(LazyBalCursor {
+                    bal: arc_bal.clone(),
+                    bal_index: u32::try_from(tx_idx + 1).unwrap_or(u32::MAX),
+                    index: arc_idx.clone(),
+                });
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
-
-                // Pre-seed with BAL-derived intermediate state.
-                // BAL index: 0 = system calls, 1 = tx 0, 2 = tx 1, ...
-                // For tx at index i, we want state through BAL index i
-                // (= system calls + effects of txs 0..i-1).
-                Self::seed_db_from_bal(
-                    &mut tx_db,
-                    bal,
-                    u32::try_from(tx_idx).unwrap_or(u32::MAX),
-                    &validation_index.accounts_by_min_index,
-                )?;
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -2154,14 +2091,27 @@ impl LEVM {
         Ok(())
     }
 
-    /// Pre-warms state by loading all accounts and storage slots listed in the
-    /// Block Access List directly, without speculative re-execution.
+    /// Flattened (address, slot) storage worklist for a BAL, in natural account
+    /// order (slots grouped per account for storage-trie locality).
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    pub fn bal_storage_slots(bal: &BlockAccessList) -> Vec<(Address, H256)> {
+        bal.accounts()
+            .iter()
+            .flat_map(|ac| {
+                ac.all_storage_slots()
+                    .map(move |slot| (ac.address, H256::from_uint(&slot)))
+            })
+            .collect()
+    }
+
+    /// Concurrent block warmer for the BAL path: prefetches account states and
+    /// contract code while execution runs.
     ///
-    /// Two-phase approach:
-    /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
-    ///   account cache AND trie layer cache nodes
-    /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
-    ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
+    /// Storage slots are deliberately NOT warmed here. They are prefetched
+    /// synchronously before the executor starts (see `bal_storage_slots` and the
+    /// call site in `blockchain.rs`); warming them concurrently here let the
+    /// executor race the warmer to the trie for SSTORE original values and cost
+    /// ~22% of CPU. Keep storage warming synchronous and up front.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
@@ -2174,8 +2124,10 @@ impl LEVM {
         }
 
         // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache
-        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
+        // This warms the CachingDatabase account cache and the TrieLayerCache with
+        // state trie nodes. Storage slots are prefetched synchronously before the
+        // executor starts (see `bal_storage_slots` at the call site), so this warmer
+        // only needs to cover account states and contract code, which overlap exec.
         let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
         store
             .prefetch_accounts(&account_addresses)
@@ -2185,27 +2137,7 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 2: Prefetch storage slots in batch — parallel inner fetch + single write-lock.
-        // Storage is flattened to (address, slot) pairs so rayon can distribute
-        // work across threads regardless of how many slots each account has.
-        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
-        // pool) would monopolize a single thread while others go idle.
-        let slots: Vec<(Address, ethrex_common::H256)> = accounts
-            .iter()
-            .flat_map(|ac| {
-                ac.all_storage_slots()
-                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
-            })
-            .collect();
-        store
-            .prefetch_storage(&slots)
-            .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
+        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
         // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
         // Uses par_iter for collection since blocks can have thousands of accounts.
         let code_hashes: Vec<ethrex_common::H256> = accounts

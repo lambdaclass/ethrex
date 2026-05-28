@@ -320,6 +320,9 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
 
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
       - name: Download ethrex image artifact
         uses: actions/download-artifact@v6
         with:
