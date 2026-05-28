@@ -4409,6 +4409,7 @@ dependencies = [
  "ethrex-trie",
  "fastbloom",
  "lru 0.16.4",
+ "proptest",
  "rayon",
  "rocksdb",
  "rustc-hash 2.1.2",

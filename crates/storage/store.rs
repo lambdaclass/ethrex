@@ -3396,6 +3396,21 @@ impl Store {
         Ok(Some(BlockNumber::from_be_bytes(arr)))
     }
 
+    /// Test-only: inserts a pre-encoded `STATE_HISTORY` entry at the given block
+    /// number. Lets integration tests seed the journal without running enough
+    /// commits to trip the in-memory cache's flush threshold.
+    #[doc(hidden)]
+    pub fn put_state_history_entry_for_test(
+        &self,
+        block_number: BlockNumber,
+        encoded: &[u8],
+    ) -> Result<(), StoreError> {
+        let mut tx = self.backend.begin_write()?;
+        tx.put(STATE_HISTORY, &block_number.to_be_bytes(), encoded)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Atomically prepares the store for a deep-reorg apply pass.
     ///
     /// Builds an [`Overlay`] from journal entries in `[to_block, from_block]`

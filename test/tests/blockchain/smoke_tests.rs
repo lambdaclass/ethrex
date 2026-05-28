@@ -565,6 +565,97 @@ async fn reorg_depth_bounded_by_journal_extent_pre_merge() {
     );
 }
 
+/// Regression test for the case-2 ceiling formula.
+///
+/// `compute_reorg_ceiling` case 2 fires when `finalized_hash` is zero but the
+/// state-history journal is non-empty. Each entry at block N is the reverse-diff
+/// that unwinds N -> N-1, so the deepest pivot the journal can reach is
+/// `lowest - 1`, not `lowest`. The previous formula `latest - lowest`
+/// under-allowed by 1: with `lowest = 4` and `latest = 10`, it returned 6 even
+/// though the journal can support depth 7 (pivot at block 3).
+///
+/// This test seeds STATE_HISTORY directly (bypassing the layer-cache flush
+/// threshold) and verifies the boundary: depth 7 must be accepted, depth 8 must
+/// be rejected with TooDeepReorg{limit: 7}.
+#[tokio::test]
+async fn reorg_depth_bounded_by_journal_extent_case2() {
+    let store = test_store().await;
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let mut parent = genesis_header.clone();
+    let mut chain_a: Vec<(u64, H256)> = Vec::new();
+    for _ in 0..10 {
+        let block = new_block(&store, &parent).await;
+        parent = block.header.clone();
+        chain_a.push((block.header.number, block.hash()));
+        blockchain.add_block(block).unwrap();
+    }
+    let (_, head_a_hash) = *chain_a.last().unwrap();
+    store
+        .forkchoice_update(chain_a.clone(), 10, head_a_hash, None, None)
+        .await
+        .unwrap();
+
+    // Seed STATE_HISTORY with entries for blocks 4..=10 (lowest = 4).
+    // Values can be arbitrary; the ceiling check only reads keys via first_key.
+    for n in 4u64..=10 {
+        store.put_state_history_entry_for_test(n, &[0u8]).unwrap();
+    }
+    assert_eq!(
+        store.lowest_state_history_block_number().unwrap(),
+        Some(4),
+        "seed setup: lowest STATE_HISTORY key must be 4"
+    );
+
+    // ceiling = latest - (lowest - 1) = 10 - 3 = 7. A reorg to chain B that
+    // diverges at block 4 has link = block 3, reorg_depth = 10 - 3 = 7. With
+    // the buggy formula (latest - lowest = 6) this would fail; with the fixed
+    // formula it must succeed.
+    let (_, link3_hash) = chain_a[2]; // block 3
+    let mut parent_hash_b = link3_hash;
+    let mut head_b_hash = link3_hash;
+    for n in 4u64..=10 {
+        let h = store_fake_block(&store, n, parent_hash_b).await;
+        parent_hash_b = h;
+        head_b_hash = h;
+    }
+    apply_fork_choice(&store, head_b_hash, H256::zero(), H256::zero(), None)
+        .await
+        .expect(
+            "depth-7 reorg at journal floor should be ACCEPTED (case-2 ceiling = 7); \
+             rejection here indicates the pre-fix off-by-one is back",
+        );
+
+    // Restore chain A so the canonical-state invariant holds for the next check.
+    apply_fork_choice(&store, head_a_hash, H256::zero(), H256::zero(), Some(10))
+        .await
+        .expect("restore chain A");
+
+    // depth = 8 (chain C diverges at block 3, link = block 2). This is past the
+    // journal floor (lowest entry is 4 -> can't unwind block 3), so it must be
+    // rejected with TooDeepReorg{limit: 7}.
+    let (_, link2_hash) = chain_a[1]; // block 2
+    let mut parent_hash_c = link2_hash;
+    let mut head_c_hash = link2_hash;
+    for n in 3u64..=10 {
+        let h = store_fake_block(&store, n, parent_hash_c).await;
+        parent_hash_c = h;
+        head_c_hash = h;
+    }
+    let result = apply_fork_choice(&store, head_c_hash, H256::zero(), H256::zero(), None).await;
+    assert!(
+        matches!(
+            result,
+            Err(InvalidForkChoice::TooDeepReorg {
+                reorg_depth: 8,
+                limit: 7
+            })
+        ),
+        "depth-8 reorg past journal floor should return TooDeepReorg{{8, 7}}, got {result:?}"
+    );
+}
+
 /// Task 3.9: Verifies that `deep_reorg_attempts_total` increments when
 /// `reorg_apply_deep` is entered. The InMemory store has an empty journal
 /// (threshold = 10_000 >> blocks in test), so the deep path exits early with

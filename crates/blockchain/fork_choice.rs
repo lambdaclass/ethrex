@@ -21,7 +21,10 @@ use crate::{
 /// 1. **Finalized block known** (`finalized_hash` is non-zero and resolves): ceiling is
 ///    `latest - finalized_number`, capped by the operator override if set.
 /// 2. **No finalized block, journal non-empty** (pre-merge or fresh node): ceiling is
-///    `latest - lowest_journal_block`, capped by the operator override if set.
+///    `latest - (lowest_journal_block - 1)`, capped by the operator override if set.
+///    The `-1` accounts for the entry at `lowest_journal_block` itself being the
+///    reverse-diff used to step PAST that block; the deepest reachable pivot is
+///    therefore one below the journal floor.
 /// 3. **No finalized block, journal empty**: ceiling is `operator_override.unwrap_or(0)`.
 ///    With no finality signal and no journal, no deep reorg can be safely executed;
 ///    reject all non-trivial reorgs unless the operator explicitly permits them.
@@ -62,12 +65,18 @@ async fn compute_reorg_ceiling(
     match store.lowest_state_history_block_number()? {
         Some(lowest) => {
             // Case 2: journal is non-empty; use journal extent as physical ceiling.
-            // Structurally identical to case 1 with `lowest` substituted for
-            // `finalized_number`; case 1 is covered by `reorg_depth_bounded_by_finalized`.
-            // No dedicated integration test because `Store::from_backend` is private
-            // and seeding STATE_HISTORY entries from the integration test crate would
-            // require new pub-test API surface.
-            let journal_ceiling = latest.saturating_sub(lowest);
+            //
+            // Each entry at block N is a reverse-diff unwinding N -> N-1, so the
+            // deepest reachable pivot is `lowest - 1` (we use the entry at `lowest`
+            // to step from state-after-`lowest` to state-after-(`lowest`-1)). Max
+            // physical depth is therefore `latest - (lowest - 1)`, matching case 1
+            // when the journal floor lines up with finality (`lowest = finalized + 1`).
+            //
+            // `lowest.saturating_sub(1)` is safe: journal entries are written by
+            // commit, genesis is never committed, so `lowest >= 1` whenever the
+            // outer `Some(lowest)` branch fires. The saturating form is defensive
+            // against a future change that could relax that invariant.
+            let journal_ceiling = latest.saturating_sub(lowest.saturating_sub(1));
             Ok(match max_reorg_depth {
                 Some(d) => journal_ceiling.min(d),
                 None => journal_ceiling,
