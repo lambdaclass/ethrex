@@ -16,7 +16,11 @@ use ethrex_rlp::{
 pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
 
 /// Wrapper for optional BAL in eth/71 protocol messages.
-/// `None` (BAL unavailable) is encoded as an empty RLP list (0xc0).
+///
+/// Per EIP-8159 §"BlockAccessLists (0x13)": "The RLP empty string (`0x80`)
+/// is returned for blocks where the BAL is unavailable." An empty list
+/// (`0xc0`) is a valid BAL encoding (block with no state changes), so the
+/// empty string is the only sentinel that can never alias a real BAL.
 /// `Some(bal)` is encoded as the BAL's normal RLP list encoding.
 #[derive(Debug, Clone)]
 struct OptionalBal(Option<BlockAccessList>);
@@ -24,14 +28,14 @@ struct OptionalBal(Option<BlockAccessList>);
 impl RLPEncode for OptionalBal {
     fn encode(&self, buf: &mut dyn BufMut) {
         match &self.0 {
-            None => buf.put_u8(0xc0),
+            None => buf.put_u8(0x80),
             Some(bal) => bal.encode(buf),
         }
     }
 
     fn length(&self) -> usize {
         match &self.0 {
-            None => 1, // empty list = 0xc0
+            None => 1, // empty string = 0x80 per EIP-8159
             Some(bal) => bal.length(),
         }
     }
@@ -39,7 +43,7 @@ impl RLPEncode for OptionalBal {
 
 impl RLPDecode for OptionalBal {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.first() == Some(&0xc0) {
+        if rlp.first() == Some(&0x80) {
             return Ok((OptionalBal(None), &rlp[1..]));
         }
         let (bal, rest) = BlockAccessList::decode_unfinished(rlp)?;
@@ -139,6 +143,7 @@ impl RLPxMessage for BlockAccessLists {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rlpx::utils::snappy_decompress;
     use ethereum_types::Address;
     use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
 
@@ -243,5 +248,32 @@ mod tests {
         msg.encode(&mut buf).unwrap();
         let decoded = BlockAccessLists::decode(&buf).unwrap();
         assert_eq!(decoded.block_access_lists.len(), BLOCK_ACCESS_LIST_LIMIT);
+    }
+
+    /// Locks EIP-8159 §"BlockAccessLists (0x13)" sentinel: missing BALs encode
+    /// as RLP empty string (`0x80`), NOT empty list (`0xc0`). Empty list is a
+    /// valid BAL encoding (block with no state changes), so the empty string
+    /// is the only byte that can't alias a real BAL. geth uses the same
+    /// sentinel (`rlp.EmptyString` in `eth/protocols/eth/handlers.go`); any
+    /// drift here is silent interop breakage.
+    #[test]
+    fn block_access_lists_none_uses_0x80_sentinel() {
+        let msg = BlockAccessLists::new(0, vec![None]);
+        let mut buf = Vec::new();
+        msg.encode(&mut buf).unwrap();
+        let decompressed = snappy_decompress(&buf).unwrap();
+        assert!(
+            decompressed.contains(&0x80),
+            "decompressed payload must contain the 0x80 None sentinel"
+        );
+        assert!(
+            !decompressed.contains(&0xc0),
+            "decompressed payload must not contain the 0xc0 empty-list sentinel"
+        );
+
+        // Roundtrip must preserve the None.
+        let decoded = BlockAccessLists::decode(&buf).unwrap();
+        assert_eq!(decoded.block_access_lists.len(), 1);
+        assert!(decoded.block_access_lists[0].is_none());
     }
 }
