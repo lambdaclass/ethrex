@@ -4147,6 +4147,7 @@ name = "ethrex-levm"
 version = "13.0.0"
 dependencies = [
  "bytes",
+ "dashmap",
  "derive_more 1.0.0",
  "ethrex-common",
  "ethrex-crypto",

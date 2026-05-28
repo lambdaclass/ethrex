@@ -1,4 +1,5 @@
 use crate::{errors::DatabaseError, precompiles::PrecompileCache};
+use dashmap::DashMap;
 use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
@@ -6,8 +7,8 @@ use ethrex_common::{
 use ethrex_crypto::keccak::keccak_hash;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use rustc_hash::FxHashMap;
-use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use rustc_hash::FxBuildHasher;
+use std::sync::{Arc, OnceLock};
 
 pub mod gen_db;
 
@@ -20,10 +21,11 @@ pub struct CachedAccount {
     pub hashed_address: H256,
 }
 
-// Type aliases for cache storage maps
-type AccountCache = FxHashMap<Address, CachedAccount>;
-type StorageCache = FxHashMap<(Address, H256), U256>;
-type CodeCache = FxHashMap<H256, Code>;
+// DashMap-backed caches: per-shard locks let warmer writes and executor reads
+// proceed concurrently without serializing on a single map-wide RwLock.
+type AccountCache = DashMap<Address, CachedAccount, FxBuildHasher>;
+type StorageCache = DashMap<(Address, H256), U256, FxBuildHasher>;
+type CodeCache = DashMap<H256, Code, FxBuildHasher>;
 
 pub trait Database: Send + Sync {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError>;
@@ -82,17 +84,18 @@ pub trait Database: Send + Sync {
 /// the sequential execution phase to reuse warmed state. Reduces redundant
 /// database/trie lookups when multiple transactions touch the same accounts.
 ///
-/// Thread-safe via RwLock - optimized for read-heavy concurrent access.
+/// Thread-safe via DashMap - per-shard locks let warmer writes and executor
+/// reads proceed concurrently without serializing on a single map-wide lock.
 ///
 /// This caching database is inspired by reth's overlay/proof worker cache.
 pub struct CachingDatabase {
     inner: Arc<dyn Database>,
     /// Cached account states (balance, nonce, code_hash, storage_root)
-    accounts: RwLock<AccountCache>,
+    accounts: AccountCache,
     /// Cached storage values
-    storage: RwLock<StorageCache>,
+    storage: StorageCache,
     /// Cached contract code
-    code: RwLock<CodeCache>,
+    code: CodeCache,
     /// Shared precompile result cache (warmer populates, executor reuses).
     /// `None` when the cache is disabled via `BlockchainOptions::precompile_cache_enabled = false`.
     precompile_cache: Option<PrecompileCache>,
@@ -104,72 +107,35 @@ impl CachingDatabase {
     pub fn new(inner: Arc<dyn Database>, precompile_cache_enabled: bool) -> Self {
         Self {
             inner,
-            accounts: RwLock::new(FxHashMap::default()),
-            storage: RwLock::new(FxHashMap::default()),
-            code: RwLock::new(FxHashMap::default()),
+            accounts: DashMap::with_hasher(FxBuildHasher),
+            storage: DashMap::with_hasher(FxBuildHasher),
+            code: DashMap::with_hasher(FxBuildHasher),
             precompile_cache: precompile_cache_enabled.then(PrecompileCache::new),
             chain_config: OnceLock::new(),
         }
     }
 
-    fn read_accounts(&self) -> Result<RwLockReadGuard<'_, AccountCache>, DatabaseError> {
-        self.accounts.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_accounts(&self) -> Result<RwLockWriteGuard<'_, AccountCache>, DatabaseError> {
-        self.accounts.write().map_err(poison_error_to_db_error)
-    }
-
-    fn read_storage(&self) -> Result<RwLockReadGuard<'_, StorageCache>, DatabaseError> {
-        self.storage.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_storage(&self) -> Result<RwLockWriteGuard<'_, StorageCache>, DatabaseError> {
-        self.storage.write().map_err(poison_error_to_db_error)
-    }
-
-    fn read_code(&self) -> Result<RwLockReadGuard<'_, CodeCache>, DatabaseError> {
-        self.code.read().map_err(poison_error_to_db_error)
-    }
-
-    fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
-        self.code.write().map_err(poison_error_to_db_error)
-    }
-}
-
-fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
-    DatabaseError::Custom(format!("Cache lock poisoned: {err}"))
-}
-
-impl CachingDatabase {
     /// Look up the cached `(hashed_address, storage_root)` for an account if present.
-    fn cached_account_hash_and_root(
-        &self,
-        address: Address,
-    ) -> Result<Option<(H256, H256)>, DatabaseError> {
-        Ok(self
-            .read_accounts()?
+    fn cached_account_hash_and_root(&self, address: Address) -> Option<(H256, H256)> {
+        self.accounts
             .get(&address)
-            .map(|cached| (cached.hashed_address, cached.state.storage_root)))
+            .map(|cached| (cached.hashed_address, cached.state.storage_root))
     }
 }
 
 impl Database for CachingDatabase {
     fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-        // Check cache first
-        if let Some(cached) = self.read_accounts()?.get(&address).copied() {
+        if let Some(cached) = self.accounts.get(&address) {
             return Ok(cached.state);
         }
 
         // Cache miss: fetch state + hash from inner (which already has them) so
         // we don't recompute keccak(address) at this layer.
         let (state, hashed_address) = self.inner.get_account_state_with_hashed_address(address)?;
-        self.write_accounts()?
-            .entry(address)
-            .or_insert(CachedAccount {
-                state,
-                hashed_address,
-            });
+        self.accounts.entry(address).or_insert(CachedAccount {
+            state,
+            hashed_address,
+        });
         Ok(state)
     }
 
@@ -177,30 +143,26 @@ impl Database for CachingDatabase {
         &self,
         address: Address,
     ) -> Result<(AccountState, H256), DatabaseError> {
-        if let Some(cached) = self.read_accounts()?.get(&address).copied() {
+        if let Some(cached) = self.accounts.get(&address) {
             return Ok((cached.state, cached.hashed_address));
         }
         let (state, hashed_address) = self.inner.get_account_state_with_hashed_address(address)?;
-        self.write_accounts()?
-            .entry(address)
-            .or_insert(CachedAccount {
-                state,
-                hashed_address,
-            });
+        self.accounts.entry(address).or_insert(CachedAccount {
+            state,
+            hashed_address,
+        });
         Ok((state, hashed_address))
     }
 
     fn get_storage_value(&self, address: Address, key: H256) -> Result<U256, DatabaseError> {
-        // Check cache first
-        if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
-            return Ok(value);
+        if let Some(value) = self.storage.get(&(address, key)) {
+            return Ok(*value);
         }
 
         // Cache miss: if the account is already cached, use its hashed address
-        // and storage_root to skip the inner database's address-to-hash lookup
-        // (and its associated lock acquisition).
+        // and storage_root to skip the inner database's address-to-hash lookup.
         let value = if let Some((hashed_address, storage_root)) =
-            self.cached_account_hash_and_root(address)?
+            self.cached_account_hash_and_root(address)
         {
             self.inner.get_storage_value_with_known_hash(
                 address,
@@ -212,9 +174,7 @@ impl Database for CachingDatabase {
             self.inner.get_storage_value(address, key)?
         };
 
-        // Populate cache (U256 is Copy, no clone needed)
-        self.write_storage()?.insert((address, key), value);
-
+        self.storage.insert((address, key), value);
         Ok(value)
     }
 
@@ -225,9 +185,8 @@ impl Database for CachingDatabase {
         storage_root: H256,
         key: H256,
     ) -> Result<U256, DatabaseError> {
-        // Honour the storage cache first; otherwise forward the precomputed hash.
-        if let Some(value) = self.read_storage()?.get(&(address, key)).copied() {
-            return Ok(value);
+        if let Some(value) = self.storage.get(&(address, key)) {
+            return Ok(*value);
         }
         let value = self.inner.get_storage_value_with_known_hash(
             address,
@@ -235,7 +194,7 @@ impl Database for CachingDatabase {
             storage_root,
             key,
         )?;
-        self.write_storage()?.insert((address, key), value);
+        self.storage.insert((address, key), value);
         Ok(value)
     }
 
@@ -256,17 +215,13 @@ impl Database for CachingDatabase {
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
-        // Check cache first
-        if let Some(code) = self.read_code()?.get(&code_hash).cloned() {
-            return Ok(code);
+        if let Some(code) = self.code.get(&code_hash) {
+            return Ok(code.clone());
         }
 
-        // Cache miss: query underlying database
         let code = self.inner.get_account_code(code_hash)?;
-
-        // Populate cache (Code contains Bytes which is ref-counted, clone is cheap)
-        self.write_code()?.insert(code_hash, code.clone());
-
+        // Code contains Bytes which is ref-counted, clone is cheap.
+        self.code.insert(code_hash, code.clone());
         Ok(code)
     }
 
@@ -283,47 +238,35 @@ impl Database for CachingDatabase {
 
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
-        // Fetch (state, hashed_address) from inner in parallel — the inner
-        // (e.g. `StoreVmDatabase`) already computes/caches the keccak, so this
-        // avoids recomputing it at this layer.
-        let fetched: Vec<(Address, CachedAccount)> = addresses
+        // Each task fetches + inserts independently — DashMap's per-shard locks
+        // make the batched-write pattern unnecessary.
+        addresses
             .par_iter()
-            .map(|&addr| {
-                self.inner.get_account_state_with_hashed_address(addr).map(
-                    |(state, hashed_address)| {
-                        (
-                            addr,
-                            CachedAccount {
-                                state,
-                                hashed_address,
-                            },
-                        )
-                    },
-                )
+            .try_for_each(|&addr| -> Result<(), DatabaseError> {
+                if self.accounts.contains_key(&addr) {
+                    return Ok(());
+                }
+                let (state, hashed_address) =
+                    self.inner.get_account_state_with_hashed_address(addr)?;
+                self.accounts.entry(addr).or_insert(CachedAccount {
+                    state,
+                    hashed_address,
+                });
+                Ok(())
             })
-            .collect::<Result<_, _>>()?;
-        let mut cache = self.write_accounts()?;
-        for (addr, cached) in fetched {
-            cache.entry(addr).or_insert(cached);
-        }
-        Ok(())
     }
 
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        // Snapshot hashed_address + storage_root per account so the parallel
-        // fetchers can use the precomputed hash and bypass the inner database's
-        // address-to-hash lookup on every slot.
-        let account_hints: FxHashMap<Address, (H256, H256)> = self
-            .read_accounts()?
-            .iter()
-            .map(|(addr, cached)| (*addr, (cached.hashed_address, cached.state.storage_root)))
-            .collect();
-
-        let fetched: Vec<((Address, H256), U256)> = keys
-            .par_iter()
-            .map(|&(addr, key)| {
-                let value = if let Some(&(hashed_address, storage_root)) = account_hints.get(&addr)
+        // No upfront snapshot needed — DashMap reads are lock-free per shard,
+        // so each parallel task can look up the cached account hash directly.
+        keys.par_iter()
+            .try_for_each(|&(addr, key)| -> Result<(), DatabaseError> {
+                if self.storage.contains_key(&(addr, key)) {
+                    return Ok(());
+                }
+                let value = if let Some((hashed_address, storage_root)) =
+                    self.cached_account_hash_and_root(addr)
                 {
                     self.inner.get_storage_value_with_known_hash(
                         addr,
@@ -334,13 +277,8 @@ impl Database for CachingDatabase {
                 } else {
                     self.inner.get_storage_value(addr, key)?
                 };
-                Ok(((addr, key), value))
+                self.storage.insert((addr, key), value);
+                Ok(())
             })
-            .collect::<Result<_, _>>()?;
-        let mut cache = self.write_storage()?;
-        for (key, value) in fetched {
-            cache.entry(key).or_insert(value);
-        }
-        Ok(())
     }
 }
