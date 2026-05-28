@@ -310,7 +310,7 @@ impl Node {
             .map(|bal| bal.compute_hash());
         let block = payload_response
             .execution_payload
-            .into_block(
+            .to_block(
                 parent_beacon_block_root,
                 Some(requests_hash),
                 block_access_list_hash,

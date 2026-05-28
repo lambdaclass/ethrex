@@ -1249,7 +1249,7 @@ mod amsterdam_types_tests {
 #[cfg(test)]
 mod conversion_tests {
     use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::conversions::{EngineCall, IntoEngineCall};
+    use crate::engine_rest::types::conversions::{DecodedNewPayload, EngineCall, IntoEngineCall};
 
     fn paris_empty_envelope() -> crate::engine_rest::types::paris::ExecutionPayloadEnvelope {
         use crate::engine_rest::types::paris::*;
@@ -1280,7 +1280,7 @@ mod conversion_tests {
     #[test]
     fn paris_envelope_dispatches_to_v1v2() {
         let env = paris_empty_envelope();
-        let (block, call) = env.into_engine_call().expect("conversion");
+        let DecodedNewPayload { block, call, .. } = env.into_engine_call().expect("conversion");
         assert!(matches!(call, EngineCall::V1V2));
         assert_eq!(block.header.gas_limit, 30_000_000);
         assert_eq!(block.header.base_fee_per_gas, Some(7));
@@ -1311,7 +1311,7 @@ mod conversion_tests {
             },
             parent_beacon_block_root: [0xBB; 32],
         };
-        let (block, call) = env.into_engine_call().expect("conversion");
+        let DecodedNewPayload { block, call, .. } = env.into_engine_call().expect("conversion");
         match call {
             EngineCall::V3 {
                 parent_beacon_block_root,
@@ -1354,7 +1354,7 @@ mod conversion_tests {
                 .try_into()
                 .unwrap(),
         };
-        let (_block, call) = env.into_engine_call().expect("conversion");
+        let DecodedNewPayload { call, .. } = env.into_engine_call().expect("conversion");
         match call {
             EngineCall::V4 {
                 execution_requests, ..
@@ -1395,7 +1395,7 @@ mod conversion_tests {
                 .unwrap(),
             },
         };
-        let (block, call) = env.into_engine_call().expect("conversion");
+        let DecodedNewPayload { block, call, .. } = env.into_engine_call().expect("conversion");
         assert!(matches!(call, EngineCall::V1V2));
         // Critical: Shanghai blocks MUST have None for blob fields, not Some(0).
         assert_eq!(block.header.blob_gas_used, None);
@@ -1434,7 +1434,7 @@ mod conversion_tests {
             parent_beacon_block_root: [0xBB; 32],
             execution_requests: vec![].try_into().unwrap(),
         };
-        let (block, call) = env.into_engine_call().expect("conversion");
+        let DecodedNewPayload { block, call, .. } = env.into_engine_call().expect("conversion");
         match call {
             EngineCall::V5 { raw_bal_hash, .. } => {
                 assert!(raw_bal_hash.is_some(), "BAL hash should be precomputed");

@@ -20,10 +20,10 @@ use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::common::{
     Bytes20, PayloadId, PayloadStatus as SszPayloadStatus, PayloadStatusCode,
 };
-use crate::engine_rest::types::conversions::{EngineCall, IntoEngineCall};
+use crate::engine_rest::types::conversions::{DecodedNewPayload, EngineCall, IntoEngineCall};
 use crate::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
 use crate::rpc::RpcApiContext;
-use crate::types::payload::{ExecutionPayload as JsonExecutionPayload, PayloadValidationStatus};
+use crate::types::payload::PayloadValidationStatus;
 
 // ── submit_payload ────────────────────────────────────────────────────────────
 
@@ -69,24 +69,57 @@ where
         Err(p) => return p.into_response(),
     };
 
-    // 2. Convert SSZ envelope → Block + EngineCall dispatch tag.
-    let (block, call) = match envelope.into_engine_call() {
-        Ok(pair) => pair,
+    // 2. Convert SSZ envelope → Block + dispatch tag + CL-claimed block_hash.
+    let DecodedNewPayload {
+        block,
+        expected_block_hash,
+        call,
+    } = match envelope.into_engine_call() {
+        Ok(d) => d,
         Err(problem) => return problem.into_response(),
     };
 
-    // 3. Build a JSON ExecutionPayload for the legacy helpers (used for block-hash
-    //    validation and logging). `from_block` does not fail.
-    let json_payload = JsonExecutionPayload::from_block(block.clone(), None);
+    // 3. V5/Amsterdam: structural BAL checks (mirror JSON-RPC NewPayloadV5Request).
+    //    These are spec-level invalid-params, not block-validity failures, so they
+    //    return 400 BadRequest instead of falling through to PayloadStatus::INVALID.
+    if let EngineCall::V5 { raw_bal_hash, .. } = &call {
+        // (a) Empty BAL → structural error. EIP-7928 makes BAL mandatory in V5.
+        if raw_bal_hash.is_none() {
+            return ProblemJson::bad_request("block_access_list required for engine_newPayloadV5")
+                .into_response();
+        }
+        // (b) Fork-boundary detector: if rebuilding the header WITHOUT
+        // `block_access_list_hash` produces the CL-claimed `block_hash`, the
+        // payload is V4-shape misrouted to V5. Match JSON-RPC's -32602 path.
+        if block.hash() != expected_block_hash {
+            let mut alt_header = block.header.clone();
+            alt_header.block_access_list_hash = None;
+            let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
+            if alt_hash == expected_block_hash {
+                return ProblemJson::bad_request(
+                    "engine_newPayloadV5 received header missing block_access_list_hash field",
+                )
+                .into_response();
+            }
+        }
+    }
 
-    // 4. Dispatch to the appropriate handle_new_payload_* helper.
+    // 4. Dispatch to the appropriate handle_new_payload_* helper. The helpers
+    //    only need the expected block_hash from the payload, so we pass it
+    //    directly and skip the `JsonExecutionPayload::from_block` intermediate.
     let result = match call {
-        EngineCall::V1V2 => handle_new_payload_v1_v2(&json_payload, block, ctx, None).await,
-        EngineCall::V3 { .. } => handle_new_payload_v3(&json_payload, ctx, block, None, None).await,
+        EngineCall::V1V2 => handle_new_payload_v1_v2(expected_block_hash, block, ctx, None).await,
+        EngineCall::V3 { .. } => {
+            handle_new_payload_v3(expected_block_hash, ctx, block, None, None).await
+        }
         // Prague (V4) reuses handle_new_payload_v3 — matches the JSON-RPC
         // NewPayloadV4Request::handle behavior in engine/payload.rs.
-        EngineCall::V4 { .. } => handle_new_payload_v3(&json_payload, ctx, block, None, None).await,
-        EngineCall::V5 { .. } => handle_new_payload_v4(&json_payload, ctx, block, None, None).await,
+        EngineCall::V4 { .. } => {
+            handle_new_payload_v3(expected_block_hash, ctx, block, None, None).await
+        }
+        EngineCall::V5 { .. } => {
+            handle_new_payload_v4(expected_block_hash, ctx, block, None, None).await
+        }
     };
 
     // 5. Map internal PayloadStatus → SSZ PayloadStatus.

@@ -62,7 +62,7 @@ where
 
         T::from_ssz_bytes(&bytes)
             .map(Ssz)
-            .map_err(|err| ProblemJson::bad_request(&format!("SSZ decode failed: {err:?}")))
+            .map_err(|err| ProblemJson::bad_request(&format!("SSZ decode failed: {err}")))
     }
 }
 
@@ -71,7 +71,7 @@ where
 /// known at the extractor level (i.e., it depends on a path parameter).
 pub fn decode_ssz<T: libssz::SszDecode>(bytes: &[u8]) -> Result<T, ProblemJson> {
     T::from_ssz_bytes(bytes)
-        .map_err(|err| ProblemJson::bad_request(&format!("SSZ decode failed: {err:?}")))
+        .map_err(|err| ProblemJson::bad_request(&format!("SSZ decode failed: {err}")))
 }
 
 /// Walk the error source chain to detect a `LengthLimitError`.

@@ -29,9 +29,18 @@ pub enum EngineCall {
     },
 }
 
+/// Outcome of converting an SSZ envelope: the reconstructed `Block`, the
+/// CL-claimed `block_hash` (preserved separately for `validate_block_hash`,
+/// since the field is not stored on `Block`), and the dispatch tag.
+pub struct DecodedNewPayload {
+    pub block: Block,
+    pub expected_block_hash: H256,
+    pub call: EngineCall,
+}
+
 /// Implemented by each per-fork `ExecutionPayloadEnvelope`.
 pub trait IntoEngineCall {
-    fn into_engine_call(self) -> Result<(Block, EngineCall), ProblemJson>;
+    fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson>;
 }
 
 // ── Helper: SSZ base_fee_per_gas (32-byte LE U256) → u64 ─────────────────────
@@ -154,12 +163,17 @@ fn paris_payload_to_json(p: paris::ExecutionPayload) -> Result<JsonExecutionPayl
 }
 
 impl IntoEngineCall for paris::ExecutionPayloadEnvelope {
-    fn into_engine_call(self) -> Result<(Block, EngineCall), ProblemJson> {
+    fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson> {
+        let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let json = paris_payload_to_json(self.execution_payload)?;
         let block = json
-            .into_block(None, None, None)
+            .to_block(None, None, None)
             .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
-        Ok((block, EngineCall::V1V2))
+        Ok(DecodedNewPayload {
+            block,
+            expected_block_hash,
+            call: EngineCall::V1V2,
+        })
     }
 }
 
@@ -192,12 +206,17 @@ fn shanghai_payload_to_json(
 }
 
 impl IntoEngineCall for shanghai::ExecutionPayloadEnvelope {
-    fn into_engine_call(self) -> Result<(Block, EngineCall), ProblemJson> {
+    fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson> {
+        let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let json = shanghai_payload_to_json(self.execution_payload)?;
         let block = json
-            .into_block(None, None, None)
+            .to_block(None, None, None)
             .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
-        Ok((block, EngineCall::V1V2))
+        Ok(DecodedNewPayload {
+            block,
+            expected_block_hash,
+            call: EngineCall::V1V2,
+        })
     }
 }
 
@@ -230,18 +249,20 @@ fn cancun_payload_to_json(
 }
 
 impl IntoEngineCall for cancun::ExecutionPayloadEnvelope {
-    fn into_engine_call(self) -> Result<(Block, EngineCall), ProblemJson> {
+    fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson> {
         let pbbr = H256::from(self.parent_beacon_block_root);
+        let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let json = cancun_payload_to_json(self.execution_payload)?;
         let block = json
-            .into_block(Some(pbbr), None, None)
+            .to_block(Some(pbbr), None, None)
             .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
-        Ok((
+        Ok(DecodedNewPayload {
             block,
-            EngineCall::V3 {
+            expected_block_hash,
+            call: EngineCall::V3 {
                 parent_beacon_block_root: pbbr,
             },
-        ))
+        })
     }
 }
 
@@ -274,21 +295,23 @@ fn prague_payload_to_json(
 }
 
 impl IntoEngineCall for prague::ExecutionPayloadEnvelope {
-    fn into_engine_call(self) -> Result<(Block, EngineCall), ProblemJson> {
+    fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson> {
         let pbbr = H256::from(self.parent_beacon_block_root);
+        let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let execution_requests = ssz_requests(&self.execution_requests);
         let requests_hash = compute_requests_hash(&execution_requests);
         let json = prague_payload_to_json(self.execution_payload)?;
         let block = json
-            .into_block(Some(pbbr), Some(requests_hash), None)
+            .to_block(Some(pbbr), Some(requests_hash), None)
             .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
-        Ok((
+        Ok(DecodedNewPayload {
             block,
-            EngineCall::V4 {
+            expected_block_hash,
+            call: EngineCall::V4 {
                 parent_beacon_block_root: pbbr,
                 execution_requests,
             },
-        ))
+        })
     }
 }
 
@@ -329,21 +352,23 @@ fn amsterdam_payload_to_json(
 }
 
 impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
-    fn into_engine_call(self) -> Result<(Block, EngineCall), ProblemJson> {
+    fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson> {
         let pbbr = H256::from(self.parent_beacon_block_root);
+        let expected_block_hash = H256::from(self.execution_payload.block_hash);
         let execution_requests = ssz_requests(&self.execution_requests);
         let requests_hash = compute_requests_hash(&execution_requests);
         let (json, raw_bal_hash) = amsterdam_payload_to_json(self.execution_payload)?;
         let block = json
-            .into_block(Some(pbbr), Some(requests_hash), raw_bal_hash)
+            .to_block(Some(pbbr), Some(requests_hash), raw_bal_hash)
             .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
-        Ok((
+        Ok(DecodedNewPayload {
             block,
-            EngineCall::V5 {
+            expected_block_hash,
+            call: EngineCall::V5 {
                 parent_beacon_block_root: pbbr,
                 execution_requests,
                 raw_bal_hash,
             },
-        ))
+        })
     }
 }
