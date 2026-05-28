@@ -38,6 +38,9 @@ const FOLLOW_DISTANCE: u64 = 8;
 
 /// Render a duration in seconds as a compact human string, e.g. "13d 4h".
 fn humanize_secs(secs: u64) -> String {
+    if secs < 60 {
+        return "< 1m".to_string();
+    }
     let days = secs / 86_400;
     let hours = (secs % 86_400) / 3_600;
     let mins = (secs % 3_600) / 60;
