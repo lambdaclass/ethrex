@@ -241,9 +241,6 @@ impl RpcHandler for NewPayloadV4Request {
                 chain_config.get_fork(block.header.timestamp)
             )));
         }
-        if chain_config.is_osaka_activated(block.header.timestamp) {
-            return Err(RpcErr::UnsupportedFork(format!("{:?}", Fork::Osaka)));
-        }
 
         // EIP-7928 fork-boundary detector: V4 doesn't carry block_access_list_hash
         // in its header schema. If the payload's block_hash matches what a V5-style
