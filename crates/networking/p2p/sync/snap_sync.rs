@@ -218,7 +218,9 @@ pub async fn sync_cycle_snap(
 
         // If the sync head is not 0 we search to fullsync
         let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
-        // Or the head is very close to 0
+        // Or the head is very close to 0. A pre-check in `sync.rs::sync_cycle`
+        // also gates on `< MIN_FULL_BLOCKS`; keep both — this one stays as a
+        // safety net for callers that enter `sync_cycle_snap` directly.
         let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {

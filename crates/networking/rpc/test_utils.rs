@@ -7,9 +7,15 @@
 
 use crate::{
     eth::gas_tip_estimator::GasTipEstimator,
-    rpc::{ClientVersion, NodeData, RpcApiContext, start_api, start_block_executor},
+    rpc::{
+        ClientVersion, NodeData, RpcApiContext, handle_authrpc_request, handle_http_request,
+        start_api, start_block_executor,
+    },
     utils::RpcNamespace,
 };
+use axum::extract::State;
+use axum_extra::TypedHeader;
+use axum_extra::headers::{Authorization, authorization::Bearer};
 use bytes::Bytes;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::{
@@ -31,8 +37,11 @@ use ethrex_p2p::{
 };
 use ethrex_storage::{EngineType, Store};
 use hex_literal::hex;
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use secp256k1::SecretKey;
+use serde_json::Value;
 use spawned_concurrency::tasks::ActorRef;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashSet, net::SocketAddr, str::FromStr, sync::Arc};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -364,4 +373,42 @@ pub async fn dummy_p2p_context(peer_table: PeerTable) -> P2PContext {
         100.0,
     )
     .unwrap()
+}
+
+/// Mint a valid bearer header for the given context's JWT secret, with a
+/// fresh `iat` claim. For integration tests of the engine RPC port.
+pub fn jwt_auth_header_for(context: &RpcApiContext) -> Option<TypedHeader<Authorization<Bearer>>> {
+    let iat = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let token = encode(
+        &Header::new(Algorithm::HS256),
+        &serde_json::json!({ "iat": iat }),
+        &EncodingKey::from_secret(&context.node_data.jwt_secret),
+    )
+    .unwrap();
+    Some(TypedHeader(Authorization::bearer(&token).unwrap()))
+}
+
+/// Drive the auth RPC handler without needing axum extractor types at the
+/// call site.
+pub async fn call_authrpc(
+    context: RpcApiContext,
+    auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+    body: String,
+) -> Value {
+    handle_authrpc_request(State(context), auth_header, body)
+        .await
+        .expect("handle_authrpc_request should not return a status code error")
+        .0
+}
+
+/// Drive the public HTTP RPC handler without needing axum extractor types at
+/// the call site.
+pub async fn call_http(context: RpcApiContext, body: String) -> Value {
+    handle_http_request(State(context), body)
+        .await
+        .expect("handle_http_request should not return a status code error")
+        .0
 }
