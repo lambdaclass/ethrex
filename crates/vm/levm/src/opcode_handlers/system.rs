@@ -95,11 +95,11 @@ impl OpcodeHandler for OpCallHandler {
             create_cost,
         );
 
+        // `create_cost` is EIP-8037 state gas (charged via `increase_state_gas`
+        // below) and must not appear in the regular-gas check.
         if is_delegation_7702 {
             vm.current_call_frame.check_gas(
                 static_cost
-                    .checked_add(create_cost)
-                    .ok_or(ExceptionalHalt::OutOfGas)?
                     .checked_add(eip7702_gas_consumed)
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
