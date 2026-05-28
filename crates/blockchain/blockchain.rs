@@ -111,6 +111,8 @@ use tokio_util::sync::CancellationToken;
 use vm::StoreVmDatabase;
 
 #[cfg(feature = "metrics")]
+use ethrex_metrics::bal::METRICS_BAL;
+#[cfg(feature = "metrics")]
 use ethrex_metrics::blocks::METRICS_BLOCKS;
 
 #[cfg(feature = "c-kzg")]
@@ -231,6 +233,19 @@ pub struct BlockchainOptions {
     /// warmer thread and the executor. Set to false (via `--no-precompile-cache`) to
     /// disable the cache for benchmarking purposes.
     pub precompile_cache_enabled: bool,
+    /// If true (default), Amsterdam+ validation runs transactions in parallel
+    /// using the header BAL to seed per-tx databases. Set to false (via
+    /// `--no-bal-parallel-exec`) to fall back to sequential execution.
+    pub bal_parallel_exec_enabled: bool,
+    /// If true (default), Amsterdam+ validation spawns a warmer thread that
+    /// prefetches accounts, storage slots, and codes listed in the header BAL.
+    /// Set to false (via `--no-bal-prefetch`) to skip prefetching on the BAL path.
+    pub bal_prefetch_enabled: bool,
+    /// If true (default), Amsterdam+ validation merkleizes optimistically from
+    /// `synthesize_bal_updates` in parallel with execution. Set to false (via
+    /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
+    /// the executor and merkleizing post-execution.
+    pub bal_parallel_trie_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -242,6 +257,9 @@ impl Default for BlockchainOptions {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             precompile_cache_enabled: true,
+            bal_parallel_exec_enabled: true,
+            bal_prefetch_enabled: true,
+            bal_parallel_trie_enabled: true,
         }
     }
 }
@@ -469,11 +487,19 @@ impl Blockchain {
         vm.db.store = caching_store.clone();
 
         let cancelled = AtomicBool::new(false);
+        let bal_parallel_exec_enabled = self.options.bal_parallel_exec_enabled;
 
         // Synthesize BAL updates pre-scope so the merkleizer thread can start
         // trie work immediately, in parallel with execution.
+        // `--no-bal-parallel-trie` opts out: leave `optimistic_updates = None` so
+        // the merkleizer takes the streaming branch (fed by the EVM-side
+        // `bal_to_account_updates` send over the channel below).
         let optimistic_updates: Option<FxHashMap<Address, BalSynthesisItem>> =
-            bal.map(synthesize_bal_updates);
+            if self.options.bal_parallel_trie_enabled {
+                bal.map(synthesize_bal_updates)
+            } else {
+                None
+            };
         let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
             optimistic_updates.as_ref().map(|m| {
                 m.iter()
@@ -488,11 +514,52 @@ impl Blockchain {
             None
         };
 
+        // Synchronously warm all BAL storage slots before the executor thread starts.
+        //
+        // The warmer and executor share one CachingDatabase; `prefetch_storage`
+        // populates the cache only after its whole parallel fetch completes, so when
+        // the warmer ran storage concurrently the executor raced it to the trie for
+        // SSTORE original values and lost (~22% of CPU on cold-cache import-bench).
+        // Doing the storage prefetch up front (parallel, on all cores) lets execution
+        // run fully warm and removes the warmer's CPU/lock contention with it.
+        //
+        // Measured on bal-devnet-7-mainnet-mix-460 (import-bench --with-bal, vs main):
+        //   - concurrent storage warming (any ordering/chunking): ~ -7% to -13%
+        //   - this synchronous full-storage prefetch:             ~ -24%
+        // DO NOT move storage back into the concurrent warmer; the race is the whole
+        // problem. DO NOT add account prefetch here too: that regressed (~ +150 ms),
+        // because account reads already overlap exec well and a synchronous pass both
+        // adds serial latency and double-fetches against the warmer's Phase 1. Slots
+        // are warmed in natural account order; an execution-order sort gave no benefit
+        // once every slot is warm before exec.
+        //
+        // Live-node tradeoff: this prefetch is on the critical path before exec, no
+        // longer overlapped with it. With a warm cache the reads hit and it is a
+        // no-op; on a genuinely cold block (first slot after restart, account-heavy
+        // block) it adds serial latency the old overlapped warmer would have hidden.
+        // The benchmarks above are cold-cache batch import, not single-block live
+        // tail latency; the tradeoff is deliberate and favors throughput.
+        //
+        // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
+        // prefetching, skip the synchronous storage warm too. The warmer thread
+        // below already honors the same toggle.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if self.options.bal_prefetch_enabled
+            && let Some(bal) = bal
+        {
+            let slots = LEVM::bal_storage_slots(bal);
+            if !slots.is_empty() {
+                let _ = caching_store.prefetch_storage(&slots);
+            }
+        }
+
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let vm_type = vm.vm_type;
                 let cancelled_ref = &cancelled;
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let bal_prefetch_enabled = self.options.bal_prefetch_enabled;
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let warm_handle = std::thread::Builder::new()
                     .name("block_executor_warmer".to_string())
@@ -501,11 +568,28 @@ impl Blockchain {
                         // Precompile cache lives inside CachingDatabase, shared automatically.
                         let start = Instant::now();
                         if let Some(bal) = bal {
-                            // Amsterdam+: BAL-based precise prefetching (no tx re-execution)
-                            if let Err(e) =
-                                LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
-                            {
-                                debug!("BAL warming failed (non-fatal): {e}");
+                            if bal_prefetch_enabled {
+                                // Amsterdam+: BAL-based precise prefetching (no tx re-execution).
+                                if let Err(e) =
+                                    LEVM::warm_block_from_bal(bal, caching_store, cancelled_ref)
+                                {
+                                    debug!("BAL warming failed (non-fatal): {e}");
+                                }
+                            } else if !bal_parallel_exec_enabled {
+                                // --no-bal-prefetch combined with --no-bal-parallel-exec:
+                                // mirror the pre-Amsterdam setup where a parallel speculative
+                                // warmer races ahead of the serial executor. With parallel
+                                // exec still on, we skip warming instead — two parallel passes
+                                // over the same txs would just fight for cores.
+                                if let Err(e) = LEVM::warm_block(
+                                    block,
+                                    caching_store,
+                                    vm_type,
+                                    &NativeCrypto,
+                                    cancelled_ref,
+                                ) {
+                                    debug!("Block warming failed (non-fatal): {e}");
+                                }
                             }
                         } else {
                             // Pre-Amsterdam / P2P sync: speculative tx re-execution
@@ -525,20 +609,33 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
-                // Channel only exists on the streaming (non-BAL) path. On the BAL path the
-                // EVM merkleizes nothing on its own (the synthesized map drives merkleization),
-                // so no Sender / drain thread are needed.
-                let (tx, rx_for_merkle) = if bal.is_some() {
-                    (None, None)
-                } else {
-                    let (tx, rx) = channel();
-                    (Some(tx), Some(rx))
-                };
+                // Channel is needed whenever the merkleizer takes the streaming
+                // branch OR LEVM falls into the sequential path:
+                // - sequential LEVM (`!bal_parallel_exec_enabled`) sends per-tx
+                //   updates via `send_state_transitions_tx`; errors if Sender is None.
+                // - streaming merkleizer (`!bal_parallel_trie_enabled` or no BAL)
+                //   reads updates from `rx`.
+                // Only the default `bal=Some && parallel_exec && parallel_trie` case
+                // can skip both: parallel LEVM doesn't stream when its Sender is None,
+                // and the merkleizer uses the synthesized optimistic map directly.
+                let (tx, rx_for_merkle) =
+                    if optimistic_updates.is_some() && bal_parallel_exec_enabled {
+                        (None, None)
+                    } else {
+                        let (tx, rx) = channel();
+                        (Some(tx), Some(rx))
+                    };
 
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())
                     .spawn_scoped(s, move || -> Result<_, ChainError> {
-                        let result = vm.execute_block_pipeline(block, tx, queue_length_ref, bal);
+                        let result = vm.execute_block_pipeline(
+                            block,
+                            tx,
+                            queue_length_ref,
+                            bal,
+                            bal_parallel_exec_enabled,
+                        );
                         cancelled_ref.store(true, Ordering::Relaxed);
                         let (execution_result, produced_bal) = result?;
 
@@ -1980,6 +2077,17 @@ impl Blockchain {
             );
         }
 
+        metrics!(if let Some(bal_ref) = produced_bal.as_ref().or(bal) {
+            let account_count = bal_ref.accounts().len() as u64;
+            let slot_count = bal_ref.item_count().saturating_sub(account_count);
+            let size_bytes = bal_ref.length() as f64;
+            METRICS_BAL.blocks_total.inc();
+            METRICS_BAL.size_bytes.set(size_bytes);
+            METRICS_BAL.size_bytes_histogram.observe(size_bytes);
+            METRICS_BAL.account_count.set(account_count as i64);
+            METRICS_BAL.slot_count.set(slot_count as i64);
+        });
+
         Ok((produced_bal, result))
     }
 
@@ -2234,14 +2342,40 @@ impl Blockchain {
 
         let chain_config: ChainConfig = self.storage.get_chain_config();
 
-        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
-        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+        // Cache block hashes for the full batch so we can access them during
+        // execution without having to store the blocks beforehand.
+        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
+            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let parent_header = self
             .storage
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
+
+        // Walk the parent chain to cache the last 256 block hashes so that
+        // BLOCKHASH can resolve references to blocks from previous batches
+        // (they may not be canonical yet during import).
+        block_hash_cache
+            .entry(parent_header.number)
+            .or_insert_with(|| parent_header.hash());
+        let mut hash = parent_header.parent_hash;
+        let mut number = parent_header.number.saturating_sub(1);
+        let lookback = first_block_header.number.saturating_sub(256);
+        while number > lookback {
+            block_hash_cache.entry(number).or_insert(hash);
+            match self.storage.get_block_header_by_hash(hash) {
+                Ok(Some(header)) => {
+                    hash = header.parent_hash;
+                    number = number.saturating_sub(1);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
+                    break;
+                }
+            }
+        }
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,
