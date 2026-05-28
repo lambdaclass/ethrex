@@ -82,14 +82,14 @@ impl Hook for DefaultHook {
         vm.increment_account_nonce(sender_address)
             .map_err(|_| TxValidationError::NonceIsMax)?;
 
-        // TODO:DEVELOPERUCHE check for nonce mismatch
-        // if sender_info.nonce != vm.env.tx_nonce {
-        //     return Err(TxValidationError::NonceMismatch {
-        //         expected: sender_info.nonce,
-        //         actual: vm.env.tx_nonce,
-        //     }
-        //     .into());
-        // }
+        // check for nonce mismatch
+        if sender_info.nonce != vm.env.tx_nonce {
+            return Err(TxValidationError::NonceMismatch {
+                expected: sender_info.nonce,
+                actual: vm.env.tx_nonce,
+            }
+            .into());
+        }
 
         // (8) PRIORITY_GREATER_THAN_MAX_FEE_PER_GAS
         if let (Some(tx_max_priority_fee), Some(tx_max_fee_per_gas)) = (

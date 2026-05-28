@@ -279,6 +279,11 @@ pub async fn handle_new_payload_with_witness_v5(
         }
     };
 
+    // Guard against empty / short params before any direct indexing.
+    if params.is_empty() {
+        return json_error_response(-32602, "Parse error: Expected 4 params, got 0");
+    }
+
     // Extract the raw BAL hash from the JSON payload before deserialization.
     // We hash the raw RLP bytes as-received to preserve the exact encoding
     // (including any ordering) for accurate block hash validation.
