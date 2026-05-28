@@ -514,6 +514,45 @@ impl Blockchain {
             None
         };
 
+        // Synchronously warm all BAL storage slots before the executor thread starts.
+        //
+        // The warmer and executor share one CachingDatabase; `prefetch_storage`
+        // populates the cache only after its whole parallel fetch completes, so when
+        // the warmer ran storage concurrently the executor raced it to the trie for
+        // SSTORE original values and lost (~22% of CPU on cold-cache import-bench).
+        // Doing the storage prefetch up front (parallel, on all cores) lets execution
+        // run fully warm and removes the warmer's CPU/lock contention with it.
+        //
+        // Measured on bal-devnet-7-mainnet-mix-460 (import-bench --with-bal, vs main):
+        //   - concurrent storage warming (any ordering/chunking): ~ -7% to -13%
+        //   - this synchronous full-storage prefetch:             ~ -24%
+        // DO NOT move storage back into the concurrent warmer; the race is the whole
+        // problem. DO NOT add account prefetch here too: that regressed (~ +150 ms),
+        // because account reads already overlap exec well and a synchronous pass both
+        // adds serial latency and double-fetches against the warmer's Phase 1. Slots
+        // are warmed in natural account order; an execution-order sort gave no benefit
+        // once every slot is warm before exec.
+        //
+        // Live-node tradeoff: this prefetch is on the critical path before exec, no
+        // longer overlapped with it. With a warm cache the reads hit and it is a
+        // no-op; on a genuinely cold block (first slot after restart, account-heavy
+        // block) it adds serial latency the old overlapped warmer would have hidden.
+        // The benchmarks above are cold-cache batch import, not single-block live
+        // tail latency; the tradeoff is deliberate and favors throughput.
+        //
+        // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
+        // prefetching, skip the synchronous storage warm too. The warmer thread
+        // below already honors the same toggle.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if self.options.bal_prefetch_enabled
+            && let Some(bal) = bal
+        {
+            let slots = LEVM::bal_storage_slots(bal);
+            if !slots.is_empty() {
+                let _ = caching_store.prefetch_storage(&slots);
+            }
+        }
+
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]

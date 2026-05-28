@@ -2091,14 +2091,27 @@ impl LEVM {
         Ok(())
     }
 
-    /// Pre-warms state by loading all accounts and storage slots listed in the
-    /// Block Access List directly, without speculative re-execution.
+    /// Flattened (address, slot) storage worklist for a BAL, in natural account
+    /// order (slots grouped per account for storage-trie locality).
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    pub fn bal_storage_slots(bal: &BlockAccessList) -> Vec<(Address, H256)> {
+        bal.accounts()
+            .iter()
+            .flat_map(|ac| {
+                ac.all_storage_slots()
+                    .map(move |slot| (ac.address, H256::from_uint(&slot)))
+            })
+            .collect()
+    }
+
+    /// Concurrent block warmer for the BAL path: prefetches account states and
+    /// contract code while execution runs.
     ///
-    /// Two-phase approach:
-    /// - Phase 1: Load all account states (parallel via rayon) -> warms CachingDatabase
-    ///   account cache AND trie layer cache nodes
-    /// - Phase 2: Load all storage slots (parallel via rayon, per-slot) + contract code
-    ///   (parallel via rayon, per-account) -> benefits from trie nodes cached in Phase 1
+    /// Storage slots are deliberately NOT warmed here. They are prefetched
+    /// synchronously before the executor starts (see `bal_storage_slots` and the
+    /// call site in `blockchain.rs`); warming them concurrently here let the
+    /// executor race the warmer to the trie for SSTORE original values and cost
+    /// ~22% of CPU. Keep storage warming synchronous and up front.
     #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     pub fn warm_block_from_bal(
         bal: &BlockAccessList,
@@ -2111,8 +2124,10 @@ impl LEVM {
         }
 
         // Phase 1: Prefetch all account states — parallel inner fetch + single write-lock.
-        // This warms the CachingDatabase account cache and the TrieLayerCache
-        // with state trie nodes, so Phase 2 storage reads benefit from cached lookups.
+        // This warms the CachingDatabase account cache and the TrieLayerCache with
+        // state trie nodes. Storage slots are prefetched synchronously before the
+        // executor starts (see `bal_storage_slots` at the call site), so this warmer
+        // only needs to cover account states and contract code, which overlap exec.
         let account_addresses: Vec<Address> = accounts.iter().map(|ac| ac.address).collect();
         store
             .prefetch_accounts(&account_addresses)
@@ -2122,27 +2137,7 @@ impl LEVM {
             return Ok(());
         }
 
-        // Phase 2: Prefetch storage slots in batch — parallel inner fetch + single write-lock.
-        // Storage is flattened to (address, slot) pairs so rayon can distribute
-        // work across threads regardless of how many slots each account has.
-        // Without flattening, a hot contract with hundreds of slots (e.g. a DEX
-        // pool) would monopolize a single thread while others go idle.
-        let slots: Vec<(Address, ethrex_common::H256)> = accounts
-            .iter()
-            .flat_map(|ac| {
-                ac.all_storage_slots()
-                    .map(move |slot| (ac.address, ethrex_common::H256::from_uint(&slot)))
-            })
-            .collect();
-        store
-            .prefetch_storage(&slots)
-            .map_err(|e| EvmError::Custom(format!("prefetch_storage: {e}")))?;
-
-        if cancelled.load(Ordering::Relaxed) {
-            return Ok(());
-        }
-
-        // Phase 3: Code prefetch — collect code hashes from Phase 1 account states
+        // Phase 2: Code prefetch — collect code hashes from Phase 1 account states
         // (already cached after Phase 1 prefetch), then batch-fetch codes in parallel.
         // Uses par_iter for collection since blocks can have thousands of accounts.
         let code_hashes: Vec<ethrex_common::H256> = accounts
