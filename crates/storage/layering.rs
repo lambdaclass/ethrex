@@ -1,3 +1,88 @@
+//! # Trie layering: in-memory diff-layers and deep-reorg overlay
+//!
+//! This module implements ethrex's two-tier in-memory trie cache that sits
+//! between block execution and RocksDB. It is the read/write path for all
+//! trie-node and flat-KV accesses during block execution and fork-choice
+//! updates.
+//!
+//! ## Architecture overview
+//!
+//! ```text
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  Block N+2  ──► Block N+1  ──► Block N (cache edge D)   │  TrieLayerCache
+//! │  (newest layer)              (oldest cached layer)       │  (forward diff-layers)
+//! └───────────────────────────┬──────────────────────────────┘
+//!                             │ miss
+//!                             ▼
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  Overlay: reverse-diff [D..pivot+1] on the OLD chain     │  (installed only during
+//! │  exposes the virtual state at `pivot` without touching   │   deep reorgs; None in
+//! │  the on-disk trie.                                       │   steady state)
+//! └───────────────────────────┬──────────────────────────────┘
+//!                             │ miss (or no overlay)
+//!                             ▼
+//! ┌──────────────────────────────────────────────────────────┐
+//! │  RocksDB on-disk state  (account/storage trie+flat KV)   │
+//! └──────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## `TrieLayer` — one block's diff
+//!
+//! Each [`TrieLayer`] stores the trie-node writes produced by executing one
+//! block (in regular sync) or one batch of ~1024 blocks (full sync / batch
+//! mode). Layers are linked via a `parent` state-root field to form a
+//! singly-linked chain from newest to oldest.
+//!
+//! ## `TrieLayerCache` — the forward cache
+//!
+//! [`TrieLayerCache`] is a `HashMap<state_root, Arc<TrieLayer>>` with a
+//! bloom filter for fast miss detection. When the chain reaches
+//! `commit_threshold` layers the oldest eligible layer is flushed to
+//! RocksDB and removed from the map. Two thresholds are used:
+//! - **128** — regular block-by-block execution.
+//! - **4** — full sync / batch mode (one layer ≈ 1 GB of state diffs).
+//!
+//! ## `Overlay` — the deep-reorg bridge
+//!
+//! When a fork-choice update targets a head whose ancestor state was flushed
+//! past the layer-cache edge `D`, ethrex builds an [`Overlay`] by replaying
+//! the [`STATE_HISTORY`](crate::api::tables::STATE_HISTORY) journal entries
+//! for blocks `[D, D-1, ..., pivot+1]` in descending order.  The overlay
+//! holds the accumulated reverse-diff, exposing the virtual state at `pivot`
+//! without mutating RocksDB.
+//!
+//! ## `TrieWrapper::get` — the read cascade
+//!
+//! [`TrieWrapper`] is the [`ethrex_trie::TrieDB`] implementation used during
+//! block execution. Its `get` method follows a strict priority order:
+//!
+//! 1. **Layer cache** — forward layers on the new chain (keyed by state-root
+//!    chain from the executing block back to the oldest in-memory layer).
+//! 2. **Overlay** — if installed, the reverse-diff that reconstructs the
+//!    pivot state. A layer hit pre-empts the overlay; an overlay hit pre-empts
+//!    disk. `Some(None)` from the overlay means the key was absent at the
+//!    pivot (caller must treat as missing, not fall through to disk, because
+//!    disk still holds the old chain's value).
+//! 3. **Disk** — RocksDB, queried only when both cache and overlay miss.
+//!
+//! ## Cache swap on deep reorg
+//!
+//! [`Store::install_overlay_for_reorg`](crate::store::Store::install_overlay_for_reorg)
+//! atomically replaces the layer cache with a fresh empty cache that has the
+//! newly built overlay pre-installed. Side-chain blocks `[pivot+1 .. new_head]`
+//! are then executed via the normal `add_block` path; each block's reads
+//! cascade through the overlay and each commit adds a new forward layer.
+//! On the first commit the reconciliation step folds the overlay entries and
+//! the new layer together into a single atomic RocksDB write batch, then
+//! clears the overlay.
+//!
+//! ## Merged PRs
+//!
+//! - PR #6686 — initial journal + overlay foundation
+//! - PR #6687 — overlay construction from journal
+//! - PR #6689 — deep-reorg orchestration (overlay install, side-chain replay)
+//! - PR #6685 (tracking) — lift the 128-block reorg cap; this PR
+
 use ethrex_common::{H256, types::BlockNumber};
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
@@ -375,9 +460,13 @@ impl TrieLayerCache {
 /// [`TrieLayerCache::commit`] explicitly.
 #[derive(Debug)]
 pub struct CommitResult {
+    /// Block number of the committed block.
     pub block_number: BlockNumber,
+    /// Block hash of the committed block.
     pub block_hash: H256,
+    /// Pre-state root of the committed block (the state to return to on rollback).
     pub parent_state_root: H256,
+    /// Merged trie node updates in oldest-first order, ready for a sequential disk write.
     pub nodes: Vec<(Vec<u8>, Vec<u8>)>,
 }
 
@@ -387,8 +476,12 @@ pub struct CommitResult {
 /// Used by the EVM during block execution: reads see the latest uncommitted state without
 /// waiting for a disk flush.
 pub struct TrieWrapper {
+    /// State root of the executing block; used as the starting point for the layer-chain walk.
     pub state_root: H256,
+    /// Shared reference to the layer cache. Multiple `TrieWrapper` instances (per account/storage
+    /// trie) share the same cache within a single block execution context.
     pub inner: Arc<TrieLayerCache>,
+    /// The underlying on-disk trie, consulted only when both the layer cache and the overlay miss.
     pub db: Box<dyn TrieDB>,
     /// Pre-computed prefix nibbles for storage tries.
     /// For state tries this is None; for storage tries this is
@@ -397,6 +490,8 @@ pub struct TrieWrapper {
 }
 
 impl TrieWrapper {
+    /// Constructs a `TrieWrapper`. `prefix` is `Some(account_hash)` for storage tries;
+    /// pass `None` for the state trie.
     pub fn new(
         state_root: H256,
         inner: Arc<TrieLayerCache>,
@@ -469,9 +564,13 @@ impl TrieDB for TrieWrapper {
 /// Identifier of which on-disk column family an [`Overlay`] entry targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayCf {
+    /// Non-leaf nodes of the account/state trie (`ACCOUNT_TRIE_NODES` CF, key length < 65).
     AccountTrie,
+    /// Non-leaf nodes of storage tries (`STORAGE_TRIE_NODES` CF, key length 66-130).
     StorageTrie,
+    /// Leaf entries of the account flat-KV table (`ACCOUNT_FLATKEYVALUE` CF, key length 65).
     AccountFlat,
+    /// Leaf entries of the storage flat-KV table (`STORAGE_FLATKEYVALUE` CF, key length 131).
     StorageFlat,
 }
 
@@ -681,9 +780,7 @@ impl Overlay {
         map.get(key).cloned()
     }
 
-    /// Total number of overlay entries across all four CFs. Used by tests and
-    /// future observability (PR 4).
-    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
+    /// Total number of overlay entries across all four CFs.
     pub fn len(&self) -> usize {
         self.account_trie.len()
             + self.storage_trie.len()
@@ -692,9 +789,24 @@ impl Overlay {
     }
 
     /// Whether the overlay holds any entries.
-    #[allow(dead_code, reason = "consumed by tests; live target for PR 4 metrics")]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Approximate byte size of the overlay's key+value data. O(N) over entries;
+    /// intended for one-shot install-time metric emission, NOT per-lookup.
+    pub fn byte_size(&self) -> usize {
+        [
+            &self.account_trie,
+            &self.storage_trie,
+            &self.account_flat,
+            &self.storage_flat,
+        ]
+        .iter()
+        .flat_map(|map| map.iter())
+        .map(|(k, v)| k.len() + v.as_ref().map_or(0, |v| v.len()))
+        .sum()
     }
 
     /// Highest block number covered by the overlay (= cache edge `D` at install time).

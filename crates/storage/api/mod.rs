@@ -65,6 +65,16 @@ pub trait StorageReadView: Send + Sync {
         table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns the lowest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support forward iteration (e.g. RocksDB `IteratorMode::Start`)
+    /// should implement this in O(1).
+    fn first_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
+
+    /// Returns the highest key in `table` by lexicographic order, or `None` if the table is
+    /// empty. Backends that support reverse iteration (e.g. RocksDB `IteratorMode::End`) should
+    /// implement this in O(1).
+    fn last_key(&self, table: &'static str) -> Result<Option<Vec<u8>>, StoreError>;
 }
 
 /// Write transaction interface.
