@@ -570,17 +570,22 @@ impl Blockchain {
                         ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
                     })?;
                 let max_queue_length_ref = &mut max_queue_length;
-                // Channel exists whenever the merkleizer takes the streaming branch:
-                // pre-Amsterdam (no BAL) and `--no-bal-parallel-trie` on the BAL path.
-                // When optimistic merkleization runs, the synthesized map drives the
-                // merkleizer and the EVM-side `bal_to_account_updates` send is skipped,
-                // so no Sender / drain thread are needed.
-                let (tx, rx_for_merkle) = if optimistic_updates.is_some() {
-                    (None, None)
-                } else {
-                    let (tx, rx) = channel();
-                    (Some(tx), Some(rx))
-                };
+                // Channel is needed whenever the merkleizer takes the streaming
+                // branch OR LEVM falls into the sequential path:
+                // - sequential LEVM (`!bal_parallel_exec_enabled`) sends per-tx
+                //   updates via `send_state_transitions_tx`; errors if Sender is None.
+                // - streaming merkleizer (`!bal_parallel_trie_enabled` or no BAL)
+                //   reads updates from `rx`.
+                // Only the default `bal=Some && parallel_exec && parallel_trie` case
+                // can skip both: parallel LEVM doesn't stream when its Sender is None,
+                // and the merkleizer uses the synthesized optimistic map directly.
+                let (tx, rx_for_merkle) =
+                    if optimistic_updates.is_some() && bal_parallel_exec_enabled {
+                        (None, None)
+                    } else {
+                        let (tx, rx) = channel();
+                        (Some(tx), Some(rx))
+                    };
 
                 let execution_handle = std::thread::Builder::new()
                     .name("block_executor_execution".to_string())

@@ -499,6 +499,7 @@ impl Default for Options {
             no_precompile_cache: false,
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
+            no_bal_parallel_trie: false,
         }
     }
 }
