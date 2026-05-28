@@ -185,17 +185,17 @@ fn prague_to_v3(a: crate::engine_rest::types::prague::PayloadAttributes) -> Payl
 fn amsterdam_to_v4(
     a: crate::engine_rest::types::amsterdam::PayloadAttributes,
 ) -> PayloadAttributesV4 {
-    // `custody_columns` is decoded for spec compliance; not forwarded to the
-    // payload builder (PeerDAS execution not yet landed in ethrex).
-    // `slot_number` is not present in Amsterdam SSZ PayloadAttributes.
-    // The V4 payload builder needs it for the payload-id hash; default to 0.
+    // `slot_number` is forwarded into the built block header (it is RLP-encoded
+    // into the header and thus part of the block hash). `target_gas_limit` is
+    // decoded for #793 spec compliance but ignored — ethrex's payload builder
+    // has no gas-limit-targeting support yet.
     PayloadAttributesV4 {
         timestamp: a.timestamp,
         prev_randao: H256::from(a.prev_randao),
         suggested_fee_recipient: Address::from(a.suggested_fee_recipient.0),
         withdrawals: Some(withdrawals_from_ssz(&a.withdrawals)),
         parent_beacon_block_root: Some(H256::from(a.parent_beacon_block_root)),
-        slot_number: 0,
+        slot_number: a.slot_number,
     }
 }
 

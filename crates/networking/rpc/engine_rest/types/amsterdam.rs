@@ -1,13 +1,13 @@
-//! Amsterdam-shape SSZ types — Prague plus block_access_list, slot_number (payload),
-//! and custody_columns (payload_attributes, decode-only).
+//! Amsterdam-shape SSZ types — Prague plus block_access_list and slot_number
+//! (payload), and slot_number + target_gas_limit (payload_attributes).
 
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_types::SszList;
 
 use super::common::{
     Bytes20, LogsBloom, MAX_BLOCK_ACCESS_LIST_BYTES, MAX_BYTES_PER_TRANSACTION,
-    MAX_CUSTODY_COLUMNS, MAX_EXECUTION_REQUESTS_PER_PAYLOAD, MAX_EXTRA_DATA_BYTES,
-    MAX_REQUEST_BYTES, MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
+    MAX_EXECUTION_REQUESTS_PER_PAYLOAD, MAX_EXTRA_DATA_BYTES, MAX_REQUEST_BYTES,
+    MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
 };
 use super::shanghai::Withdrawal;
 
@@ -44,9 +44,12 @@ pub struct ExecutionPayloadEnvelope {
         SszList<SszList<u8, MAX_REQUEST_BYTES>, MAX_EXECUTION_REQUESTS_PER_PAYLOAD>,
 }
 
-/// Amsterdam payload attributes: Prague fields + `custody_columns`.
-/// `custody_columns` is decoded for spec compliance; the value is ignored by
-/// ethrex's payload builder until PeerDAS execution lands.
+/// Amsterdam payload attributes: Cancun fields + `slot_number` + `target_gas_limit`
+/// (execution-apis #793, `PayloadAttributesAmsterdam`). `target_gas_limit` is
+/// decoded for spec compliance; the value is ignored by ethrex's payload builder
+/// until gas-limit targeting lands. `custody_columns` is NOT part of these
+/// attributes — per spec it is a sibling field of `ForkchoiceUpdate` (see
+/// `forkchoice_update::AmsterdamForkchoiceUpdate`).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct PayloadAttributes {
     pub timestamp: u64,
@@ -54,5 +57,6 @@ pub struct PayloadAttributes {
     pub suggested_fee_recipient: Bytes20,
     pub withdrawals: SszList<Withdrawal, MAX_WITHDRAWALS_PER_PAYLOAD>,
     pub parent_beacon_block_root: [u8; 32],
-    pub custody_columns: SszList<u64, MAX_CUSTODY_COLUMNS>,
+    pub slot_number: u64,
+    pub target_gas_limit: u64,
 }

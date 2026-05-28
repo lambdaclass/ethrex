@@ -1,8 +1,5 @@
-//! Engine REST handlers.
-//!
-//! - `identity`, `capabilities`: full implementations (sub-project 1).
-//! - `payloads`, `forkchoice`: full implementations (sub-project 2).
-//! - `bodies`, `blobs`: full implementations (sub-project 3).
+//! Engine REST handlers: `identity`, `capabilities`, `payloads`, `forkchoice`,
+//! `bodies`, and `blobs`.
 
 pub mod blobs;
 pub mod bodies;

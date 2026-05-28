@@ -107,10 +107,11 @@ impl EncodedTransaction {
 impl ExecutionPayload {
     /// Build a `Block` (BlockHeader + BlockBody) from this payload using the
     /// CL-supplied `parentBeaconBlockRoot` / `requests_hash` / `block_access_list_hash`.
-    /// Takes `&self` so callers don't have to clone the full payload — only
-    /// `transactions` (decoded per-element), `withdrawals`, and `extra_data`
-    /// are read out, all of which are cheap (Bytes is refcounted, withdrawals
-    /// is a small Vec).
+    /// Takes `&self` so callers can keep the payload afterward; the previous
+    /// `into_block(self, ..)` forced them to write `payload.clone().into_block(..)`.
+    /// Every payload field is read to populate the header/body, but only
+    /// `transactions` (RLP-decoded per element), `withdrawals` (a small Vec) and
+    /// `extra_data` (refcounted `Bytes`) need allocation — the rest are `Copy`.
     pub fn to_block(
         &self,
         parent_beacon_block_root: Option<H256>,

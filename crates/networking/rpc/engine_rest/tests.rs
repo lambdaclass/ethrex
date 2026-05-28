@@ -1230,19 +1230,21 @@ mod amsterdam_types_tests {
     }
 
     #[test]
-    fn amsterdam_attrs_roundtrip_with_custody_columns() {
+    fn amsterdam_attrs_roundtrip_with_slot_and_target_gas() {
         let attrs = AmsterdamAttrs {
             timestamp: 1_700_000_001,
             prev_randao: [9; 32],
             suggested_fee_recipient: Bytes20([10; 20]),
             withdrawals: vec![].try_into().unwrap(),
             parent_beacon_block_root: [0xCC; 32],
-            custody_columns: vec![1u64, 7, 42, 127].try_into().unwrap(),
+            slot_number: 42_000_001,
+            target_gas_limit: 36_000_000,
         };
         let bytes = attrs.to_ssz();
         let back = AmsterdamAttrs::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, attrs);
-        assert_eq!(&back.custody_columns[..], &[1u64, 7, 42, 127]);
+        assert_eq!(back.slot_number, 42_000_001);
+        assert_eq!(back.target_gas_limit, 36_000_000);
     }
 }
 

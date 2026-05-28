@@ -85,8 +85,6 @@ impl From<Bytes20> for [u8; 20] {
 
 /// Spec limit on raw block_access_list bytes per payload (EIP-7928).
 pub const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 16 MiB
-/// Spec limit on custody_columns entries per payload_attributes (PeerDAS).
-pub const MAX_CUSTODY_COLUMNS: usize = 128;
 
 /// Spec limit for `validation_error` strings.
 pub const MAX_ERROR_BYTES: usize = 1024;

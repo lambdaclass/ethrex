@@ -1,9 +1,8 @@
-//! REST/SSZ Engine API per execution-apis PR #793.
+//! REST/SSZ Engine API per execution-apis PR #793
+//! (`src/engine/refactor-ssz.md`).
 //!
-//! See `docs/superpowers/specs/2026-05-18-engine-rest-ssz-foundation-design.md`.
-//!
-//! All hot-path, bodies, and blobs handlers are wired. Sub-project 4 (measurement)
-//! adds benchmarks and an end-to-end harness.
+//! All hot-path, bodies, and blobs handlers are wired, with SSZ wire types per
+//! fork under `types/`. Benchmarks live in `benches/` and `tooling/engine_bench/`.
 
 pub mod auth;
 pub mod error;

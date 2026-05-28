@@ -15,9 +15,11 @@ use crate::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
 use crate::types::payload::{EncodedTransaction, ExecutionPayload as JsonExecutionPayload};
 
 /// Dispatch tag selecting which existing `handle_new_payload_*` helper to call.
-/// Variant fields are baked into the reconstructed `Block` upstream and so are
-/// not read at dispatch time, but tests inspect them and they remain useful for
-/// debug logging — silence dead-code lints rather than drop them.
+/// Most variant fields are baked into the reconstructed `Block` upstream and are
+/// not read again in the final dispatch match — though `V5.raw_bal_hash` is read
+/// by the handler's structural BAL check before dispatch (see `handlers::payloads`),
+/// and tests inspect the rest. They remain useful for debug logging, so silence
+/// dead-code lints rather than drop them.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum EngineCall {

@@ -424,7 +424,8 @@ impl Blockchain {
     /// Returns the Block Access List for a block, preferring the copy stored at
     /// import time and falling back to re-execution only when it isn't persisted.
     /// Returns None for pre-Amsterdam blocks.
-    /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
+    /// Used by the JSON-RPC `engine_getPayloadBodiesByHash/RangeV2` handlers and
+    /// the engine REST `/{fork}/bodies` handlers.
     pub fn generate_bal_for_block(
         &self,
         block: &Block,

@@ -113,6 +113,36 @@ where
         }
     }
 
+    // 3b. Fork-boundary checks (mirror JSON-RPC NewPayloadV4/V5 UnsupportedFork,
+    //     engine/payload.rs). The fork is pinned by the URL, so a payload whose
+    //     timestamp belongs to a different fork era is misrouted; reject it with
+    //     400 instead of letting it fall through to a block-hash-mismatch INVALID.
+    let chain_config = ctx.storage.get_chain_config();
+    let ts = block.header.timestamp;
+    match &call {
+        // V4 (Prague/Osaka): Amsterdam-era payloads must use V5; pre-Prague must not use V4.
+        EngineCall::V4 { .. } => {
+            if chain_config.is_amsterdam_activated(ts) || !chain_config.is_prague_activated(ts) {
+                return ProblemJson::bad_request(&format!(
+                    "unsupported fork for this endpoint: {:?}",
+                    chain_config.get_fork(ts)
+                ))
+                .into_response();
+            }
+        }
+        // V5 (Amsterdam): pre-Amsterdam payloads must use V4.
+        EngineCall::V5 { .. } => {
+            if !chain_config.is_amsterdam_activated(ts) {
+                return ProblemJson::bad_request(&format!(
+                    "unsupported fork for this endpoint: {:?}",
+                    chain_config.get_fork(ts)
+                ))
+                .into_response();
+            }
+        }
+        EngineCall::V1V2 | EngineCall::V3 { .. } => {}
+    }
+
     // 4. Dispatch to the appropriate handle_new_payload_* helper. The helpers
     //    only need the expected block_hash from the payload, so we pass it
     //    directly and skip the `JsonExecutionPayload::from_block` intermediate.

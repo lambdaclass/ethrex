@@ -240,7 +240,8 @@ impl SszDecode for OptBodyAmsterdam {
 // encoding), we just need to expose `SszEncode` for the wrapper by delegating
 // to the inner Vec.
 
-/// `/{fork}/bodies/hash` response for Paris.
+/// Paris bodies response. Shared by both `POST /{fork}/bodies/hash` and
+/// `GET /{fork}/bodies` (range) — the SSZ wire shape is identical.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodiesByHashResponseParis {
     pub bodies: Vec<OptBodyParis>,
@@ -274,7 +275,8 @@ impl SszDecode for BodiesByHashResponseParis {
     }
 }
 
-/// `/{fork}/bodies/hash` response for Shanghai/Cancun/Prague/Osaka.
+/// Shanghai/Cancun/Prague/Osaka bodies response. Shared by both
+/// `POST /{fork}/bodies/hash` and `GET /{fork}/bodies` (range).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodiesByHashResponseShanghai {
     pub bodies: Vec<OptBodyShanghai>,
@@ -308,7 +310,8 @@ impl SszDecode for BodiesByHashResponseShanghai {
     }
 }
 
-/// `/{fork}/bodies/hash` response for Amsterdam.
+/// Amsterdam bodies response. Shared by both `POST /{fork}/bodies/hash` and
+/// `GET /{fork}/bodies` (range).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodiesByHashResponseAmsterdam {
     pub bodies: Vec<OptBodyAmsterdam>,

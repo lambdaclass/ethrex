@@ -24,7 +24,6 @@ pub struct Capabilities {
 }
 
 pub const PAYLOAD_MAX_BYTES: u64 = 268_435_456; // 256 MiB, matches DefaultBodyLimit in rpc.rs
-pub const FORKCHOICE_MAX_BYTES: u64 = 65_536; // 64 KiB
 pub const BODIES_MAX_COUNT: u32 = 128;
 pub const BLOBS_MAX_COUNT: u32 = 128;
 
@@ -47,7 +46,10 @@ pub fn capabilities() -> Capabilities {
     endpoints.insert(
         "POST /{fork}/forkchoice".to_string(),
         EndpointLimits {
-            max_bytes: Some(FORKCHOICE_MAX_BYTES),
+            // The only enforced body cap is the shared 256 MiB DefaultBodyLimit
+            // applied to the whole authrpc router in rpc.rs; advertise that
+            // rather than a smaller per-route limit we don't actually enforce.
+            max_bytes: Some(PAYLOAD_MAX_BYTES),
             max_count: None,
         },
     );

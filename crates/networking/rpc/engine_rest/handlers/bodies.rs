@@ -1,9 +1,12 @@
 //! /{fork}/bodies/* — body retrieval by hash and by range.
 
+use std::sync::Arc;
+
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
+use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
-use ethrex_common::types::{BlockBody, Fork};
+use ethrex_common::types::{Block, BlockBody, Fork};
 use ethrex_rlp::encode::RLPEncode;
 use serde::Deserialize;
 
@@ -85,6 +88,29 @@ async fn fetch_shanghai_bodies(hashes: Vec<H256>, ctx: RpcApiContext) -> Respons
     SszBody(BodiesByHashResponseShanghai { bodies }).into_response()
 }
 
+/// Get the RLP-encoded BAL bytes for a block, preferring the copy stored at
+/// import time and falling back to re-execution only when it isn't persisted
+/// (see `Blockchain::generate_bal_for_block`). The work is offloaded to a
+/// blocking thread because the re-execution fallback is CPU-bound and would
+/// otherwise stall the async runtime. Returns the (bytes, block) pair so the
+/// caller can reuse the moved-in block. Empty bytes for a pre-Amsterdam block.
+async fn bal_bytes_for_block(
+    blockchain: Arc<Blockchain>,
+    block: Block,
+) -> Result<(Vec<u8>, Block), Response> {
+    let (bal_result, block) = tokio::task::spawn_blocking(move || {
+        let bal = blockchain.generate_bal_for_block(&block);
+        (bal, block)
+    })
+    .await
+    .map_err(|e| ProblemJson::internal(&format!("bal task join failed: {e}")).into_response())?;
+
+    match bal_result {
+        Ok(bal) => Ok((bal.map(|b| b.encode_to_vec()).unwrap_or_default(), block)),
+        Err(e) => Err(ProblemJson::internal(&format!("bal: {e}")).into_response()),
+    }
+}
+
 async fn fetch_amsterdam_bodies(hashes: Vec<H256>, ctx: RpcApiContext) -> Response {
     let mut bodies: Vec<OptBodyAmsterdam> = Vec::with_capacity(hashes.len());
     for h in hashes {
@@ -96,14 +122,11 @@ async fn fetch_amsterdam_bodies(hashes: Vec<H256>, ctx: RpcApiContext) -> Respon
         };
         match block_opt {
             Some(block) => {
-                // Regenerate BAL via blockchain helper (returns None for pre-Amsterdam blocks).
-                let bal = match ctx.blockchain.generate_bal_for_block(&block) {
-                    Ok(opt) => opt,
-                    Err(e) => {
-                        return ProblemJson::internal(&format!("bal: {e}")).into_response();
-                    }
-                };
-                let bal_bytes = bal.map(|b| b.encode_to_vec()).unwrap_or_default();
+                let (bal_bytes, block) =
+                    match bal_bytes_for_block(ctx.blockchain.clone(), block).await {
+                        Ok(v) => v,
+                        Err(resp) => return resp,
+                    };
                 match amsterdam_body_from_internal(block.body, bal_bytes) {
                     Ok(p) => bodies.push(OptBodyAmsterdam(Some(p))),
                     Err(p) => return p.into_response(),
@@ -286,13 +309,11 @@ pub async fn bodies_by_range(
                 };
                 match block_opt {
                     Some(block) => {
-                        let bal = match ctx.blockchain.generate_bal_for_block(&block) {
-                            Ok(opt) => opt,
-                            Err(e) => {
-                                return ProblemJson::internal(&format!("bal: {e}")).into_response();
-                            }
-                        };
-                        let bal_bytes = bal.map(|b| b.encode_to_vec()).unwrap_or_default();
+                        let (bal_bytes, block) =
+                            match bal_bytes_for_block(ctx.blockchain.clone(), block).await {
+                                Ok(v) => v,
+                                Err(resp) => return resp,
+                            };
                         match amsterdam_body_from_internal(block.body, bal_bytes) {
                             Ok(p) => converted.push(OptBodyAmsterdam(Some(p))),
                             Err(p) => return p.into_response(),

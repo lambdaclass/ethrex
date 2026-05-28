@@ -585,12 +585,26 @@ pub async fn start_api(
         }
     });
 
+    let rest_timer_sender = timer_sender.clone();
     let authrpc_handler = move |ctx, auth, body| async move {
         let _ = timer_sender.send(());
         handle_authrpc_request(ctx, auth, body).await
     };
 
-    let engine_rest_router = crate::engine_rest::router(service_context.clone());
+    // Reset the consensus-layer activity watchdog on engine REST requests too, so
+    // a CL using only the REST/SSZ transport doesn't continuously trip the
+    // "No messages from the consensus layer" warning (mirrors authrpc_handler for
+    // the JSON-RPC path).
+    let engine_rest_router =
+        crate::engine_rest::router(service_context.clone()).layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let timer = rest_timer_sender.clone();
+                async move {
+                    let _ = timer.send(());
+                    next.run(req).await
+                }
+            },
+        ));
 
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
