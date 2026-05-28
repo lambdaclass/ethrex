@@ -1,5 +1,4 @@
 use crate::authentication::authenticate;
-use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
@@ -31,6 +30,7 @@ use crate::eth::{
         GetBlockReceiptsRequest, GetBlockTransactionCountRequest, GetRawBlockRequest,
         GetRawHeaderRequest, GetRawReceipts,
     },
+    block_access_list::BlockAccessListRequest,
     client::{ChainId, Syncing},
     fee_market::FeeHistoryRequest,
     filter::{self, ActiveFilters, DeleteFilterRequest, FilterChangesRequest, NewFilterRequest},
@@ -1105,6 +1105,7 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
             GetTransactionByBlockHashAndIndexRequest::call(req, context).await
         }
         "eth_getBlockReceipts" => GetBlockReceiptsRequest::call(req, context).await,
+        "eth_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "eth_getTransactionByHash" => GetTransactionByHashRequest::call(req, context).await,
         "eth_getTransactionReceipt" => GetTransactionReceiptRequest::call(req, context).await,
         "eth_createAccessList" => CreateAccessListRequest::call(req, context).await,
@@ -1152,7 +1153,6 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
             ExecutionWitnessByBlockHashRequest::call(req, context).await
         }
         "debug_chainConfig" => ChainConfigRequest::call(req, context).await,
-        "debug_getBlockAccessList" => BlockAccessListRequest::call(req, context).await,
         "debug_traceTransaction" => TraceTransactionRequest::call(req, context).await,
         "debug_traceBlockByNumber" => TraceBlockByNumberRequest::call(req, context).await,
         unknown_debug_method => Err(RpcErr::MethodNotFound(unknown_debug_method.to_owned())),
