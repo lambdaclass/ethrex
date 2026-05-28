@@ -1123,6 +1123,32 @@ async fn try_execute_payload(
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
+    // Defer eager execution when the parent block is known but its state is
+    // not currently materialized (parent state neither in the layer cache nor
+    // on disk). Stash the block in HEADERS+BODIES and return ACCEPTED; a later
+    // forkchoiceUpdated pointing at this block (or a descendant) will drive
+    // the deep-reorg apply path. Matches geth's `eth/catalyst/api.go` behavior
+    // with the `HasBlockAndState` predicate. Issue #6685.
+    //
+    // If the parent is itself unknown, fall through to `add_block` which
+    // returns `ChainError::ParentNotFound` and stashes the block; handled
+    // below as `SYNCING`, preserving existing behavior.
+    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)? {
+        let parent_state = parent_header.state_root;
+        let in_cache = storage.is_state_in_layer_cache(parent_state)?;
+        let on_disk = !in_cache && storage.has_state_root(parent_state)?;
+        if !in_cache && !on_disk {
+            debug!(
+                %block_hash,
+                %block_number,
+                parent_hash = %block.header.parent_hash,
+                "Parent state not materialized; stashing payload as ACCEPTED"
+            );
+            storage.add_block(block).await?;
+            return Ok(PayloadStatus::accepted());
+        }
+    }
+
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
