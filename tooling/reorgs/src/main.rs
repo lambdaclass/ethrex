@@ -64,6 +64,9 @@ async fn main() {
         ("deep_reorg_side_chain_replay", |s| {
             Box::pin(test_deep_reorg_side_chain_replay(s))
         }),
+        ("deep_reorg_state_oracle", |s| {
+            Box::pin(test_deep_reorg_state_oracle(s))
+        }),
     ];
 
     for (name, scenario_fn) in all_scenarios {
@@ -605,14 +608,20 @@ async fn test_deep_reorg_side_chain_replay(simulator: Arc<Mutex<Simulator>>) {
     let chain_b = node1
         .extend_chain(chain_at_common.fork().with_salt(1), DIVERGENT)
         .await;
-    info!(tip_height = chain_b.len() - 1, "Chain B built canonical on node 1");
+    info!(
+        tip_height = chain_b.len() - 1,
+        "Chain B built canonical on node 1"
+    );
 
     // Phase 4: extend chain A on node 0 past the common ancestor. After this,
     // node 0's canonical is 300 blocks long and node 0's layer cache has
     // committed the oldest layers (default threshold 128) past height COMMON,
     // so block COMMON's state is no longer reachable from cache or disk.
     let chain_a = node0.extend_chain(chain_at_common, DIVERGENT).await;
-    info!(tip_height = chain_a.len() - 1, "Chain A extended canonical on node 0");
+    info!(
+        tip_height = chain_a.len() - 1,
+        "Chain A extended canonical on node 0"
+    );
 
     // Phase 5: feed chain B's divergent suffix into node 0 via newPayload only,
     // no FCU. Each block stashes as ACCEPTED (parent state not materialized) ;
@@ -638,5 +647,176 @@ async fn test_deep_reorg_side_chain_replay(simulator: Arc<Mutex<Simulator>>) {
         canonical_baseline = chain_a.len() - 1,
         side_chain_replay = DIVERGENT,
         "Deep reorg with side-chain replay accepted -- test passed"
+    );
+}
+
+/// State-correctness oracle for the deep-reorg apply path.
+///
+/// The existing `deep_reorg_*` scenarios gate on `forkchoiceUpdated` returning
+/// `VALID` at the deep head, which proves the EL accepted the reorg policy-wise
+/// but does NOT prove that disk state reflects chain B's effects after the
+/// overlay reconciliation. A bug that returns VALID with stale (chain A) or
+/// hybrid state would slip through every existing test.
+///
+/// This scenario seeds *observable* divergent effects in both chains and
+/// asserts via `eth_getStorageAt` / `eth_getBalance` that post-reorg state on
+/// node 0 matches chain B exactly:
+///   - storage slot only chain A writes -> must be zero after reorg
+///   - storage slot only chain B writes -> must be its chain-B value after reorg
+///   - account balance the two chains credit with different amounts -> must
+///     equal chain B's credit after reorg
+///
+/// Depth is 150 so the apply path is the deep-reorg one (legacy cap was 128).
+async fn test_deep_reorg_state_oracle(simulator: Arc<Mutex<Simulator>>) {
+    const COMMON: usize = 10;
+    const DEPTH: usize = 150;
+
+    let mut simulator = simulator.lock().await;
+    let node0 = simulator.start_node().await;
+    let node1 = simulator.start_node().await;
+
+    // Same contract as test_storage_slots_reorg: takes (key, value) calldata and
+    // sets storage[key] = value.
+    let contract_deploy_bytecode = hex::decode("656020355f35555f526006601af3").unwrap().into();
+    let signer: Signer = LocalSigner::new(
+        "941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e"
+            .parse()
+            .unwrap(),
+    )
+    .into();
+    let recipient = "941e103320615d394a55708be13e45994c7d93b0".parse().unwrap();
+
+    let slot_key_a = U256::from(42);
+    let val_a = U256::from(1163);
+    let slot_key_b = U256::from(25);
+    let val_b = U256::from(7474);
+    let transfer_a: u64 = 1_000;
+    let transfer_b: u64 = 7_777;
+
+    // Phase 1: common prefix. Deploy the contract in block 1 and pad to COMMON
+    // blocks so both nodes share the same canonical head.
+    let mut base_chain = simulator.get_base_chain();
+    let contract_address = node0
+        .send_contract_deploy(&signer, contract_deploy_bytecode)
+        .await;
+    for _ in 0..COMMON {
+        base_chain = node0.build_payload(base_chain).await;
+        node0.notify_new_payload(&base_chain).await;
+        node0.update_forkchoice(&base_chain).await;
+        node1.notify_new_payload(&base_chain).await;
+        node1.update_forkchoice(&base_chain).await;
+    }
+
+    let initial_balance = node0.get_balance(recipient).await;
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_a).await,
+        U256::zero()
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_b).await,
+        U256::zero()
+    );
+
+    // Phase 2: chain A on node 0 -- set slot_a + transfer_a in the first
+    // divergent block, then pad to DEPTH so the common ancestor's state is
+    // beyond the TrieLayerCache horizon when the reorg fires.
+    let mut chain_a = base_chain.fork();
+    let calldata_a = [slot_key_a.to_big_endian(), val_a.to_big_endian()]
+        .concat()
+        .into();
+    node0.send_call(&signer, contract_address, calldata_a).await;
+    node0
+        .send_eth_transfer(&signer, recipient, transfer_a)
+        .await;
+    chain_a = node0.build_payload(chain_a).await;
+    node0.notify_new_payload(&chain_a).await;
+    node0.update_forkchoice(&chain_a).await;
+    for _ in 1..DEPTH {
+        chain_a = node0.build_payload(chain_a).await;
+        node0.notify_new_payload(&chain_a).await;
+        node0.update_forkchoice(&chain_a).await;
+    }
+    info!(
+        tip = chain_a.len() - 1,
+        "Chain A extended canonical on node 0"
+    );
+
+    // Phase 3: chain B on node 1 (salted so blocks diverge byte-wise from A) --
+    // set slot_b + transfer_b in the first divergent block, then pad to DEPTH.
+    let mut chain_b = base_chain.fork().with_salt(1);
+    let calldata_b = [slot_key_b.to_big_endian(), val_b.to_big_endian()]
+        .concat()
+        .into();
+    node1.send_call(&signer, contract_address, calldata_b).await;
+    node1
+        .send_eth_transfer(&signer, recipient, transfer_b)
+        .await;
+    chain_b = node1.build_payload(chain_b).await;
+    node1.notify_new_payload(&chain_b).await;
+    node1.update_forkchoice(&chain_b).await;
+    for _ in 1..DEPTH {
+        chain_b = node1.build_payload(chain_b).await;
+        node1.notify_new_payload(&chain_b).await;
+        node1.update_forkchoice(&chain_b).await;
+    }
+    info!(
+        tip = chain_b.len() - 1,
+        "Chain B extended canonical on node 1"
+    );
+
+    // Pre-reorg invariants on node 0: chain A's effects are visible, chain B's
+    // are not. (If these fail, the test setup is broken, not the EL.)
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_a).await,
+        val_a,
+        "pre-reorg: chain A's slot must be set on node 0"
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_b).await,
+        U256::zero(),
+        "pre-reorg: chain B's slot must NOT be set on node 0"
+    );
+    assert_eq!(
+        node0.get_balance(recipient).await,
+        initial_balance + U256::from(transfer_a),
+        "pre-reorg: chain A's transfer must be reflected on node 0"
+    );
+
+    // Phase 4: deep reorg on node 0. Feed chain B's divergent suffix in via
+    // newPayload so node 0 has the headers, then FCU to chain B's tip. Depth =
+    // DEPTH, which is past the legacy 128-block cap.
+    for block in chain_b.blocks_from(COMMON + 1) {
+        node0.submit_block(block).await;
+    }
+    info!(depth = DEPTH, "FCUing node 0 to chain B tip -- deep reorg");
+    node0.update_forkchoice(&chain_b).await;
+
+    // Post-reorg state oracle. This is the load-bearing check: returning VALID
+    // is necessary but not sufficient -- disk state must actually reflect chain
+    // B. Each assertion targets a distinct class of bug:
+    //   - slot_a leaking through means the overlay/reconciliation failed to
+    //     revert chain A's storage writes.
+    //   - slot_b absent means the replay loop or first-commit reconciliation
+    //     dropped chain B's writes.
+    //   - balance mismatch means the same for account state.
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_a).await,
+        U256::zero(),
+        "post-reorg: chain A's slot must be reverted"
+    );
+    assert_eq!(
+        node0.get_storage_at(contract_address, slot_key_b).await,
+        val_b,
+        "post-reorg: chain B's slot must be applied"
+    );
+    assert_eq!(
+        node0.get_balance(recipient).await,
+        initial_balance + U256::from(transfer_b),
+        "post-reorg: balance must reflect chain B's transfer, not chain A's"
+    );
+
+    info!(
+        depth = DEPTH,
+        "Deep reorg state oracle verified -- chain B's storage + balance fully applied"
     );
 }

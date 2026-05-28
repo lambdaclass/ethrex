@@ -574,6 +574,7 @@ impl Chain {
 
     /// Mark the block at `height` as finalized (safe).
     /// `height` is the block index in this chain (0 = genesis).
+    #[allow(dead_code)]
     pub fn set_finalized_height(&mut self, height: usize) {
         assert!(
             height < self.block_hashes.len(),

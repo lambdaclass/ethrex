@@ -198,7 +198,9 @@ async fn run(
                     ));
                 }
                 // Advance fork choice to the new head
-                apply_fork_choice(store, hash, hash, hash, None).await.unwrap();
+                apply_fork_choice(store, hash, hash, hash, None)
+                    .await
+                    .unwrap();
             }
         }
     }
