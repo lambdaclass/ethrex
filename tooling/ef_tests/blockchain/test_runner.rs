@@ -102,8 +102,10 @@ pub async fn run_ef_test(
     // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
     // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
     // same final state is reached.
-    // Skipped under `stateless`: `eip-8025` on `ethrex-blockchain` drops the merkleizer
-    // Sender the parallel path needs; the non-stateless runs still cover this.
+    // Not exercised under `stateless`: the stateless harness runs the guest program directly
+    // and doesn't drive `add_block_pipeline`, and BAL-warmed parallel execution gives no
+    // benefit in single-threaded zkVM guest builds. The non-stateless runs are the right
+    // home for this check.
     #[cfg(not(feature = "stateless"))]
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
