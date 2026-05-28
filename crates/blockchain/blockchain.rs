@@ -421,7 +421,8 @@ impl Blockchain {
         Ok((execution_result, account_updates))
     }
 
-    /// Generates Block Access List by re-executing a block.
+    /// Returns the Block Access List for a block, preferring the copy stored at
+    /// import time and falling back to re-execution only when it isn't persisted.
     /// Returns None for pre-Amsterdam blocks.
     /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
     pub fn generate_bal_for_block(
@@ -433,6 +434,14 @@ impl Blockchain {
         // Pre-Amsterdam blocks don't have BAL
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
             return Ok(None);
+        }
+
+        // Prefer the BAL recorded during import (see `store_block_access_list`).
+        // Re-execution is a last resort for blocks imported without a stored BAL,
+        // since a bodies-by-range request would otherwise re-execute up to
+        // BODIES_MAX_COUNT blocks synchronously.
+        if let Some(bal) = self.storage.get_block_access_list(block.hash())? {
+            return Ok(Some(bal));
         }
 
         // Find parent header

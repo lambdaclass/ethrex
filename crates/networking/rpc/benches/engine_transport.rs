@@ -115,7 +115,7 @@ fn blobs_bench(c: &mut Criterion) {
     g.bench_function("decode_ssz", |b| {
         b.iter(|| {
             let r =
-                ethrex_rpc::engine_rest::types::blobs::BlobsResponseV1::from_ssz_bytes(&ssz_bytes)
+                ethrex_rpc::engine_rest::types::blobs::BlobsV1Response::from_ssz_bytes(&ssz_bytes)
                     .unwrap();
             black_box(r);
         })

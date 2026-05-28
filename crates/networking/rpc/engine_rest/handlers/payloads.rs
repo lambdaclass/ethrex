@@ -82,6 +82,7 @@ where
         block,
         expected_block_hash,
         call,
+        block_access_list,
     } = match envelope.into_engine_call() {
         Ok(d) => d,
         Err(problem) => return problem.into_response(),
@@ -126,7 +127,9 @@ where
             handle_new_payload_v3(expected_block_hash, ctx, block, None, None).await
         }
         EngineCall::V5 { .. } => {
-            handle_new_payload_v4(expected_block_hash, ctx, block, None, None).await
+            // Pass the decoded BAL so handle_new_payload_v4 runs validate_ordering,
+            // matching the JSON-RPC engine_newPayloadV5 path.
+            handle_new_payload_v4(expected_block_hash, ctx, block, None, block_access_list).await
         }
     };
 

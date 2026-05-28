@@ -1409,6 +1409,11 @@ mod conversion_tests {
     #[test]
     fn amsterdam_envelope_dispatches_to_v5_with_bal() {
         use crate::engine_rest::types::amsterdam::*;
+        use ethrex_common::types::block_access_list::BlockAccessList;
+        use ethrex_rlp::encode::RLPEncode;
+        // The block_access_list field carries the RLP-encoded BAL; the conversion
+        // decodes it (to run validate_ordering downstream), so it must be valid RLP.
+        let bal_rlp = BlockAccessList::new().encode_to_vec();
         let env = ExecutionPayloadEnvelope {
             execution_payload: ExecutionPayload {
                 parent_hash: [0; 32],
@@ -1428,7 +1433,7 @@ mod conversion_tests {
                 withdrawals: vec![].try_into().unwrap(),
                 blob_gas_used: 0,
                 excess_blob_gas: 0,
-                block_access_list: vec![0xCA, 0xFE].try_into().unwrap(),
+                block_access_list: bal_rlp.try_into().unwrap(),
                 slot_number: 100,
             },
             parent_beacon_block_root: [0xBB; 32],
@@ -2084,15 +2089,22 @@ mod blobs_types_tests {
     }
 
     #[test]
-    fn blobs_request_v4_roundtrips_with_cell_indices() {
+    fn blobs_request_v4_roundtrips_with_indices_bitarray() {
+        use libssz_types::SszBitvector;
+        let mut bits = SszBitvector::<128>::new();
+        bits.set(0, true).unwrap();
+        bits.set(5, true).unwrap();
+        bits.set(32, true).unwrap();
         let req = BlobsRequestV4 {
             versioned_hashes: vec![[3u8; 32]].try_into().unwrap(),
-            cell_indices: vec![0u8, 5, 32].try_into().unwrap(),
+            indices_bitarray: bits.clone(),
         };
         let bytes = req.to_ssz();
         let back = BlobsRequestV4::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back.versioned_hashes.len(), 1);
-        assert_eq!(&back.cell_indices[..], &[0u8, 5, 32]);
+        assert_eq!(back.indices_bitarray, bits);
+        assert_eq!(back.indices_bitarray.get(5), Some(true));
+        assert_eq!(back.indices_bitarray.get(6), Some(false));
     }
 
     #[test]
@@ -2115,6 +2127,51 @@ mod blobs_types_tests {
         let bytes = v2.to_ssz();
         let back = BlobAndProofV2::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back.proofs.len(), 2);
+    }
+
+    #[test]
+    fn blobs_v1_response_roundtrips_mixed_availability() {
+        use crate::engine_rest::types::blobs::{BlobV1Entry, BlobsV1Response};
+        let entries = vec![
+            BlobV1Entry::available(BlobAndProofV1 {
+                blob: vec![0x11u8; 131_072].try_into().unwrap(),
+                proof: [0x22; 48],
+            }),
+            BlobV1Entry::unavailable(),
+        ];
+        let resp = BlobsV1Response {
+            entries: entries.try_into().unwrap(),
+        };
+        let bytes = resp.to_ssz();
+        let back = BlobsV1Response::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, resp);
+        assert_eq!(back.entries.len(), 2);
+    }
+
+    #[test]
+    fn blobs_v4_response_roundtrips_with_optional_cells() {
+        use crate::engine_rest::types::blobs::{
+            BYTES_PER_CELL, BlobCellsAndProofs, BlobV4Entry, BlobsV4Response, OptionalCell,
+            OptionalProof,
+        };
+        let cells = vec![
+            OptionalCell(None),
+            OptionalCell(Some(vec![0x33u8; BYTES_PER_CELL].try_into().unwrap())),
+        ];
+        let proofs = vec![OptionalProof(None), OptionalProof(Some([0x44u8; 48]))];
+        let entry = BlobV4Entry {
+            available: true,
+            contents: BlobCellsAndProofs {
+                blob_cells: cells.try_into().unwrap(),
+                proofs: proofs.try_into().unwrap(),
+            },
+        };
+        let resp = BlobsV4Response {
+            entries: vec![entry].try_into().unwrap(),
+        };
+        let bytes = resp.to_ssz();
+        let back = BlobsV4Response::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, resp);
     }
 }
 
@@ -2203,7 +2260,9 @@ mod blobs_v2v3_tests {
     }
 
     #[tokio::test]
-    async fn v2_unknown_hash_returns_200_with_none_position() {
+    async fn v2_unknown_hash_returns_204_all_or_nothing() {
+        // V2 is all-or-nothing: a missing blob means the EL returns 204 No Content
+        // (execution-apis #793 §POST /blobs/v2), not a per-slot null.
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
         let req_body = BlobsRequest {
@@ -2218,11 +2277,7 @@ mod blobs_v2v3_tests {
             .body(axum::body::Body::from(body))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 200);
-        assert_eq!(
-            resp.headers().get("content-type").unwrap(),
-            "application/octet-stream"
-        );
+        assert_eq!(resp.status(), 204);
     }
 
     #[tokio::test]
@@ -2280,6 +2335,7 @@ mod blobs_v4_tests {
     use crate::test_utils::{default_context_with_storage, setup_store};
     use bytes::Bytes;
     use libssz::SszEncode;
+    use libssz_types::SszBitvector;
     use tower::ServiceExt;
 
     async fn build_app() -> (axum::Router, Bytes) {
@@ -2290,13 +2346,20 @@ mod blobs_v4_tests {
         (router(ctx), secret)
     }
 
+    // The mempool stores no per-cell data, so the EL cannot serve /blobs/v4 at
+    // all and returns 204 No Content (execution-apis #793 §POST /blobs/v4),
+    // regardless of which cell indices the request selects.
     #[tokio::test]
-    async fn unknown_hash_returns_200_with_none() {
+    async fn v4_returns_204_no_content() {
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
+        let mut bits = SszBitvector::<128>::new();
+        bits.set(0, true).unwrap();
+        bits.set(5, true).unwrap();
+        bits.set(32, true).unwrap();
         let req_body = BlobsRequestV4 {
             versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-            cell_indices: vec![0u8, 5, 32].try_into().unwrap(),
+            indices_bitarray: bits,
         };
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
@@ -2307,16 +2370,16 @@ mod blobs_v4_tests {
             .body(axum::body::Body::from(body))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.status(), 204);
     }
 
     #[tokio::test]
-    async fn empty_cell_indices_returns_200() {
+    async fn v4_empty_bitarray_returns_204() {
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
         let req_body = BlobsRequestV4 {
             versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-            cell_indices: vec![].try_into().unwrap(),
+            indices_bitarray: SszBitvector::<128>::new(),
         };
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
@@ -2327,48 +2390,7 @@ mod blobs_v4_tests {
             .body(axum::body::Body::from(body))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 200);
-    }
-
-    #[tokio::test]
-    async fn duplicate_cell_indices_returns_400() {
-        let (app, secret) = build_app().await;
-        let token = auth_token(&secret).await;
-        let req_body = BlobsRequestV4 {
-            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-            cell_indices: vec![5u8, 5].try_into().unwrap(),
-        };
-        let body = req_body.to_ssz();
-        let req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/blobs/v4")
-            .header("authorization", format!("Bearer {token}"))
-            .header("content-type", "application/octet-stream")
-            .body(axum::body::Body::from(body))
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 400);
-    }
-
-    #[tokio::test]
-    async fn out_of_range_cell_index_returns_400() {
-        // Index value 128 is a valid u8 but an invalid cell index (cells are 0..=127).
-        let (app, secret) = build_app().await;
-        let token = auth_token(&secret).await;
-        let req_body = BlobsRequestV4 {
-            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-            cell_indices: vec![128u8].try_into().unwrap(),
-        };
-        let body = req_body.to_ssz();
-        let req = axum::http::Request::builder()
-            .method("POST")
-            .uri("/blobs/v4")
-            .header("authorization", format!("Bearer {token}"))
-            .header("content-type", "application/octet-stream")
-            .body(axum::body::Body::from(body))
-            .unwrap();
-        let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 400);
+        assert_eq!(resp.status(), 204);
     }
 }
 

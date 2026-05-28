@@ -11,8 +11,9 @@ use libssz_types::SszVector;
 pub const MAX_EXTRA_DATA_BYTES: usize = 32;
 pub const MAX_BYTES_PER_TRANSACTION: usize = 1_073_741_824;
 pub const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1_048_576;
-/// `MAX_WITHDRAWALS_PER_PAYLOAD` — spec limit on the withdrawals SSZ list.
-pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 65_536;
+/// `MAX_WITHDRAWALS_PER_PAYLOAD` — Capella SSZ list limit (`2**4`), per
+/// execution-apis #793 (`refactor-ssz.md`) and the Capella beacon-chain spec.
+pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 16;
 /// Spec limit on number of distinct execution request types per payload (EIP-7685).
 pub const MAX_EXECUTION_REQUESTS_PER_PAYLOAD: usize = 16;
 /// Spec limit on bytes per single execution-request payload (type-prefix + body).

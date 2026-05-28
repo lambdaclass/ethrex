@@ -2,9 +2,11 @@
 //! `EngineCall` enum that selects the right `handle_new_payload_*` helper.
 
 use bytes::Bytes;
+use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, Withdrawal as InternalWithdrawal};
 use ethrex_common::{Address, Bloom, H256, U256};
+use ethrex_rlp::decode::RLPDecode;
 
 use crate::engine::payload::validate_execution_requests;
 use crate::engine_rest::error::ProblemJson;
@@ -41,6 +43,10 @@ pub(crate) struct DecodedNewPayload {
     pub block: Block,
     pub expected_block_hash: H256,
     pub call: EngineCall,
+    /// Decoded BAL for V5/Amsterdam payloads (None for earlier forks). Passed to
+    /// `handle_new_payload_v4` so its `validate_ordering` check runs, matching the
+    /// JSON-RPC `engine_newPayloadV5` path.
+    pub block_access_list: Option<BlockAccessList>,
 }
 
 /// Implemented by each per-fork `ExecutionPayloadEnvelope`.
@@ -178,6 +184,7 @@ impl IntoEngineCall for paris::ExecutionPayloadEnvelope {
             block,
             expected_block_hash,
             call: EngineCall::V1V2,
+            block_access_list: None,
         })
     }
 }
@@ -221,6 +228,7 @@ impl IntoEngineCall for shanghai::ExecutionPayloadEnvelope {
             block,
             expected_block_hash,
             call: EngineCall::V1V2,
+            block_access_list: None,
         })
     }
 }
@@ -267,6 +275,7 @@ impl IntoEngineCall for cancun::ExecutionPayloadEnvelope {
             call: EngineCall::V3 {
                 parent_beacon_block_root: pbbr,
             },
+            block_access_list: None,
         })
     }
 }
@@ -320,6 +329,7 @@ impl IntoEngineCall for prague::ExecutionPayloadEnvelope {
                 parent_beacon_block_root: pbbr,
                 execution_requests,
             },
+            block_access_list: None,
         })
     }
 }
@@ -328,14 +338,20 @@ impl IntoEngineCall for prague::ExecutionPayloadEnvelope {
 
 fn amsterdam_payload_to_json(
     p: amsterdam::ExecutionPayload,
-) -> Result<(JsonExecutionPayload, Option<H256>), ProblemJson> {
+) -> Result<(JsonExecutionPayload, Option<H256>, Option<BlockAccessList>), ProblemJson> {
     let withdrawals: Vec<InternalWithdrawal> = p.withdrawals.iter().map(ssz_withdrawal).collect();
-    // Compute the BAL hash from raw SSZ bytes before discarding them.
+    // The block_access_list field carries the RLP-encoded BAL. Hash the raw bytes
+    // for the header's `block_access_list_hash`, and decode the BAL itself so the
+    // caller can run `validate_ordering` (matching the JSON-RPC V5 path).
     let bal_bytes = p.block_access_list.to_vec();
-    let raw_bal_hash = if bal_bytes.is_empty() {
-        None
+    let (raw_bal_hash, block_access_list) = if bal_bytes.is_empty() {
+        (None, None)
     } else {
-        Some(ethrex_common::utils::keccak(&bal_bytes))
+        let hash = ethrex_common::utils::keccak(&bal_bytes);
+        let bal = BlockAccessList::decode(&bal_bytes).map_err(|err| {
+            ProblemJson::bad_request(&format!("invalid block_access_list RLP: {err}"))
+        })?;
+        (Some(hash), Some(bal))
     };
     let json = cancun_fields_to_json(CommonCancunFields {
         parent_hash: p.parent_hash,
@@ -357,7 +373,7 @@ fn amsterdam_payload_to_json(
         excess_blob_gas: Some(p.excess_blob_gas),
         slot_number: Some(p.slot_number),
     })?;
-    Ok((json, raw_bal_hash))
+    Ok((json, raw_bal_hash, block_access_list))
 }
 
 impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
@@ -370,7 +386,8 @@ impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
         validate_execution_requests(&execution_requests)
             .map_err(|err| ProblemJson::bad_request(&err.to_string()))?;
         let requests_hash = compute_requests_hash(&execution_requests);
-        let (json, raw_bal_hash) = amsterdam_payload_to_json(self.execution_payload)?;
+        let (json, raw_bal_hash, block_access_list) =
+            amsterdam_payload_to_json(self.execution_payload)?;
         let block = json
             .to_block(Some(pbbr), Some(requests_hash), raw_bal_hash)
             .map_err(|e| ProblemJson::unprocessable_entity(&e.to_string()))?;
@@ -382,6 +399,7 @@ impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
                 execution_requests,
                 raw_bal_hash,
             },
+            block_access_list,
         })
     }
 }

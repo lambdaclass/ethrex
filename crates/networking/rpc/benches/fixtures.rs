@@ -346,34 +346,36 @@ pub fn blobs_v1_response_json(
         .collect()
 }
 
-/// SSZ-side blobs response wrapping `Vec<OptBlobAndProofV1>`.
+/// SSZ-side blobs response: a `BlobsV1Response` of `available` entries.
 #[allow(dead_code)]
 pub fn blobs_v1_response_ssz(
     seed: u64,
     n: usize,
-) -> ethrex_rpc::engine_rest::types::blobs::BlobsResponseV1 {
+) -> ethrex_rpc::engine_rest::types::blobs::BlobsV1Response {
     use ethrex_rpc::engine_rest::types::blobs::{
-        BYTES_PER_BLOB, BYTES_PER_PROOF, BlobAndProofV1 as SszBlobAndProofV1, BlobsResponseV1,
-        OptBlobAndProofV1,
+        BYTES_PER_BLOB, BYTES_PER_PROOF, BlobAndProofV1 as SszBlobAndProofV1, BlobV1Entry,
+        BlobsV1Response,
     };
-    use libssz_types::SszList;
+    use libssz_types::SszVector;
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let items: Vec<OptBlobAndProofV1> = (0..n)
+    let entries: Vec<BlobV1Entry> = (0..n)
         .map(|_| {
             let mut blob = vec![0u8; BYTES_PER_BLOB];
             rng.fill(&mut blob[..]);
             let mut proof = [0u8; BYTES_PER_PROOF];
             rng.fill(&mut proof[..]);
-            let blob_ssz: SszList<u8, BYTES_PER_BLOB> =
+            let blob_ssz: SszVector<u8, BYTES_PER_BLOB> =
                 blob.try_into().expect("blob fits BYTES_PER_BLOB");
-            OptBlobAndProofV1::some(SszBlobAndProofV1 {
+            BlobV1Entry::available(SszBlobAndProofV1 {
                 blob: blob_ssz,
                 proof,
             })
         })
         .collect();
-    BlobsResponseV1 { items }
+    BlobsV1Response {
+        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
+    }
 }
 
 /// JSON-side getPayload response — same `ExecutionPayload` shape as newPayload.
