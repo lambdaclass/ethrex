@@ -215,7 +215,7 @@ pub fn eip7702_recover_address(
     if auth_tuple.r_signature > *SECP256K1_ORDER || U256::zero() >= auth_tuple.r_signature {
         return Ok(None);
     }
-    if auth_tuple.y_parity != U256::one() && auth_tuple.y_parity != U256::zero() {
+    if auth_tuple.y_parity != 1 && auth_tuple.y_parity != 0 {
         return Ok(None);
     }
 
@@ -224,8 +224,7 @@ pub fn eip7702_recover_address(
     (auth_tuple.chain_id, auth_tuple.address, auth_tuple.nonce).encode(&mut rlp_buf);
     let msg = crypto.keccak256(&rlp_buf);
 
-    let y_parity: u8 =
-        TryInto::<u8>::try_into(auth_tuple.y_parity).map_err(|_| InternalError::TypeConversion)?;
+    let y_parity: u8 = auth_tuple.y_parity;
 
     let mut sig = [0u8; 65];
     sig[..32].copy_from_slice(&auth_tuple.r_signature.to_big_endian());

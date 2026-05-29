@@ -2791,8 +2791,9 @@ fn vm_from_generic<'a>(
                 .collect(),
             authorization_list: authorization_list
                 .iter()
-                .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
-                .collect(),
+                .map(|auth| AuthorizationTuple::try_from(auth.clone()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| InternalError::TypeConversion)?,
             ..Default::default()
         }),
         None => Transaction::EIP1559Transaction(EIP1559Transaction {
