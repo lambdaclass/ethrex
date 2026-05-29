@@ -2510,11 +2510,6 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-    let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
-    let coinbase_backup = db
-        .current_accounts_state
-        .get(&block_header.coinbase)
-        .cloned();
     let env = Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
@@ -2575,29 +2570,10 @@ pub fn generic_system_contract_levm(
 
     let report = result?;
 
-    if let Some(system_account) = system_account_backup {
-        db.current_accounts_state
-            .insert(system_address, system_account);
-    } else {
-        // If the system account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&system_address);
-    }
-
-    // Restore the coinbase account to its pre-call state so the system call has no
-    // fee/value side effects on the block's fee recipient. Skip this when the fee
-    // recipient IS the system contract being called: in that case the only change to
-    // the coinbase account is the system call's own storage write (e.g. the EIP-2935
-    // history slot, or an EIP-7002/7251 request), which must persist. Restoring it
-    // would drop that write from the emitted state updates and diverge from other
-    // clients, which commit the system-call diff and never restore the callee.
-    if block_header.coinbase != contract_address {
-        if let Some(coinbase_account) = coinbase_backup {
-            db.current_accounts_state
-                .insert(block_header.coinbase, coinbase_account);
-        } else {
-            // If the coinbase account was not in the cache, we need to remove it
-            db.current_accounts_state.remove(&block_header.coinbase);
-        }
+    // Undo the sender nonce bump: it's the only state change a system call leaves
+    // behind given that the gas price is set to zero.
+    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
+        account.info.nonce = account.info.nonce.saturating_sub(1);
     }
 
     Ok(report)
