@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3840,7 +3840,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "criterion 0.5.1",
@@ -3858,7 +3858,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -3886,7 +3886,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -3920,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -3931,7 +3931,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -3956,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -3975,7 +3975,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4003,7 +4003,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "agg_mode_sdk",
  "alloy",
@@ -4057,7 +4057,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4075,7 +4075,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-prover"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -4114,7 +4114,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "axum 0.8.9",
  "bytes",
@@ -4144,7 +4144,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -4161,7 +4161,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "axum 0.8.9",
  "ethrex-common",
@@ -4176,7 +4176,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-monitor"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -4205,7 +4205,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4253,7 +4253,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -4283,7 +4283,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-repl"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "clap",
  "colored 2.2.0",
@@ -4301,7 +4301,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "criterion 0.7.0",
@@ -4316,7 +4316,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "axum 0.8.9",
  "axum-extra",
@@ -4359,7 +4359,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4383,7 +4383,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -4391,7 +4391,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4414,7 +4414,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "async-trait",
  "bincode 1.3.3",
@@ -4431,7 +4431,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-test"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4472,7 +4472,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4490,7 +4490,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "13.0.0"
+version = "14.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
