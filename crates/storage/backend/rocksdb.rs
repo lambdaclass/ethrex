@@ -27,7 +27,7 @@ pub struct RocksDBBackend {
 }
 
 impl RocksDBBackend {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<Path>, block_cache_size: usize) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -84,9 +84,14 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
-        // Shared block cache for all column families: caches decompressed SST data
-        // blocks in userspace, reducing kernel I/O for hot data (trie nodes, accounts).
-        let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
+        // Shared block cache for all column families. With
+        // `cache_index_and_filter_blocks(true)` below, this cache holds both data blocks
+        // and the index/bloom-filter blocks needed to look them up, so its size is the
+        // effective ceiling on RocksDB's resident memory footprint. The caller chooses
+        // the size (see the `--rocksdb.block-cache-size` CLI flag); a value that is too
+        // small relative to the filter + working-set size will degrade block-import
+        // throughput (filter blocks displace data blocks, EVM reads spill to disk).
+        let block_cache = Cache::new_lru_cache(block_cache_size);
 
         // Configures a CF's block-based table to keep its index and bloom-filter blocks
         // inside the shared (bounded) block cache rather than pinning them per open file.

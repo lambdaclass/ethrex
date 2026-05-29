@@ -1,8 +1,10 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network, init_store,
+    get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network,
+    init_store_with_config,
 };
+use ethrex_storage::StoreConfig;
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
@@ -200,7 +202,10 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis.clone()).await?;
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
+    };
+    let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
