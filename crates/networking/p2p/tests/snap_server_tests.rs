@@ -291,7 +291,7 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
     // So I copied the state from a geth execution of the test suite
 
     // State was trimmed to only the first 100 accounts (as the furthest account used by the tests is account 87)
-    // If the full 408 account state is needed check out previous commits the PR that added this code
+    // If the full 408 account state is needed, check out previous commits of the PR that added this code
 
     let accounts: Vec<(&str, Vec<u8>)> = vec![
         (

@@ -54,6 +54,15 @@ impl Memory {
         }
     }
 
+    /// Truncates the memory back to base. This is crucial for constrained
+    /// memory in zkVMs. The memory is not freed, but rather shrunk in `len`,
+    /// so that the already allocated `capacity` is reused.
+    #[cfg(target_arch = "riscv64")]
+    #[inline]
+    pub fn truncate_to_base(&self) {
+        self.buffer.borrow_mut().truncate(self.current_base);
+    }
+
     /// Returns the len of the current memory, from the current base.
     #[inline]
     pub fn len(&self) -> usize {
@@ -63,6 +72,19 @@ impl Memory {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Returns a copy of the live byte slice for this frame (from `current_base` to
+    /// `current_base + len`).  Used by the struct-log tracer for memory capture.
+    pub fn live_bytes(&self) -> Vec<u8> {
+        if self.len == 0 {
+            return Vec::new();
+        }
+        let buf = self.buffer.borrow();
+        let end = self.current_base.saturating_add(self.len);
+        buf.get(self.current_base..end)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
     }
 
     /// Resizes the from the current base to fit the memory specified at new_memory_size.

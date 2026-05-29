@@ -6,9 +6,10 @@ use crate::{
         StorageBackend, StorageReadView,
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
-            BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, EXECUTION_WITNESSES,
-            FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES, PENDING_BLOCKS, RECEIPTS,
-            SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
+            BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
+            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
+            TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -27,6 +28,7 @@ use ethrex_common::{
         AccountInfo, AccountState, AccountUpdate, Block, BlockBody, BlockHash, BlockHeader,
         BlockNumber, ChainConfig, Code, CodeMetadata, ForkId, Genesis, GenesisAccount, Index,
         Receipt, Transaction,
+        block_access_list::BlockAccessList,
         block_execution_witness::{ExecutionWitness, RpcExecutionWitness},
     },
     utils::keccak,
@@ -166,8 +168,8 @@ pub struct Store {
     trie_cache: Arc<RwLock<Arc<TrieLayerCache>>>,
     /// Channel for controlling the FlatKeyValue generator background task.
     flatkeyvalue_control_tx: std::sync::mpsc::SyncSender<FKVGeneratorControlMessage>,
-    /// Channel for sending trie updates to the background worker.
-    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieUpdate>,
+    /// Channel for sending trie updates (and idle pings) to the background worker.
+    trie_update_worker_tx: std::sync::mpsc::SyncSender<TrieMessage>,
     /// Cached latest canonical block header.
     ///
     /// Wrapped in Arc for cheap reads with infrequent writes.
@@ -188,6 +190,10 @@ pub struct Store {
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
     code_metadata_cache: Arc<Mutex<rustc_hash::FxHashMap<H256, CodeMetadata>>>,
+
+    /// Serializes concurrent `forkchoice_update` callers so that the cache
+    /// update and the DB write transaction remain mutually ordered.
+    fcu_lock: Arc<tokio::sync::Mutex<()>>,
 
     background_threads: Arc<ThreadList>,
 }
@@ -264,6 +270,29 @@ pub struct AccountUpdatesList {
 }
 
 impl Store {
+    /// Block until the trie-update background worker has drained every prior
+    /// message and is waiting for new work — i.e. Phase 2 (disk write of the
+    /// bottom-most diff layer) and Phase 3 (in-memory layer removal) for all
+    /// previously-applied updates have completed.
+    ///
+    /// Implementation: the worker channel is `sync_channel(0)`, so a send only
+    /// returns once the worker calls `recv()` on the next loop iteration.
+    /// `TrieMessage::Ping` carries no work, so the send completing is itself
+    /// the idle signal.
+    ///
+    /// Caller's responsibility: hold off other senders to `trie_update_worker_tx`
+    /// while this is in flight. Under concurrent producers the rendezvous
+    /// guarantee degrades to "the prior message has been drained", not
+    /// "persistence is idle going forward" — a racing `Update` from another
+    /// thread can be in-flight by the time this returns.
+    pub async fn wait_for_persistence_idle(&self) -> Result<(), StoreError> {
+        let tx = self.trie_update_worker_tx.clone();
+        tokio::task::spawn_blocking(move || tx.send(TrieMessage::Ping))
+            .await
+            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle join: {e}")))?
+            .map_err(|e| StoreError::Custom(format!("wait_for_persistence_idle send: {e}")))
+    }
+
     /// Add a block in a single transaction.
     /// This will store -> BlockHeader, BlockBody, BlockTransactions, BlockNumber.
     pub async fn add_block(&self, block: Block) -> Result<(), StoreError> {
@@ -584,15 +613,17 @@ impl Store {
             let tx_hash_bytes = transaction_hash.as_bytes();
             let tx = db.begin_read()?;
 
-            // Use prefix iterator to find all entries with this transaction hash
+            // rust-rocksdb's prefix_iterator_cf seeks but does not bound iteration —
+            // caller must stop on the first prefix mismatch.
             let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
             let mut transaction_locations = Vec::new();
 
             while let Some(Ok((key, value))) = iter.next() {
-                // Ensure key is exactly tx_hash + block_hash (32 + 32 = 64 bytes)
-                // and starts with our exact tx_hash
+                // Key is tx_hash (32) + block_hash (32) = 64 bytes.
                 if key.len() == 64 && &key[0..32] == tx_hash_bytes {
                     transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
+                } else {
+                    break;
                 }
             }
 
@@ -629,10 +660,9 @@ impl Store {
         index: Index,
         receipt: Receipt,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let key = (block_hash, index).encode_to_vec();
+        let key = receipt_key(&block_hash, index);
         let value = receipt.encode_to_vec();
-        self.write_async(RECEIPTS, key, value).await
+        self.write_async(RECEIPTS_V2, key, value).await
     }
 
     /// Add receipts
@@ -645,12 +675,12 @@ impl Store {
             .into_iter()
             .enumerate()
             .map(|(index, receipt)| {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
                 (key, value)
             })
             .collect();
-        self.write_batch_async(RECEIPTS, batch_items).await
+        self.write_batch_async(RECEIPTS_V2, batch_items).await
     }
 
     /// Obtain receipt for a canonical block represented by the block number.
@@ -672,8 +702,8 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<Option<Receipt>, StoreError> {
-        let key = (block_hash, index).encode_to_vec();
-        self.read_async(RECEIPTS, key)
+        let key = receipt_key(&block_hash, index);
+        self.read_async(RECEIPTS_V2, key)
             .await?
             .map(|bytes| Receipt::decode(bytes.as_slice()))
             .transpose()
@@ -1008,7 +1038,12 @@ impl Store {
             .transpose()
     }
 
-    pub async fn forkchoice_update_inner(
+    /// DB mutation step of `forkchoice_update`.
+    ///
+    /// Callers MUST hold `fcu_lock` (only `forkchoice_update` should invoke this).
+    /// The read of `LatestBlockNumber` below happens outside the write
+    /// transaction and would be a TOCTOU window without that serialization.
+    async fn forkchoice_update_inner(
         &self,
         new_canonical_blocks: Vec<(BlockNumber, BlockHash)>,
         head_number: BlockNumber,
@@ -1027,6 +1062,12 @@ impl Store {
                 txn.put(CANONICAL_BLOCK_HASHES, &head_key, &head_value)?;
             }
 
+            // Delete canonical entries above the new head by enumerating each key.
+            // `delete_range` is not safe here: keys are `u64::to_le_bytes()`, and
+            // RocksDB's lexicographic comparator does not match LE numeric order
+            // (e.g. block 256 = [0x00, 0x01, ..] sorts before block 11 = [0x0B, ..]),
+            // so a range-delete would silently miss blocks whose LE first byte is
+            // smaller than `head+1`'s first byte.
             for number in (head_number + 1)..=(latest) {
                 txn.delete(CANONICAL_BLOCK_HASHES, number.to_le_bytes().as_slice())?;
             }
@@ -1060,33 +1101,55 @@ impl Store {
         &self,
         block_hash: &BlockHash,
     ) -> Result<Vec<Receipt>, StoreError> {
-        self.get_receipts_for_block_from_index(block_hash, 0).await
+        self.get_receipts_for_block_from_index(block_hash, 0, None)
+            .await
     }
 
-    /// Retrieves receipts for a block starting from the given index.
-    /// Used by eth/70 partial receipt requests (EIP-7975).
+    /// Retrieves receipts for a block starting from the given index,
+    /// optionally limited to `max_count` receipts.
+    ///
+    /// Uses cursor-based prefix iteration over the 32-byte block hash prefix
+    /// for efficient batch retrieval. Used by:
+    /// - eth/70 partial receipt requests (EIP-7975) via p2p
+    /// - `eth_getTransactionReceipt` RPC with a count limit to avoid
+    ///   fetching the entire block's receipts
     pub async fn get_receipts_for_block_from_index(
         &self,
         block_hash: &BlockHash,
         start_index: u64,
+        max_count: Option<usize>,
     ) -> Result<Vec<Receipt>, StoreError> {
-        let mut receipts = Vec::new();
-        let mut index = start_index;
+        let backend = self.backend.clone();
+        let block_hash = *block_hash;
 
-        let txn = self.backend.begin_read()?;
-        loop {
-            let key = (*block_hash, index).encode_to_vec();
-            match txn.get(RECEIPTS, key.as_slice())? {
-                Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
-                    receipts.push(receipt);
-                    index += 1;
+        tokio::task::spawn_blocking(move || {
+            let txn = backend.begin_read()?;
+            let prefix = block_hash.as_bytes().to_vec();
+            // Seek directly to block_hash || start_index to avoid O(start_index) scan.
+            // Keys are big-endian u64, so lexicographic order matches numeric order.
+            let mut seek_key = prefix.clone();
+            seek_key.extend_from_slice(&start_index.to_be_bytes());
+            let iter = txn.prefix_iterator(RECEIPTS_V2, &seek_key)?;
+            let mut receipts = Vec::new();
+            for result in iter {
+                let (k, v) = result?;
+                if !k.starts_with(&prefix) {
+                    break;
                 }
-                None => break,
+                if k.len() != 40 {
+                    continue;
+                }
+                receipts.push(Receipt::decode(v.as_ref())?);
+                if let Some(max) = max_count
+                    && receipts.len() >= max
+                {
+                    break;
+                }
             }
-        }
-
-        Ok(receipts)
+            Ok(receipts)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {e}")))?
     }
 
     // Snap State methods
@@ -1398,9 +1461,11 @@ impl Store {
             child_state_root: last_state_root,
             is_batch,
         };
-        trie_upd_worker_tx.send(trie_update).map_err(|e| {
-            StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
-        })?;
+        trie_upd_worker_tx
+            .send(TrieMessage::Update(trie_update))
+            .map_err(|e| {
+                StoreError::Custom(format!("failed to read new trie layer notification: {e}"))
+            })?;
         let mut tx = db.begin_write()?;
 
         for block in update_batch.blocks {
@@ -1429,9 +1494,9 @@ impl Store {
 
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
-                let key = (block_hash, index as u64).encode_to_vec();
+                let key = receipt_key(&block_hash, index as u64);
                 let value = receipt.encode_to_vec();
-                tx.put(RECEIPTS, &key, &value)?;
+                tx.put(RECEIPTS_V2, &key, &value)?;
             }
         }
 
@@ -1486,10 +1551,13 @@ impl Store {
                 }
                 #[cfg(feature = "rocksdb")]
                 Some(v) if v < STORE_SCHEMA_VERSION => {
-                    // Open backend, run migrations, then proceed with the same Arc
-                    let backend: Arc<dyn crate::api::StorageBackend> =
-                        Arc::new(RocksDBBackend::open(&path)?);
-                    crate::migrations::run_pending_migrations(backend.as_ref(), &db_path, v)?;
+                    // Open backend, run migrations, then drop obsolete CFs.
+                    // Cleanup must happen AFTER migrations so legacy CFs (e.g.
+                    // `receipts`) are still readable during the migration.
+                    let rocksdb = Arc::new(RocksDBBackend::open(&path)?);
+                    crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
+                    rocksdb.drop_obsolete_cfs(&path);
+                    let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
                     return Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD);
                 }
                 Some(_) => {
@@ -1504,7 +1572,9 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let backend = Arc::new(RocksDBBackend::open(path)?);
+                let rocksdb = RocksDBBackend::open(&path)?;
+                rocksdb.drop_obsolete_cfs(&path);
+                let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
             }
             EngineType::InMemory => {
@@ -1546,6 +1616,7 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
+            fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
             background_threads: Default::default(),
         };
         let backend_clone = store.backend.clone();
@@ -1594,7 +1665,7 @@ impl Store {
             let rx = trie_upd_rx;
             loop {
                 match rx.recv() {
-                    Ok(trie_update) => {
+                    Ok(TrieMessage::Update(trie_update)) => {
                         // FIXME: what should we do on error?
                         let _ = apply_trie_updates(
                             backend.as_ref(),
@@ -1603,6 +1674,10 @@ impl Store {
                             trie_update,
                         )
                         .inspect_err(|err| error!("apply_trie_updates failed: {err}"));
+                    }
+                    Ok(TrieMessage::Ping) => {
+                        // Rendezvous handshake only — sender just wanted to know
+                        // we were idle and back at recv(). No work to do.
                     }
                     Err(err) => {
                         debug!("Trie update sender disconnected: {err}");
@@ -2092,6 +2167,34 @@ impl Store {
         }
     }
 
+    /// Stores a block access list for a given block hash.
+    pub fn store_block_access_list(
+        &self,
+        block_hash: BlockHash,
+        bal: &BlockAccessList,
+    ) -> Result<(), StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        let mut value = vec![];
+        bal.encode(&mut value);
+        self.write(BLOCK_ACCESS_LISTS, key, value)
+    }
+
+    /// Returns the block access list for a given block hash, if stored.
+    pub fn get_block_access_list(
+        &self,
+        block_hash: BlockHash,
+    ) -> Result<Option<BlockAccessList>, StoreError> {
+        let key = block_hash.as_bytes().to_vec();
+        match self.read(BLOCK_ACCESS_LISTS, key)? {
+            Some(value) => {
+                let bal = BlockAccessList::decode(&value)
+                    .map_err(|e| StoreError::Custom(format!("Failed to decode BAL: {e}")))?;
+                Ok(Some(bal))
+            }
+            None => Ok(None),
+        }
+    }
+
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
@@ -2281,19 +2384,35 @@ impl Store {
         safe: Option<BlockNumber>,
         finalized: Option<BlockNumber>,
     ) -> Result<(), StoreError> {
+        // Serialize concurrent forkchoice updates. Without this, two callers
+        // could interleave their `latest_block_header` cache updates with each
+        // other's DB writes, leaving the cache inconsistent with the DB or
+        // letting a later caller's write reorder relative to the cache update
+        // order (see the TOCTOU discussion around canonical/latest drift).
+        let _guard = self.fcu_lock.lock().await;
+
         // Updates first the latest_block_header to avoid nonce inconsistencies #3927.
+        // Snapshot the previous header so we can roll the cache back if the DB
+        // write fails — otherwise the cache would point at a block the DB does
+        // not consider canonical.
+        let previous_head = self.latest_block_header.get();
         let new_head = self
             .load_block_header_by_hash(head_hash)?
             .ok_or_else(|| StoreError::MissingLatestBlockNumber)?;
         self.latest_block_header.update(new_head);
-        self.forkchoice_update_inner(
-            new_canonical_blocks,
-            head_number,
-            head_hash,
-            safe,
-            finalized,
-        )
-        .await?;
+        if let Err(err) = self
+            .forkchoice_update_inner(
+                new_canonical_blocks,
+                head_number,
+                head_hash,
+                safe,
+                finalized,
+            )
+            .await
+        {
+            self.latest_block_header.update((*previous_head).clone());
+            return Err(err);
+        }
 
         Ok(())
     }
@@ -2867,6 +2986,18 @@ struct TrieUpdate {
     is_batch: bool,
 }
 
+/// Messages handled by the trie-update background worker.
+///
+/// `Ping` is a no-op the worker handles between real updates. Because the
+/// worker channel is `sync_channel(0)` (rendezvous), a successful `Ping` send
+/// proves the worker has finished its previous iteration (Phase 1+2+3) and is
+/// blocked back at `recv()` — i.e. persistence is idle. See
+/// `Store::wait_for_persistence_idle`.
+enum TrieMessage {
+    Update(TrieUpdate),
+    Ping,
+}
+
 // NOTE: we don't receive `Store` here to avoid cyclic dependencies
 // with the other end of `fkv_ctl`
 fn apply_trie_updates(
@@ -3200,6 +3331,14 @@ fn chain_data_key(index: ChainDataIndex) -> Vec<u8> {
 
 fn snap_state_key(index: SnapStateIndex) -> Vec<u8> {
     (index as u8).encode_to_vec()
+}
+
+/// Builds a fixed-width RECEIPTS key: block_hash (32B) || index (8B BE).
+pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
+    let mut key = Vec::with_capacity(40);
+    key.extend_from_slice(block_hash.as_bytes());
+    key.extend_from_slice(&index.to_be_bytes());
+    key
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {

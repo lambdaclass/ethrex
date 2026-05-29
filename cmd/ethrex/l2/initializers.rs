@@ -55,6 +55,8 @@ fn init_rpc_api(
 ) {
     init_datadir(&opts.datadir);
 
+    let allowed_namespaces: std::collections::HashSet<_> = opts.http_api.iter().copied().collect();
+    let ethrex_namespace_allowed = l2_opts.http_api_ethrex;
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
         ws,
@@ -73,6 +75,8 @@ fn init_rpc_api(
         log_filter_handler,
         l2_gas_limit,
         l2_opts.sponsored_gas_limit,
+        allowed_namespaces,
+        ethrex_namespace_allowed,
     );
 
     tracker.spawn(rpc_api);
@@ -224,6 +228,9 @@ pub async fn init_l2(
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        bal_parallel_exec_enabled: true,
+        bal_prefetch_enabled: true,
+        bal_parallel_trie_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());

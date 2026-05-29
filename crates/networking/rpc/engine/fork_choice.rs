@@ -221,7 +221,7 @@ async fn handle_forkchoice(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
-        finalized = %format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        finalized = %format!("{:#x}", fork_choice_state.finalized_block_hash),
         "New fork choice update",
     );
 
@@ -318,9 +318,20 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
-                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
-                ),
+                InvalidForkChoice::NewHeadAlreadyCanonical => {
+                    // execution-apis PR 786: when head references a VALID ancestor of
+                    // the latest known finalized block, return VALID + null payloadId
+                    // and MUST NOT begin a payload build process. We return `None` for
+                    // the head header so the V3/V4 dispatch short-circuits the
+                    // build_payload call.
+                    context.blockchain.set_synced();
+                    return Ok((
+                        None,
+                        ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                            fork_choice_state.head_block_hash,
+                        )),
+                    ));
+                }
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
@@ -334,6 +345,10 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::TooDeepReorg { .. } => {
+                    warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
+                    return Err(RpcErr::TooDeepReorg(forkchoice_error.to_string()));
                 }
                 InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(

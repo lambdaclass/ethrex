@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime};
 
-use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{AccountState, BlockHeader, Code};
 use ethrex_common::{
     H256,
@@ -21,6 +20,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
 #[cfg(feature = "rocksdb")]
 use ethrex_trie::Trie;
+use rayon::iter::{ParallelBridge, ParallelIterator};
 use tracing::{debug, error, info, warn};
 
 use crate::metrics::{CurrentStepValue, METRICS};
@@ -28,6 +28,7 @@ use crate::peer_handler::PeerHandler;
 use crate::peer_table::PeerTableServerProtocol as _;
 use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
+    async_fs,
     constants::{
         BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
         SECONDS_PER_BLOCK, SNAP_LIMIT,
@@ -48,6 +49,12 @@ use ethrex_common::U256;
 #[cfg(not(feature = "rocksdb"))]
 use ethrex_rlp::encode::RLPEncode;
 
+/// Channel buffer for the background → main header stream.
+/// Each batch is a `Vec<BlockHeader>` (typically up to MAX_BLOCK_HEADERS_REQUEST headers),
+/// so this caps in-flight memory at ~100 × batch_size while letting the background task
+/// stay a few batches ahead of the consumer without blocking.
+const HEADER_CHANNEL_BUFFER: usize = 100;
+
 /// Status of the background header download task
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadStatus {
@@ -57,6 +64,22 @@ pub enum DownloadStatus {
     InProgress,
     /// Background download has completed
     Complete,
+}
+
+/// RAII guard that flips the shared `download_complete` flag to `true` on drop.
+///
+/// Ensures the main task waiting on `download_status().is_terminal()` is unblocked
+/// regardless of how `download_headers_background` returns — happy path, early
+/// `?` propagation, or panic unwind. Without this, an error in header fetch /
+/// store write would leave the flag at `false` and hang the consumer.
+struct CompletionGuard {
+    flag: Arc<AtomicBool>,
+}
+
+impl Drop for CompletionGuard {
+    fn drop(&mut self) {
+        self.flag.store(true, Ordering::Release);
+    }
 }
 
 impl DownloadStatus {
@@ -176,7 +199,12 @@ impl SnapBlockSyncState {
 
 /// Downloads block headers in the background, sending them via channel.
 /// This allows state download to proceed in parallel with header download.
-#[allow(clippy::too_many_arguments)]
+///
+/// **Responsibility split**: this task only fetches + persists headers and signals when
+/// done. It never invokes `sync_cycle_full` itself — that would race against the main
+/// task's `snap_sync()` on the same Store/peers. When the sync head is reached, it sets
+/// `snap_enabled = false` and returns; the main task (and ultimately `Syncer::sync_cycle`)
+/// picks up the transition to full sync on the next cycle.
 async fn download_headers_background(
     mut peers: PeerHandler,
     store: Store,
@@ -184,16 +212,26 @@ async fn download_headers_background(
     sync_head: H256,
     header_sender: tokio::sync::mpsc::Sender<Vec<BlockHeader>>,
     download_complete: Arc<AtomicBool>,
-    blockchain: Arc<Blockchain>,
     snap_enabled: Arc<AtomicBool>,
 ) -> Result<(), SyncError> {
+    // Flag is flipped on every return path via Drop, so the main task can never hang
+    // waiting on a completion signal that was missed by an early `?` propagation.
+    let _completion_guard = CompletionGuard {
+        flag: download_complete,
+    };
+
     let mut current_head_number = start_number;
+    // Track the current head as a hash locally so reorg detection doesn't depend on
+    // store reads (which used to fail once the task fetched past the local canonical
+    // head). Bootstrap from store if we have it; otherwise use a sentinel that won't
+    // match any real block hash.
+    let mut current_head_hash = store
+        .get_block_header(start_number)?
+        .map(|h| h.hash())
+        .unwrap_or_default();
     let mut attempts = 0;
 
-    let pending_block = match store.get_pending_block(sync_head).await {
-        Ok(res) => res,
-        Err(e) => return Err(e.into()),
-    };
+    let pending_block = store.get_pending_block(sync_head).await?;
 
     loop {
         debug!("Background: Requesting Block Headers from number {current_head_number}");
@@ -206,7 +244,6 @@ async fn download_headers_background(
                 warn!(
                     "Background: Sync failed to find target block header after {attempts} attempts, aborting"
                 );
-                download_complete.store(true, Ordering::Release);
                 return Ok(());
             }
             attempts += 1;
@@ -219,7 +256,7 @@ async fn download_headers_background(
         // Reset failure counter on success so it tracks consecutive failures
         attempts = 0;
 
-        let (first_block_hash, first_block_number, _first_block_parent_hash) =
+        let (first_block_hash, first_block_number, first_block_parent_hash) =
             match block_headers.first() {
                 Some(header) => (header.hash(), header.number, header.parent_hash),
                 None => continue,
@@ -229,22 +266,16 @@ async fn download_headers_background(
             None => continue,
         };
 
-        // Handle reorg case where sync head is not reachable
-        let current_head = store
-            .get_block_header(current_head_number)?
-            .map(|h| h.hash())
-            .unwrap_or(first_block_hash);
-
+        // Reorg / stuck-on-target detection — mirrors the original sequential path.
+        // If the peer returns only the header we already have, walk back via parent_hash.
         if first_block_hash == last_block_hash
-            && first_block_hash == current_head
-            && current_head != sync_head
+            && first_block_hash == current_head_hash
+            && current_head_hash != sync_head
         {
             warn!(
                 "Background: Sync failed to find target block header, going back to the previous parent"
             );
-            // We can't easily go back in the background task, so we just continue with the current head
-            // The update_pivot mechanism will handle this case
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            current_head_hash = first_block_parent_hash;
             continue;
         }
 
@@ -272,38 +303,54 @@ async fn download_headers_background(
             block_headers.drain(index + 1..);
         }
 
-        // Update current fetch head
+        // Persist headers to the store immediately. This keeps reorg detection,
+        // `get_block_header(n)`-based lookups elsewhere in sync, and the
+        // checkpoint-resume path consistent with the sequential download behaviour
+        // we replaced — both the background task and any other code reading the
+        // store see the same view of downloaded headers.
+        store.add_block_headers(block_headers.clone()).await?;
+        if let Some(last_hash) = block_headers.last().map(|h| h.hash()) {
+            store.set_header_download_checkpoint(last_hash).await?;
+        }
+
+        // Advance loop state
         current_head_number = last_block_number;
+        current_head_hash = last_block_hash;
 
         // Check for full sync case - if we're close to head, switch to full sync
         let head_found = sync_head_found && store.get_latest_block_number().await? > 0;
+        // Or the head is very close to 0. A pre-check in `sync.rs::sync_cycle`
+        // also gates on `< MIN_FULL_BLOCKS`; keep both — this one stays as a
+        // safety net for callers that enter `sync_cycle_snap` directly.
         let head_close_to_0 = last_block_number < MIN_FULL_BLOCKS;
 
         if head_found || head_close_to_0 {
-            info!("Background: Sync head is found, will switch to FullSync");
+            info!("Background: Sync head is found, signaling switch to FullSync");
             snap_enabled.store(false, Ordering::Relaxed);
-            // Send remaining headers and signal completion
+            // Send any remaining headers (with the first header skipped — see below)
+            // so the main task has them available before it observes the abort.
             if block_headers.len() > 1 {
-                let _ = header_sender.send(block_headers).await;
+                let tail = block_headers.split_off(1);
+                let _ = header_sender.send(tail).await;
             }
-            download_complete.store(true, Ordering::Release);
-            // Disable snap metrics so the progress display stops
+            // Disable snap metrics so the progress display stops.
+            // Full sync resumes on the next `Syncer::sync_cycle` invocation; the
+            // background task does NOT run full sync itself (would race the main
+            // task on Store / peers).
             METRICS.disable().await;
-            // The main task will handle the full sync switch
-            return super::full::sync_cycle_full(
-                &mut peers,
-                blockchain,
-                tokio_util::sync::CancellationToken::new(),
-                sync_head,
-                store,
-            )
-            .await;
+            return Ok(());
         }
 
-        // Send headers through channel (skip the first as we already have it)
-        if block_headers.len() > 1 && header_sender.send(block_headers).await.is_err() {
-            debug!("Background: Header receiver dropped, stopping download");
-            break;
+        // Send headers through channel. We strip the first header here (it's the same
+        // as the previous batch's last header, which the receiver already has) so the
+        // sender/receiver contract is unambiguous — the channel carries only "new"
+        // headers and the receiver doesn't need to know to skip one.
+        if block_headers.len() > 1 {
+            let tail = block_headers.split_off(1);
+            if header_sender.send(tail).await.is_err() {
+                debug!("Background: Header receiver dropped, stopping download");
+                break;
+            }
         }
 
         if sync_head_found {
@@ -312,7 +359,6 @@ async fn download_headers_background(
         }
     }
 
-    download_complete.store(true, Ordering::Release);
     Ok(())
 }
 
@@ -320,7 +366,6 @@ async fn download_headers_background(
 /// Header download now runs in the background, allowing state download to start immediately.
 pub async fn sync_cycle_snap(
     peers: &mut PeerHandler,
-    blockchain: Arc<Blockchain>,
     snap_enabled: &std::sync::atomic::AtomicBool,
     sync_head: H256,
     store: Store,
@@ -345,7 +390,7 @@ pub async fn sync_cycle_snap(
     );
 
     // Create channel for header communication between background task and main snap_sync
-    let (header_sender, header_receiver) = tokio::sync::mpsc::channel(100);
+    let (header_sender, header_receiver) = tokio::sync::mpsc::channel(HEADER_CHANNEL_BUFFER);
     let download_complete = Arc::new(AtomicBool::new(false));
 
     // Setup block_sync_state with channel receiver
@@ -354,10 +399,11 @@ pub async fn sync_cycle_snap(
     // Create Arc wrapper for snap_enabled so we can share it with the background task
     let snap_enabled_arc = Arc::new(AtomicBool::new(snap_enabled.load(Ordering::Relaxed)));
 
-    // Spawn background header download task
+    // Spawn background header download task. Note: the task does NOT take `blockchain`
+    // any more — when it detects the sync head it only signals the switch via
+    // `snap_enabled`, and `Syncer::sync_cycle` runs `sync_cycle_full` on the next cycle.
     let peers_clone = peers.clone();
     let store_clone = store.clone();
-    let blockchain_clone = blockchain.clone();
     let snap_enabled_clone = snap_enabled_arc.clone();
     let header_download_handle = tokio::spawn(async move {
         download_headers_background(
@@ -367,7 +413,6 @@ pub async fn sync_cycle_snap(
             sync_head,
             header_sender,
             download_complete,
-            blockchain_clone,
             snap_enabled_clone,
         )
         .await
@@ -416,16 +461,18 @@ fn should_abort_snap_sync(snap_enabled: &Arc<AtomicBool>) -> bool {
     !snap_enabled.load(Ordering::Relaxed)
 }
 
-/// Helper function to process any pending headers from the background download task
+/// Helper function to process any pending headers from the background download task.
+///
+/// The channel carries only "new" headers (the background task strips the duplicate
+/// first header from each batch before sending), so this receiver consumes everything
+/// it gets without further filtering.
 async fn process_pending_headers(
     block_sync_state: &mut SnapBlockSyncState,
 ) -> Result<(), SyncError> {
     while let Some(headers) = block_sync_state.try_receive_headers() {
         if !headers.is_empty() {
-            // Skip the first header as we already have it (same as in original code)
-            let headers_iter = headers.into_iter().skip(1);
             block_sync_state
-                .process_incoming_headers(headers_iter)
+                .process_incoming_headers(headers.into_iter())
                 .await?;
         }
     }
@@ -464,8 +511,9 @@ pub async fn snap_sync(
             .await
             && !headers.is_empty()
         {
+            // Channel already carries first-header-stripped batches; no extra skip needed.
             block_sync_state
-                .process_incoming_headers(headers.into_iter().skip(1))
+                .process_incoming_headers(headers.into_iter())
                 .await?;
         }
     }
@@ -511,11 +559,7 @@ pub async fn snap_sync(
     let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
-    std::fs::create_dir_all(&code_hashes_snapshot_dir).map_err(|e| {
-        SyncError::FileSystem(format!(
-            "Failed to create {code_hashes_snapshot_dir:?}: {e}"
-        ))
-    })?;
+    async_fs::ensure_dir_exists(&code_hashes_snapshot_dir).await?;
 
     // Create collector to store code hashes in files
     let mut code_hash_collector: CodeHashCollector =
@@ -777,15 +821,11 @@ pub async fn snap_sync(
 
     diagnostics.write().await.current_phase = "bytecodes".to_string();
     info!("Starting download code hashes from peers");
-    for entry in std::fs::read_dir(&code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?
-    {
-        let entry =
-            entry.map_err(|e| SyncError::FileSystem(format!("Failed to read dir entry: {e}")))?;
-        let snapshot_contents = std::fs::read(entry.path())
-            .map_err(|err| SyncError::SnapshotReadError(entry.path(), err))?;
+    let code_hash_files = async_fs::read_dir_paths(&code_hashes_dir).await?;
+    for file_path in code_hash_files {
+        let snapshot_contents = async_fs::read_file(&file_path).await?;
         let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(entry.path()))?;
+            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(file_path))?;
 
         for hash in code_hashes {
             // If we haven't seen the code hash yet, add it to the list of hashes to download
@@ -835,8 +875,7 @@ pub async fn snap_sync(
             .await?;
     }
 
-    std::fs::remove_dir_all(code_hashes_dir)
-        .map_err(|_| SyncError::CodeHashesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(&code_hashes_dir).await?;
 
     *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
 
@@ -1105,7 +1144,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
         store
             .open_locked_state_trie(state_root)
             .expect("couldn't open trie")
-            .validate_parallel()
+            .validate()
     })
     .await
     .expect("We should be able to create threads");
@@ -1122,40 +1161,21 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
 pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
     info!("Starting validate_storage_root");
     let is_valid = tokio::task::spawn_blocking(move || {
-        use rayon::prelude::*;
-        let mut iter = store
+        store
             .iter_accounts(state_root)
             .expect("couldn't iterate accounts")
-            .filter(|(_, account_state)| account_state.storage_root != *EMPTY_TRIE_HASH);
-
-        const CHUNK_SIZE: usize = 4096;
-        let mut result: Result<(), ethrex_trie::TrieError> = Ok(());
-
-        loop {
-            let chunk: Vec<_> = iter.by_ref().take(CHUNK_SIZE).collect();
-            if chunk.is_empty() {
-                break;
-            }
-
-            result = chunk
-                .par_iter()
-                .try_for_each(|(hashed_address, account_state)| {
-                    store
-                        .open_locked_storage_trie(
-                            *hashed_address,
-                            state_root,
-                            account_state.storage_root,
-                        )
-                        .expect("couldn't open storage trie")
-                        .validate()
-                });
-
-            if result.is_err() {
-                break;
-            }
-        }
-
-        result
+            .par_bridge()
+            .try_for_each(|(hashed_address, account_state)| {
+                let store_clone = store.clone();
+                store_clone
+                    .open_locked_storage_trie(
+                        hashed_address,
+                        state_root,
+                        account_state.storage_root,
+                    )
+                    .expect("couldn't open storage trie")
+                    .validate()
+            })
     })
     .await
     .expect("We should be able to create threads");
@@ -1168,43 +1188,27 @@ pub async fn validate_storage_root(store: Store, state_root: H256) -> bool {
 
 pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
     info!("Starting validate_bytecodes");
-
-    // Collect unique code hashes — many contracts share bytecode (proxies, ERC20 clones)
-    let mut unique_hashes = HashSet::new();
-    for (_, account_state) in store
+    let mut is_valid = true;
+    for (account_hash, account_state) in store
         .iter_accounts(state_root)
         .expect("we couldn't iterate over accounts")
     {
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
-            unique_hashes.insert(account_state.code_hash);
+        if account_state.code_hash != *EMPTY_KECCACK_HASH
+            && !store
+                .get_account_code(account_state.code_hash)
+                .is_ok_and(|code| code.is_some())
+        {
+            error!(
+                "Missing code hash {:x} for account {:x}",
+                account_state.code_hash, account_hash
+            );
+            is_valid = false
         }
     }
-
-    info!(
-        "Collected {} unique code hashes for validation",
-        unique_hashes.len()
-    );
-
-    // Validate in parallel using existence-only check
-    use rayon::prelude::*;
-    let missing: Vec<_> = unique_hashes
-        .par_iter()
-        .filter(|code_hash| match store.code_exists(**code_hash) {
-            Ok(exists) => !exists,
-            Err(e) => {
-                error!("DB error checking code hash {:x}: {e}", code_hash);
-                true
-            }
-        })
-        .collect();
-
-    if !missing.is_empty() {
-        for hash in &missing {
-            error!("Missing code hash {:x}", hash);
-        }
+    if !is_valid {
         std::process::exit(1);
     }
-    true
+    is_valid
 }
 
 // ============================================================================
@@ -1254,15 +1258,10 @@ async fn insert_accounts(
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     let mut computed_state_root = *EMPTY_TRIE_HASH;
-    for entry in std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-    {
-        let entry = entry
-            .map_err(|err| SyncError::SnapshotReadError(account_state_snapshots_dir.into(), err))?;
-        info!("Reading account file from entry {entry:?}");
-        let snapshot_path = entry.path();
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+    let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account file from {snapshot_path:?}");
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
         let account_states_snapshot: Vec<(H256, AccountState)> =
             RLPDecode::decode(&snapshot_contents)
                 .map_err(|_| SyncError::SnapshotDecodeError(snapshot_path.clone()))?;
@@ -1303,8 +1302,7 @@ async fn insert_accounts(
 
         computed_state_root = current_state_root?;
     }
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
     info!("computed_state_root {computed_state_root}");
     Ok((computed_state_root, BTreeSet::new()))
 }
@@ -1316,22 +1314,14 @@ async fn insert_storages(
     account_storages_snapshots_dir: &Path,
     _: &Path,
 ) -> Result<(), SyncError> {
-    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use crate::utils::AccountsWithStorage;
+    use rayon::iter::IntoParallelIterator;
 
-    for entry in std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-    {
-        use crate::utils::AccountsWithStorage;
+    let snapshot_files = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
+    for snapshot_path in snapshot_files {
+        info!("Reading account storage file from {snapshot_path:?}");
 
-        let entry = entry.map_err(|err| {
-            SyncError::SnapshotReadError(account_storages_snapshots_dir.into(), err)
-        })?;
-        info!("Reading account storage file from entry {entry:?}");
-
-        let snapshot_path = entry.path();
-
-        let snapshot_contents = std::fs::read(&snapshot_path)
-            .map_err(|err| SyncError::SnapshotReadError(snapshot_path.clone(), err))?;
+        let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
 
         #[expect(clippy::type_complexity)]
         let account_storages_snapshot: Vec<AccountsWithStorage> =
@@ -1370,8 +1360,7 @@ async fn insert_storages(
             .await?;
     }
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
 
     Ok(())
 }
@@ -1396,14 +1385,13 @@ async fn insert_accounts(
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
+    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
+    // Move SST files into the temp DB instead of copying them. The snapshot dir
+    // and the temp DB live under the same datadir, so rename succeeds and we
+    // avoid keeping two on-disk copies of the leaf data during ingest.
+    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
+    ingest_opts.set_move_files(true);
+    db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     for account in iter {
@@ -1438,10 +1426,8 @@ async fn insert_accounts(
 
     drop(db); // close db before removing directory
 
-    std::fs::remove_dir_all(account_state_snapshots_dir)
-        .map_err(|_| SyncError::AccountStateSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
+    async_fs::remove_dir_all(account_state_snapshots_dir).await?;
+    async_fs::remove_dir_all(&get_rocksdb_temp_accounts_dir(datadir)).await?;
 
     let accounts_with_storage =
         BTreeSet::from_iter(storage_accounts.accounts_with_storage_root.keys().copied());
@@ -1501,14 +1487,13 @@ async fn insert_storages(
     db_options.create_if_missing(true);
     let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = std::fs::read_dir(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?
-        .into_iter()
-        .map(|res| res.path())
-        .collect();
-    db.ingest_external_file(file_paths)
+    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
+    // Move SST files into the temp DB instead of copying them. The snapshot dir
+    // and the temp DB live under the same datadir, so rename succeeds and we
+    // avoid keeping two on-disk copies of the leaf data during ingest.
+    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
+    ingest_opts.set_move_files(true);
+    db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
     let snapshot = db.snapshot();
 
@@ -1580,10 +1565,8 @@ async fn insert_storages(
     drop(snapshot);
     drop(db);
 
-    std::fs::remove_dir_all(account_storages_snapshots_dir)
-        .map_err(|_| SyncError::AccountStoragesSnapshotsDirNotFound)?;
-    std::fs::remove_dir_all(get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|e| SyncError::StorageTempDBDirNotFound(e.to_string()))?;
+    async_fs::remove_dir_all(account_storages_snapshots_dir).await?;
+    async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
     Ok(())
 }
