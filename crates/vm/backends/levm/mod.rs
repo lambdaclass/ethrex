@@ -2533,6 +2533,15 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
+    // Invariant relied upon below: with a zero gas price a system call charges no
+    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
+    // state change left to undo afterwards is the sender's nonce bump. If this ever
+    // becomes non-zero, the post-call cleanup must be revisited.
+    debug_assert!(
+        env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
+        "system calls must run with a zero gas price"
+    );
+
     // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
     // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
     // The error that should be returned for the relevant contracts is indicated in the following:
