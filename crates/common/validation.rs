@@ -9,7 +9,8 @@ use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
     Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
     validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields,
+    validate_pre_cancun_header_fields, validate_pre_shanghai_header_fields,
+    validate_shanghai_header_fields,
 };
 use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
@@ -32,6 +33,11 @@ pub fn validate_block_pre_execution(
 ) -> Result<(), InvalidBlockError> {
     // Verify initial header validity against parent
     validate_block_header(&block.header, parent_header, elasticity_multiplier)?;
+    if chain_config.is_shanghai_activated(block.header.timestamp) {
+        validate_shanghai_header_fields(&block.header)?;
+    } else {
+        validate_pre_shanghai_header_fields(&block.header)?;
+    }
 
     if chain_config.is_osaka_activated(block.header.timestamp) {
         let block_rlp_size = block.length();

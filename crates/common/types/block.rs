@@ -628,6 +628,10 @@ pub enum InvalidBlockHeaderError {
     #[error("Requests hash is not present")]
     RequestsHashNotPresent,
     // Other fork errors
+    #[error("Withdrawals root is not present")]
+    WithdrawalsRootNotPresent,
+    #[error("Withdrawals root is present")]
+    WithdrawalsRootPresent,
     #[error("Excess blob gas is present")]
     ExcessBlobGasPresent,
     #[error("Blob gas used is present")]
@@ -646,6 +650,10 @@ pub enum InvalidBlockHeaderError {
 pub enum InvalidBlockBodyError {
     #[error("Withdrawals root does not match")]
     WithdrawalsRootNotMatch,
+    #[error("Withdrawals are not present")]
+    WithdrawalsNotPresent,
+    #[error("Withdrawals are present")]
+    WithdrawalsPresent,
     #[error("Transactions root does not match")]
     TransactionsRootNotMatch,
     #[error("Ommers is not empty")]
@@ -735,13 +743,35 @@ pub fn validate_block_body(
                 return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
             }
         }
-        (Some(withdrawals_root), None) => {
-            if withdrawals_root != *EMPTY_WITHDRAWALS_HASH {
-                return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch);
-            }
+        (Some(_), None) => {
+            return Err(InvalidBlockBodyError::WithdrawalsNotPresent);
+        }
+        (None, Some(_)) => {
+            return Err(InvalidBlockBodyError::WithdrawalsPresent);
         }
         (None, None) => {}
-        _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
+    }
+
+    Ok(())
+}
+
+/// Validates that the required Shanghai header fields are present.
+pub fn validate_shanghai_header_fields(
+    header: &BlockHeader,
+) -> Result<(), InvalidBlockHeaderError> {
+    if header.withdrawals_root.is_none() {
+        return Err(InvalidBlockHeaderError::WithdrawalsRootNotPresent);
+    }
+
+    Ok(())
+}
+
+/// Validates that Shanghai header fields are not present before Shanghai.
+pub fn validate_pre_shanghai_header_fields(
+    header: &BlockHeader,
+) -> Result<(), InvalidBlockHeaderError> {
+    if header.withdrawals_root.is_some() {
+        return Err(InvalidBlockHeaderError::WithdrawalsRootPresent);
     }
 
     Ok(())
@@ -1001,6 +1031,139 @@ mod test {
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());
         assert_eq!(parent_block.encode_to_vec().len(), parent_block.length());
         assert_eq!(block.encode_to_vec().len(), block.length());
+    }
+    #[test]
+    fn test_validate_shanghai_header_fields() {
+        // withdrawals_root absent: rejected post-Shanghai.
+        let header_without_root = BlockHeader {
+            withdrawals_root: None,
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_shanghai_header_fields(&header_without_root),
+            Err(InvalidBlockHeaderError::WithdrawalsRootNotPresent)
+        ));
+
+        let header_with_root = BlockHeader {
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        assert!(validate_shanghai_header_fields(&header_with_root).is_ok());
+    }
+    #[test]
+
+    fn test_validate_pre_shanghai_header_fields() {
+        // withdrawals_root present before Shanghai: protocol violation.
+        let header_with_root = BlockHeader {
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        assert!(matches!(
+            validate_pre_shanghai_header_fields(&header_with_root),
+            Err(InvalidBlockHeaderError::WithdrawalsRootPresent)
+        ));
+
+        // withdrawals_root absent before Shanghai: expected normal case.
+        let header_without_root = BlockHeader {
+            withdrawals_root: None,
+            ..Default::default()
+        };
+        assert!(validate_pre_shanghai_header_fields(&header_without_root).is_ok());
+    }
+
+    #[test]
+    fn test_validate_block_body_withdrawals_not_present_in_body() {
+        // (Some(_), None): header declares a root but body field is absent.
+        // Previously accepted when root == EMPTY_WITHDRAWALS_HASH — EIP-4895
+        // violation. Must be rejected regardless of hash value.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        let body = BlockBody {
+            withdrawals: None,
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            validate_block_body(&header, &body, &NativeCrypto),
+            Err(InvalidBlockBodyError::WithdrawalsNotPresent)
+        ));
+    }
+
+    #[test]
+    fn test_validate_block_body_withdrawals_present_without_header_root() {
+        // (None, Some(_)): body carries a withdrawals list but header has no
+        // withdrawals_root. Invalid in all forks.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            withdrawals_root: None,
+            ..Default::default()
+        };
+        let body = BlockBody {
+            withdrawals: Some(vec![]),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            validate_block_body(&header, &body, &NativeCrypto),
+            Err(InvalidBlockBodyError::WithdrawalsPresent)
+        ));
+    }
+
+    #[test]
+    fn test_validate_block_body_empty_withdrawals_matching_root() {
+        // (Some(EMPTY_WITHDRAWALS_HASH), Some([])): both sides present,
+        // root matches the trie of an empty list.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            withdrawals_root: Some(*EMPTY_WITHDRAWALS_HASH),
+            ..Default::default()
+        };
+        let body = BlockBody {
+            withdrawals: Some(vec![]),
+            ..Default::default()
+        };
+
+        assert!(validate_block_body(&header, &body, &NativeCrypto).is_ok());
+    }
+
+    #[test]
+    fn test_validate_block_body_no_withdrawals_no_header_root() {
+        // (None, None): neither side present.
+        // Correct for pre-Shanghai blocks; body validation passes.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            withdrawals_root: None,
+            ..Default::default()
+        };
+        let body = BlockBody {
+            withdrawals: None,
+            ..Default::default()
+        };
+
+        assert!(validate_block_body(&header, &body, &NativeCrypto).is_ok());
+    }
+
+    #[test]
+    fn test_validate_block_body_withdrawals_root_mismatch() {
+        // (Some(wrong_root), Some([])): both sides present but root does not
+        // match the computed trie of the withdrawals list.
+        let header = BlockHeader {
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            withdrawals_root: Some(H256::zero()), // intentionally wrong hash
+            ..Default::default()
+        };
+        let body = BlockBody {
+            withdrawals: Some(vec![]),
+            ..Default::default()
+        };
+
+        assert!(matches!(
+            validate_block_body(&header, &body, &NativeCrypto),
+            Err(InvalidBlockBodyError::WithdrawalsRootNotMatch)
+        ));
     }
 
     #[test]
