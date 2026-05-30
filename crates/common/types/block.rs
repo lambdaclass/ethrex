@@ -4,10 +4,7 @@ use super::{
 };
 use crate::{
     Address, H256, U256,
-    constants::{
-        BLOB_BASE_COST, DEFAULT_OMMERS_HASH, EMPTY_WITHDRAWALS_HASH, GAS_PER_BLOB,
-        MIN_BASE_FEE_PER_BLOB_GAS,
-    },
+    constants::{BLOB_BASE_COST, DEFAULT_OMMERS_HASH, GAS_PER_BLOB, MIN_BASE_FEE_PER_BLOB_GAS},
     types::{Receipt, Transaction},
 };
 use bytes::Bytes;
@@ -907,7 +904,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::constants::EMPTY_KECCACK_HASH;
+    use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_WITHDRAWALS_HASH};
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
     use ethereum_types::H160;
     use hex_literal::hex;
