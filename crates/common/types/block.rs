@@ -1050,8 +1050,8 @@ mod test {
         };
         assert!(validate_shanghai_header_fields(&header_with_root).is_ok());
     }
-    #[test]
 
+    #[test]
     fn test_validate_pre_shanghai_header_fields() {
         // withdrawals_root present before Shanghai: protocol violation.
         let header_with_root = BlockHeader {
