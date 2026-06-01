@@ -509,7 +509,7 @@ impl AuthorizationListTuple {
             chain_id: self.chain_id,
             address: self.address,
             nonce: self.nonce,
-            y_parity: self.v,
+            y_parity: self.v.try_into().unwrap_or(u8::MAX),
             r_signature: self.r,
             s_signature: self.s,
         }

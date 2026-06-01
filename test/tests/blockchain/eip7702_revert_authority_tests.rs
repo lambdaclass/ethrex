@@ -126,7 +126,7 @@ fn sign_auth_tuple(
 
     let r = U256::from_big_endian(&sig[..32]);
     let s = U256::from_big_endian(&sig[32..64]);
-    let y_parity = U256::from(Into::<i32>::into(recovery_id) as u64);
+    let y_parity = Into::<i32>::into(recovery_id) as u8;
 
     AuthorizationTuple {
         chain_id: U256::from(chain_id),

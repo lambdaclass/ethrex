@@ -199,7 +199,7 @@ fn test_intrinsic_parity_eip7702_auth_list() {
         chain_id: U256::from(1),
         address: Address::from_low_u64_be(0xAA),
         nonce: 0,
-        y_parity: U256::zero(),
+        y_parity: 0,
         r_signature: U256::from(1),
         s_signature: U256::from(1),
     };
