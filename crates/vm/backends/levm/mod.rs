@@ -2254,11 +2254,21 @@ impl LEVM {
     ) -> Result<ExecutionReport, EvmError> {
         let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
-
-        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Draw the root frame's stack from the shared pool (and adopt it for sub-frames), then
+        // return every stack to the pool afterwards so the next tx reuses them instead of
+        // allocating + zeroing a fresh 32 KB stack per transaction.
+        let mut vm = VM::new_pooled(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stack_pool,
+        )?;
         let result = vm.execute().map_err(VMError::into);
-        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
+        vm.reclaim_stacks_into(stack_pool);
         result
     }
 

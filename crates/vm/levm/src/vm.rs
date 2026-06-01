@@ -499,6 +499,10 @@ pub struct VM<'a> {
 }
 
 impl<'a> VM<'a> {
+    /// Constructs a VM, allocating a fresh 32 KB root call-frame stack.
+    ///
+    /// Hot block execution should prefer [`VM::new_pooled`], which draws the root stack from a
+    /// reusable pool instead of allocating + zeroing one per transaction.
     pub fn new(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
@@ -506,6 +510,60 @@ impl<'a> VM<'a> {
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
+    ) -> Result<Self, VMError> {
+        Self::new_with_root_stack(env, db, tx, tracer, vm_type, crypto, Stack::default())
+    }
+
+    /// Like [`VM::new`], but draws the root call-frame stack from `stack_pool` (falling back to a
+    /// fresh `Stack::default()` only when the pool is empty) and adopts the remaining pooled
+    /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
+    /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
+    ///
+    /// Pair with [`VM::reclaim_stacks_into`] after execution to return every stack (root +
+    /// sub-frame) to `stack_pool` so the next transaction reuses them.
+    pub fn new_pooled(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &Transaction,
+        tracer: LevmCallTracer,
+        vm_type: VMType,
+        crypto: &'a dyn Crypto,
+        stack_pool: &mut Vec<Stack>,
+    ) -> Result<Self, VMError> {
+        // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
+        // which is sound because the EVM never reads stack slots it didn't write — the same
+        // invariant that already makes sub-frame pooling safe.
+        let mut root_stack = stack_pool.pop().unwrap_or_default();
+        root_stack.clear();
+        let mut vm = Self::new_with_root_stack(env, db, tx, tracer, vm_type, crypto, root_stack)?;
+        // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_stacks_into`.
+        mem::swap(&mut vm.stack_pool, stack_pool);
+        Ok(vm)
+    }
+
+    /// Returns every stack owned by this VM (the root call-frame stack plus any sub-frame stacks
+    /// still pooled internally) to `stack_pool` so the next transaction reuses them instead of
+    /// allocating. Must run on both the success and error paths of [`VM::execute`].
+    pub fn reclaim_stacks_into(mut self, stack_pool: &mut Vec<Stack>) {
+        // Hand the internal sub-frame pool back to the caller first.
+        mem::swap(&mut self.stack_pool, stack_pool);
+        // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
+        // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
+        // `mem::take`/`mem::replace` against an empty pool would force, defeating the win on
+        // exactly the transfer-only blocks (no sub-frames ever seed the pool) we target.
+        let mut root_stack = self.current_call_frame.stack;
+        root_stack.clear();
+        stack_pool.push(root_stack);
+    }
+
+    fn new_with_root_stack(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &Transaction,
+        tracer: LevmCallTracer,
+        vm_type: VMType,
+        crypto: &'a dyn Crypto,
+        root_stack: Stack,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -575,7 +633,7 @@ impl<'a> VM<'a> {
                 is_create,
                 0,
                 0,
-                Stack::default(),
+                root_stack,
                 Memory::default(),
             ),
             env,
