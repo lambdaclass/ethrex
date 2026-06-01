@@ -2292,7 +2292,8 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -2463,13 +2464,15 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(&tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env.clone(), db, vm_type, crypto)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(&tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
 
         let report = vm.stateless_execute()?;
 
@@ -2777,14 +2780,12 @@ fn env_from_generic(
     })
 }
 
-fn vm_from_generic<'a>(
-    tx: &GenericTransaction,
-    env: Environment,
-    db: &'a mut GeneralizedDatabase,
-    vm_type: VMType,
-    crypto: &'a dyn Crypto,
-) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
+/// Converts a `GenericTransaction` (RPC/simulation input) into a concrete `Transaction`.
+///
+/// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
+/// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
+fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
@@ -2816,10 +2817,18 @@ fn vm_from_generic<'a>(
                 .collect(),
             ..Default::default()
         }),
-    };
+    })
+}
 
+fn vm_from_generic<'a>(
+    tx: &'a Transaction,
+    env: Environment,
+    db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &'a dyn Crypto,
+) -> Result<VM<'a>, VMError> {
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
+    VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {

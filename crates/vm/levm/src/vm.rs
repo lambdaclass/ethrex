@@ -431,8 +431,9 @@ pub struct VM<'a> {
     pub substate: Substate,
     /// Database for reading/writing account state.
     pub db: &'a mut GeneralizedDatabase,
-    /// The transaction being executed.
-    pub tx: Transaction,
+    /// The transaction being executed. Borrowed for the VM's lifetime (the caller owns it for at
+    /// least that long), avoiding a per-tx deep clone of the access/authorization lists.
+    pub tx: &'a Transaction,
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
     /// Original storage values before transaction (for SSTORE gas calculation),
@@ -506,7 +507,7 @@ impl<'a> VM<'a> {
     pub fn new(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
-        tx: &Transaction,
+        tx: &'a Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
@@ -524,7 +525,7 @@ impl<'a> VM<'a> {
     pub fn new_pooled(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
-        tx: &Transaction,
+        tx: &'a Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
@@ -559,7 +560,7 @@ impl<'a> VM<'a> {
     fn new_with_root_stack(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
-        tx: &Transaction,
+        tx: &'a Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
         crypto: &'a dyn Crypto,
@@ -600,7 +601,7 @@ impl<'a> VM<'a> {
             call_frames: Vec::new(),
             substate,
             db,
-            tx: tx.clone(),
+            tx,
             hooks: get_hooks(&vm_type),
             storage_original_values: FxHashMap::default(),
             tracer,
