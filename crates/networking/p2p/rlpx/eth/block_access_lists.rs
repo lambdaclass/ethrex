@@ -22,6 +22,10 @@ pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
 /// (`0xc0`) is a valid BAL encoding (block with no state changes), so the
 /// empty string is the only sentinel that can never alias a real BAL.
 /// `Some(bal)` is encoded as the BAL's normal RLP list encoding.
+///
+/// INVARIANT: `BlockAccessList` always encodes as an RLP list (first byte
+/// >= 0xc0), so `0x80` is unambiguously the `None` sentinel; keep this true
+/// if `BlockAccessList`'s encoding is ever refactored.
 #[derive(Debug, Clone)]
 struct OptionalBal(Option<BlockAccessList>);
 
@@ -143,7 +147,6 @@ impl RLPxMessage for BlockAccessLists {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rlpx::utils::snappy_decompress;
     use ethereum_types::Address;
     use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange};
 
@@ -250,30 +253,17 @@ mod tests {
         assert_eq!(decoded.block_access_lists.len(), BLOCK_ACCESS_LIST_LIMIT);
     }
 
-    /// Locks EIP-8159 §"BlockAccessLists (0x13)" sentinel: missing BALs encode
-    /// as RLP empty string (`0x80`), NOT empty list (`0xc0`). Empty list is a
-    /// valid BAL encoding (block with no state changes), so the empty string
-    /// is the only byte that can't alias a real BAL. geth uses the same
+    /// Locks the EIP-8159 §"BlockAccessLists (0x13)" sentinel at the unit
+    /// level: a missing BAL encodes as exactly the RLP empty string (`0x80`),
+    /// never the empty list (`0xc0`, a valid empty BAL). geth uses the same
     /// sentinel (`rlp.EmptyString` in `eth/protocols/eth/handlers.go`); any
-    /// drift here is silent interop breakage.
+    /// drift here is silent interop breakage. Message-level roundtrip coverage
+    /// lives in `test/tests/p2p/rlpx/block_access_lists_tests.rs` (the private
+    /// `OptionalBal` wrapper asserted here is unreachable from that crate).
     #[test]
-    fn block_access_lists_none_uses_0x80_sentinel() {
-        let msg = BlockAccessLists::new(0, vec![None]);
-        let mut buf = Vec::new();
-        msg.encode(&mut buf).unwrap();
-        let decompressed = snappy_decompress(&buf).unwrap();
-        assert!(
-            decompressed.contains(&0x80),
-            "decompressed payload must contain the 0x80 None sentinel"
-        );
-        assert!(
-            !decompressed.contains(&0xc0),
-            "decompressed payload must not contain the 0xc0 empty-list sentinel"
-        );
-
-        // Roundtrip must preserve the None.
-        let decoded = BlockAccessLists::decode(&buf).unwrap();
-        assert_eq!(decoded.block_access_lists.len(), 1);
-        assert!(decoded.block_access_lists[0].is_none());
+    fn optional_bal_none_encodes_as_0x80_sentinel() {
+        let mut bytes = Vec::new();
+        OptionalBal(None).encode(&mut bytes);
+        assert_eq!(bytes, vec![0x80]);
     }
 }
