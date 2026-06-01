@@ -593,9 +593,17 @@ async fn build_payload_v4(
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
-    use crate::types::fork_choice::PayloadAttributesV3;
-    use ethrex_common::types::{BlockHeader, Withdrawal};
+    use super::{
+        validate_attributes_v2, validate_attributes_v2_pre_shanghai, validate_attributes_v3,
+    };
+    use crate::{
+        test_utils::default_context_with_storage, types::fork_choice::PayloadAttributesV3,
+    };
+    use ethrex_common::{
+        H256,
+        types::{BlockHeader, ChainConfig, Withdrawal},
+    };
+    use ethrex_storage::{EngineType, Store};
 
     #[test]
     fn forkchoice_updated_v2_returns_invalid_payload_attributes_when_withdrawals_missing() {
@@ -635,5 +643,39 @@ mod tests {
             err,
             crate::utils::RpcErr::InvalidPayloadAttributes(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
+        let mut storage =
+            Store::new("test-fcu-v3-amsterdam-boundary", EngineType::InMemory).unwrap();
+        storage
+            .set_chain_config(&ChainConfig {
+                chain_id: 1,
+                shanghai_time: Some(0),
+                cancun_time: Some(0),
+                prague_time: Some(0),
+                osaka_time: Some(0),
+                amsterdam_time: Some(10),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        let context = default_context_with_storage(storage).await;
+        let attributes = PayloadAttributesV3 {
+            timestamp: 10,
+            withdrawals: Some(Vec::<Withdrawal>::new()),
+            parent_beacon_block_root: Some(H256::zero()),
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 9,
+            ..Default::default()
+        };
+
+        let err = validate_attributes_v3(&attributes, &head_block, &context).unwrap_err();
+
+        assert!(matches!(err, crate::utils::RpcErr::UnsupportedFork(_)));
     }
 }
