@@ -50,16 +50,20 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
-amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+$(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam
 
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
 
-zkevm-vectors: $(ZKEVM_ARTIFACT)
+$(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
 	rm -rf $(ZKEVM_VECTORS_DIR)
 	mkdir -p $(ZKEVM_VECTORS_DIR)
 	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -71,16 +75,16 @@ clean-vectors: ## 🗑️  Clean test vectors
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(ZKEVM_ARTIFACT)
 
 test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
-	cargo test --profile release-with-debug
+	cargo test --profile release-fast
 
 test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
-	cargo test --profile release-with-debug --features sp1
+	cargo test --profile release-fast --features sp1
 
 test-stateless: zkevm-vectors
-	cargo test --profile release-with-debug --features stateless
+	cargo test --profile release-fast --features stateless
 
 test-stateless-zkevm: zkevm-vectors
-	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
+	cargo test --profile release-fast --features stateless -- eip8025_optional_proofs
 
 test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
