@@ -1982,7 +1982,9 @@ impl Blockchain {
     }
 
     /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
-    /// On Amsterdam+ blocks the returned value is `Some(bal)`, otherwise `None`.
+    /// On the Amsterdam+ validation path the BAL comes from the header and drives
+    /// execution rather than being rebuilt, so the returned value is `None`; the
+    /// pre-Amsterdam / streaming paths rebuild and return `Some(bal)`.
     pub fn add_block_pipeline_bal(
         &self,
         block: Block,

@@ -739,9 +739,10 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
 
 /// Returns the block's BAL for V2 payload-body responses.
 ///
-/// Reads the persisted BAL first; only when it is absent (e.g. blocks predating
-/// BAL persistence) does it fall back to regenerating via re-execution, which
-/// requires the parent state trie and fails once that state has been pruned.
+/// Reads the persisted BAL first; only when it is absent (pre-Amsterdam blocks,
+/// or Amsterdam blocks processed before BAL persistence was added) does it fall
+/// back to regenerating via re-execution, which requires the parent state trie
+/// and fails on snap-synced nodes that don't hold that historical state.
 fn bal_for_block(
     context: &RpcApiContext,
     block: &Block,
