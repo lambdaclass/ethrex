@@ -1,4 +1,5 @@
 use crate::{
+    discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     discv5::{
         messages::{
             DISTANCES_PER_FIND_NODE_MSG, FindNodeMessage, Handshake, HandshakeAuthdata, Message,
@@ -238,8 +239,7 @@ impl DiscoveryServer {
         }
 
         if let Some(record) = &authdata.record {
-            self.peer_table
-                .new_contact_records(vec![record.clone()], self.local_node.node_id())?;
+            self.peer_table.new_contact_records(vec![record.clone()])?;
         }
 
         let session = derive_session_keys(
@@ -278,38 +278,104 @@ impl DiscoveryServer {
     }
 
     pub(crate) async fn discv5_lookup(&mut self) -> Result<(), DiscoveryServerError> {
-        if let Some(contact) = self
-            .peer_table
-            .get_contact_for_lookup(DiscoveryProtocol::Discv5)
-            .await?
-        {
-            let find_node_msg = self.discv5_get_random_find_node_message(&contact.node);
-            if let Err(e) = self
-                .discv5_send_ordinary(find_node_msg, &contact.node)
-                .await
-            {
-                error!(protocol = "discv5", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table.set_disposable(contact.node.node_id())?;
-                METRICS.record_new_discarded_node();
-            }
+        if self.discv5.is_none() {
+            return Ok(());
+        }
 
-            self.peer_table
-                .increment_find_node_sent(contact.node.node_id())?;
+        // Remove finished lookups
+        self.discv5
+            .as_mut()
+            .expect("discv5 state must exist")
+            .active_lookups
+            .retain(|l| !l.is_finished());
+
+        // If a lookup is already active, advance it instead of starting a new
+        // one. Lookups are timer-driven: each tick sends the next alpha queries.
+        // Responses feed results into the lookup but don't trigger new queries,
+        // which naturally throttles traffic.
+        if !self
+            .discv5
+            .as_ref()
+            .expect("discv5 state must exist")
+            .active_lookups
+            .is_empty()
+        {
+            return self.advance_v5_lookup().await;
+        }
+
+        let mut rng = OsRng;
+        let target_id: H256 = rng.r#gen();
+
+        // Seed with closest known nodes from the connection pool
+        let seed = self
+            .peer_table
+            .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
+            .await?;
+        if seed.is_empty() {
+            trace!(
+                protocol = "discv5",
+                "No seeds for lookup, connection pool empty"
+            );
+            return Ok(());
+        }
+
+        trace!(
+            protocol = "discv5",
+            seeds = seed.len(),
+            "Starting new iterative lookup"
+        );
+        let lookup = IterativeLookup::new(target_id, seed);
+        let discv5 = self.discv5.as_mut().expect("discv5 state must exist");
+        discv5.active_lookups.push(lookup);
+
+        // Fire the initial queries for the new lookup
+        self.advance_v5_lookup().await
+    }
+
+    async fn advance_v5_lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        let discv5 = match &mut self.discv5 {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+
+        if discv5.active_lookups.is_empty() {
+            return Ok(());
+        }
+
+        // Collect queries from all active lookups
+        let mut queries: Vec<(usize, H256, H256, Node)> = Vec::new();
+        for (idx, lookup) in discv5.active_lookups.iter_mut().enumerate() {
+            let target = lookup.target;
+            for (node_id, node) in lookup.next_to_query(LOOKUP_ALPHA) {
+                queries.push((idx, target, node_id, node));
+            }
+        }
+
+        for (idx, target, node_id, node) in queries {
+            let find_node_msg = self.discv5_build_find_node_for_target(target, &node);
+            if let Err(e) = self.discv5_send_ordinary(find_node_msg, &node).await {
+                error!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
+                self.peer_table.set_disposable(node_id)?;
+                METRICS.record_new_discarded_node();
+                if let Some(discv5) = &mut self.discv5
+                    && let Some(lookup) = discv5.active_lookups.get_mut(idx)
+                {
+                    lookup.record_timeout();
+                }
+            }
         }
         Ok(())
     }
 
-    fn discv5_get_random_find_node_message(&self, node: &Node) -> Message {
-        let mut rng = OsRng;
-        let target = rng.r#gen();
-        let distance = distance(&target, &node.node_id()) as u8;
+    fn discv5_build_find_node_for_target(&self, target: H256, node: &Node) -> Message {
+        let center_distance = distance(&target, &node.node_id()) as u8;
         let mut distances = Vec::new();
-        distances.push(distance as u32);
+        distances.push(center_distance as u32);
         for i in 0..DISTANCES_PER_FIND_NODE_MSG / 2 {
-            if let Some(d) = distance.checked_add(i + 1) {
+            if let Some(d) = center_distance.checked_add(i + 1) {
                 distances.push(d as u32)
             }
-            if let Some(d) = distance.checked_sub(i + 1) {
+            if let Some(d) = center_distance.checked_sub(i + 1) {
                 distances.push(d as u32)
             }
         }
@@ -417,10 +483,7 @@ impl DiscoveryServer {
 
         let mut nodes = self
             .peer_table
-            .get_nodes_at_distances(
-                self.local_node.node_id(),
-                find_node_message.distances.clone(),
-            )
+            .get_nodes_at_distances(find_node_message.distances.clone())
             .await?;
         if find_node_message.distances.contains(&0) {
             nodes.push(self.local_node_record.clone());
@@ -469,7 +532,24 @@ impl DiscoveryServer {
         nodes_message: NodesMessage,
     ) -> Result<(), DiscoveryServerError> {
         self.peer_table
-            .new_contact_records(nodes_message.nodes, self.local_node.node_id())?;
+            .new_contact_records(nodes_message.nodes.clone())?;
+
+        // Feed results into ALL active lookups (but don't advance — the timer
+        // drives lookup progress so that traffic stays controlled).
+        if let Some(discv5) = &mut self.discv5 {
+            let entries: Vec<(H256, Node)> = nodes_message
+                .nodes
+                .iter()
+                .filter_map(|r| Node::from_enr(r).ok().map(|n| (n.node_id(), n)))
+                .collect();
+            for lookup in &mut discv5.active_lookups {
+                lookup.feed_results(entries.clone());
+            }
+            if let Some(lookup) = discv5.active_lookups.first_mut() {
+                lookup.record_response();
+            }
+        }
+
         Ok(())
     }
 
