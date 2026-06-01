@@ -795,7 +795,12 @@ mod tests {
             r#"{{"chainId":1,"terminalTotalDifficulty":58750000000000000000000,{dca}}}"#
         ))
         .expect("number-encoded TTD should parse");
-        assert!(from_number.terminal_total_difficulty.is_some());
+        // f64 cast is lossy above u64::MAX; assert the known, stable
+        // approximation so a regression to Some(0) can't silently pass.
+        assert_eq!(
+            from_number.terminal_total_difficulty,
+            Some(58749999999999996329984u128)
+        );
 
         let from_hex: ChainConfig = serde_json::from_str(&format!(
             r#"{{"chainId":1,"terminalTotalDifficulty":"0xc70d808a128d7380000",{dca}}}"#
@@ -811,6 +816,12 @@ mod tests {
         ))
         .expect("small number TTD should parse");
         assert_eq!(small.terminal_total_difficulty, Some(17000000000000000u128));
+
+        // A negative bare number must error, not silently saturate to Some(0).
+        let negative = serde_json::from_str::<ChainConfig>(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":-1,{dca}}}"#
+        ));
+        assert!(negative.is_err(), "negative TTD must be rejected");
     }
 
     #[test]

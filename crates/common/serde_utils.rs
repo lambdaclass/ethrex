@@ -343,7 +343,9 @@ pub mod u128 {
                     // used as a post-merge sentinel, so f64 imprecision is moot).
                     let v = if let Some(u) = n.as_u64() {
                         u as u128
-                    } else if let Some(f) = n.as_f64() {
+                    } else if let Some(f) = n.as_f64().filter(|f| f.is_finite() && *f >= 0.0) {
+                        // `f as u128` saturates negatives to 0, which would mean
+                        // "PoS active" for TTD; reject them above instead.
                         f as u128
                     } else {
                         return Err(D::Error::custom("Failed to deserialize u128 number"));
