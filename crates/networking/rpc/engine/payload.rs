@@ -737,6 +737,24 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
+/// Returns the block's BAL for V2 payload-body responses.
+///
+/// Reads the persisted BAL first; only when it is absent (e.g. blocks predating
+/// BAL persistence) does it fall back to regenerating via re-execution, which
+/// requires the parent state trie and fails once that state has been pruned.
+fn bal_for_block(
+    context: &RpcApiContext,
+    block: &Block,
+) -> Result<Option<BlockAccessList>, RpcErr> {
+    if let Some(bal) = context.storage.get_block_access_list(block.hash())? {
+        return Ok(Some(bal));
+    }
+    context
+        .blockchain
+        .generate_bal_for_block(block)
+        .map_err(|e| RpcErr::Internal(e.to_string()))
+}
+
 // ==================== V2 Body Methods (EIP-7928) ====================
 
 pub struct GetPayloadBodiesByHashV2Request {
@@ -767,10 +785,7 @@ impl RpcHandler for GetPayloadBodiesByHashV2Request {
             let block = context.storage.get_block_by_hash(*hash).await?;
             let result = match block {
                 Some(block) => {
-                    let bal = context
-                        .blockchain
-                        .generate_bal_for_block(&block)
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let bal = bal_for_block(&context, &block)?;
                     Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
                 }
                 None => None,
@@ -835,10 +850,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
                             })?;
                     let block = Block { header, body };
 
-                    let bal = context
-                        .blockchain
-                        .generate_bal_for_block(&block)
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let bal = bal_for_block(&context, &block)?;
                     Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
                 }
                 None => None,
