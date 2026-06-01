@@ -13,6 +13,10 @@ use std::sync::OnceLock;
 /// to get around the Sync requirement.
 ///
 /// This code is only sound because the guest is guaranteed to be single-threaded.
+#[cfg(all(feature = "eip-8025", not(target_arch = "riscv64")))]
+compile_error!(
+    "Feature `eip-8025` uses a single-threaded OnceLock. This is unsafe and should be used only in guest program running on riscv64im_zicclsm-unknown-none-elf."
+);
 #[cfg(feature = "eip-8025")]
 pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
 
