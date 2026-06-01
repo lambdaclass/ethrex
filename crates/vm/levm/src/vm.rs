@@ -75,9 +75,14 @@ pub enum VMType {
 pub struct Substate {
     /// Parent checkpoint for reverting on failure.
     parent: Option<Box<Self>>,
+    /// Fork of the enclosing transaction. Lets the warmth helpers treat precompile addresses as
+    /// always-warm without occupying a hashset slot (EIP-2929). Constant for a tx, so it is
+    /// carried forward across `push_backup` checkpoints.
+    fork: Fork,
     /// Accounts marked for self-destruction (deleted at end of transaction).
     selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
+    /// Precompiles are NOT stored here; they are warm by construction (see `is_warm_precompile`).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
     accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
@@ -93,12 +98,13 @@ pub struct Substate {
 
 impl Substate {
     pub fn from_accesses(
+        fork: Fork,
         accessed_addresses: FxHashSet<Address>,
         accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
-
+            fork,
             selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
@@ -109,11 +115,36 @@ impl Substate {
         }
     }
 
+    /// Whether `address` is a precompile that the EVM treats as warm from the start of the tx
+    /// (EIP-2929), exactly matching the addresses `Substate::initialize` used to pre-seed.
+    ///
+    /// Replicates the pre-seed *precisely* — the contiguous range `0x01..=max_for_fork` plus the
+    /// post-Osaka P256VERIFY address `0x100` — and is intentionally `vm_type`-independent, since
+    /// the old pre-seed was too. (Using `precompiles::is_precompile`, which gates `0x100` on L2
+    /// for any fork, would change L2 pre-Osaka warmth — a consensus difference, not an opt.)
+    #[inline]
+    fn is_warm_precompile(&self, address: &Address) -> bool {
+        // Fast reject: every pre-seeded precompile has 18 leading zero bytes (max is `0x01_00`),
+        // so real contract/EOA addresses bail out here, off the hot warmth path.
+        if address.0[..18] != [0u8; 18] {
+            return false;
+        }
+        let n = u16::from_be_bytes([address.0[18], address.0[19]]);
+        let max_contiguous: u64 = match self.fork {
+            f if f >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            f if f >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            _ => SIZE_PRECOMPILES_PRE_CANCUN,
+        };
+        (n >= 1 && u64::from(n) <= max_contiguous) || (n == 0x100 && self.fork >= Fork::Osaka)
+    }
+
     /// Push a checkpoint that can be either reverted or committed. All data up to this point is
     /// still accessible.
     pub fn push_backup(&mut self) {
         let parent = mem::take(self);
         self.refunded_gas = parent.refunded_gas;
+        // Carry the fork forward so child checkpoints keep the same precompile-warmth view.
+        self.fork = parent.fork;
         self.parent = Some(Box::new(parent));
     }
 
@@ -294,6 +325,12 @@ impl Substate {
 
     /// Mark an address as accessed and return whether the address was cold.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        // Precompiles are warm from tx start (EIP-2929) without occupying a hashset slot. Returns
+        // `false` (not cold) so cold-access gas is never charged — identical to the old pre-seed.
+        if self.is_warm_precompile(&address) {
+            return false;
+        }
+
         if self.accessed_addresses.contains(&address) {
             return false;
         }
@@ -312,7 +349,10 @@ impl Substate {
 
     /// Return whether an address has already been accessed.
     pub fn is_address_accessed(&self, address: &Address) -> bool {
-        self.accessed_addresses.contains(address)
+        // Precompiles are always warm; the chain shares one `fork`, so this is consistent across
+        // sub-frame substates.
+        self.is_warm_precompile(address)
+            || self.accessed_addresses.contains(address)
             || self
                 .parent
                 .as_ref()
@@ -1247,13 +1287,15 @@ impl<'a> VM<'a> {
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+        let fork = env.config.fork;
+
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        // Pre-size the accessed-address set: it is never empty (sender + coinbase + precompiles,
-        // min ~19) and p99 is 24, so a capacity of 32 covers >99.6% of txs without reallocating
-        // while leaving headroom for the access-list tail. The precompile floor (~20) dominates
-        // here; see Workstream D2, which removes those inserts and shrinks this hint.
+        // Precompiles are NO LONGER inserted here — they are warm by construction (see
+        // `is_warm_precompile`), removing the ~20-entry floor that used to dominate this set. The
+        // remaining working set is small (sender + coinbase + recipient + access-list/touched
+        // addresses; real p99 ~7), so a capacity of 8 covers most txs with little waste.
         let mut initial_accessed_addresses =
-            FxHashSet::with_capacity_and_hasher(32, Default::default());
+            FxHashSet::with_capacity_and_hasher(8, Default::default());
         // Storage slots are ~98% empty (p95 0, p99 4), so `default()` (alloc-free until first
         // insert) beats pre-sizing, which would tax the common empty case.
         let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
@@ -1263,25 +1305,8 @@ impl Substate {
         initial_accessed_addresses.insert(env.origin);
 
         // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
-        if env.config.fork >= Fork::Shanghai {
+        if fork >= Fork::Shanghai {
             initial_accessed_addresses.insert(env.coinbase);
-        }
-
-        // Add precompiled contracts addresses to accessed accounts.
-        let max_precompile_address = match env.config.fork {
-            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(InternalError::InvalidFork.into()),
-        };
-
-        for i in 1..=max_precompile_address {
-            initial_accessed_addresses.insert(Address::from_low_u64_be(i));
-        }
-
-        // Add the address for the P256 verify precompile post-Osaka
-        if env.config.fork >= Fork::Osaka {
-            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.
@@ -1294,8 +1319,11 @@ impl Substate {
             }
         }
 
-        let substate =
-            Substate::from_accesses(initial_accessed_addresses, initial_accessed_storage_slots);
+        let substate = Substate::from_accesses(
+            fork,
+            initial_accessed_addresses,
+            initial_accessed_storage_slots,
+        );
 
         Ok(substate)
     }
