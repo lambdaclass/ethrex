@@ -438,6 +438,12 @@ impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
     pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        // Reserve once on the first sub-call (p99 depth ~10, max 27): keeps the ~43% of txs that
+        // never make a call alloc-free (`call_frames` starts as `Vec::new()`), while avoiding the
+        // repeated reallocs a call-heavy tx would otherwise incur as depth grows.
+        if self.call_frames.is_empty() {
+            self.call_frames.reserve(8);
+        }
         self.call_frames.push(new_call_frame);
         #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
         unsafe {

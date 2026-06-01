@@ -1184,7 +1184,14 @@ impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = FxHashSet::default();
+        // Pre-size the accessed-address set: it is never empty (sender + coinbase + precompiles,
+        // min ~19) and p99 is 24, so a capacity of 32 covers >99.6% of txs without reallocating
+        // while leaving headroom for the access-list tail. The precompile floor (~20) dominates
+        // here; see Workstream D2, which removes those inserts and shrinks this hint.
+        let mut initial_accessed_addresses =
+            FxHashSet::with_capacity_and_hasher(32, Default::default());
+        // Storage slots are ~98% empty (p95 0, p99 4), so `default()` (alloc-free until first
+        // insert) beats pre-sizing, which would tax the common empty case.
         let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
             FxHashMap::default();
 

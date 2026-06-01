@@ -557,7 +557,11 @@ impl GeneralizedDatabase {
     }
 
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
+        // Exact upper bound: every emitted update corresponds to a modified entry in
+        // `current_accounts_state`, so its length is the tightest non-reallocating hint
+        // (never empty — the sender is always modified).
+        let mut account_updates: Vec<AccountUpdate> =
+            Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.iter() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
@@ -662,7 +666,9 @@ impl GeneralizedDatabase {
     }
 
     pub fn get_state_transitions_tx(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
-        let mut account_updates: Vec<AccountUpdate> = vec![];
+        // Exact upper bound: one update per modified account. Capture the length before draining.
+        let mut account_updates: Vec<AccountUpdate> =
+            Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.drain() {
             if new_state_account.is_unmodified() {
                 // Skip processing account that we know wasn't mutably accessed during execution
