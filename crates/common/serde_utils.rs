@@ -335,11 +335,21 @@ pub mod u128 {
         {
             let value: Option<serde_json::Value> = Option::deserialize(d)?;
             match value {
-                Some(serde_json::Value::Number(n)) => n
-                    .to_string()
-                    .parse::<u128>()
-                    .map(Some)
-                    .map_err(|_| D::Error::custom("Failed to deserialize u128 number")),
+                Some(serde_json::Value::Number(n)) => {
+                    // Values above u64::MAX (e.g. mainnet's TTD) are stored by
+                    // serde_json as f64, so `n.to_string()` can be "5.875e22",
+                    // which won't parse as u128. Read the integer directly and
+                    // fall back to f64 for the out-of-u64-range case (TTD is only
+                    // used as a post-merge sentinel, so f64 imprecision is moot).
+                    let v = if let Some(u) = n.as_u64() {
+                        u as u128
+                    } else if let Some(f) = n.as_f64() {
+                        f as u128
+                    } else {
+                        return Err(D::Error::custom("Failed to deserialize u128 number"));
+                    };
+                    Ok(Some(v))
+                }
                 Some(serde_json::Value::String(s)) if !s.is_empty() => {
                     u128::from_str_radix(s.trim_start_matches("0x"), 16)
                         .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))
