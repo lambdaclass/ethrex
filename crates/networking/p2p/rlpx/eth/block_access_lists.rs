@@ -23,9 +23,9 @@ pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
 /// empty string is the only sentinel that can never alias a real BAL.
 /// `Some(bal)` is encoded as the BAL's normal RLP list encoding.
 ///
-/// INVARIANT: `BlockAccessList` always encodes as an RLP list (first byte
-/// >= 0xc0), so `0x80` is unambiguously the `None` sentinel; keep this true
-/// if `BlockAccessList`'s encoding is ever refactored.
+/// INVARIANT: `BlockAccessList` always encodes as an RLP list (first byte is
+/// `0xc0` or greater), so `0x80` is unambiguously the `None` sentinel; keep
+/// this true if `BlockAccessList`'s encoding is ever refactored.
 #[derive(Debug, Clone)]
 struct OptionalBal(Option<BlockAccessList>);
 
