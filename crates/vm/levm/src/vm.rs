@@ -491,8 +491,9 @@ pub struct VM<'a> {
     /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
     pub intrinsic_state_gas: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
-    /// Build dynamically according to the given fork config.
-    pub(crate) opcode_table: [OpCodeFn; 256],
+    /// A shared `&'static` reference to a per-fork table that is `const`-built once for the
+    /// whole process (immutable), so each VM holds only a pointer instead of a 2 KB inline copy.
+    pub(crate) opcode_table: &'static [OpCodeFn; 256],
     /// Crypto provider for cryptographic operations.
     pub crypto: &'a dyn Crypto,
 }
@@ -829,6 +830,10 @@ impl<'a> VM<'a> {
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
+        // Copy the `&'static` table pointer once; it doesn't borrow `self`, so dispatch can still
+        // pass `self` mutably to the handler without reloading the pointer each iteration.
+        let opcode_table = self.opcode_table;
+
         loop {
             // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
             let pc_of_current_op = self.current_call_frame.pc;
@@ -892,7 +897,7 @@ impl<'a> VM<'a> {
 
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = self.opcode_table[opcode as usize].call(self, &mut error);
+            let op_result = opcode_table[opcode as usize].call(self, &mut error);
 
             #[cfg(feature = "perf_opcode_timings")]
             {
