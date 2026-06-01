@@ -1102,12 +1102,25 @@ impl<'a> VM<'a> {
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
-    pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
+    ///
+    /// `consume_backup` lets the caller move the frame's backup out (no clone) on the
+    /// revert path when the frame is about to be discarded; see
+    /// [`VM::restore_cache_state_consuming`]. The top-level call passes `false` because
+    /// `BackupHook::finalize` still reads the backup afterward.
+    pub fn handle_state_backup(
+        &mut self,
+        ctx_result: &ContextResult,
+        consume_backup: bool,
+    ) -> Result<(), VMError> {
         if ctx_result.is_success() {
             self.substate.commit_backup();
         } else {
             self.substate.revert_backup();
-            self.restore_cache_state()?;
+            if consume_backup {
+                self.restore_cache_state_consuming()?;
+            } else {
+                self.restore_cache_state()?;
+            }
         }
 
         Ok(())
@@ -1117,7 +1130,9 @@ impl<'a> VM<'a> {
     ///
     /// Returns the pc increment.
     pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
-        self.handle_state_backup(ctx_result)?;
+        // The frame is popped immediately below and its backup is not read again on
+        // the revert path, so move it out instead of cloning.
+        self.handle_state_backup(ctx_result, true)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
