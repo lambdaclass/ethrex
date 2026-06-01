@@ -81,35 +81,54 @@ pub async fn start_block_producer(
                 continue;
             }
         };
-        let payload_status = match engine_client
-            .engine_new_payload_v4(
-                execution_payload_response.execution_payload,
-                execution_payload_response
-                    .blobs_bundle
-                    .unwrap_or_default()
-                    .commitments
-                    .iter()
-                    .map(|commitment| {
-                        let mut hasher = Sha256::new();
-                        hasher.update(commitment);
-                        let mut hash = hasher.finalize();
-                        // https://eips.ethereum.org/EIPS/eip-4844 -> kzg_to_versioned_hash
-                        hash[0] = 0x01;
-                        H256::from_slice(&hash)
-                    })
-                    .collect(),
-                parent_beacon_block_root,
-            )
-            .await
-        {
+        let execution_payload = execution_payload_response.execution_payload;
+        let versioned_hashes: Vec<H256> = execution_payload_response
+            .blobs_bundle
+            .unwrap_or_default()
+            .commitments
+            .iter()
+            .map(|commitment| {
+                let mut hasher = Sha256::new();
+                hasher.update(commitment);
+                let mut hash = hasher.finalize();
+                // https://eips.ethereum.org/EIPS/eip-4844 -> kzg_to_versioned_hash
+                hash[0] = 0x01;
+                H256::from_slice(&hash)
+            })
+            .collect();
+
+        // Amsterdam+ payloads carry a Block Access List and MUST use newPayloadV5;
+        // earlier forks use V4, which rejects the BAL field.
+        let is_amsterdam = execution_payload.block_access_list.is_some();
+        let endpoint = if is_amsterdam {
+            "engine_newPayloadV5"
+        } else {
+            "engine_newPayloadV4"
+        };
+        let new_payload_result = if is_amsterdam {
+            engine_client
+                .engine_new_payload_v5(
+                    execution_payload,
+                    versioned_hashes,
+                    parent_beacon_block_root,
+                )
+                .await
+        } else {
+            engine_client
+                .engine_new_payload_v4(
+                    execution_payload,
+                    versioned_hashes,
+                    parent_beacon_block_root,
+                )
+                .await
+        };
+        let payload_status = match new_payload_result {
             Ok(response) => {
-                tracing::debug!("engine_newPayloadV4 response: {response:?}");
+                tracing::debug!("{endpoint} response: {response:?}");
                 response
             }
             Err(error) => {
-                tracing::error!(
-                    "Failed to produce block: error sending engine_newPayloadV4: {error}"
-                );
+                tracing::error!("Failed to produce block: error sending {endpoint}: {error}");
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
