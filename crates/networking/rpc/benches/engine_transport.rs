@@ -150,7 +150,7 @@ fn bodies_bench(c: &mut Criterion) {
     });
     g.bench_function("decode_ssz", |b| {
         b.iter(|| {
-            let r = ethrex_rpc::engine_rest::types::bodies::BodiesByHashResponseShanghai::from_ssz_bytes(
+            let r = ethrex_rpc::engine_rest::types::bodies::BodiesResponseShanghai::from_ssz_bytes(
                 &ssz_bytes,
             )
             .unwrap();

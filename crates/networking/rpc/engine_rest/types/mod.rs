@@ -7,6 +7,7 @@
 pub mod amsterdam;
 pub mod blobs;
 pub mod bodies;
+pub mod built_payload;
 pub mod cancun;
 pub mod common;
 pub mod conversions;

@@ -1,14 +1,13 @@
-//! SSZ wire types for the engine REST blob endpoints.
+//! SSZ wire types for the engine REST blob endpoints (execution-apis #793).
 //!
-//! Shapes follow execution-apis PR #793 (`src/engine/refactor-ssz.md`):
-//! each response is a `List[BlobV*Entry]`, where an entry carries an
-//! `available` boolean plus `contents`. When `available` is false the
-//! `contents` are zero-valued and CLs MUST ignore them. `/blobs/v2` is
-//! all-or-nothing (the handler returns 204 when any blob is missing rather
-//! than emitting unavailable entries); `/blobs/v3` surfaces missing blobs
-//! per entry.
+//! Requests are bare `List[VersionedHash, MAX_BLOBS_REQUEST]` (v1/v2/v3) or a
+//! `BlobsV4Request` container (v4). Responses are bare `List[BlobV*Entry,
+//! MAX_BLOBS_REQUEST]` — NOT wrapped in a named container — matching the CL.
+//! Each entry carries an `available` boolean plus `contents`; when `available`
+//! is false the `contents` are zero-valued and CLs MUST ignore them. `/blobs/v2`
+//! is all-or-nothing (204 when any blob is missing); `/blobs/v3` surfaces missing
+//! blobs per entry.
 
-use libssz::{DecodeError, SszDecode, SszEncode};
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_types::{SszBitvector, SszList, SszVector};
 
@@ -26,11 +25,8 @@ pub const MAX_BLOBS_REQUEST: usize = 128;
 
 // ── Requests ──────────────────────────────────────────────────────────────────
 
-/// `/blobs/v1`, `/blobs/v2`, `/blobs/v3` request: versioned hashes only.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct BlobsRequest {
-    pub versioned_hashes: SszList<[u8; 32], MAX_BLOBS_REQUEST>,
-}
+/// `/blobs/v1`, `/blobs/v2`, `/blobs/v3` request: a bare `List[VersionedHash, N]`.
+pub type VersionedHashList = SszList<[u8; 32], MAX_BLOBS_REQUEST>;
 
 /// `/blobs/v4` request: versioned hashes + a `CELLS_PER_EXT_BLOB`-bit bitarray
 /// selecting which cell indices to return.
@@ -127,156 +123,33 @@ impl BlobV2Entry {
     }
 }
 
-// ── Response containers ───────────────────────────────────────────────────────
+// ── Response aliases (bare top-level lists, per the CL) ────────────────────────
 
 /// `/blobs/v1` response.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct BlobsV1Response {
-    pub entries: SszList<BlobV1Entry, MAX_BLOBS_REQUEST>,
-}
-
+pub type BlobsV1Response = SszList<BlobV1Entry, MAX_BLOBS_REQUEST>;
 /// `/blobs/v2` response (all-or-nothing; every entry is `available`).
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct BlobsV2Response {
-    pub entries: SszList<BlobV2Entry, MAX_BLOBS_REQUEST>,
-}
-
+pub type BlobsV2Response = SszList<BlobV2Entry, MAX_BLOBS_REQUEST>;
 /// `/blobs/v3` response (partial; missing blobs surface as `available == false`).
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct BlobsV3Response {
-    pub entries: SszList<BlobV2Entry, MAX_BLOBS_REQUEST>,
-}
+pub type BlobsV3Response = SszList<BlobV2Entry, MAX_BLOBS_REQUEST>;
 
 // ── `/blobs/v4` types ─────────────────────────────────────────────────────────
 //
-// V4 carries per-cell nullable data. SSZ `Optional[T]` is a union (selector
-// 0 = None, 1 = Some(T)); libssz has no blanket `Option<T>` impl, so the two
-// element wrappers below implement SSZ encode/decode by hand (mirroring the
-// union wrappers elsewhere in this module). HashTreeRoot is intentionally not
-// implemented for the V4 types — they are encode/decode only, like the other
-// hand-written response containers.
-
-/// SSZ `Optional[ByteVector[BYTES_PER_CELL]]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OptionalCell(pub Option<SszVector<u8, BYTES_PER_CELL>>);
-
-impl SszEncode for OptionalCell {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        match &self.0 {
-            None => 1,
-            Some(v) => 1 + v.encoded_len(),
-        }
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        match &self.0 {
-            None => buf.push(0),
-            Some(v) => {
-                buf.push(1);
-                v.ssz_append(buf);
-            }
-        }
-    }
-}
-
-impl SszDecode for OptionalCell {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if bytes.is_empty() {
-            return Err(DecodeError::EmptyInput);
-        }
-        match bytes[0] {
-            0 => {
-                if bytes.len() != 1 {
-                    return Err(DecodeError::AdditionalBytes {
-                        expected: 1,
-                        got: bytes.len(),
-                    });
-                }
-                Ok(OptionalCell(None))
-            }
-            1 => {
-                let v = SszVector::<u8, BYTES_PER_CELL>::from_ssz_bytes(&bytes[1..])?;
-                Ok(OptionalCell(Some(v)))
-            }
-            s => Err(DecodeError::InvalidUnionSelector(s)),
-        }
-    }
-}
-
-/// SSZ `Optional[Bytes48]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OptionalProof(pub Option<[u8; BYTES_PER_PROOF]>);
-
-impl SszEncode for OptionalProof {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        match &self.0 {
-            None => 1,
-            Some(p) => 1 + p.encoded_len(),
-        }
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        match &self.0 {
-            None => buf.push(0),
-            Some(p) => {
-                buf.push(1);
-                p.ssz_append(buf);
-            }
-        }
-    }
-}
-
-impl SszDecode for OptionalProof {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if bytes.is_empty() {
-            return Err(DecodeError::EmptyInput);
-        }
-        match bytes[0] {
-            0 => {
-                if bytes.len() != 1 {
-                    return Err(DecodeError::AdditionalBytes {
-                        expected: 1,
-                        got: bytes.len(),
-                    });
-                }
-                Ok(OptionalProof(None))
-            }
-            1 => {
-                let p = <[u8; BYTES_PER_PROOF]>::from_ssz_bytes(&bytes[1..])?;
-                Ok(OptionalProof(Some(p)))
-            }
-            s => Err(DecodeError::InvalidUnionSelector(s)),
-        }
-    }
-}
+// TODO: these are the spec's `200 OK` response containers for `/blobs/v4`
+// (execution-apis #793). They are not constructed in production yet: the handler
+// returns `204 No Content` because the mempool does not store the per-cell blob
+// data (EIP-7594/PeerDAS) these responses require. Kept (with round-trip tests)
+// so the wire shape is ready when per-cell storage lands; remove or wire up once
+// that exists. The request type `BlobsRequestV4` IS live (decoded for validation).
+//
+// Per the spec convention `Optional[T] ≡ List[T, 1]`, the per-cell optional
+// values are `List[Cell, 1]` / `List[Bytes48, 1]` — an empty inner list means
+// the cell/proof is absent, matching the CL.
 
 /// `/blobs/v4` contents: per-cell nullable cells + proofs.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
 pub struct BlobCellsAndProofs {
-    pub blob_cells: SszList<OptionalCell, CELLS_PER_EXT_BLOB>,
-    pub proofs: SszList<OptionalProof, CELLS_PER_EXT_BLOB>,
+    pub blob_cells: SszList<SszList<SszVector<u8, BYTES_PER_CELL>, 1>, CELLS_PER_EXT_BLOB>,
+    pub proofs: SszList<SszList<[u8; BYTES_PER_PROOF], 1>, CELLS_PER_EXT_BLOB>,
 }
 
 /// `/blobs/v4` response entry.
@@ -287,7 +160,4 @@ pub struct BlobV4Entry {
 }
 
 /// `/blobs/v4` response.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
-pub struct BlobsV4Response {
-    pub entries: SszList<BlobV4Entry, MAX_BLOBS_REQUEST>,
-}
+pub type BlobsV4Response = SszList<BlobV4Entry, MAX_BLOBS_REQUEST>;

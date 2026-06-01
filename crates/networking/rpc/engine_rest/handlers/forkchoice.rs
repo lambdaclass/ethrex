@@ -17,7 +17,7 @@ use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::common::{
     ForkchoiceResponse, ForkchoiceState as SszForkchoiceState, PayloadId, PayloadStatus,
-    PayloadStatusCode,
+    PayloadStatusCode, from_optional,
 };
 use crate::engine_rest::types::forkchoice_update::{
     AmsterdamForkchoiceUpdate, CancunForkchoiceUpdate, ParisForkchoiceUpdate,
@@ -64,8 +64,7 @@ pub async fn forkchoice_update(
                 Ok(u) => u,
                 Err(p) => return p.into_response(),
             };
-            let attrs = update
-                .payload_attributes
+            let attrs = from_optional(&update.payload_attributes)
                 .map(|a| AttrsInternal::V3(paris_to_v3(a)));
             run_forkchoice(update.state, attrs, ctx, 1).await
         }
@@ -74,8 +73,7 @@ pub async fn forkchoice_update(
                 Ok(u) => u,
                 Err(p) => return p.into_response(),
             };
-            let attrs = update
-                .payload_attributes
+            let attrs = from_optional(&update.payload_attributes)
                 .map(|a| AttrsInternal::V3(shanghai_to_v3(a)));
             run_forkchoice(update.state, attrs, ctx, 2).await
         }
@@ -84,8 +82,7 @@ pub async fn forkchoice_update(
                 Ok(u) => u,
                 Err(p) => return p.into_response(),
             };
-            let attrs = update
-                .payload_attributes
+            let attrs = from_optional(&update.payload_attributes)
                 .map(|a| AttrsInternal::V3(cancun_to_v3(a)));
             run_forkchoice(update.state, attrs, ctx, 3).await
         }
@@ -94,8 +91,7 @@ pub async fn forkchoice_update(
                 Ok(u) => u,
                 Err(p) => return p.into_response(),
             };
-            let attrs = update
-                .payload_attributes
+            let attrs = from_optional(&update.payload_attributes)
                 .map(|a| AttrsInternal::V3(prague_to_v3(a)));
             // Prague uses forkchoiceUpdatedV3 semantics in the JSON-RPC layer.
             run_forkchoice(update.state, attrs, ctx, 3).await
@@ -106,8 +102,7 @@ pub async fn forkchoice_update(
                 Ok(u) => u,
                 Err(p) => return p.into_response(),
             };
-            let attrs = update
-                .payload_attributes
+            let attrs = from_optional(&update.payload_attributes)
                 .map(|a| AttrsInternal::V3(prague_to_v3(a)));
             run_forkchoice(update.state, attrs, ctx, 3).await
         }
@@ -116,8 +111,7 @@ pub async fn forkchoice_update(
                 Ok(u) => u,
                 Err(p) => return p.into_response(),
             };
-            let attrs = update
-                .payload_attributes
+            let attrs = from_optional(&update.payload_attributes)
                 .map(|a| AttrsInternal::V4(amsterdam_to_v4(a)));
             run_forkchoice(update.state, attrs, ctx, 4).await
         }
@@ -224,6 +218,11 @@ fn rpc_err_to_problem(err: RpcErr) -> ProblemJson {
         RpcErr::BadParams(msg) | RpcErr::WrongParam(msg) | RpcErr::MissingParam(msg) => {
             ProblemJson::bad_request(&msg)
         }
+        // A build-phase EVM failure (create_payload) is the EL failing to execute,
+        // not a malformed request. Surface it explicitly with a clear detail rather
+        // than letting it fall through the generic `other` arm — mirrors the
+        // JSON-RPC path, which maps RpcErr::Vm to its own error code.
+        RpcErr::Vm(msg) => ProblemJson::internal(&format!("payload build EVM error: {msg}")),
         RpcErr::Internal(msg) => ProblemJson::internal(&format!("forkchoice failed: {msg}")),
         other => ProblemJson::internal(&format!("forkchoice failed: {other}")),
     }
@@ -278,18 +277,14 @@ async fn run_forkchoice(
         }
     };
 
-    let ssz_status = PayloadStatus {
-        status: status_code as u8,
-        latest_valid_hash: response.payload_status.latest_valid_hash.map(|h| h.0),
-        validation_error: response.payload_status.validation_error,
-    };
+    let ssz_status = PayloadStatus::new(
+        status_code as u8,
+        response.payload_status.latest_valid_hash.map(|h| h.0),
+        response.payload_status.validation_error,
+    );
     let payload_id = response.payload_id.map(PayloadId::from_u64);
 
-    SszBody(ForkchoiceResponse {
-        payload_status: ssz_status,
-        payload_id,
-    })
-    .into_response()
+    SszBody(ForkchoiceResponse::new(ssz_status, payload_id)).into_response()
 }
 
 // ── Payload build helpers ─────────────────────────────────────────────────────

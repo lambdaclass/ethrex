@@ -7,9 +7,8 @@ use axum::http::{Request, header};
 use http_body_util::LengthLimitError;
 use libssz::SszDecode;
 
+use crate::engine_rest::CONTENT_TYPE_OCTET_STREAM;
 use crate::engine_rest::error::ProblemJson;
-
-const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
 /// Axum extractor that reads an SSZ-encoded request body into `T`.
 ///

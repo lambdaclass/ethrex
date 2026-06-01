@@ -2,10 +2,10 @@
 
 use std::str::FromStr;
 
-use libssz::{ContainerDecoder, ContainerEncoder, DecodeError, SszDecode, SszEncode};
+use libssz::{SszDecode, SszEncode};
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_merkle::{HashTreeRoot, Sha256Hasher};
-use libssz_types::SszVector;
+use libssz_types::{SszList, SszVector};
 
 /// Spec limits shared across all forks.
 pub const MAX_EXTRA_DATA_BYTES: usize = 32;
@@ -14,8 +14,9 @@ pub const MAX_TRANSACTIONS_PER_PAYLOAD: usize = 1_048_576;
 /// `MAX_WITHDRAWALS_PER_PAYLOAD` — Capella SSZ list limit (`2**4`), per
 /// execution-apis #793 (`refactor-ssz.md`) and the Capella beacon-chain spec.
 pub const MAX_WITHDRAWALS_PER_PAYLOAD: usize = 16;
-/// Spec limit on number of distinct execution request types per payload (EIP-7685).
-pub const MAX_EXECUTION_REQUESTS_PER_PAYLOAD: usize = 16;
+/// `MAX_EXECUTION_REQUESTS_PER_PAYLOAD` (`2**8`) per refactor-ssz.md; matches the
+/// consensoor CL.
+pub const MAX_EXECUTION_REQUESTS_PER_PAYLOAD: usize = 256;
 /// Spec limit on bytes per single execution-request payload (type-prefix + body).
 pub const MAX_REQUEST_BYTES: usize = 16_777_216; // 16 MiB
 
@@ -86,8 +87,11 @@ impl From<Bytes20> for [u8; 20] {
 /// Spec limit on raw block_access_list bytes per payload (EIP-7928).
 pub const MAX_BLOCK_ACCESS_LIST_BYTES: usize = 16_777_216; // 16 MiB
 
-/// Spec limit for `validation_error` strings.
+/// Spec limit for `validation_error` strings (`MAX_ERROR_BYTES`).
 pub const MAX_ERROR_BYTES: usize = 1024;
+
+/// SSZ `String` ≡ `List[byte, MAX_ERROR_BYTES]` (refactor.md convention).
+pub type ErrorString = SszList<u8, MAX_ERROR_BYTES>;
 
 /// Numeric status codes used in `PayloadStatus`.
 ///
@@ -101,213 +105,70 @@ pub enum PayloadStatusCode {
     Accepted = 3,
 }
 
-// ── Option<[u8; 32]> SSZ union helpers ──────────────────────────────────────
+// ── Optional[T] ≡ List[T, 1] ───────────────────────────────────────────────
 //
-// libssz does not provide blanket impls for `Option<T>`. We implement
-// SszEncode / SszDecode directly for the two `Option` variants used in this
-// module (selector 0 = None, selector 1 = Some(value)).
+// refactor.md SSZ encoding conventions: `Optional[T]` is encoded as an SSZ
+// `List[T, 1]` — an empty list means absent, a single element means present.
+// (NOT a union with a selector byte.) These helpers bridge the ergonomic
+// Rust `Option<T>` used by handlers and the `SszList<T, 1>` wire field.
 
-fn encode_option_hash(opt: &Option<[u8; 32]>, buf: &mut Vec<u8>) {
-    match opt {
-        None => buf.push(0),
-        Some(h) => {
-            buf.push(1);
-            buf.extend_from_slice(h);
-        }
-    }
+/// `Option<T>` → `List[T, 1]`.
+pub(crate) fn to_optional<T>(opt: Option<T>) -> SszList<T, 1> {
+    opt.into_iter()
+        .collect::<Vec<T>>()
+        .try_into()
+        .unwrap_or_else(|_| unreachable!("0 or 1 element always fits List[T, 1]"))
 }
 
-fn encoded_len_option_hash(opt: &Option<[u8; 32]>) -> usize {
-    match opt {
-        None => 1,
-        Some(_) => 1 + 32,
-    }
-}
-
-fn decode_option_hash(bytes: &[u8]) -> Result<Option<[u8; 32]>, DecodeError> {
-    if bytes.is_empty() {
-        return Err(DecodeError::EmptyInput);
-    }
-    match bytes[0] {
-        0 => {
-            if bytes.len() != 1 {
-                return Err(DecodeError::AdditionalBytes {
-                    expected: 1,
-                    got: bytes.len(),
-                });
-            }
-            Ok(None)
-        }
-        1 => {
-            if bytes.len() != 33 {
-                return Err(DecodeError::InvalidFixedLength {
-                    expected: 33,
-                    got: bytes.len(),
-                });
-            }
-            let mut h = [0u8; 32];
-            h.copy_from_slice(&bytes[1..33]);
-            Ok(Some(h))
-        }
-        s => Err(DecodeError::InvalidUnionSelector(s)),
-    }
-}
-
-fn encode_option_string(opt: &Option<String>, buf: &mut Vec<u8>) {
-    match opt {
-        None => buf.push(0),
-        Some(s) => {
-            buf.push(1);
-            buf.extend_from_slice(s.as_bytes());
-        }
-    }
-}
-
-fn encoded_len_option_string(opt: &Option<String>) -> usize {
-    match opt {
-        None => 1,
-        Some(s) => 1 + s.len(),
-    }
-}
-
-fn decode_option_string(bytes: &[u8]) -> Result<Option<String>, DecodeError> {
-    if bytes.is_empty() {
-        return Err(DecodeError::EmptyInput);
-    }
-    match bytes[0] {
-        0 => {
-            if bytes.len() != 1 {
-                return Err(DecodeError::AdditionalBytes {
-                    expected: 1,
-                    got: bytes.len(),
-                });
-            }
-            Ok(None)
-        }
-        1 => {
-            let payload = &bytes[1..];
-            if payload.len() > MAX_ERROR_BYTES {
-                return Err(DecodeError::InvalidByteLength {
-                    expected: MAX_ERROR_BYTES,
-                    got: payload.len(),
-                });
-            }
-            let s = std::str::from_utf8(payload)
-                .map_err(|_| DecodeError::InvalidByteLength {
-                    expected: 0,
-                    got: payload.len(),
-                })?
-                .to_string();
-            Ok(Some(s))
-        }
-        s => Err(DecodeError::InvalidUnionSelector(s)),
-    }
+/// `List[T, 1]` → `Option<T>`.
+pub(crate) fn from_optional<T: Clone>(list: &SszList<T, 1>) -> Option<T> {
+    list.iter().next().cloned()
 }
 
 // ── PayloadStatus ────────────────────────────────────────────────────────────
 
-/// SSZ payload status — `/payloads` response body.
+/// SSZ payload status — `/payloads` response body (refactor-ssz.md § PayloadStatus).
 ///
-/// Manual SSZ impl because libssz has no blanket `Option<T>` or `String` support.
-/// Wire layout (SSZ container):
-///   status              : u8          (fixed, 1 byte)
-///   latest_valid_hash   : Offset(4)   (variable, union: 0x00 | 0x01 ++ [u8;32])
-///   validation_error    : Offset(4)   (variable, union: 0x00 | 0x01 ++ utf8)
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Wire layout (SSZ container): `status: uint8`, `latest_valid_hash: List[Bytes32, 1]`,
+/// `validation_error: List[String, 1]`.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct PayloadStatus {
     pub status: u8,
-    pub latest_valid_hash: Option<[u8; 32]>,
-    pub validation_error: Option<String>,
+    pub latest_valid_hash: SszList<[u8; 32], 1>,
+    pub validation_error: SszList<ErrorString, 1>,
 }
 
-impl SszEncode for PayloadStatus {
-    fn is_fixed_size() -> bool {
-        false
-    }
-
-    fn fixed_size() -> usize {
-        0
-    }
-
-    fn encoded_len(&self) -> usize {
-        // fixed part: 1 (status) + 4 (offset for latest_valid_hash) + 4 (offset for validation_error)
-        // variable part: encoded lengths of both option fields
-        1 + 4
-            + 4
-            + encoded_len_option_hash(&self.latest_valid_hash)
-            + encoded_len_option_string(&self.validation_error)
-    }
-
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        // fixed_part_len = 1 (status) + 4 (offset lvh) + 4 (offset ve) = 9
-        let fixed_part_len = 1 + 4 + 4;
-        let mut enc = ContainerEncoder::with_capacity(buf, fixed_part_len, self.encoded_len());
-        enc.append_fixed(&self.status);
-        enc.append_variable(&OptionHashProxy(&self.latest_valid_hash));
-        enc.append_variable(&OptionStringProxy(&self.validation_error));
-        enc.finalize();
-    }
-}
-
-impl SszDecode for PayloadStatus {
-    fn is_fixed_size() -> bool {
-        false
-    }
-
-    fn fixed_size() -> usize {
-        0
-    }
-
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        // fixed_part_len = 1 (status) + 4 (offset lvh) + 4 (offset ve) = 9
-        let fixed_part_len = 1 + 4 + 4;
-        let mut dec = ContainerDecoder::new(bytes, fixed_part_len)?;
-        let status: u8 = dec.decode_fixed()?;
-        dec.read_variable_offset()?;
-        dec.read_variable_offset()?;
-        let latest_valid_hash = decode_option_hash(&dec.decode_variable::<Vec<u8>>()?)?;
-        let validation_error = decode_option_string(&dec.decode_variable::<Vec<u8>>()?)?;
-        Ok(PayloadStatus {
+impl PayloadStatus {
+    /// Build from the ergonomic `Option` representation. A `validation_error`
+    /// longer than `MAX_ERROR_BYTES` is truncated to fit the SSZ bound.
+    pub fn new(
+        status: u8,
+        latest_valid_hash: Option<[u8; 32]>,
+        validation_error: Option<String>,
+    ) -> Self {
+        let ve = validation_error.map(|s| {
+            let mut bytes = s.into_bytes();
+            bytes.truncate(MAX_ERROR_BYTES);
+            bytes
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("truncated error fits MAX_ERROR_BYTES"))
+        });
+        PayloadStatus {
             status,
-            latest_valid_hash,
-            validation_error,
-        })
+            latest_valid_hash: to_optional(latest_valid_hash),
+            validation_error: to_optional(ve),
+        }
     }
-}
 
-// ── Proxy types for ContainerEncoder::append_variable ────────────────────────
+    /// The latest valid hash, if present.
+    pub fn latest_valid_hash(&self) -> Option<[u8; 32]> {
+        from_optional(&self.latest_valid_hash)
+    }
 
-struct OptionHashProxy<'a>(&'a Option<[u8; 32]>);
-
-impl SszEncode for OptionHashProxy<'_> {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        encoded_len_option_hash(self.0)
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        encode_option_hash(self.0, buf);
-    }
-}
-
-struct OptionStringProxy<'a>(&'a Option<String>);
-
-impl SszEncode for OptionStringProxy<'_> {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        encoded_len_option_string(self.0)
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        encode_option_string(self.0, buf);
+    /// The validation error decoded as a (lossy) UTF-8 string, if present.
+    pub fn validation_error_string(&self) -> Option<String> {
+        from_optional(&self.validation_error)
+            .map(|e| String::from_utf8_lossy(e.as_ref()).into_owned())
     }
 }
 
@@ -369,125 +230,25 @@ impl FromStr for PayloadId {
 
 // ── ForkchoiceResponse ────────────────────────────────────────────────────────
 
-/// `/forkchoice` response carrying the resulting status and (if attributes were supplied)
-/// the payload-build id.
-///
-/// Manual SSZ impl because `Option<PayloadId>` requires union encoding.
-/// Wire layout (SSZ container):
-///   payload_status : Offset(4)  (variable — PayloadStatus is variable-length)
-///   payload_id     : Offset(4)  (variable, union: 0x00 | 0x01 ++ [u8;8])
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// `/forkchoice` response carrying the resulting status and (if attributes were
+/// supplied) the payload-build id (`Optional[Bytes8]` ≡ `List[Bytes8, 1]`).
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct ForkchoiceResponse {
     pub payload_status: PayloadStatus,
-    pub payload_id: Option<PayloadId>,
+    pub payload_id: SszList<PayloadId, 1>,
 }
 
-impl SszEncode for ForkchoiceResponse {
-    fn is_fixed_size() -> bool {
-        false
-    }
-
-    fn fixed_size() -> usize {
-        0
-    }
-
-    fn encoded_len(&self) -> usize {
-        // fixed part: 4 (offset ps) + 4 (offset pid) = 8
-        4 + 4 + self.payload_status.encoded_len() + encoded_len_option_payload_id(&self.payload_id)
-    }
-
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        let fixed_part_len = 4 + 4;
-        let mut enc = ContainerEncoder::with_capacity(buf, fixed_part_len, self.encoded_len());
-        enc.append_variable(&self.payload_status);
-        enc.append_variable(&OptionPayloadIdProxy(&self.payload_id));
-        enc.finalize();
-    }
-}
-
-impl SszDecode for ForkchoiceResponse {
-    fn is_fixed_size() -> bool {
-        false
-    }
-
-    fn fixed_size() -> usize {
-        0
-    }
-
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let fixed_part_len = 4 + 4;
-        let mut dec = ContainerDecoder::new(bytes, fixed_part_len)?;
-        dec.read_variable_offset()?;
-        dec.read_variable_offset()?;
-        let payload_status = dec.decode_variable::<PayloadStatus>()?;
-        let pid_bytes = dec.decode_variable::<Vec<u8>>()?;
-        let payload_id = decode_option_payload_id(&pid_bytes)?;
-        Ok(ForkchoiceResponse {
+impl ForkchoiceResponse {
+    /// Build from the ergonomic `Option` representation.
+    pub fn new(payload_status: PayloadStatus, payload_id: Option<PayloadId>) -> Self {
+        ForkchoiceResponse {
             payload_status,
-            payload_id,
-        })
-    }
-}
-
-fn encode_option_payload_id(opt: &Option<PayloadId>, buf: &mut Vec<u8>) {
-    match opt {
-        None => buf.push(0),
-        Some(id) => {
-            buf.push(1);
-            buf.extend_from_slice(&id.0);
+            payload_id: to_optional(payload_id),
         }
     }
-}
 
-fn encoded_len_option_payload_id(opt: &Option<PayloadId>) -> usize {
-    match opt {
-        None => 1,
-        Some(_) => 1 + 8,
-    }
-}
-
-fn decode_option_payload_id(bytes: &[u8]) -> Result<Option<PayloadId>, DecodeError> {
-    if bytes.is_empty() {
-        return Err(DecodeError::EmptyInput);
-    }
-    match bytes[0] {
-        0 => {
-            if bytes.len() != 1 {
-                return Err(DecodeError::AdditionalBytes {
-                    expected: 1,
-                    got: bytes.len(),
-                });
-            }
-            Ok(None)
-        }
-        1 => {
-            if bytes.len() != 9 {
-                return Err(DecodeError::InvalidFixedLength {
-                    expected: 9,
-                    got: bytes.len(),
-                });
-            }
-            let mut id = [0u8; 8];
-            id.copy_from_slice(&bytes[1..9]);
-            Ok(Some(PayloadId(id)))
-        }
-        s => Err(DecodeError::InvalidUnionSelector(s)),
-    }
-}
-
-struct OptionPayloadIdProxy<'a>(&'a Option<PayloadId>);
-
-impl SszEncode for OptionPayloadIdProxy<'_> {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        encoded_len_option_payload_id(self.0)
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        encode_option_payload_id(self.0, buf);
+    /// The payload-build id, if present.
+    pub fn payload_id(&self) -> Option<PayloadId> {
+        from_optional(&self.payload_id)
     }
 }

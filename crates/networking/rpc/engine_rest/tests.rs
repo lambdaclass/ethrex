@@ -304,7 +304,7 @@ mod identity_tests {
 #[cfg(test)]
 mod capabilities_tests {
     use crate::engine_rest::handlers::capabilities::{
-        BODIES_MAX_COUNT, Capabilities, PAYLOAD_MAX_BYTES, get_capabilities,
+        BLOBS_MAX_COUNT, BODIES_MAX_COUNT, Capabilities, PAYLOAD_MAX_BYTES, get_capabilities,
     };
     use axum::Router;
     use axum::routing::get;
@@ -337,15 +337,22 @@ mod capabilities_tests {
                 "amsterdam"
             ]
         );
-        assert_eq!(caps.blobs, vec!["v1", "v2", "v3", "v4"]);
-        assert!(caps.endpoints.contains_key("POST /{fork}/payloads"));
         assert_eq!(
-            caps.endpoints["POST /{fork}/payloads"].max_bytes,
-            Some(PAYLOAD_MAX_BYTES)
+            caps.independently_versioned.blobs,
+            vec!["v1", "v2", "v3", "v4"]
         );
         assert_eq!(
-            caps.endpoints["POST /{fork}/bodies/hash"].max_count,
-            Some(BODIES_MAX_COUNT)
+            caps.fork_scoped_endpoints,
+            vec!["payloads", "forkchoice", "bodies"]
+        );
+        assert_eq!(caps.unscoped_endpoints, vec!["capabilities", "identity"]);
+        // Flat dot-notation limit keys with scalar values per #793 refactor.md,
+        // not method+path keys with nested objects.
+        assert_eq!(caps.limits["payload.max_bytes"], PAYLOAD_MAX_BYTES);
+        assert_eq!(caps.limits["bodies.max_count"], BODIES_MAX_COUNT as u64);
+        assert_eq!(
+            caps.limits["blobs.max_versioned_hashes"],
+            BLOBS_MAX_COUNT as u64
         );
     }
 }
@@ -419,7 +426,11 @@ mod router_tests {
         let body = resp.into_body().collect().await.unwrap().to_bytes();
         let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(v["supported_forks"].is_array());
-        assert!(v["endpoints"].is_object());
+        assert!(v["fork_scoped_endpoints"].is_array());
+        assert!(v["independently_versioned"]["blobs"].is_array());
+        assert!(v["unscoped_endpoints"].is_array());
+        assert!(v["limits"].is_object());
+        assert!(v["limits"]["payload.max_bytes"].is_number());
     }
 
     #[tokio::test]
@@ -668,30 +679,29 @@ mod common_types_tests {
 
     #[test]
     fn payload_status_roundtrips_valid() {
-        let s = PayloadStatus {
-            status: PayloadStatusCode::Valid as u8,
-            latest_valid_hash: Some([0xAB; 32]),
-            validation_error: None,
-        };
+        let s = PayloadStatus::new(PayloadStatusCode::Valid as u8, Some([0xAB; 32]), None);
         let bytes = s.to_ssz();
         let back = PayloadStatus::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back.status, 0);
-        assert_eq!(back.latest_valid_hash, Some([0xAB; 32]));
-        assert!(back.validation_error.is_none());
+        assert_eq!(back.latest_valid_hash(), Some([0xAB; 32]));
+        assert!(back.validation_error_string().is_none());
     }
 
     #[test]
     fn payload_status_roundtrips_invalid_with_message() {
-        let s = PayloadStatus {
-            status: PayloadStatusCode::Invalid as u8,
-            latest_valid_hash: None,
-            validation_error: Some("bad parent".to_string()),
-        };
+        let s = PayloadStatus::new(
+            PayloadStatusCode::Invalid as u8,
+            None,
+            Some("bad parent".to_string()),
+        );
         let bytes = s.to_ssz();
         let back = PayloadStatus::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back.status, 1);
-        assert!(back.latest_valid_hash.is_none());
-        assert_eq!(back.validation_error.as_deref(), Some("bad parent"));
+        assert!(back.latest_valid_hash().is_none());
+        assert_eq!(
+            back.validation_error_string().as_deref(),
+            Some("bad parent")
+        );
     }
 
     #[test]
@@ -742,33 +752,23 @@ mod common_types_tests {
     }
 
     #[test]
-    fn payload_status_decode_rejects_oversize_validation_error() {
-        // Build a valid PayloadStatus encoding with status=1, no latest_valid_hash,
-        // but a validation_error that's 1025 bytes (one over the cap).
+    fn payload_status_truncates_oversize_validation_error() {
+        // `PayloadStatus::new` caps `validation_error` at MAX_ERROR_BYTES (1024)
+        // so it always fits the `List[byte, 1024]` bound; a 1025-byte input is
+        // truncated and round-trips cleanly.
         let huge = "x".repeat(1025);
-        let s = PayloadStatus {
-            status: 1,
-            latest_valid_hash: None,
-            validation_error: Some(huge),
-        };
+        let s = PayloadStatus::new(1, None, Some(huge));
         let bytes = s.to_ssz();
-        let err = PayloadStatus::from_ssz_bytes(&bytes);
-        assert!(
-            err.is_err(),
-            "decoder must reject oversize validation_error"
-        );
+        let back = PayloadStatus::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back.validation_error_string().unwrap().len(), 1024);
     }
 
     #[test]
     fn forkchoice_response_roundtrips_with_payload_id() {
-        let r = ForkchoiceResponse {
-            payload_status: PayloadStatus {
-                status: PayloadStatusCode::Valid as u8,
-                latest_valid_hash: Some([0xAA; 32]),
-                validation_error: None,
-            },
-            payload_id: Some(PayloadId([1, 2, 3, 4, 5, 6, 7, 8])),
-        };
+        let r = ForkchoiceResponse::new(
+            PayloadStatus::new(PayloadStatusCode::Valid as u8, Some([0xAA; 32]), None),
+            Some(PayloadId([1, 2, 3, 4, 5, 6, 7, 8])),
+        );
         let bytes = r.to_ssz();
         let back = ForkchoiceResponse::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, r);
@@ -776,18 +776,14 @@ mod common_types_tests {
 
     #[test]
     fn forkchoice_response_roundtrips_without_payload_id() {
-        let r = ForkchoiceResponse {
-            payload_status: PayloadStatus {
-                status: PayloadStatusCode::Syncing as u8,
-                latest_valid_hash: None,
-                validation_error: None,
-            },
-            payload_id: None,
-        };
+        let r = ForkchoiceResponse::new(
+            PayloadStatus::new(PayloadStatusCode::Syncing as u8, None, None),
+            None,
+        );
         let bytes = r.to_ssz();
         let back = ForkchoiceResponse::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, r);
-        assert!(back.payload_id.is_none());
+        assert!(back.payload_id().is_none());
     }
 }
 
@@ -1610,7 +1606,7 @@ mod get_payload_tests {
 mod forkchoice_handler_tests {
     use crate::engine_rest::router;
     use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::common::{ForkchoiceResponse, ForkchoiceState};
+    use crate::engine_rest::types::common::{ForkchoiceResponse, ForkchoiceState, to_optional};
     use crate::engine_rest::types::forkchoice_update::CancunForkchoiceUpdate;
     use crate::test_utils::default_context_with_storage;
     use crate::test_utils::setup_store;
@@ -1634,7 +1630,7 @@ mod forkchoice_handler_tests {
                 safe_block_hash: [0; 32],
                 finalized_block_hash: [0; 32],
             },
-            payload_attributes: None,
+            payload_attributes: to_optional(None),
         };
         let body = update.to_ssz();
         let req = axum::http::Request::builder()
@@ -1653,7 +1649,7 @@ mod forkchoice_handler_tests {
             r.payload_status.status,
             crate::engine_rest::types::common::PayloadStatusCode::Syncing as u8
         );
-        assert!(r.payload_id.is_none());
+        assert!(r.payload_id().is_none());
     }
 
     #[tokio::test]
@@ -1681,8 +1677,11 @@ mod forkchoice_handler_tests {
 mod end_to_end_tests {
     use crate::engine_rest::router;
     use crate::engine_rest::tests::test_helpers::auth_token;
+    use crate::engine_rest::types::built_payload::BuiltPayloadCancun;
     use crate::engine_rest::types::cancun::PayloadAttributes;
-    use crate::engine_rest::types::common::{Bytes20, ForkchoiceResponse, ForkchoiceState};
+    use crate::engine_rest::types::common::{
+        Bytes20, ForkchoiceResponse, ForkchoiceState, to_optional,
+    };
     use crate::engine_rest::types::forkchoice_update::CancunForkchoiceUpdate;
     use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
     use bytes::Bytes;
@@ -1728,13 +1727,13 @@ mod end_to_end_tests {
                 safe_block_hash: head_hash.0,
                 finalized_block_hash: head_hash.0,
             },
-            payload_attributes: Some(PayloadAttributes {
+            payload_attributes: to_optional(Some(PayloadAttributes {
                 timestamp: head_header.timestamp + 12,
                 prev_randao: [0; 32],
                 suggested_fee_recipient: Bytes20([0xFE; 20]),
                 withdrawals: vec![].try_into().unwrap(),
                 parent_beacon_block_root: [0xBB; 32],
-            }),
+            })),
         };
         let body = update.to_ssz();
         let req = axum::http::Request::builder()
@@ -1749,10 +1748,10 @@ mod end_to_end_tests {
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let fcr = ForkchoiceResponse::from_ssz_bytes(&body_bytes).unwrap();
         let payload_id = fcr
-            .payload_id
+            .payload_id()
             .expect("payload_id should be Some when attrs provided");
 
-        // GET /cancun/payloads/{id} — verify the SSZ envelope decodes.
+        // GET /cancun/payloads/{id} — verify the SSZ BuiltPayload decodes.
         let req = axum::http::Request::builder()
             .method("GET")
             .uri(format!("/cancun/payloads/{}", payload_id.to_hex_string()))
@@ -1762,11 +1761,8 @@ mod end_to_end_tests {
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), 200);
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let envelope = crate::engine_rest::types::cancun::ExecutionPayloadEnvelope::from_ssz_bytes(
-            &body_bytes,
-        )
-        .unwrap();
-        assert_eq!(envelope.parent_beacon_block_root, [0xBB; 32]);
+        let built = BuiltPayloadCancun::from_ssz_bytes(&body_bytes).unwrap();
+        assert!(!built.should_override_builder);
     }
 }
 
@@ -1818,7 +1814,7 @@ mod helpers_tests {
 #[cfg(test)]
 mod bodies_types_tests {
     use crate::engine_rest::types::bodies::{
-        BodiesByHashRequest, BodyAmsterdam, BodyParis, BodyShanghai,
+        BlockHashList, BodyAmsterdam, BodyParis, BodyShanghai,
     };
     use crate::engine_rest::types::common::Bytes20;
     use crate::engine_rest::types::shanghai::Withdrawal;
@@ -1867,13 +1863,11 @@ mod bodies_types_tests {
 
     #[test]
     fn bodies_by_hash_request_roundtrips() {
-        let req = BodiesByHashRequest {
-            hashes: vec![[1u8; 32], [2u8; 32]].try_into().unwrap(),
-        };
+        let req: BlockHashList = vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
         let bytes = req.to_ssz();
-        let back = BodiesByHashRequest::from_ssz_bytes(&bytes).unwrap();
-        assert_eq!(back.hashes.len(), 2);
-        assert_eq!(back.hashes[0], [1u8; 32]);
+        let back = BlockHashList::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0], [1u8; 32]);
     }
 }
 
@@ -1881,7 +1875,7 @@ mod bodies_types_tests {
 mod bodies_by_hash_tests {
     use crate::engine_rest::router;
     use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::bodies::BodiesByHashRequest;
+    use crate::engine_rest::types::bodies::BlockHashList;
     use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
     use axum::http::StatusCode;
     use bytes::Bytes;
@@ -1906,9 +1900,7 @@ mod bodies_by_hash_tests {
             .unwrap()
             .expect("block 1 should exist");
 
-        let req_body = BodiesByHashRequest {
-            hashes: vec![block1_hash.0, [0xFFu8; 32]].try_into().unwrap(),
-        };
+        let req_body: BlockHashList = vec![block1_hash.0, [0xFFu8; 32]].try_into().unwrap();
         let body = req_body.to_ssz();
 
         let req = axum::http::Request::builder()
@@ -1940,9 +1932,7 @@ mod bodies_by_hash_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body = BodiesByHashRequest {
-            hashes: vec![].try_into().unwrap(),
-        };
+        let req_body: BlockHashList = vec![].try_into().unwrap();
         let body = req_body.to_ssz();
 
         let req = axum::http::Request::builder()
@@ -1965,9 +1955,7 @@ mod bodies_by_hash_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body = BodiesByHashRequest {
-            hashes: vec![].try_into().unwrap(),
-        };
+        let req_body: BlockHashList = vec![].try_into().unwrap();
         let body = req_body.to_ssz();
 
         let req = axum::http::Request::builder()
@@ -2076,18 +2064,16 @@ mod bodies_by_range_tests {
 #[cfg(test)]
 mod blobs_types_tests {
     use crate::engine_rest::types::blobs::{
-        BlobAndProofV1, BlobAndProofV2, BlobsRequest, BlobsRequestV4,
+        BlobAndProofV1, BlobAndProofV2, BlobsRequestV4, VersionedHashList,
     };
     use libssz::{SszDecode, SszEncode};
 
     #[test]
     fn blobs_request_roundtrips() {
-        let req = BlobsRequest {
-            versioned_hashes: vec![[1u8; 32], [2u8; 32]].try_into().unwrap(),
-        };
+        let req: VersionedHashList = vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
         let bytes = req.to_ssz();
-        let back = BlobsRequest::from_ssz_bytes(&bytes).unwrap();
-        assert_eq!(back.versioned_hashes.len(), 2);
+        let back = VersionedHashList::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back.len(), 2);
     }
 
     #[test]
@@ -2141,36 +2127,35 @@ mod blobs_types_tests {
             }),
             BlobV1Entry::unavailable(),
         ];
-        let resp = BlobsV1Response {
-            entries: entries.try_into().unwrap(),
-        };
+        let resp: BlobsV1Response = entries.try_into().unwrap();
         let bytes = resp.to_ssz();
         let back = BlobsV1Response::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, resp);
-        assert_eq!(back.entries.len(), 2);
+        assert_eq!(back.len(), 2);
     }
 
     #[test]
     fn blobs_v4_response_roundtrips_with_optional_cells() {
         use crate::engine_rest::types::blobs::{
-            BYTES_PER_CELL, BlobCellsAndProofs, BlobV4Entry, BlobsV4Response, OptionalCell,
-            OptionalProof,
+            BYTES_PER_CELL, BlobCellsAndProofs, BlobV4Entry, BlobsV4Response,
         };
-        let cells = vec![
-            OptionalCell(None),
-            OptionalCell(Some(vec![0x33u8; BYTES_PER_CELL].try_into().unwrap())),
-        ];
-        let proofs = vec![OptionalProof(None), OptionalProof(Some([0x44u8; 48]))];
+        use libssz_types::{SszList, SszVector};
+        // Optional[T] ≡ List[T, 1]: empty inner list = absent, one element = present.
+        let absent_cell: SszList<SszVector<u8, BYTES_PER_CELL>, 1> = Vec::new().try_into().unwrap();
+        let present_cell: SszList<SszVector<u8, BYTES_PER_CELL>, 1> =
+            vec![vec![0x33u8; BYTES_PER_CELL].try_into().unwrap()]
+                .try_into()
+                .unwrap();
+        let absent_proof: SszList<[u8; 48], 1> = Vec::new().try_into().unwrap();
+        let present_proof: SszList<[u8; 48], 1> = vec![[0x44u8; 48]].try_into().unwrap();
         let entry = BlobV4Entry {
             available: true,
             contents: BlobCellsAndProofs {
-                blob_cells: cells.try_into().unwrap(),
-                proofs: proofs.try_into().unwrap(),
+                blob_cells: vec![absent_cell, present_cell].try_into().unwrap(),
+                proofs: vec![absent_proof, present_proof].try_into().unwrap(),
             },
         };
-        let resp = BlobsV4Response {
-            entries: vec![entry].try_into().unwrap(),
-        };
+        let resp: BlobsV4Response = vec![entry].try_into().unwrap();
         let bytes = resp.to_ssz();
         let back = BlobsV4Response::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, resp);
@@ -2181,7 +2166,7 @@ mod blobs_types_tests {
 mod blobs_v1_tests {
     use crate::engine_rest::router;
     use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::blobs::BlobsRequest;
+    use crate::engine_rest::types::blobs::VersionedHashList;
     use crate::test_utils::{default_context_with_storage, setup_store};
     use bytes::Bytes;
     use http_body_util::BodyExt;
@@ -2197,9 +2182,7 @@ mod blobs_v1_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body = BlobsRequest {
-            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-        };
+        let req_body: VersionedHashList = vec![[0xFFu8; 32]].try_into().unwrap();
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2227,9 +2210,7 @@ mod blobs_v1_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body = BlobsRequest {
-            versioned_hashes: vec![].try_into().unwrap(),
-        };
+        let req_body: VersionedHashList = vec![].try_into().unwrap();
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2247,7 +2228,7 @@ mod blobs_v1_tests {
 mod blobs_v2v3_tests {
     use crate::engine_rest::router;
     use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::blobs::BlobsRequest;
+    use crate::engine_rest::types::blobs::VersionedHashList;
     use crate::test_utils::{default_context_with_storage, setup_store};
     use bytes::Bytes;
     use libssz::SszEncode;
@@ -2267,9 +2248,7 @@ mod blobs_v2v3_tests {
         // (execution-apis #793 §POST /blobs/v2), not a per-slot null.
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
-        let req_body = BlobsRequest {
-            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-        };
+        let req_body: VersionedHashList = vec![[0xFFu8; 32]].try_into().unwrap();
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2286,9 +2265,7 @@ mod blobs_v2v3_tests {
     async fn v3_unknown_hash_returns_200_with_none_position() {
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
-        let req_body = BlobsRequest {
-            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
-        };
+        let req_body: VersionedHashList = vec![[0xFFu8; 32]].try_into().unwrap();
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2305,16 +2282,12 @@ mod blobs_v2v3_tests {
     async fn v2_exceeds_count_returns_400_or_413() {
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
-        // BlobsRequest uses SszList<[u8; 32], 128> which enforces the cap at the Rust
-        // type level, so we can't use BlobsRequest::to_ssz() to build an over-cap body.
-        // Instead, manually construct raw SSZ bytes: BlobsRequest is a container with a
-        // single variable-length field, so the encoding is:
-        //   4-byte offset (= 4) || raw list bytes (129 * 32 bytes)
-        // This tests that the SSZ extractor rejects the body (400) before the handler.
-        let list_bytes: Vec<u8> = (0u8..129).flat_map(|i| [i; 32]).collect();
-        let offset: u32 = 4u32;
-        let mut body = offset.to_le_bytes().to_vec();
-        body.extend_from_slice(&list_bytes);
+        // The request is a bare `List[Bytes32, 128]`, whose SSZ encoding is just the
+        // concatenated 32-byte elements (fixed-size element list — no offsets). 129
+        // elements (129 * 32 bytes) exceeds the cap, so the SSZ extractor rejects the
+        // body (400) before the handler, and `VersionedHashList::try_into` can't build
+        // an over-cap value at the type level.
+        let body: Vec<u8> = (0u8..129).flat_map(|i| [i; 32]).collect();
         let req = axum::http::Request::builder()
             .method("POST")
             .uri("/blobs/v2")
@@ -2446,5 +2419,43 @@ mod sp3_smoke_tests {
                 "{method} {uri} returned 501 — endpoint still stubbed"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    //! Guards that `axum::serve` (used for the authrpc port in `rpc.rs`) serves
+    //! HTTP/2 cleartext (h2c). execution-apis #793 mandates HTTP/2, and the only
+    //! #793 CL (consensoor) connects with h2c prior-knowledge and will NOT
+    //! downgrade to HTTP/1.1 — so without h2c the entire REST/SSZ path silently
+    //! falls back to JSON-RPC. h2c is served by the `hyper_util` auto builder
+    //! behind `axum::serve`, which needs axum's `http2` feature (see Cargo.toml).
+    //! If that feature regresses, the handshake below fails and this test catches it.
+
+    use axum::Router;
+    use axum::routing::get;
+
+    #[tokio::test]
+    async fn authrpc_serves_h2c_prior_knowledge() {
+        let app = Router::new().route("/ping", get(|| async { "pong" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        // h2c prior-knowledge: forces cleartext HTTP/2 with no HTTP/1.1 fallback —
+        // exactly how consensoor's httpx(http1=False, http2=True) connects.
+        let client = reqwest::Client::builder()
+            .http2_prior_knowledge()
+            .build()
+            .unwrap();
+        let resp = client
+            .get(format!("http://{addr}/ping"))
+            .send()
+            .await
+            .expect("h2c handshake must succeed — is axum's `http2` feature still enabled?");
+        assert_eq!(resp.version(), axum::http::Version::HTTP_2);
+        assert_eq!(resp.text().await.unwrap(), "pong");
     }
 }

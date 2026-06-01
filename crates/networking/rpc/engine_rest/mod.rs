@@ -20,9 +20,15 @@ use axum::routing::{get, post};
 
 use crate::rpc::{ClientVersion, RpcApiContext};
 
+/// SSZ request/response media type for the engine REST API. Shared by the body
+/// extractor, the `SszBody` responder, and the `Content-Type` validation helper.
+pub(crate) const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
+
 /// Build the engine REST sub-router. Layered with JWT auth at construction time.
+/// Mounted under `/engine/v2` by the caller (see `rpc::start_api`), so the
+/// effective paths are `/engine/v2/<route>` per refactor.md.
 ///
-/// Routes:
+/// Routes (relative to the `/engine/v2` mount point):
 ///   GET  /identity
 ///   GET  /capabilities
 ///   POST /{fork}/payloads

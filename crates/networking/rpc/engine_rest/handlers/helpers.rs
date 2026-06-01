@@ -2,9 +2,8 @@
 
 use axum::http::{HeaderMap, header};
 
+use crate::engine_rest::CONTENT_TYPE_OCTET_STREAM;
 use crate::engine_rest::error::ProblemJson;
-
-const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
 
 /// Validate the request `Content-Type` is `application/octet-stream` (case-
 /// insensitive, allows trailing parameters). Returns `ProblemJson` (415) on

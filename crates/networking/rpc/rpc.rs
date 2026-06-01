@@ -609,7 +609,9 @@ pub async fn start_api(
     let authrpc_router = Router::new()
         .route("/", post(authrpc_handler))
         .with_state(service_context.clone())
-        .merge(engine_rest_router)
+        // Engine REST/SSZ (#793) is scoped under /engine/v2/... per refactor.md;
+        // the CL calls /engine/v2/{fork}/payloads, /engine/v2/capabilities, etc.
+        .nest("/engine/v2", engine_rest_router)
         // Bump the body limit for the engine API to 256MB
         // This is needed to receive payloads bigger than the default limit of 2MB
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024));

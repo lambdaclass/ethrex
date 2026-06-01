@@ -16,10 +16,11 @@ use crate::types::payload::{EncodedTransaction, ExecutionPayload as JsonExecutio
 
 /// Dispatch tag selecting which existing `handle_new_payload_*` helper to call.
 /// Most variant fields are baked into the reconstructed `Block` upstream and are
-/// not read again in the final dispatch match — though `V5.raw_bal_hash` is read
-/// by the handler's structural BAL check before dispatch (see `handlers::payloads`),
-/// and tests inspect the rest. They remain useful for debug logging, so silence
-/// dead-code lints rather than drop them.
+/// not read again in the final dispatch match — `V5.raw_bal_hash` is the
+/// exception, read by the handler's structural BAL check before dispatch (see
+/// `handlers::payloads`). The remaining fields are kept because the conversion
+/// tests assert on them; `#[allow(dead_code)]` silences the lint for the fields
+/// no production code reads.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub(crate) enum EngineCall {

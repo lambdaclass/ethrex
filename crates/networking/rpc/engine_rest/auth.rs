@@ -49,9 +49,14 @@ pub async fn engine_auth_middleware(
         }
     };
 
-    let token = match auth_str.strip_prefix(BEARER_PREFIX) {
-        Some(t) => t,
-        None => {
+    // RFC 7235 §2.1: the auth-scheme token is case-insensitive. `BEARER_PREFIX`
+    // is ASCII, so byte index 7 is also char index 7 — slicing is safe once the
+    // prefix matches.
+    let token = match auth_str.get(..BEARER_PREFIX.len()) {
+        Some(prefix) if prefix.eq_ignore_ascii_case(BEARER_PREFIX) => {
+            &auth_str[BEARER_PREFIX.len()..]
+        }
+        _ => {
             return ProblemJson::unauthorized("Authorization header must be Bearer")
                 .into_response();
         }

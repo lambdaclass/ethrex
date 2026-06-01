@@ -4,7 +4,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use libssz::SszEncode;
 
-const CONTENT_TYPE_OCTET_STREAM: &str = "application/octet-stream";
+use crate::engine_rest::CONTENT_TYPE_OCTET_STREAM;
 
 /// Wraps a value implementing `SszEncode` and serves it as an SSZ-encoded
 /// `application/octet-stream` response body with status 200.

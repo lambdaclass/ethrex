@@ -104,7 +104,7 @@ async fn run_newpayload_ssz(
         fixtures::DEFAULT_BLOB_HASH_COUNT,
     );
     let body = envelope.to_ssz();
-    let url = format!("{url_base}/cancun/payloads");
+    let url = format!("{url_base}/engine/v2/cancun/payloads");
     let t0 = Instant::now();
     let resp = rest_ssz::call(client, Method::POST, &url, token, body).await?;
     let wall_time_us = t0.elapsed().as_micros();
@@ -149,7 +149,7 @@ async fn run_getpayload_ssz(
     token: &str,
     i: usize,
 ) -> Result<IterationRecord> {
-    let url = format!("{url_base}/cancun/payloads/0x0102030405060708");
+    let url = format!("{url_base}/engine/v2/cancun/payloads/0x0102030405060708");
     let t0 = Instant::now();
     let resp = rest_ssz::call(client, Method::GET, &url, token, vec![]).await?;
     let wall_time_us = t0.elapsed().as_micros();
@@ -195,17 +195,15 @@ async fn run_blobs_ssz(
     token: &str,
     i: usize,
 ) -> Result<IterationRecord> {
-    use ethrex_rpc::engine_rest::types::blobs::BlobsRequest;
+    use ethrex_rpc::engine_rest::types::blobs::VersionedHashList;
     let hashes = fixtures::blob_versioned_hashes(
         fixtures::DEFAULT_SEED,
         fixtures::DEFAULT_BLOB_REQUEST_COUNT,
     );
     let hashes_arr: Vec<[u8; 32]> = hashes.iter().map(|h| h.0).collect();
-    let req = BlobsRequest {
-        versioned_hashes: hashes_arr.try_into().expect("blob hashes fit"),
-    };
+    let req: VersionedHashList = hashes_arr.try_into().expect("blob hashes fit");
     let body = req.to_ssz();
-    let url = format!("{url_base}/blobs/v1");
+    let url = format!("{url_base}/engine/v2/blobs/v1");
     let t0 = Instant::now();
     let resp = rest_ssz::call(client, Method::POST, &url, token, body).await?;
     let wall_time_us = t0.elapsed().as_micros();
@@ -255,7 +253,7 @@ async fn run_bodies_ssz(
     i: usize,
 ) -> Result<IterationRecord> {
     let url = format!(
-        "{url_base}/cancun/bodies?from=1&count={}",
+        "{url_base}/engine/v2/cancun/bodies?from=1&count={}",
         fixtures::DEFAULT_BODIES_COUNT
     );
     let t0 = Instant::now();

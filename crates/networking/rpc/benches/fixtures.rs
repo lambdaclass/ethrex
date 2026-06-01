@@ -281,23 +281,21 @@ pub fn bodies_range_json(
         .collect()
 }
 
-/// SSZ-side bodies response wrapping `Vec<OptBodyShanghai>`.
+/// SSZ-side bodies response wrapping `List[BodyEntryShanghai]`.
 #[allow(dead_code)]
 pub fn bodies_range_ssz(
     seed: u64,
     n: usize,
     tx_per_body: usize,
-) -> ethrex_rpc::engine_rest::types::bodies::BodiesByHashResponseShanghai {
-    use ethrex_rpc::engine_rest::types::bodies::{
-        BodiesByHashResponseShanghai, BodyShanghai, OptBodyShanghai,
-    };
+) -> ethrex_rpc::engine_rest::types::bodies::BodiesResponseShanghai {
+    use ethrex_rpc::engine_rest::types::bodies::{BodyEntryShanghai, BodyShanghai};
     use ethrex_rpc::engine_rest::types::common::{
         MAX_BYTES_PER_TRANSACTION, MAX_TRANSACTIONS_PER_PAYLOAD, MAX_WITHDRAWALS_PER_PAYLOAD,
     };
     use libssz_types::SszList;
 
     let mut rng = StdRng::seed_from_u64(seed);
-    let bodies: Vec<OptBodyShanghai> = (0..n)
+    let entries_vec: Vec<BodyEntryShanghai> = (0..n)
         .map(|_| {
             let tx_lists: Vec<SszList<u8, MAX_BYTES_PER_TRANSACTION>> = (0..tx_per_body)
                 .map(|_| {
@@ -317,13 +315,15 @@ pub fn bodies_range_ssz(
                 ethrex_rpc::engine_rest::types::shanghai::Withdrawal,
                 MAX_WITHDRAWALS_PER_PAYLOAD,
             > = Vec::new().try_into().expect("empty withdrawals fits");
-            OptBodyShanghai(Some(BodyShanghai {
+            BodyEntryShanghai::available(BodyShanghai {
                 transactions,
                 withdrawals,
-            }))
+            })
         })
         .collect();
-    BodiesByHashResponseShanghai { bodies }
+    entries_vec
+        .try_into()
+        .expect("bodies fit MAX_BODIES_PER_REQUEST")
 }
 
 /// JSON-side blobs response: `Vec<Option<BlobAndProofV1>>`.
@@ -354,7 +354,6 @@ pub fn blobs_v1_response_ssz(
 ) -> ethrex_rpc::engine_rest::types::blobs::BlobsV1Response {
     use ethrex_rpc::engine_rest::types::blobs::{
         BYTES_PER_BLOB, BYTES_PER_PROOF, BlobAndProofV1 as SszBlobAndProofV1, BlobV1Entry,
-        BlobsV1Response,
     };
     use libssz_types::SszVector;
 
@@ -373,9 +372,7 @@ pub fn blobs_v1_response_ssz(
             })
         })
         .collect();
-    BlobsV1Response {
-        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
-    }
+    entries.try_into().expect("n <= MAX_BLOBS_REQUEST")
 }
 
 /// JSON-side getPayload response — same `ExecutionPayload` shape as newPayload.

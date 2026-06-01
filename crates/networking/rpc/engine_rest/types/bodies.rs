@@ -1,6 +1,11 @@
-//! SSZ wire types for the engine REST bodies endpoints.
+//! SSZ wire types for the engine REST bodies endpoints (execution-apis #793).
+//!
+//! Request (`POST /{fork}/bodies/hash`) is a bare `List[Hash32, MAX_BODIES_REQUEST]`.
+//! Response is a bare `List[BodyEntry, MAX_BODIES_REQUEST]` — NOT wrapped in a
+//! named container — where `BodyEntry { available: Boolean, body: ExecutionPayloadBody }`.
+//! When `available == false` the `body` is zero-valued (every list empty) and CLs
+//! MUST ignore it. Each fork URL returns only its own era's blocks.
 
-use libssz::{DecodeError, SszDecode, SszEncode};
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_types::SszList;
 
@@ -10,14 +15,14 @@ use super::common::{
 };
 use super::shanghai::Withdrawal;
 
-/// Spec cap on the number of block hashes in a `/{fork}/bodies/hash` request.
-pub const MAX_BODIES_PER_REQUEST: usize = 128;
+/// Spec cap on hashes per `/{fork}/bodies/hash` request and on entries in any
+/// bodies response (`MAX_BODIES_REQUEST = 2**5`); matches the consensoor CL.
+pub const MAX_BODIES_PER_REQUEST: usize = 32;
 
-/// `/{fork}/bodies/hash` request body.
-#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
-pub struct BodiesByHashRequest {
-    pub hashes: SszList<[u8; 32], MAX_BODIES_PER_REQUEST>,
-}
+/// `POST /{fork}/bodies/hash` request body: a bare `List[Hash32, MAX_BODIES_REQUEST]`.
+pub type BlockHashList = SszList<[u8; 32], MAX_BODIES_PER_REQUEST>;
+
+// ── Per-fork ExecutionPayloadBody ─────────────────────────────────────────────
 
 /// Paris body: transactions only.
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
@@ -40,307 +45,111 @@ pub struct BodyAmsterdam {
     pub block_access_list: SszList<u8, MAX_BLOCK_ACCESS_LIST_BYTES>,
 }
 
-// ── `/{fork}/bodies/hash` response wrappers ───────────────────────────────────
+impl BodyParis {
+    /// Zero-valued body for an `available == false` entry (CLs MUST ignore it).
+    pub fn empty() -> Self {
+        BodyParis {
+            transactions: Vec::new().try_into().expect("empty list fits"),
+        }
+    }
+}
+
+impl BodyShanghai {
+    /// Zero-valued body for an `available == false` entry (CLs MUST ignore it).
+    pub fn empty() -> Self {
+        BodyShanghai {
+            transactions: Vec::new().try_into().expect("empty list fits"),
+            withdrawals: Vec::new().try_into().expect("empty list fits"),
+        }
+    }
+}
+
+impl BodyAmsterdam {
+    /// Zero-valued body for an `available == false` entry (CLs MUST ignore it).
+    pub fn empty() -> Self {
+        BodyAmsterdam {
+            transactions: Vec::new().try_into().expect("empty list fits"),
+            withdrawals: Vec::new().try_into().expect("empty list fits"),
+            block_access_list: Vec::new().try_into().expect("empty list fits"),
+        }
+    }
+}
+
+// ── Per-fork BodyEntry { available, body } ────────────────────────────────────
+
+/// Paris bodies response entry.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodyEntryParis {
+    pub available: bool,
+    pub body: BodyParis,
+}
+
+/// Shanghai/Cancun/Prague/Osaka bodies response entry.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodyEntryShanghai {
+    pub available: bool,
+    pub body: BodyShanghai,
+}
+
+/// Amsterdam bodies response entry.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodyEntryAmsterdam {
+    pub available: bool,
+    pub body: BodyAmsterdam,
+}
+
+impl BodyEntryParis {
+    pub fn available(body: BodyParis) -> Self {
+        Self {
+            available: true,
+            body,
+        }
+    }
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            body: BodyParis::empty(),
+        }
+    }
+}
+
+impl BodyEntryShanghai {
+    pub fn available(body: BodyShanghai) -> Self {
+        Self {
+            available: true,
+            body,
+        }
+    }
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            body: BodyShanghai::empty(),
+        }
+    }
+}
+
+impl BodyEntryAmsterdam {
+    pub fn available(body: BodyAmsterdam) -> Self {
+        Self {
+            available: true,
+            body,
+        }
+    }
+    pub fn unavailable() -> Self {
+        Self {
+            available: false,
+            body: BodyAmsterdam::empty(),
+        }
+    }
+}
+
+// ── Response aliases (bare top-level lists, per the CL) ───────────────────────
 //
-// The response is `Vec<Option<Body<fork>>>`. libssz has no blanket
-// `Option<NestedStruct>` impl, so we use the SSZ union encoding manually:
-//
-//   selector = 0x00  → None (no further bytes)
-//   selector = 0x01  → Some, followed by the inner body's SSZ encoding
-//
-// The outer Vec<_> encodes as a standard SSZ list of variable-length elements
-// (4-byte little-endian offsets followed by the concatenated payloads), which
-// `Vec<T: SszEncode>` already handles when T is variable-size.
-//
-// We define one wrapper type per fork (`OptBodyParis`, `OptBodyShanghai`,
-// `OptBodyAmsterdam`) that implements `SszEncode + SszDecode` as a union, and
-// a response struct per fork that holds `Vec<OptBody*>`.
+// Shared by both `POST /{fork}/bodies/hash` and `GET /{fork}/bodies` (range).
 
-// ── OptBodyParis ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OptBodyParis(pub Option<BodyParis>);
-
-impl SszEncode for OptBodyParis {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        match &self.0 {
-            None => 1,
-            Some(b) => 1 + b.encoded_len(),
-        }
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        match &self.0 {
-            None => buf.push(0),
-            Some(b) => {
-                buf.push(1);
-                b.ssz_append(buf);
-            }
-        }
-    }
-}
-
-impl SszDecode for OptBodyParis {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if bytes.is_empty() {
-            return Err(DecodeError::EmptyInput);
-        }
-        match bytes[0] {
-            0 => {
-                if bytes.len() != 1 {
-                    return Err(DecodeError::AdditionalBytes {
-                        expected: 1,
-                        got: bytes.len(),
-                    });
-                }
-                Ok(OptBodyParis(None))
-            }
-            1 => {
-                let body = BodyParis::from_ssz_bytes(&bytes[1..])?;
-                Ok(OptBodyParis(Some(body)))
-            }
-            s => Err(DecodeError::InvalidUnionSelector(s)),
-        }
-    }
-}
-
-// ── OptBodyShanghai ───────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OptBodyShanghai(pub Option<BodyShanghai>);
-
-impl SszEncode for OptBodyShanghai {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        match &self.0 {
-            None => 1,
-            Some(b) => 1 + b.encoded_len(),
-        }
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        match &self.0 {
-            None => buf.push(0),
-            Some(b) => {
-                buf.push(1);
-                b.ssz_append(buf);
-            }
-        }
-    }
-}
-
-impl SszDecode for OptBodyShanghai {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if bytes.is_empty() {
-            return Err(DecodeError::EmptyInput);
-        }
-        match bytes[0] {
-            0 => {
-                if bytes.len() != 1 {
-                    return Err(DecodeError::AdditionalBytes {
-                        expected: 1,
-                        got: bytes.len(),
-                    });
-                }
-                Ok(OptBodyShanghai(None))
-            }
-            1 => {
-                let body = BodyShanghai::from_ssz_bytes(&bytes[1..])?;
-                Ok(OptBodyShanghai(Some(body)))
-            }
-            s => Err(DecodeError::InvalidUnionSelector(s)),
-        }
-    }
-}
-
-// ── OptBodyAmsterdam ──────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OptBodyAmsterdam(pub Option<BodyAmsterdam>);
-
-impl SszEncode for OptBodyAmsterdam {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        match &self.0 {
-            None => 1,
-            Some(b) => 1 + b.encoded_len(),
-        }
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        match &self.0 {
-            None => buf.push(0),
-            Some(b) => {
-                buf.push(1);
-                b.ssz_append(buf);
-            }
-        }
-    }
-}
-
-impl SszDecode for OptBodyAmsterdam {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        if bytes.is_empty() {
-            return Err(DecodeError::EmptyInput);
-        }
-        match bytes[0] {
-            0 => {
-                if bytes.len() != 1 {
-                    return Err(DecodeError::AdditionalBytes {
-                        expected: 1,
-                        got: bytes.len(),
-                    });
-                }
-                Ok(OptBodyAmsterdam(None))
-            }
-            1 => {
-                let body = BodyAmsterdam::from_ssz_bytes(&bytes[1..])?;
-                Ok(OptBodyAmsterdam(Some(body)))
-            }
-            s => Err(DecodeError::InvalidUnionSelector(s)),
-        }
-    }
-}
-
-// ── Response wrapper structs ──────────────────────────────────────────────────
-//
-// Each response wrapper holds a Vec of the per-fork Opt* types. Because
-// `Vec<T: SszEncode>` is already implemented in libssz (variable-size list
-// encoding), we just need to expose `SszEncode` for the wrapper by delegating
-// to the inner Vec.
-
-/// Paris bodies response. Shared by both `POST /{fork}/bodies/hash` and
-/// `GET /{fork}/bodies` (range) — the SSZ wire shape is identical.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BodiesByHashResponseParis {
-    pub bodies: Vec<OptBodyParis>,
-}
-
-impl SszEncode for BodiesByHashResponseParis {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        self.bodies.encoded_len()
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        self.bodies.ssz_append(buf);
-    }
-}
-
-impl SszDecode for BodiesByHashResponseParis {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let bodies = Vec::<OptBodyParis>::from_ssz_bytes(bytes)?;
-        Ok(BodiesByHashResponseParis { bodies })
-    }
-}
-
-/// Shanghai/Cancun/Prague/Osaka bodies response. Shared by both
-/// `POST /{fork}/bodies/hash` and `GET /{fork}/bodies` (range).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BodiesByHashResponseShanghai {
-    pub bodies: Vec<OptBodyShanghai>,
-}
-
-impl SszEncode for BodiesByHashResponseShanghai {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        self.bodies.encoded_len()
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        self.bodies.ssz_append(buf);
-    }
-}
-
-impl SszDecode for BodiesByHashResponseShanghai {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let bodies = Vec::<OptBodyShanghai>::from_ssz_bytes(bytes)?;
-        Ok(BodiesByHashResponseShanghai { bodies })
-    }
-}
-
-/// Amsterdam bodies response. Shared by both `POST /{fork}/bodies/hash` and
-/// `GET /{fork}/bodies` (range).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BodiesByHashResponseAmsterdam {
-    pub bodies: Vec<OptBodyAmsterdam>,
-}
-
-impl SszEncode for BodiesByHashResponseAmsterdam {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn encoded_len(&self) -> usize {
-        self.bodies.encoded_len()
-    }
-    fn ssz_append(&self, buf: &mut Vec<u8>) {
-        self.bodies.ssz_append(buf);
-    }
-}
-
-impl SszDecode for BodiesByHashResponseAmsterdam {
-    fn is_fixed_size() -> bool {
-        false
-    }
-    fn fixed_size() -> usize {
-        0
-    }
-    fn from_ssz_bytes(bytes: &[u8]) -> Result<Self, DecodeError> {
-        let bodies = Vec::<OptBodyAmsterdam>::from_ssz_bytes(bytes)?;
-        Ok(BodiesByHashResponseAmsterdam { bodies })
-    }
-}
+/// Paris bodies response.
+pub type BodiesResponseParis = SszList<BodyEntryParis, MAX_BODIES_PER_REQUEST>;
+/// Shanghai/Cancun/Prague/Osaka bodies response.
+pub type BodiesResponseShanghai = SszList<BodyEntryShanghai, MAX_BODIES_PER_REQUEST>;
+/// Amsterdam bodies response.
+pub type BodiesResponseAmsterdam = SszList<BodyEntryAmsterdam, MAX_BODIES_PER_REQUEST>;

@@ -7,9 +7,11 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
+use ethrex_common::U256;
+use ethrex_common::types::blobs_bundle::BlobsBundle;
 use ethrex_common::types::{Block, Fork};
 use ethrex_rlp::encode::RLPEncode;
-use libssz_types::SszList;
+use libssz_types::{SszList, SszVector};
 
 use crate::engine::payload::{
     handle_new_payload_v1_v2, handle_new_payload_v3, handle_new_payload_v4,
@@ -19,6 +21,11 @@ use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
 use crate::engine_rest::fork_path::{ForkPath, parse_fork_segment};
 use crate::engine_rest::handlers::helpers::check_content_type;
 use crate::engine_rest::responses::SszBody;
+use crate::engine_rest::types::blobs::BYTES_PER_BLOB;
+use crate::engine_rest::types::built_payload::{
+    BlobsBundleV1, BlobsBundleV2, BuiltPayloadAmsterdam, BuiltPayloadCancun, BuiltPayloadOsaka,
+    BuiltPayloadParis, BuiltPayloadPrague, BuiltPayloadShanghai, MAX_BLOB_COMMITMENTS_PER_BLOCK,
+};
 use crate::engine_rest::types::common::{
     Bytes20, PayloadId, PayloadStatus as SszPayloadStatus, PayloadStatusCode,
 };
@@ -177,11 +184,11 @@ where
         PayloadValidationStatus::Syncing => PayloadStatusCode::Syncing as u8,
         PayloadValidationStatus::Accepted => PayloadStatusCode::Accepted as u8,
     };
-    let ssz_status = SszPayloadStatus {
-        status: status_code,
-        latest_valid_hash: internal_status.latest_valid_hash.map(|h| h.0),
-        validation_error: internal_status.validation_error,
-    };
+    let ssz_status = SszPayloadStatus::new(
+        status_code,
+        internal_status.latest_valid_hash.map(|h| h.0),
+        internal_status.validation_error,
+    );
 
     SszBody(ssz_status).into_response()
 }
@@ -217,45 +224,137 @@ pub async fn get_payload(
         }
     };
 
-    // 4. Convert Block → fork-specific SSZ envelope and return.
-    //    Prague+ forks need `requests`; Amsterdam additionally needs the BAL
-    //    raw RLP bytes. Both come from the existing PayloadBuildResult.
+    // 4. Convert Block → fork-specific SSZ `BuiltPayload` (replaces
+    //    engine_getPayloadV1..V6) and return. `block_value`, `blobs_bundle`,
+    //    `requests`, and the stored BAL all come from `PayloadBuildResult`.
+    //    `should_override_builder` is always false (ethrex has no builder).
+    //    The per-fork ExecutionPayload is reused from the envelope builders.
     let block = &result.payload;
-    match fork {
-        Fork::Paris => match paris_envelope_from_block(block) {
-            Ok(env) => SszBody(env).into_response(),
-            Err(p) => p.into_response(),
-        },
-        Fork::Shanghai => match shanghai_envelope_from_block(block) {
-            Ok(env) => SszBody(env).into_response(),
-            Err(p) => p.into_response(),
-        },
-        Fork::Cancun => match cancun_envelope_from_block(block) {
-            Ok(env) => SszBody(env).into_response(),
-            Err(p) => p.into_response(),
-        },
-        Fork::Prague => match prague_envelope_from_block(block, &result.requests) {
-            Ok(env) => SszBody(env).into_response(),
-            Err(p) => p.into_response(),
-        },
-        Fork::Osaka => {
-            // Osaka envelope is structurally identical to Prague.
-            match prague_envelope_from_block(block, &result.requests) {
-                Ok(env) => SszBody(env).into_response(),
-                Err(p) => p.into_response(),
-            }
-        }
-        Fork::Amsterdam => match amsterdam_envelope_from_block(
-            block,
-            &result.requests,
-            result.block_access_list.as_ref(),
-        ) {
-            Ok(env) => SszBody(env).into_response(),
-            Err(p) => p.into_response(),
-        },
+    let block_value = u256_to_le_bytes(result.block_value);
+    let built: Result<Response, ProblemJson> = match fork {
+        Fork::Paris => paris_envelope_from_block(block).map(|env| {
+            SszBody(BuiltPayloadParis {
+                payload: env.execution_payload,
+                block_value,
+            })
+            .into_response()
+        }),
+        Fork::Shanghai => shanghai_envelope_from_block(block).map(|env| {
+            SszBody(BuiltPayloadShanghai {
+                payload: env.execution_payload,
+                block_value,
+            })
+            .into_response()
+        }),
+        Fork::Cancun => (|| -> Result<Response, ProblemJson> {
+            let payload = cancun_envelope_from_block(block)?.execution_payload;
+            Ok(SszBody(BuiltPayloadCancun {
+                payload,
+                block_value,
+                blobs_bundle: blobs_bundle_v1(&result.blobs_bundle)?,
+                should_override_builder: false,
+            })
+            .into_response())
+        })(),
+        Fork::Prague => (|| -> Result<Response, ProblemJson> {
+            Ok(SszBody(BuiltPayloadPrague {
+                payload: prague_payload_from_block(block)?,
+                block_value,
+                blobs_bundle: blobs_bundle_v1(&result.blobs_bundle)?,
+                execution_requests: ssz_execution_requests(&result.requests)?,
+                should_override_builder: false,
+            })
+            .into_response())
+        })(),
+        Fork::Osaka => (|| -> Result<Response, ProblemJson> {
+            // Osaka payload is structurally identical to Prague; the difference
+            // is the cell-proof BlobsBundleV2.
+            Ok(SszBody(BuiltPayloadOsaka {
+                payload: prague_payload_from_block(block)?,
+                block_value,
+                blobs_bundle: blobs_bundle_v2(&result.blobs_bundle)?,
+                execution_requests: ssz_execution_requests(&result.requests)?,
+                should_override_builder: false,
+            })
+            .into_response())
+        })(),
+        Fork::Amsterdam => (|| -> Result<Response, ProblemJson> {
+            let payload = amsterdam_envelope_from_block(
+                block,
+                &result.requests,
+                result.block_access_list.as_ref(),
+            )?
+            .execution_payload;
+            Ok(SszBody(BuiltPayloadAmsterdam {
+                payload,
+                block_value,
+                blobs_bundle: blobs_bundle_v2(&result.blobs_bundle)?,
+                execution_requests: ssz_execution_requests(&result.requests)?,
+                should_override_builder: false,
+            })
+            .into_response())
+        })(),
         // Unreachable: parse_fork_segment already validated the fork.
         _ => unreachable!("fork path validation ensures only spec forks reach here"),
+    };
+    match built {
+        Ok(r) => r,
+        Err(p) => p.into_response(),
     }
+}
+
+// ── BlobsBundle + block_value conversions ─────────────────────────────────────
+
+/// SSZ `uint256` is 32-byte little-endian.
+fn u256_to_le_bytes(v: U256) -> [u8; 32] {
+    v.to_little_endian()
+}
+
+/// Map the internal blobs (`Vec<[u8; BYTES_PER_BLOB]>`) into the SSZ blob list
+/// shared by both bundle revisions.
+fn ssz_blobs(
+    blobs: &[[u8; BYTES_PER_BLOB]],
+) -> Result<SszList<SszVector<u8, BYTES_PER_BLOB>, MAX_BLOB_COMMITMENTS_PER_BLOCK>, ProblemJson> {
+    let v: Result<Vec<SszVector<u8, BYTES_PER_BLOB>>, ProblemJson> = blobs
+        .iter()
+        .map(|blob| {
+            blob.to_vec()
+                .try_into()
+                .map_err(|_| ProblemJson::internal("blob is not BYTES_PER_BLOB"))
+        })
+        .collect();
+    v?.try_into()
+        .map_err(|_| ProblemJson::internal("blobs exceed MAX_BLOB_COMMITMENTS_PER_BLOCK"))
+}
+
+/// `BlobsBundleV1` — one whole-blob proof per blob (Cancun/Prague).
+fn blobs_bundle_v1(b: &BlobsBundle) -> Result<BlobsBundleV1, ProblemJson> {
+    Ok(BlobsBundleV1 {
+        commitments: b.commitments.clone().try_into().map_err(|_| {
+            ProblemJson::internal("commitments exceed MAX_BLOB_COMMITMENTS_PER_BLOCK")
+        })?,
+        proofs: b
+            .proofs
+            .clone()
+            .try_into()
+            .map_err(|_| ProblemJson::internal("proofs exceed MAX_BLOB_COMMITMENTS_PER_BLOCK"))?,
+        blobs: ssz_blobs(&b.blobs)?,
+    })
+}
+
+/// `BlobsBundleV2` — cell proofs (Osaka/Amsterdam).
+fn blobs_bundle_v2(b: &BlobsBundle) -> Result<BlobsBundleV2, ProblemJson> {
+    Ok(BlobsBundleV2 {
+        commitments: b.commitments.clone().try_into().map_err(|_| {
+            ProblemJson::internal("commitments exceed MAX_BLOB_COMMITMENTS_PER_BLOCK")
+        })?,
+        proofs: b
+            .proofs
+            .clone()
+            .try_into()
+            .map_err(|_| ProblemJson::internal("cell proofs exceed MAX_CELL_PROOFS"))?,
+        blobs: ssz_blobs(&b.blobs)?,
+    })
 }
 
 // ── Block → SSZ envelope conversions ─────────────────────────────────────────
@@ -512,18 +611,6 @@ fn ssz_execution_requests(
     inner?
         .try_into()
         .map_err(|_| ProblemJson::internal("execution_requests list overflow"))
-}
-
-fn prague_envelope_from_block(
-    block: &Block,
-    requests: &[ethrex_common::types::requests::EncodedRequests],
-) -> Result<prague::ExecutionPayloadEnvelope, ProblemJson> {
-    let h = &block.header;
-    Ok(prague::ExecutionPayloadEnvelope {
-        execution_payload: prague_payload_from_block(block)?,
-        parent_beacon_block_root: h.parent_beacon_block_root.unwrap_or_default().0,
-        execution_requests: ssz_execution_requests(requests)?,
-    })
 }
 
 fn amsterdam_envelope_from_block(
