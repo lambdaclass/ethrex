@@ -373,6 +373,10 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // Block-invariant EVM config + chain id, computed once and reused by every tx
+        // (avoids a per-tx chain-config dyn-dispatch copy + fork/blob-schedule recompute).
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
 
         // EIP-7928 BlockAccessIndex invariant — see `execute_block` for rationale.
         debug_assert!(
@@ -644,6 +648,8 @@ impl LEVM {
                 &mut shared_stack_pool,
                 false,
                 crypto,
+                evm_config,
+                chain_id,
             )?;
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
@@ -991,6 +997,10 @@ impl LEVM {
         // invariant checkable rather than implicit.
         let chain_config = store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(header.timestamp);
+        // Block-invariant EVM config + chain id, computed once and shared across the
+        // parallel workers (both are `Copy` + `Send`/`Sync`).
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let chain_id = chain_config.chain_id;
         debug_assert!(
             is_amsterdam,
             "execute_block_parallel invoked on non-Amsterdam block"
@@ -1112,6 +1122,8 @@ impl LEVM {
                     &mut stack_pool,
                     false,
                     crypto,
+                    evm_config,
+                    chain_id,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -2044,6 +2056,12 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
+        // Block-invariant EVM config + chain id, computed once and shared (by copy)
+        // across the parallel warming workers.
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+
         // Parallel across sender groups, sequential within each group
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
@@ -2065,6 +2083,8 @@ impl LEVM {
                         stack_pool,
                         true,
                         crypto,
+                        evm_config,
+                        chain_id,
                     );
                 }
             },
@@ -2177,7 +2197,32 @@ impl LEVM {
         db: &GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<Environment, EvmError> {
+        // `chain_config` (a dyn-dispatch copy) and `EVMConfig`/fork/blob-schedule are
+        // block-invariant; in a block loop, compute them once and use
+        // `setup_env_with_config` instead. This single-tx entry point computes them here.
         let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        Self::setup_env_with_config(
+            tx,
+            tx_sender,
+            block_header,
+            config,
+            chain_config.chain_id,
+            vm_type,
+        )
+    }
+
+    /// Per-tx `Environment` builder that takes the block-invariant `EVMConfig` and
+    /// `chain_id` precomputed once per block, avoiding a per-tx `get_chain_config()`
+    /// dyn-dispatch `ChainConfig` copy + `fork`/blob-schedule recompute.
+    fn setup_env_with_config(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        config: EVMConfig,
+        chain_id: u64,
+        vm_type: VMType,
+    ) -> Result<Environment, EvmError> {
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
@@ -2185,7 +2230,6 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
@@ -2198,7 +2242,7 @@ impl LEVM {
                 .slot_number
                 .map(U256::from)
                 .unwrap_or(U256::zero()),
-            chain_id: chain_config.chain_id.into(),
+            chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
@@ -2237,7 +2281,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool
+    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
@@ -2251,8 +2296,11 @@ impl LEVM {
         stack_pool: &mut Vec<Stack>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
+        config: EVMConfig,
+        chain_id: u64,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env =
+            Self::setup_env_with_config(tx, tx_sender, block_header, config, chain_id, vm_type)?;
         env.disable_balance_check = disable_balance_check;
         let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
 
