@@ -425,6 +425,11 @@ fn validate_attributes_v3(
             "Attribute parent_beacon_block_root is null".to_string(),
         ));
     }
+    if chain_config.is_amsterdam_activated(attributes.timestamp) {
+        return Err(RpcErr::UnsupportedFork(
+            "forkChoiceV3 used to build Amsterdam payload".to_string(),
+        ));
+    }
     if !chain_config.is_cancun_activated(attributes.timestamp) {
         return Err(RpcErr::UnsupportedFork(
             "forkChoiceV3 used to build pre-Cancun payload".to_string(),
