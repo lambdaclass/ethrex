@@ -106,8 +106,6 @@ impl<T: std::fmt::Debug> std::fmt::Debug for OnceCell<T> {
 impl<T> From<T> for OnceCell<T> {
     #[inline]
     fn from(value: T) -> Self {
-        OnceCell {
-            0: core::cell::UnsafeCell::new(Some(value)),
-        }
+        OnceCell(core::cell::UnsafeCell::new(Some(value)))
     }
 }
