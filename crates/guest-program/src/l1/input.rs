@@ -1,3 +1,8 @@
+//! `ProgramInput` is a `struct` without the `eip-8025` feature and an `enum`
+//! with it. The `new(...)` constructor and `Default` exist under both, but
+//! pattern-matching on `Wire(...)`/`Direct { .. }` only compiles when
+//! `eip-8025` is on.
+
 use ethrex_common::types::Block;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 

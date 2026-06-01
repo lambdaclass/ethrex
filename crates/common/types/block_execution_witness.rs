@@ -257,7 +257,7 @@ pub fn validate_witness_headers_chain(
 ) -> Result<(), GuestProgramStateError> {
     for pair in headers.windows(2) {
         let (prev, next) = (&pair[0], &pair[1]);
-        if next.number != prev.number.saturating_add(1)
+        if prev.number.checked_add(1) != Some(next.number)
             || next.parent_hash != prev.compute_block_hash(crypto)
         {
             return Err(GuestProgramStateError::NoncontiguousBlockHeaders);

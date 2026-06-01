@@ -63,10 +63,17 @@ impl OpcodeHandler for OpCallHandler {
         )?;
 
         vm.substate.add_accessed_address(callee);
-        let address_is_empty = vm.db.get_account(callee)?.is_empty();
+        // `address_is_empty` only feeds gates that also require `value != 0`,
+        // so skip the read entirely when value is zero (matches EELS' gating
+        // of `is_account_alive` on `value != 0`).
+        let address_is_empty = if value.is_zero() {
+            false
+        } else {
+            vm.db.get_account(callee)?.is_empty()
+        };
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, callee)?;
-        let create_cost = if address_is_empty && !value.is_zero() {
+        let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
             0
@@ -108,7 +115,7 @@ impl OpcodeHandler for OpCallHandler {
         // but charge state gas AFTER regular gas per EIPs#11421.
         // Regular gas OOG must not consume state gas that would inflate the parent's
         // reservoir on frame failure.
-        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
+        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty;
         let gas_left = if needs_state_gas {
             let state_gas_new_account = vm.state_gas_new_account;
             let from_reservoir = vm.state_gas_reservoir.min(state_gas_new_account);
