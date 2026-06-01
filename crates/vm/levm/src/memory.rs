@@ -145,6 +145,38 @@ impl Memory {
         }
     }
 
+    /// Borrow `size` bytes from the given offset and pass them to `f`, without
+    /// allocating a `Bytes` copy of the range.
+    ///
+    /// `load_range` reads through `self.buffer.borrow()`, whose `Ref` guard cannot
+    /// outlive this call — so a `-> &[u8]` accessor can't be written. Callers that
+    /// only need to read the range (e.g. hashing) take the borrow via this closure
+    /// instead. Semantics match `load_range` exactly, including zero-padding reads
+    /// past the current length (handled by `resize`).
+    #[inline]
+    pub fn with_range<R>(
+        &mut self,
+        offset: usize,
+        size: usize,
+        f: impl FnOnce(&[u8]) -> R,
+    ) -> Result<R, VMError> {
+        if size == 0 {
+            return Ok(f(&[]));
+        }
+
+        let new_size = offset.checked_add(size).ok_or(OutOfBounds)?;
+        self.resize(new_size)?;
+
+        let true_offset = offset.wrapping_add(self.current_base);
+
+        let buf = self.buffer.borrow();
+
+        // SAFETY: resize already makes sure bounds are correct.
+        #[allow(unsafe_code)]
+        let range = unsafe { buf.get_unchecked(true_offset..(true_offset.wrapping_add(size))) };
+        Ok(f(range))
+    }
+
     /// Load N bytes from the given offset.
     #[inline(always)]
     pub fn load_range_const<const N: usize>(&mut self, offset: usize) -> Result<[u8; N], VMError> {

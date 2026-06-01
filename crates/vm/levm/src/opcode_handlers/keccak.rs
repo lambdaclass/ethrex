@@ -27,11 +27,19 @@ impl OpcodeHandler for OpKeccak256Handler {
                 len,
             )?)?;
 
+        // Hash the memory range in place — `with_range` lends a borrow to keccak256
+        // instead of allocating a throwaway `Bytes` copy (KECCAK256 fires ~15x/tx).
+        // Bind `crypto` first so the closure doesn't capture `vm` while `memory` is
+        // borrowed mutably.
+        let crypto = vm.crypto;
+        let hash = vm
+            .current_call_frame
+            .memory
+            .with_range(offset, len, |bytes| crypto.keccak256(bytes))?;
+
         vm.current_call_frame
             .stack
-            .push(u256_from_big_endian(&vm.crypto.keccak256(
-                &vm.current_call_frame.memory.load_range(offset, len)?,
-            )))?;
+            .push(u256_from_big_endian(&hash))?;
 
         Ok(OpcodeResult::Continue)
     }
