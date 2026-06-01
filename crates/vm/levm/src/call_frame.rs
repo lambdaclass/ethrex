@@ -473,6 +473,17 @@ impl<'a> VM<'a> {
         restore_cache_state(self.db, callframe_backup)
     }
 
+    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out
+    /// instead of cloning it. Only sound when the frame is about to be discarded and
+    /// nothing reads `call_frame_backup` afterward — i.e. the inner-call revert in
+    /// `handle_return`, where the frame is popped right after and its backup is dead.
+    /// (The top-level/error paths must keep cloning: `BackupHook::finalize` reads the
+    /// backup to build the tx-level undo snapshot.)
+    pub fn restore_cache_state_consuming(&mut self) -> Result<(), VMError> {
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
+        restore_cache_state(self.db, callframe_backup)
+    }
+
     // The CallFrameBackup of the current callframe has to be merged with the backup of its parent, in the following way:
     //   - For every account that's present in the parent backup, do nothing (i.e. keep the one that's already there).
     //   - For every account that's NOT present in the parent backup but is on the child backup, add the child backup to it.

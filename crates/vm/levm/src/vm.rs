@@ -1039,7 +1039,9 @@ impl<'a> VM<'a> {
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
-                self.handle_state_backup(&result)?;
+                // Keep the backup (clone): `BackupHook::finalize` reads it to build the
+                // tx-level undo snapshot after we return.
+                self.handle_state_backup(&result, false)?;
                 return Ok(result);
             }
 
