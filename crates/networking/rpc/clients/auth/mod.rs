@@ -159,6 +159,9 @@ impl EngineClient {
             payload: execution_payload,
             expected_blob_versioned_hashes,
             parent_beacon_block_root,
+            // The dev producer does not synthesize deposits/withdrawals/consolidations,
+            // so blocks driven through this client carry no execution requests; this
+            // matches the V4 path and is not suitable for deposit-bearing Amsterdam tests.
             execution_requests: vec![],
             raw_bal_hash: None,
         }

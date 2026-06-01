@@ -99,7 +99,13 @@ pub async fn start_block_producer(
 
         // Amsterdam+ payloads carry a Block Access List and MUST use newPayloadV5;
         // earlier forks use V4, which rejects the BAL field.
-        let new_payload_result = if execution_payload.block_access_list.is_some() {
+        let is_amsterdam = execution_payload.block_access_list.is_some();
+        let endpoint = if is_amsterdam {
+            "engine_newPayloadV5"
+        } else {
+            "engine_newPayloadV4"
+        };
+        let new_payload_result = if is_amsterdam {
             engine_client
                 .engine_new_payload_v5(
                     execution_payload,
@@ -118,13 +124,11 @@ pub async fn start_block_producer(
         };
         let payload_status = match new_payload_result {
             Ok(response) => {
-                tracing::debug!("engine_newPayload response: {response:?}");
+                tracing::debug!("{endpoint} response: {response:?}");
                 response
             }
             Err(error) => {
-                tracing::error!(
-                    "Failed to produce block: error sending engine_newPayload: {error}"
-                );
+                tracing::error!("Failed to produce block: error sending {endpoint}: {error}");
                 sleep(Duration::from_millis(300)).await;
                 tries += 1;
                 continue;
