@@ -81,7 +81,10 @@ async fn l1_rejects_privileged_l2_transaction_block() {
     // Round-trip through the canonical decoder, exactly as L1 block import does.
     let decoded_tx = Transaction::decode_canonical(&tx.encode_canonical_to_vec())
         .expect("decode canonical type-0x7e transaction");
-    assert!(matches!(decoded_tx, Transaction::PrivilegedL2Transaction(_)));
+    assert!(matches!(
+        decoded_tx,
+        Transaction::PrivilegedL2Transaction(_)
+    ));
 
     let body = BlockBody {
         transactions: vec![decoded_tx],
