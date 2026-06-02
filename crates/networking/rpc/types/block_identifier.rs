@@ -197,6 +197,14 @@ impl Default for BlockIdentifier {
     }
 }
 
+impl Default for BlockIdentifierOrHash {
+    /// Defaults to the latest block, used when an optional block parameter is
+    /// omitted from a request (per execution-apis: default 'latest').
+    fn default() -> BlockIdentifierOrHash {
+        BlockIdentifierOrHash::Identifier(BlockIdentifier::default())
+    }
+}
+
 impl Display for BlockIdentifierOrHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
