@@ -4,7 +4,6 @@ use crate::initializers::{
     get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network,
     init_store_with_config,
 };
-use ethrex_storage::StoreConfig;
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
     NodeConfigFile, get_client_version, get_client_version_string, init_datadir,
@@ -25,7 +24,7 @@ use ethrex_p2p::{
     types::{Node, NodeRecord},
 };
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
-use ethrex_storage::Store;
+use ethrex_storage::{Store, StoreConfig};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
