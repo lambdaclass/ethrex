@@ -1,7 +1,7 @@
 use ethrex_blockchain::mempool::Mempool;
 use ethrex_common::{
     H256,
-    types::{BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB},
+    types::{BYTES_PER_BLOB, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB},
 };
 
 // Convenience: build a fake cell of a recognizable pattern.
@@ -241,5 +241,59 @@ fn provider_announcer_count_two_provider_gate() {
     assert!(
         mp.provider_announcer_count(tx).unwrap() >= MIN_PROVIDERS_BEFORE_SAMPLING,
         "should reach gate after 2 announcers"
+    );
+}
+
+// ── available_cell_mask (D2) ──────────────────────────────────────────────────
+
+#[test]
+fn available_cell_mask_returns_all_ones_for_full_bundle() {
+    let mp = Mempool::new(64);
+    let tx_hash = h(30);
+    // Store a bundle with non-empty blobs.
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]; CELLS_PER_EXT_BLOB],
+        version: 0,
+    };
+    mp.add_blobs_bundle(tx_hash, bundle).unwrap();
+
+    assert_eq!(
+        mp.available_cell_mask(tx_hash),
+        u128::MAX,
+        "full bundle must report u128::MAX availability"
+    );
+}
+
+#[test]
+fn available_cell_mask_returns_sampled_mask_for_elided_bundle() {
+    let mp = Mempool::new(64);
+    let tx_hash = h(31);
+    // Store an elided bundle (no blobs, only commitments and proofs).
+    let bundle = BlobsBundle {
+        blobs: vec![],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]; CELLS_PER_EXT_BLOB],
+        version: 0,
+    };
+    mp.add_blobs_bundle(tx_hash, bundle).unwrap();
+
+    // Store cells for columns 0 and 1 only.
+    mp.store_cells(tx_hash, 1, vec![(0, 0, cell(0xAA)), (0, 1, cell(0xBB))])
+        .unwrap();
+
+    let mask = mp.available_cell_mask(tx_hash);
+    assert_eq!(mask & 0b11, 0b11, "columns 0 and 1 must be set");
+    assert_eq!(mask >> 2, 0, "no other columns should be set");
+}
+
+#[test]
+fn available_cell_mask_returns_zero_for_unknown_hash() {
+    let mp = Mempool::new(64);
+    assert_eq!(
+        mp.available_cell_mask(h(99)),
+        0,
+        "unknown hash must report 0"
     );
 }

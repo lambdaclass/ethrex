@@ -5,6 +5,7 @@ use crate::rlpx::l2::{
         self, L2Cast, L2ConnState, handle_based_capability_message, handle_l2_broadcast,
     },
 };
+use crate::utils::{node_id, public_key_from_signing_key};
 use crate::{
     backend,
     metrics::METRICS,
@@ -1587,6 +1588,11 @@ async fn handle_incoming_message(
                             }
                         };
 
+                        // Compute the local node id once per announcement (D1: per-node entropy).
+                        let local_pubkey = public_key_from_signing_key(&state.signer);
+                        let local_node_id = node_id(&local_pubkey);
+                        let eager = state.blockchain.mempool.eager_provider;
+
                         let mut provider_hashes: Vec<H256> = Vec::new();
                         let mut sampler_hashes: Vec<H256> = Vec::new();
 
@@ -1601,7 +1607,13 @@ async fn handle_incoming_message(
                                     .zip(announcement.transaction_hashes.iter())
                                     .any(|(&ty, &h)| h == hash && ty == 3);
 
-                            if !is_blob || is_provider_role(hash, epoch_seed, false) {
+                            // D4: provider path only when is_provider_role AND peer advertised
+                            // full availability (all-ones mask). Otherwise sampler path.
+                            let peer_is_full_provider = announcement.cell_mask == Some(u128::MAX);
+                            if !is_blob
+                                || (peer_is_full_provider
+                                    && is_provider_role(local_node_id, hash, epoch_seed, eager))
+                            {
                                 provider_hashes.push(hash);
                             } else {
                                 sampler_hashes.push(hash);
@@ -1626,15 +1638,43 @@ async fn handle_incoming_message(
                         // Sampler hashes: record the announcing peer as a provider
                         // ONLY if it signaled full availability (all-ones mask);
                         // a partially-available peer is not a provider observation.
-                        // Then issue a tx-only request below.
+                        // D6b: if recording this provider hits the threshold and we already
+                        // have the tx body, retrigger cell-fetch immediately rather than
+                        // waiting for the tx-body response path.
                         if announcement.cell_mask == Some(u128::MAX) {
+                            let mempool = &state.blockchain.mempool;
                             for &hash in &sampler_hashes {
-                                if let Err(e) = state
-                                    .blockchain
-                                    .mempool
+                                let count = match mempool
                                     .record_provider_announcement(hash, peer_id)
                                 {
-                                    warn!(error = %e, "record_provider_announcement failed");
+                                    Ok(n) => n,
+                                    Err(e) => {
+                                        warn!(error = %e, "record_provider_announcement failed");
+                                        continue;
+                                    }
+                                };
+                                // D6b retrigger: threshold just reached and tx body already known.
+                                if count
+                                    == ethrex_blockchain::mempool::MIN_PROVIDERS_BEFORE_SAMPLING
+                                    && mempool.contains_tx(hash).unwrap_or(false)
+                                {
+                                    let custody = match mempool.get_custody_columns() {
+                                        Ok(c) => c,
+                                        Err(e) => {
+                                            warn!(error = %e, "get_custody_columns failed (D6b)");
+                                            continue;
+                                        }
+                                    };
+                                    // D6a: only add C_extra when this peer is a provider.
+                                    let mut target = custody;
+                                    if let Some(extra_col) = pick_random_extra_column(custody, hash)
+                                    {
+                                        target |= 1u128 << extra_col;
+                                    }
+                                    let fetch_mask = target & u128::MAX; // peer is full provider
+                                    if fetch_mask != 0 {
+                                        state.pending_cell_requests.push((vec![hash], fetch_mask));
+                                    }
                                 }
                             }
                         }
@@ -1865,18 +1905,20 @@ async fn handle_incoming_message(
                                             continue;
                                         }
                                     };
-                                    let mut target = custody;
-                                    if let Some(extra_col) =
-                                        pick_random_extra_column(custody, tx_hash)
-                                    {
-                                        target |= 1u128 << extra_col;
-                                    }
-                                    // Intersect with what this peer claims to have.
-                                    let available = mempool
+                                    // D6a: C_extra is only added when the target peer
+                                    // is a provider (advertised full availability).
+                                    let peer_mask = mempool
                                         .peer_cell_mask(peer_id)
                                         .unwrap_or(None)
                                         .unwrap_or(u128::MAX);
-                                    let fetch_mask = target & available;
+                                    let mut target = custody;
+                                    if peer_mask == u128::MAX
+                                        && let Some(extra_col) =
+                                            pick_random_extra_column(custody, tx_hash)
+                                    {
+                                        target |= 1u128 << extra_col;
+                                    }
+                                    let fetch_mask = target & peer_mask;
                                     if fetch_mask != 0 {
                                         state
                                             .pending_cell_requests

@@ -107,11 +107,24 @@ impl NewPooledTransactionHashes72 {
             transaction_sizes.push(transaction_size);
         }
 
-        // cell_mask MUST be nil when no type-3 tx is announced.
-        // TODO(FU-2): when sampling is enabled and we hold custody cells,
-        // advertise our actual custody mask here instead of 0 so sampler peers
-        // will request cells from us (currently they compute missing & 0 = 0).
-        let cell_mask = has_blob_tx.then_some(0u128);
+        // cell_mask MUST be nil when no type-3 tx is announced (EIP-8070 N1).
+        // When blob txs are present, compute the AND of available_cell_mask over
+        // every type-3 hash: this is the set of columns available for ALL of them,
+        // so receivers know we can serve every requested column for the whole batch.
+        // u128::MAX is advertised when we hold the full blob payload (all 128
+        // columns derivable); otherwise the sampled-cells mask is used.
+        let cell_mask = if has_blob_tx {
+            let mask = transaction_hashes
+                .iter()
+                .zip(transaction_types.iter())
+                .filter(|&(_, &ty)| ty == 3)
+                .fold(u128::MAX, |acc, (hash, _)| {
+                    acc & blockchain.mempool.available_cell_mask(*hash)
+                });
+            Some(mask)
+        } else {
+            None
+        };
 
         Ok(Self {
             transaction_types: transaction_types.into(),
@@ -150,12 +163,19 @@ impl NewPooledTransactionHashes72 {
     }
 
     /// Convert from a v71 announcement (no cell_mask).
+    ///
+    /// No `Blockchain` handle is available here, so we cannot look up
+    /// `available_cell_mask`. We conservatively advertise 0 for blob txs
+    /// (signaling no cells held) rather than u128::MAX. This is safe: sampler
+    /// peers will simply not request cells from us for this announcement.
+    /// Callers with access to the blockchain should prefer `new()` instead.
     pub fn from_v71(
         transaction_types: Bytes,
         transaction_sizes: Vec<usize>,
         transaction_hashes: Vec<H256>,
     ) -> Self {
         let has_blob_tx = transaction_types.contains(&3);
+        // Conservative: no blockchain handle → advertise 0 (no cells available).
         let cell_mask = has_blob_tx.then_some(0u128);
         Self {
             transaction_types,

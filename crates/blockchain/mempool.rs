@@ -324,6 +324,11 @@ pub struct Mempool {
     /// When true, the EIP-8070 sampler/provider state machine is active.
     /// When false (default), the node always acts as provider (p=1.0).
     pub blob_sampling_enabled: bool,
+    /// When true, this node always acts as provider (p=1.0) for every blob tx
+    /// regardless of the pseudo-random role decision. Block builders SHOULD
+    /// enable this (EIP-8070 N8) to ensure full blob availability. Enabled via
+    /// `--blob-eager-provider` CLI flag.
+    pub eager_provider: bool,
     /// Monotonic counter bumped whenever `custody_columns` changes value (via
     /// the Engine API FCU v4). The p2p sweep compares it against its last-seen
     /// value to re-sample pending blob txs for newly-custodied columns.
@@ -343,6 +348,7 @@ impl Mempool {
             tx_added: tokio::sync::Notify::new(),
             tx_seq: AtomicU64::new(0),
             blob_sampling_enabled: false,
+            eager_provider: false,
             custody_generation: AtomicU64::new(0),
         }
     }
@@ -362,6 +368,16 @@ impl Mempool {
             inner.max_blob_mempool_size = max_blob_mempool_size;
         }
         self
+    }
+
+    /// Create a mempool with blob sampling enabled and eager-provider mode on.
+    /// Block builders should use this so they always act as providers (EIP-8070 N8).
+    pub fn new_with_eager_provider(max_mempool_size: usize) -> Self {
+        Mempool {
+            blob_sampling_enabled: true,
+            eager_provider: true,
+            ..Self::new(max_mempool_size)
+        }
     }
 
     pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
@@ -950,6 +966,32 @@ impl Mempool {
             .get(&tx_hash)
             .map(|tc| tc.mask())
             .unwrap_or(0))
+    }
+
+    /// Return the set of columns available for `tx_hash` when building outbound
+    /// announcements or serving GetCells requests.
+    ///
+    /// Returns `u128::MAX` when the stored `BlobsBundle` for this hash contains
+    /// non-empty blobs (full payload — all 128 columns are derivable on demand).
+    /// Otherwise returns the columns for which verified cells are already held
+    /// (`TxCells::mask()`). Returns `0` when the hash is unknown.
+    ///
+    /// This is used by D2 (outbound cell_mask = real availability) and
+    /// GetCells::handle (serve cells from full bundle when TxCells absent).
+    pub fn available_cell_mask(&self, tx_hash: H256) -> u128 {
+        let Ok(inner) = self.read() else {
+            return 0;
+        };
+        // Full payload: all 128 columns are derivable via cells_for_columns.
+        if inner
+            .blobs_bundle_pool
+            .get(&tx_hash)
+            .is_some_and(|b| !b.blobs.is_empty())
+        {
+            return u128::MAX;
+        }
+        // Sampled cells only.
+        inner.cells.get(&tx_hash).map(|tc| tc.mask()).unwrap_or(0)
     }
 
     /// Return the bitmask of custody columns for which we are still missing cells.

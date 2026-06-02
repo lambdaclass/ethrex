@@ -199,20 +199,58 @@ impl GetCells {
     /// permits truncation), keeping it consistent with the packed cells so the
     /// receiver can reconstruct column indices unambiguously.
     ///
+    /// `available_cell_mask` is used to compute the served intersection: when a
+    /// tx has a full blob payload (blobs non-empty), all 128 columns are available
+    /// and we compute cells on demand via `cells_for_columns`. When only sampled
+    /// cells are held, the TxCells mask is used.
+    ///
     /// Consequence of the uniform mask: if ANY requested hash is unknown (or we
     /// hold no cells for it), the intersection collapses and we serve zero cells
     /// for the whole batch. This is a protocol-level limitation of the single
     /// per-message `cell_mask`, not a bug; callers should request hashes they
     /// expect us to hold together. See OQ-2 in the plan.
     pub fn handle(&self, mempool: &Mempool) -> Cells {
+        // D2c: use available_cell_mask (real availability) for the intersection,
+        // so a full-payload provider with u128::MAX availability actually serves
+        // all requested columns.
         let mut served = self.cell_mask;
         for &tx_hash in &self.transaction_hashes {
-            served &= mempool.get_cells_mask(tx_hash).unwrap_or(0);
+            served &= mempool.available_cell_mask(tx_hash);
         }
         let mut all_cells: Vec<Vec<Cell>> = Vec::with_capacity(self.transaction_hashes.len());
         for &tx_hash in &self.transaction_hashes {
-            all_cells.push(mempool.get_tx_cells_for_mask(tx_hash, served));
+            let cells = get_cells_for_tx(mempool, tx_hash, served);
+            all_cells.push(cells);
         }
         Cells::new(self.id, self.transaction_hashes.clone(), all_cells, served)
     }
+}
+
+/// Retrieve cells for `tx_hash` and the given `served_mask`.
+///
+/// When the tx has a full blob payload (non-empty blobs), compute cells from
+/// the bundle on demand (requires `c-kzg`). Otherwise fall back to the stored
+/// sampled cells.
+fn get_cells_for_tx(mempool: &Mempool, tx_hash: H256, served_mask: u128) -> Vec<Cell> {
+    if served_mask == 0 {
+        return Vec::new();
+    }
+    // Try to serve from full blob payload (c-kzg only).
+    #[cfg(feature = "c-kzg")]
+    if let Some(bundle) = mempool.get_blobs_bundle(tx_hash).unwrap_or(None)
+        && !bundle.blobs.is_empty()
+        && let Ok(blob_cells) = bundle.cells_for_columns(served_mask)
+    {
+        // cells_for_columns returns one Vec per blob; flatten blob-major.
+        let col_count = served_mask.count_ones() as usize;
+        let mut result = Vec::with_capacity(blob_cells.len() * col_count);
+        for blob_col_cells in &blob_cells {
+            for cell in blob_col_cells {
+                result.push(*cell);
+            }
+        }
+        return result;
+    }
+    // Fall back to stored sampled cells.
+    mempool.get_tx_cells_for_mask(tx_hash, served_mask)
 }

@@ -5,11 +5,19 @@ use ethrex_common::H256;
 
 #[test]
 fn provider_role_is_roughly_15_pct() {
-    // Sample 10 000 hashes; expect 13-17% providers.
+    // Sample 10 000 hashes with a fixed local node id; expect 13-17% providers.
+    let local_node_id = H256::from_low_u64_be(0xdeadbeef);
     let epoch_seed = 42u64;
     let total: usize = 10_000;
     let providers = (0..total)
-        .filter(|&i| is_provider_role(H256::from_low_u64_be(i as u64), epoch_seed, false))
+        .filter(|&i| {
+            is_provider_role(
+                local_node_id,
+                H256::from_low_u64_be(i as u64),
+                epoch_seed,
+                false,
+            )
+        })
         .count();
     let pct = providers * 100 / total;
     assert!(
@@ -21,12 +29,40 @@ fn provider_role_is_roughly_15_pct() {
 #[test]
 fn eager_true_always_provider() {
     // eager=true must return true regardless of tx_hash or epoch_seed.
+    let local_node_id = H256::from_low_u64_be(0xabcd);
     for i in 0u64..20 {
         assert!(
-            is_provider_role(H256::from_low_u64_be(i), i, true),
+            is_provider_role(local_node_id, H256::from_low_u64_be(i), i, true),
             "eager=true must always be provider (i={i})"
         );
     }
+}
+
+// ── D1: per-node entropy (different local ids give different decisions) ────────
+
+#[test]
+fn different_local_node_ids_give_different_decisions() {
+    // Two distinct local node ids must not produce identical provider/sampler
+    // decisions for ALL tx hashes (that would mean the local id is ignored).
+    let node_a = H256::from_low_u64_be(0x1111_1111);
+    let node_b = H256::from_low_u64_be(0x2222_2222);
+    let epoch_seed = 7u64;
+    let total = 200usize;
+
+    let mut differ = false;
+    for i in 0..total {
+        let tx = H256::from_low_u64_be(i as u64);
+        let a = is_provider_role(node_a, tx, epoch_seed, false);
+        let b = is_provider_role(node_b, tx, epoch_seed, false);
+        if a != b {
+            differ = true;
+            break;
+        }
+    }
+    assert!(
+        differ,
+        "node A and node B must disagree on at least one tx decision over {total} hashes"
+    );
 }
 
 // ── pick_random_extra_column ──────────────────────────────────────────────────

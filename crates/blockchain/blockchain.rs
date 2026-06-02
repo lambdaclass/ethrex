@@ -262,6 +262,11 @@ pub struct BlockchainOptions {
     /// EIP-8070: when true, activate the sampler/provider state machine.
     /// When false (default), the node always acts as provider (p=1.0).
     pub blob_sampling_enabled: bool,
+    /// EIP-8070: when true, always act as provider (p=1.0) regardless of role
+    /// randomization. Block builders SHOULD enable this (EIP-8070 N8).
+    /// Enabled via `--blob-eager-provider`. Only meaningful when
+    /// `blob_sampling_enabled` is also true.
+    pub blob_eager_provider: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -277,6 +282,7 @@ impl Default for BlockchainOptions {
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
             blob_sampling_enabled: false,
+            blob_eager_provider: false,
         }
     }
 }
@@ -375,7 +381,9 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
-        let mempool = if blockchain_opts.blob_sampling_enabled {
+        let mempool = if blockchain_opts.blob_eager_provider {
+            Mempool::new_with_eager_provider(blockchain_opts.max_mempool_size)
+        } else if blockchain_opts.blob_sampling_enabled {
             Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
         } else {
             Mempool::new(blockchain_opts.max_mempool_size)

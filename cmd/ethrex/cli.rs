@@ -449,6 +449,15 @@ pub struct Options {
         env = "ETHREX_BLOB_SAMPLING"
     )]
     pub blob_sampling: bool,
+    #[arg(
+        long = "blob-eager-provider",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "EIP-8070: always act as provider (p=1.0) for every blob tx, bypassing the pseudo-random role decision. Block builders should enable this (EIP-8070 N8). Implies --blob-sampling.",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_EAGER_PROVIDER"
+    )]
+    pub blob_eager_provider: bool,
 }
 
 impl Options {
@@ -542,6 +551,7 @@ impl Default for Options {
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
             blob_sampling: false,
+            blob_eager_provider: false,
         }
     }
 }

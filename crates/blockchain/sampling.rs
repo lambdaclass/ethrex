@@ -13,21 +13,25 @@ use crate::mempool::PROVIDER_PROBABILITY_PCT;
 /// Decide whether this node is a *provider* for `tx_hash` in the current
 /// epoch.
 ///
+/// `local_node_id` is the keccak256 node identity of the local peer (derived
+/// from its public key). Including it in the preimage gives each node an
+/// independent, per-node pseudo-random decision so the provider set follows
+/// the intended Binomial(D, p) distribution — without it every node would
+/// make the identical decision for a given (epoch_seed, tx_hash), collapsing
+/// all nodes to either all-provider or all-sampler for that tx.
+///
 /// `epoch_seed` = `head_block_number / 32`.
 ///
-/// The decision is deterministic: every node with the same key material sees
-/// the same result for the same `(epoch_seed, tx_hash)` pair. Actual
-/// provider/sampler split is governed by `PROVIDER_PROBABILITY_PCT`.
-///
-/// When `eager` is `true` (local block builders), always return `true`.
-pub fn is_provider_role(tx_hash: H256, epoch_seed: u64, eager: bool) -> bool {
+/// When `eager` is `true` (local block builders; EIP-8070 N8), always return `true`.
+pub fn is_provider_role(local_node_id: H256, tx_hash: H256, epoch_seed: u64, eager: bool) -> bool {
     if eager {
         return true;
     }
-    // hash = keccak256(epoch_seed_be ++ tx_hash)
-    let mut preimage = [0u8; 8 + 32];
-    preimage[..8].copy_from_slice(&epoch_seed.to_be_bytes());
-    preimage[8..].copy_from_slice(tx_hash.as_bytes());
+    // hash = keccak256(local_node_id ++ epoch_seed_be ++ tx_hash)
+    let mut preimage = [0u8; 32 + 8 + 32];
+    preimage[..32].copy_from_slice(local_node_id.as_bytes());
+    preimage[32..40].copy_from_slice(&epoch_seed.to_be_bytes());
+    preimage[40..].copy_from_slice(tx_hash.as_bytes());
     let digest = keccak_hash(preimage);
 
     let value = U256::from_big_endian(&digest);
