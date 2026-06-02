@@ -75,8 +75,7 @@ impl TryFrom<&Path> for Genesis {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
 
-        // ethrex only supports post-merge (PoS) networks.
-        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
+        // ethrex only supports post-merge (PoS) networks. PoW execution is not planned.
         if is_unsupported_pow_genesis(&genesis) {
             warn!("Genesis has no merge configuration; ethrex only supports post-merge networks.");
         }
@@ -98,9 +97,15 @@ impl TryFrom<&Path> for Genesis {
 /// (genesis difficulty 0). The previous heuristic warned whenever the
 /// post-merge forks were scheduled at non-zero timestamps, which false-fired
 /// on every mainnet-style genesis.
+///
+/// Note: `terminal_total_difficulty = Some(0)` is the sentinel for "PoS active
+/// from genesis" and counts as merge-configured here, as does the
+/// `terminal_total_difficulty_passed` flag (the post-merge signal used by the
+/// sync manager).
 fn is_unsupported_pow_genesis(genesis: &Genesis) -> bool {
     let merge_configured = genesis.config.terminal_total_difficulty.is_some()
-        || genesis.config.merge_netsplit_block.is_some();
+        || genesis.config.merge_netsplit_block.is_some()
+        || genesis.config.terminal_total_difficulty_passed;
     let post_merge_at_genesis = genesis.difficulty.is_zero();
     !merge_configured && !post_merge_at_genesis
 }
@@ -850,6 +855,17 @@ mod tests {
         // Merge-netsplit block configured (no TTD) -> supported.
         g.config.terminal_total_difficulty = None;
         g.config.merge_netsplit_block = Some(15537394);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // TTD = Some(0) sentinel (PoS from genesis), non-zero difficulty -> supported.
+        g.config.merge_netsplit_block = None;
+        g.config.terminal_total_difficulty = Some(0);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // terminal_total_difficulty_passed with no TTD value (post-merge snapshot
+        // that dropped the redundant field), non-zero difficulty -> supported.
+        g.config.terminal_total_difficulty = None;
+        g.config.terminal_total_difficulty_passed = true;
         assert!(!is_unsupported_pow_genesis(&g));
     }
 
