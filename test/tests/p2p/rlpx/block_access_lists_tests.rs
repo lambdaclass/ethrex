@@ -1,5 +1,9 @@
 use ethrex_common::types::block_access_list::BlockAccessList;
-use ethrex_p2p::rlpx::{eth::block_access_lists::BlockAccessLists, message::RLPxMessage};
+use ethrex_p2p::rlpx::{
+    eth::block_access_lists::{BlockAccessLists, OptionalBal},
+    message::RLPxMessage,
+};
+use ethrex_rlp::encode::RLPEncode;
 
 // ── BlockAccessLists (0x13, eth/71) ──
 //
@@ -43,4 +47,17 @@ fn present_empty_bal_roundtrips_as_some() {
     let decoded = BlockAccessLists::decode(&buf).unwrap();
     assert_eq!(decoded.block_access_lists.len(), 1);
     assert!(decoded.block_access_lists[0].is_some());
+}
+
+/// Locks the EIP-8159 §"BlockAccessLists (0x13)" sentinel: a missing BAL
+/// encodes as exactly the RLP empty string (`0x80`), never the empty list
+/// (`0xc0`, a valid empty BAL). geth uses the same sentinel (`rlp.EmptyString`
+/// in `eth/protocols/eth/handlers.go`); any drift here is silent interop
+/// breakage. Asserts the raw byte directly on the `OptionalBal` wrapper, which
+/// the message-level tests can't see (their bytes go through snappy).
+#[test]
+fn optional_bal_none_encodes_as_0x80_sentinel() {
+    let mut bytes = Vec::new();
+    OptionalBal(None).encode(&mut bytes);
+    assert_eq!(bytes, vec![0x80]);
 }

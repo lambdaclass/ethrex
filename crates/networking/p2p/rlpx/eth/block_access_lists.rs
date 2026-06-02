@@ -26,8 +26,12 @@ pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
 /// INVARIANT: `BlockAccessList` always encodes as an RLP list (first byte is
 /// `0xc0` or greater), so `0x80` is unambiguously the `None` sentinel; keep
 /// this true if `BlockAccessList`'s encoding is ever refactored.
+///
+/// Public so the byte-level sentinel encoding can be asserted from the test
+/// crate (`test/tests/p2p/rlpx/block_access_lists_tests.rs`); message-level
+/// roundtrips run the bytes through snappy and can't see the raw `0x80`.
 #[derive(Debug, Clone)]
-struct OptionalBal(Option<BlockAccessList>);
+pub struct OptionalBal(pub Option<BlockAccessList>);
 
 impl RLPEncode for OptionalBal {
     fn encode(&self, buf: &mut dyn BufMut) {
@@ -251,19 +255,5 @@ mod tests {
         msg.encode(&mut buf).unwrap();
         let decoded = BlockAccessLists::decode(&buf).unwrap();
         assert_eq!(decoded.block_access_lists.len(), BLOCK_ACCESS_LIST_LIMIT);
-    }
-
-    /// Locks the EIP-8159 §"BlockAccessLists (0x13)" sentinel at the unit
-    /// level: a missing BAL encodes as exactly the RLP empty string (`0x80`),
-    /// never the empty list (`0xc0`, a valid empty BAL). geth uses the same
-    /// sentinel (`rlp.EmptyString` in `eth/protocols/eth/handlers.go`); any
-    /// drift here is silent interop breakage. Message-level roundtrip coverage
-    /// lives in `test/tests/p2p/rlpx/block_access_lists_tests.rs` (the private
-    /// `OptionalBal` wrapper asserted here is unreachable from that crate).
-    #[test]
-    fn optional_bal_none_encodes_as_0x80_sentinel() {
-        let mut bytes = Vec::new();
-        OptionalBal(None).encode(&mut bytes);
-        assert_eq!(bytes, vec![0x80]);
     }
 }
