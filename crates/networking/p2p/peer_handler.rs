@@ -428,6 +428,7 @@ impl PeerHandler {
                         debug!(
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
+                        let _ = self.peer_table.set_disposable(peer_id);
                         return Ok(None);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
@@ -441,7 +442,7 @@ impl PeerHandler {
                     self.peer_table.record_failure(peer_id)?;
                     return Ok(None);
                 }
-                // Timeouted
+                // Timeout or invalid response - mark peer as disposable
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
@@ -526,6 +527,7 @@ impl PeerHandler {
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
                 self.peer_table.record_failure(peer_id)?;
+                let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
         }
