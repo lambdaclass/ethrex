@@ -1,7 +1,13 @@
+//! `ProgramInput` is a `struct` without the `eip-8025` feature and an `enum`
+//! with it. The `new(...)` constructor and `Default` exist under both, but
+//! pattern-matching on `Wire(...)`/`Direct { .. }` only compiles when
+//! `eip-8025` is on.
+
 use ethrex_common::types::Block;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
 /// Input for the L1 stateless validation program.
+#[cfg(not(feature = "eip-8025"))]
 #[derive(
     Clone,
     Default,
@@ -18,6 +24,7 @@ pub struct ProgramInput {
     pub execution_witness: ExecutionWitness,
 }
 
+#[cfg(not(feature = "eip-8025"))]
 impl ProgramInput {
     /// Creates a new ProgramInput with the given blocks and execution witness.
     pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
@@ -25,6 +32,45 @@ impl ProgramInput {
             blocks,
             execution_witness,
         }
+    }
+}
+
+/// Input for the L1 stateless validation program (EIP-8025 build).
+///
+/// `Direct` carries in-memory blocks + witness (test path). `Wire` carries an
+/// already-decoded EIP-8025 stateless input from spec wire bytes.
+#[cfg(feature = "eip-8025")]
+pub enum ProgramInput {
+    Direct {
+        blocks: Vec<Block>,
+        execution_witness: ExecutionWitness,
+    },
+    Wire(DecodedEip8025),
+}
+
+#[cfg(feature = "eip-8025")]
+impl Default for ProgramInput {
+    fn default() -> Self {
+        Self::Direct {
+            blocks: Vec::new(),
+            execution_witness: ExecutionWitness::default(),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl ProgramInput {
+    /// Creates a `Direct` ProgramInput from in-memory blocks and execution witness.
+    pub fn new(blocks: Vec<Block>, execution_witness: ExecutionWitness) -> Self {
+        Self::Direct {
+            blocks,
+            execution_witness,
+        }
+    }
+
+    /// Creates a `Wire` ProgramInput from an already-decoded EIP-8025 payload.
+    pub fn wire(decoded: DecodedEip8025) -> Self {
+        Self::Wire(decoded)
     }
 }
 
@@ -79,13 +125,57 @@ const MAX_BYTES_PER_HEADER: usize = 1 << 10;
 #[cfg(feature = "eip-8025")]
 const MAX_PUBLIC_KEYS: usize = 1 << 20;
 #[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_PUBLIC_KEY: usize = 65;
+const BYTES_PER_PUBLIC_KEY: usize = 65;
+
+/// SSZ shape of the per-tx public key list in `CanonicalStatelessInput`:
+/// one fixed-size 65-byte uncompressed secp256k1 key per transaction.
+#[cfg(feature = "eip-8025")]
+pub type PublicKeysList =
+    libssz_types::SszList<libssz_types::SszVector<u8, BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>;
+#[cfg(feature = "eip-8025")]
+const MAX_OPTIONAL_FORK_ACTIVATION_VALUES: usize = 1;
+#[cfg(feature = "eip-8025")]
+const MAX_BLOB_SCHEDULES_PER_FORK: usize = 1;
+
+/// Big-endian schema-id prefix on canonical `SszStatelessInput` wire bytes.
+#[cfg(feature = "eip-8025")]
+pub const STATELESS_INPUT_SCHEMA_ID: u16 = 0x0001;
+/// Byte length of [`STATELESS_INPUT_SCHEMA_ID`] on the wire.
+#[cfg(feature = "eip-8025")]
+pub const STATELESS_INPUT_SCHEMA_ID_SIZE: usize = 2;
+
+/// Mirrors `SszBlobSchedule` from the Amsterdam stateless-validation spec.
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct CanonicalBlobSchedule {
+    pub target: u64,
+    pub max: u64,
+    pub base_fee_update_fraction: u64,
+}
+
+/// Mirrors `SszForkActivation` from the Amsterdam stateless-validation spec.
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct CanonicalForkActivation {
+    pub block_number: libssz_types::SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES>,
+    pub timestamp: libssz_types::SszList<u64, MAX_OPTIONAL_FORK_ACTIVATION_VALUES>,
+}
+
+/// Mirrors `SszForkConfig` from the Amsterdam stateless-validation spec.
+#[cfg(feature = "eip-8025")]
+#[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct CanonicalForkConfig {
+    pub fork: u64,
+    pub activation: CanonicalForkActivation,
+    pub blob_schedule: libssz_types::SszList<CanonicalBlobSchedule, MAX_BLOB_SCHEDULES_PER_FORK>,
+}
 
 /// Mirrors `SszChainConfig` from the Amsterdam stateless-validation spec.
 #[cfg(feature = "eip-8025")]
 #[derive(Debug, Clone, PartialEq, Eq, libssz_derive::SszEncode, libssz_derive::SszDecode)]
 pub struct CanonicalChainConfig {
     pub chain_id: u64,
+    pub active_fork: CanonicalForkConfig,
 }
 
 /// Mirrors `SszExecutionWitness` from the Amsterdam stateless-validation spec.
@@ -109,10 +199,9 @@ pub struct CanonicalStatelessInput {
     pub new_payload_request: ethrex_common::types::eip8025_ssz::NewPayloadRequestAmsterdam,
     pub witness: CanonicalExecutionWitness,
     pub chain_config: CanonicalChainConfig,
-    // Currently the specs do not include proper values for this field,
-    // but it is planned to be supported in the next release.
-    pub public_keys:
-        libssz_types::SszList<libssz_types::SszList<u8, MAX_BYTES_PER_PUBLIC_KEY>, MAX_PUBLIC_KEYS>,
+    /// Per-transaction public keys (uncompressed secp256k1, 65 bytes each).
+    /// Mirrors `SszList[ByteVector[PUBLIC_KEY_BYTES], MAX_PUBLIC_KEYS]` in the spec.
+    pub public_keys: PublicKeysList,
 }
 
 /// Decoded EIP-8025 wire payload, dispatched by version byte.
@@ -171,6 +260,26 @@ pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecode
         }
         v => Err(ProgramInputDecodeError::UnknownVersion(v)),
     }
+}
+
+/// Decode a spec-format canonical stateless input blob:
+/// `[BE u16 STATELESS_INPUT_SCHEMA_ID][SSZ-encoded CanonicalStatelessInput]`.
+/// Caller supplies `chain_config` out-of-band (unlike [`decode_eip8025`]).
+#[cfg(feature = "eip-8025")]
+pub fn decode_canonical_stateless_input_bytes(
+    bytes: &[u8],
+) -> Result<CanonicalStatelessInput, ProgramInputDecodeError> {
+    use libssz::SszDecode;
+
+    if bytes.len() < STATELESS_INPUT_SCHEMA_ID_SIZE {
+        return Err(ProgramInputDecodeError::TooShort);
+    }
+    let (schema_bytes, ssz_bytes) = bytes.split_at(STATELESS_INPUT_SCHEMA_ID_SIZE);
+    let schema_id = u16::from_be_bytes([schema_bytes[0], schema_bytes[1]]);
+    if schema_id != STATELESS_INPUT_SCHEMA_ID {
+        return Err(ProgramInputDecodeError::UnknownSchemaId(schema_id));
+    }
+    CanonicalStatelessInput::from_ssz_bytes(ssz_bytes).map_err(ProgramInputDecodeError::Ssz)
 }
 
 #[cfg(feature = "eip-8025")]
@@ -269,6 +378,7 @@ pub enum ProgramInputDecodeError {
     Ssz(libssz::DecodeError),
     Rkyv(String),
     UnknownVersion(u8),
+    UnknownSchemaId(u16),
 }
 
 #[cfg(feature = "eip-8025")]
@@ -279,6 +389,9 @@ impl core::fmt::Display for ProgramInputDecodeError {
             Self::Ssz(e) => write!(f, "SSZ decode error: {e}"),
             Self::Rkyv(e) => write!(f, "rkyv decode error: {e}"),
             Self::UnknownVersion(v) => write!(f, "unknown EIP-8025 wire version: {v:#04x}"),
+            Self::UnknownSchemaId(v) => {
+                write!(f, "unknown stateless input schema id: {v:#06x}")
+            }
         }
     }
 }

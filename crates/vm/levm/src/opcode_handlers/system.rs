@@ -48,27 +48,39 @@ impl OpcodeHandler for OpCallHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, callee)?;
-
-        // Process gas usage.
-        let (new_memory_size, address_is_empty, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, callee)?;
-
-        // Record addresses for BAL per EIP-7928.
-        // gas_remaining has NOT been reduced by eip7702_gas_consumed yet,
-        // matching the EELS reference where BAL recording sees pre-eip7702 gas.
         let value_cost = if !value.is_zero() {
             gas_cost::CALL_POSITIVE_VALUE
         } else {
             0
         };
-        let create_cost = if address_is_empty && !value.is_zero() {
+        let (new_memory_size, address_was_cold, static_cost) = vm.check_call_static_gas(
+            args_offset,
+            args_len,
+            return_offset,
+            return_len,
+            callee,
+            value_cost,
+        )?;
+
+        vm.substate.add_accessed_address(callee);
+        // `address_is_empty` only feeds gates that also require `value != 0`,
+        // so skip the read entirely when value is zero (matches EELS' gating
+        // of `is_account_alive` on `value != 0`).
+        let address_is_empty = if value.is_zero() {
+            false
+        } else {
+            vm.db.get_account(callee)?.is_empty()
+        };
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
+            eip7702_get_code(vm.db, &mut vm.substate, callee)?;
+        let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
             0
         };
+
+        // BAL touches the target before the delegation gas check, so a failed
+        // delegate-access check still leaves the target recorded.
         vm.record_bal_call_touch(
             callee,
             code_address,
@@ -80,6 +92,16 @@ impl OpcodeHandler for OpCallHandler {
             value_cost,
             create_cost,
         );
+
+        // `create_cost` is EIP-8037 state gas (charged via `increase_state_gas`
+        // below) and must not appear in the regular-gas check.
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         let fork = vm.env.config.fork;
 
@@ -93,7 +115,7 @@ impl OpcodeHandler for OpCallHandler {
         // but charge state gas AFTER regular gas per EIPs#11421.
         // Regular gas OOG must not consume state gas that would inflate the parent's
         // reservoir on frame failure.
-        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty && !value.is_zero();
+        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty;
         let gas_left = if needs_state_gas {
             let state_gas_new_account = vm.state_gas_new_account;
             let from_reservoir = vm.state_gas_reservoir.min(state_gas_new_account);
@@ -195,20 +217,25 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address)?;
-
-        // Process gas usage.
-        let (new_memory_size, _, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
-
-        // Record addresses for BAL per EIP-7928.
         let value_cost = if !value.is_zero() {
             gas_cost::CALLCODE_POSITIVE_VALUE
         } else {
             0
         };
+        let (new_memory_size, address_was_cold, static_cost) = vm.check_call_static_gas(
+            args_offset,
+            args_len,
+            return_offset,
+            return_len,
+            address,
+            value_cost,
+        )?;
+
+        vm.substate.add_accessed_address(address);
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
+            eip7702_get_code(vm.db, &mut vm.substate, address)?;
+
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -220,6 +247,14 @@ impl OpcodeHandler for OpCallCodeHandler {
             value_cost,
             0,
         );
+
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -296,15 +331,14 @@ impl OpcodeHandler for OpDelegateCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
+        let (new_memory_size, address_was_cold, static_cost) =
+            vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
+
+        vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Process gas usage.
-        let (new_memory_size, _, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
-
-        // Record addresses for BAL per EIP-7928.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -316,6 +350,14 @@ impl OpcodeHandler for OpDelegateCallHandler {
             0,
             0,
         );
+
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -393,15 +435,14 @@ impl OpcodeHandler for OpStaticCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
+        let (new_memory_size, address_was_cold, static_cost) =
+            vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
+
+        vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Process gas usage.
-        let (new_memory_size, _, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
-
-        // Record addresses for BAL per EIP-7928.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -413,6 +454,14 @@ impl OpcodeHandler for OpStaticCallHandler {
             0,
             0,
         );
+
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -880,6 +929,39 @@ impl<'a> VM<'a> {
         Ok(OpcodeResult::Continue)
     }
 
+    /// Static gas prelude for CALL/CALLCODE/DELEGATECALL/STATICCALL: compute
+    /// `(new_memory_size, address_was_cold, static_cost)` and `check_gas` it
+    /// before any state read, mirroring EELS' `# check static gas before state
+    /// access`. `value_cost` is the per-opcode positive-value cost (0 when
+    /// none).
+    fn check_call_static_gas(
+        &mut self,
+        args_offset: usize,
+        args_len: usize,
+        return_offset: usize,
+        return_len: usize,
+        address: Address,
+        value_cost: u64,
+    ) -> Result<(usize, bool, u64), VMError> {
+        let new_memory_size = calculate_memory_size(args_offset, args_len)?
+            .max(calculate_memory_size(return_offset, return_len)?);
+        let address_was_cold = !self.substate.is_address_accessed(&address);
+        let memory_expansion_cost =
+            memory::expansion_cost(new_memory_size, self.current_call_frame.memory.len())?;
+        let access_gas_cost = if address_was_cold {
+            gas_cost::COLD_ADDRESS_ACCESS_COST
+        } else {
+            gas_cost::WARM_ADDRESS_ACCESS_COST
+        };
+        let static_cost = memory_expansion_cost
+            .checked_add(access_gas_cost)
+            .ok_or(ExceptionalHalt::OutOfGas)?
+            .checked_add(value_cost)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
+        self.current_call_frame.check_gas(static_cost)?;
+        Ok((new_memory_size, address_was_cold, static_cost))
+    }
+
     /// Record BAL touched addresses for CALL-family opcodes per EIP-7928.
     /// Gated on intermediate gas checks matching the EELS reference.
     #[expect(
@@ -1270,28 +1352,6 @@ impl<'a> VM<'a> {
         self.stack_pool.push(stack);
 
         Ok(())
-    }
-
-    /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
-    fn get_call_gas_params(
-        &mut self,
-        args_offset: usize,
-        args_size: usize,
-        return_data_offset: usize,
-        return_data_size: usize,
-        address: Address,
-    ) -> Result<(usize, bool, bool), VMError> {
-        // Creation of previously empty accounts and cold addresses have higher gas cost
-        let address_was_cold = self.substate.add_accessed_address(address);
-        let account_is_empty = self.db.get_account(address)?.is_empty();
-
-        // Calculated here for memory expansion gas cost
-        let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
-        let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_offset, return_data_size)?;
-        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-
-        Ok((new_memory_size, account_is_empty, address_was_cold))
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {
