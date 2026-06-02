@@ -13,6 +13,20 @@ use ethrex_levm::{
     vm::{VM, VMType},
 };
 use std::str::FromStr;
+use std::sync::Arc;
+
+thread_local! {
+    /// Per-OS-thread merkleization pool, lazily built on first use. See the
+    /// matching helper in `tooling/ef_tests/blockchain/test_runner.rs` for the
+    /// reasoning; the merkle protocol requires exclusive ownership of its pool
+    /// per concurrent caller, and keying by `thread_local!` provides that.
+    static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
+        const { std::cell::OnceCell::new() };
+}
+
+fn merkle_pool() -> Arc<rayon::ThreadPool> {
+    MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
+}
 
 use crate::modules::types::TestCase;
 use crate::modules::{
@@ -167,7 +181,7 @@ pub async fn run_test(test: &Test, test_case: &TestCase) -> Result<(), RunnerErr
 
     // 3. Create Blockchain and add block.
 
-    let blockchain = Blockchain::new(store, ethrex_blockchain::BlockchainOptions::default());
+    let blockchain = Blockchain::default_with_store_and_pool(store, merkle_pool());
 
     let result = blockchain.add_block_pipeline(block, None);
 

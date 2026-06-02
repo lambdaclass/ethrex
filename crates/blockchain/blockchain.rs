@@ -212,7 +212,11 @@ pub struct Blockchain {
     pub payloads: Arc<TokioMutex<Vec<(u64, PayloadOrTask)>>>,
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
-    merkle_pool: rayon::ThreadPool,
+    ///
+    /// `Arc` for sharing in test harnesses that build many `Blockchain`s; the
+    /// production path keeps the original semantics (one fresh pool per call
+    /// to `Blockchain::new` / `default_with_store`).
+    merkle_pool: Arc<rayon::ThreadPool>,
 }
 
 /// Configuration options for the blockchain.
@@ -344,12 +348,17 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    fn build_merkle_pool() -> rayon::ThreadPool {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(17)
-            .thread_name(|i| format!("merkle-worker-{i}"))
-            .build()
-            .expect("Failed to create merkle thread pool")
+    /// Build a fresh 17-thread merkleization pool. Used by the default
+    /// constructors; tests that build many `Blockchain`s should share one pool
+    /// via `default_with_store_and_pool` to avoid spawning the pool repeatedly.
+    pub fn build_merkle_pool() -> Arc<rayon::ThreadPool> {
+        Arc::new(
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(17)
+                .thread_name(|i| format!("merkle-worker-{i}"))
+                .build()
+                .expect("Failed to create merkle thread pool"),
+        )
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
@@ -360,6 +369,26 @@ impl Blockchain {
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
             merkle_pool: Self::build_merkle_pool(),
+        }
+    }
+
+    /// Like `default_with_store`, but reuses an externally-owned merkleization
+    /// pool. Intended for test harnesses that build many short-lived
+    /// `Blockchain` instances; sharing the pool avoids spawning 17 fresh OS
+    /// threads per instance.
+    ///
+    /// SAFETY: the caller must ensure each pool has only one concurrent
+    /// `in_place_scope` user at a time. The internal merkle protocol requires
+    /// all 16 worker jobs to run concurrently (they cross-communicate via
+    /// channels); sharing a pool across simultaneous callers deadlocks.
+    pub fn default_with_store_and_pool(store: Store, pool: Arc<rayon::ThreadPool>) -> Self {
+        Self {
+            storage: store,
+            mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
+            is_synced: AtomicBool::new(false),
+            payloads: Arc::new(TokioMutex::new(Vec::new())),
+            options: BlockchainOptions::default(),
+            merkle_pool: pool,
         }
     }
 
@@ -513,6 +542,45 @@ impl Blockchain {
         } else {
             None
         };
+
+        // Synchronously warm all BAL storage slots before the executor thread starts.
+        //
+        // The warmer and executor share one CachingDatabase; `prefetch_storage`
+        // populates the cache only after its whole parallel fetch completes, so when
+        // the warmer ran storage concurrently the executor raced it to the trie for
+        // SSTORE original values and lost (~22% of CPU on cold-cache import-bench).
+        // Doing the storage prefetch up front (parallel, on all cores) lets execution
+        // run fully warm and removes the warmer's CPU/lock contention with it.
+        //
+        // Measured on bal-devnet-7-mainnet-mix-460 (import-bench --with-bal, vs main):
+        //   - concurrent storage warming (any ordering/chunking): ~ -7% to -13%
+        //   - this synchronous full-storage prefetch:             ~ -24%
+        // DO NOT move storage back into the concurrent warmer; the race is the whole
+        // problem. DO NOT add account prefetch here too: that regressed (~ +150 ms),
+        // because account reads already overlap exec well and a synchronous pass both
+        // adds serial latency and double-fetches against the warmer's Phase 1. Slots
+        // are warmed in natural account order; an execution-order sort gave no benefit
+        // once every slot is warm before exec.
+        //
+        // Live-node tradeoff: this prefetch is on the critical path before exec, no
+        // longer overlapped with it. With a warm cache the reads hit and it is a
+        // no-op; on a genuinely cold block (first slot after restart, account-heavy
+        // block) it adds serial latency the old overlapped warmer would have hidden.
+        // The benchmarks above are cold-cache batch import, not single-block live
+        // tail latency; the tradeoff is deliberate and favors throughput.
+        //
+        // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
+        // prefetching, skip the synchronous storage warm too. The warmer thread
+        // below already honors the same toggle.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if self.options.bal_prefetch_enabled
+            && let Some(bal) = bal
+        {
+            let slots = LEVM::bal_storage_slots(bal);
+            if !slots.is_empty() {
+                let _ = caching_store.prefetch_storage(&slots);
+            }
+        }
 
         let (execution_result, merkleization_result, warmer_duration) =
             std::thread::scope(|s| -> Result<_, ChainError> {
@@ -2303,14 +2371,40 @@ impl Blockchain {
 
         let chain_config: ChainConfig = self.storage.get_chain_config();
 
-        // Cache block hashes for the full batch so we can access them during execution without having to store the blocks beforehand
-        let block_hash_cache = blocks.iter().map(|b| (b.header.number, b.hash())).collect();
+        // Cache block hashes for the full batch so we can access them during
+        // execution without having to store the blocks beforehand.
+        let mut block_hash_cache: BTreeMap<BlockNumber, BlockHash> =
+            blocks.iter().map(|b| (b.header.number, b.hash())).collect();
 
         let parent_header = self
             .storage
             .get_block_header_by_hash(first_block_header.parent_hash)
             .map_err(|e| (ChainError::StoreError(e), None))?
             .ok_or((ChainError::ParentNotFound, None))?;
+
+        // Walk the parent chain to cache the last 256 block hashes so that
+        // BLOCKHASH can resolve references to blocks from previous batches
+        // (they may not be canonical yet during import).
+        block_hash_cache
+            .entry(parent_header.number)
+            .or_insert_with(|| parent_header.hash());
+        let mut hash = parent_header.parent_hash;
+        let mut number = parent_header.number.saturating_sub(1);
+        let lookback = first_block_header.number.saturating_sub(256);
+        while number > lookback {
+            block_hash_cache.entry(number).or_insert(hash);
+            match self.storage.get_block_header_by_hash(hash) {
+                Ok(Some(header)) => {
+                    hash = header.parent_hash;
+                    number = number.saturating_sub(1);
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("Failed to fetch block header by hash during BLOCKHASH cache walk: {e}");
+                    break;
+                }
+            }
+        }
         let vm_db = StoreVmDatabase::new_with_block_hash_cache(
             self.storage.clone(),
             parent_header,
