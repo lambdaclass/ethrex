@@ -617,6 +617,14 @@ impl<'a> VM<'a> {
     fn execute_frame_tx(&mut self) -> Result<ExecutionReport, VMError> {
         use crate::errors::TxResult;
 
+        // EIP-8141 fork gating: reject frame transactions observed in a block or
+        // submitted to any non-mempool entry point before Hegota activates.
+        if self.env.config.fork < Fork::Hegota {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::FrameTxPreFork,
+            ));
+        }
+
         let frame_tx = match &self.tx {
             Transaction::FrameTransaction(ft) => ft.clone(),
             _ => unreachable!(),
