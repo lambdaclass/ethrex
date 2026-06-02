@@ -1,6 +1,33 @@
 # Ethrex Changelog
 
+## Observability
+
+### 2026-05-27
+
+- Add BAL (EIP-7928) Prometheus instruments (`bal_blocks_total`, `bal_size_bytes`, `bal_size_bytes_histogram`, `bal_account_count`, `bal_slot_count`) and a BAL row in the `ethrex_l1_perf` Grafana dashboard [#6678](https://github.com/lambdaclass/ethrex/pull/6678)
+
 ## Perf
+
+### 2026-05-27
+
+- Prefetch all BAL storage synchronously before execution [#6732](https://github.com/lambdaclass/ethrex/pull/6732)
+
+### 2026-05-19
+
+- Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
+
+### 2026-05-15
+
+- Replace synchronous disk I/O with async operations in snap sync [#6113](https://github.com/lambdaclass/ethrex/pull/6113)
+
+### 2026-05-14
+
+- Skip `vm.run_execution()` for transfers to codeless EOAs [#6570](https://github.com/lambdaclass/ethrex/pull/6570)
+- BAL optimistic merkleization: synthesize state deltas from the input Block Access List pre-execution and merkleize in parallel with the EVM on the `engine_newPayload` validation path. Includes a parallel state-trie pre-warm and per-account hashed-key-sorted storage inserts to keep the trie node arena hot for Stage B/C [#6655](https://github.com/lambdaclass/ethrex/pull/6655)
+
+### 2026-05-21
+
+- Two-CF receipts migration: copy old RLP-keyed receipts to `receipts_v2` with fixed-width keys; old CF auto-dropped on restart [#6598](https://github.com/lambdaclass/ethrex/pull/6598)
 
 ### 2026-04-27
 

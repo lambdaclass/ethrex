@@ -30,10 +30,17 @@ pub const ACCOUNT_CODES: &str = "account_codes";
 /// - [`u8; 8`] = `code_length.to_be_bytes()`
 pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
 
-/// Receipts column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = `(block_hash, index).encode_to_vec()`
-/// - [`Vec<u8>`] = `receipt.encode_to_vec()`
+/// Receipts column family (legacy, pre-v2): [`Vec<u8>`] => [`Vec<u8>`]
+/// Used only for migration reads (v1→v2). Not listed in `TABLES`, so
+/// `drop_obsolete_cfs()` removes it right after migration completes
+/// (same startup).
 pub const RECEIPTS: &str = "receipts";
+
+/// Receipts v2 column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - Key: `block_hash (32B) || index (8B big-endian u64)` — fixed-width raw key
+///   enabling cursor-based prefix iteration by block hash.
+/// - Value: `receipt.encode_to_vec()`
+pub const RECEIPTS_V2: &str = "receipts_v2";
 
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = Composite key
@@ -111,7 +118,12 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// lexicographic prefix iteration matches numeric block order.
 pub const BLOCK_HASHES_BY_NUMBER: &str = "block_hashes_by_number";
 
-pub const TABLES: [&str; 20] = [
+/// Block access lists column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = `block_hash.as_bytes().to_vec()`
+/// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
+pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
+
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -121,7 +133,7 @@ pub const TABLES: [&str; 20] = [
     HEADERS,
     PENDING_BLOCKS,
     TRANSACTION_LOCATIONS,
-    RECEIPTS,
+    RECEIPTS_V2,
     SNAP_STATE,
     INVALID_CHAINS,
     ACCOUNT_TRIE_NODES,
@@ -132,6 +144,7 @@ pub const TABLES: [&str; 20] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     BLOCK_HASHES_BY_NUMBER,
+    BLOCK_ACCESS_LISTS,
 ];
 
 #[cfg(test)]
