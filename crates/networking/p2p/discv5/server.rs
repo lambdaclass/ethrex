@@ -1,3 +1,4 @@
+use crate::discovery::lookup::IterativeLookup;
 use crate::discv5::messages::Message;
 use crate::{
     discv5::messages::Packet,
@@ -12,6 +13,7 @@ use std::{
     num::NonZero,
     time::{Duration, Instant},
 };
+use tracing::trace;
 
 /// Maximum number of entries in the per-IP WHOAREYOU rate limit cache.
 pub const MAX_WHOAREYOU_RATE_LIMIT_ENTRIES: usize = 10_000;
@@ -46,6 +48,8 @@ pub struct Discv5State {
     pub ip_vote_period_start: Option<Instant>,
     /// Whether the first (fast) voting round has completed.
     pub first_ip_vote_round_completed: bool,
+    /// Currently active iterative lookups.
+    pub active_lookups: Vec<IterativeLookup>,
 }
 
 impl Default for Discv5State {
@@ -64,6 +68,7 @@ impl Default for Discv5State {
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
+            active_lookups: Vec::new(),
         }
     }
 }
@@ -87,15 +92,30 @@ impl Discv5State {
     pub fn cleanup_stale_entries(&mut self) -> Option<IpAddr> {
         let now = Instant::now();
 
+        let before_messages = self.pending_by_nonce.len();
         self.pending_by_nonce
             .retain(|_nonce, (_node, _message, timestamp)| {
                 now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
             });
+        let removed_messages = before_messages - self.pending_by_nonce.len();
 
+        let before_challenges = self.pending_challenges.len();
         self.pending_challenges
             .retain(|_src_id, (_challenge_data, timestamp, _raw)| {
                 now.duration_since(*timestamp) < MESSAGE_CACHE_TIMEOUT
             });
+        let removed_challenges = before_challenges - self.pending_challenges.len();
+
+        let total_removed = removed_messages + removed_challenges;
+        if total_removed > 0 {
+            trace!(
+                protocol = "discv5",
+                "Cleaned up {} stale entries ({} messages, {} challenges)",
+                total_removed,
+                removed_messages,
+                removed_challenges,
+            );
+        }
 
         if let Some(start) = self.ip_vote_period_start
             && now.duration_since(start) >= IP_VOTE_WINDOW

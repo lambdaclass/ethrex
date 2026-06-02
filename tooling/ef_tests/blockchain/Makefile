@@ -1,4 +1,4 @@
-.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors
+.PHONY: download-test-vectors clean-vectors test test-levm test-sp1 test-stateless amsterdam-vectors zkevm-vectors test-stateless-zkevm
 
 VECTORS_ROOT := vectors
 FIXTURES_FILE := .fixtures_url
@@ -16,6 +16,12 @@ AMSTERDAM_FIXTURES_FILE := .fixtures_url_amsterdam
 AMSTERDAM_ARTIFACT := amsterdam-tests.tar.gz
 AMSTERDAM_URL := $(shell cat $(AMSTERDAM_FIXTURES_FILE))
 
+# zkevm@v0.3.3 ships fixtures filled against an older Amsterdam base
+# (bal@v5.6.1). Extracting them on top of the bal-devnet-7 tree would
+# clobber the newer fixtures with stale gas-accounting expectations, so we
+# keep them in a separate root and only the stateless harness reads from it.
+ZKEVM_VECTORS_ROOT := vectors_zkevm
+ZKEVM_VECTORS_DIR := $(ZKEVM_VECTORS_ROOT)/eest
 ZKEVM_FIXTURES_FILE := .fixtures_url_zkevm
 ZKEVM_ARTIFACT := zkevm-tests.tar.gz
 ZKEVM_URL := $(shell cat $(ZKEVM_FIXTURES_FILE))
@@ -44,15 +50,20 @@ $(LEGACYTEST_VECTORS_DIR): $(LEGACYTEST_ARTIFACT)
 $(AMSTERDAM_ARTIFACT): $(AMSTERDAM_FIXTURES_FILE)
 	curl -L -o $(AMSTERDAM_ARTIFACT) $(AMSTERDAM_URL)
 
-amsterdam-vectors: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
+$(SPECTEST_VECTORS_DIR)/for_amsterdam: $(AMSTERDAM_ARTIFACT) $(SPECTEST_VECTORS_DIR)
 	tar -xzf $(AMSTERDAM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+amsterdam-vectors: $(SPECTEST_VECTORS_DIR)/for_amsterdam
 
 $(ZKEVM_ARTIFACT): $(ZKEVM_FIXTURES_FILE)
 	curl -L -o $(ZKEVM_ARTIFACT) $(ZKEVM_URL)
 
-# amsterdam-vectors must run first so witness-bearing zkevm JSONs overlay the bal@v5.6.1 copies.
-zkevm-vectors: $(ZKEVM_ARTIFACT) $(SPECTEST_VECTORS_DIR) amsterdam-vectors
-	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(SPECTEST_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+$(ZKEVM_VECTORS_DIR): $(ZKEVM_ARTIFACT)
+	rm -rf $(ZKEVM_VECTORS_DIR)
+	mkdir -p $(ZKEVM_VECTORS_DIR)
+	tar -xzf $(ZKEVM_ARTIFACT) --strip-components=2 -C $(ZKEVM_VECTORS_DIR) fixtures/blockchain_tests/for_amsterdam
+
+zkevm-vectors: $(ZKEVM_VECTORS_DIR)
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -60,21 +71,21 @@ help: ## 📚 Show help for each of the Makefile recipes
 download-test-vectors: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 📥 Download test vectors
 
 clean-vectors: ## 🗑️  Clean test vectors
-	rm -rf $(VECTORS_ROOT)
+	rm -rf $(VECTORS_ROOT) $(ZKEVM_VECTORS_ROOT)
 	rm -f $(SPECTEST_ARTIFACT) $(LEGACYTEST_ARTIFACT) $(AMSTERDAM_ARTIFACT) $(ZKEVM_ARTIFACT)
 
-test-levm: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors ## 🧪 Run blockchain tests with LEVM
-	cargo test --profile release-with-debug
+test-levm: $(VECTORS_TARGETS) amsterdam-vectors ## 🧪 Run blockchain tests with LEVM
+	cargo test --profile release-fast
 
-test-sp1: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
-	cargo test --profile release-with-debug --features sp1
+test-sp1: $(VECTORS_TARGETS) amsterdam-vectors
+	cargo test --profile release-fast --features sp1
 
-test-stateless: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
-	cargo test --profile release-with-debug --features stateless
+test-stateless: zkevm-vectors
+	cargo test --profile release-fast --features stateless
 
-test-stateless-zkevm: $(VECTORS_TARGETS) amsterdam-vectors zkevm-vectors
-	cargo test --profile release-with-debug --features stateless -- eip8025_optional_proofs
+test-stateless-zkevm: zkevm-vectors
+	cargo test --profile release-fast --features stateless -- eip8025_optional_proofs
 
-test: ## 🧪 Run blockchain tests with LEVM both with state and stateless 
+test: ## 🧪 Run blockchain tests with LEVM both with state and stateless
 	$(MAKE) test-levm
 	$(MAKE) test-stateless

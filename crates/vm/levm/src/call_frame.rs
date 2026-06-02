@@ -287,8 +287,9 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
-    /// EIP-8037: snapshot of VM.state_gas_used at the start of this frame (for revert restoration)
-    pub state_gas_used_snapshot: u64,
+    /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
+    /// Used to restore parent's state_gas_used on child revert.
+    pub state_gas_used_at_entry: i64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -393,7 +394,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
-            state_gas_used_snapshot: 0,
+            state_gas_used_at_entry: 0,
         }
     }
 
@@ -424,6 +425,16 @@ impl CallFrame {
             return Err(ExceptionalHalt::OutOfGas);
         }
 
+        Ok(())
+    }
+
+    /// EELS' `check_gas`: assert gas is available without consuming it.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    pub fn check_gas(&self, gas: u64) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 || (self.gas_remaining as u64) < gas {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
         Ok(())
     }
 

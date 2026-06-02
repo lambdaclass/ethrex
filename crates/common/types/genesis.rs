@@ -508,33 +508,35 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_amsterdam_activated(block_timestamp) {
-            None
-        } else if self.is_bpo5_activated(block_timestamp) && self.amsterdam_time.is_some() {
-            Some(Fork::Amsterdam)
-        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
-            Some(Fork::BPO5)
-        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
-            Some(Fork::BPO4)
-        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
-            Some(Fork::BPO3)
-        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
-            Some(Fork::BPO2)
-        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
-            Some(Fork::BPO1)
-        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
-            Some(Fork::Osaka)
-        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
-            Some(Fork::Prague)
-        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
-            Some(Fork::Cancun)
-        } else {
-            None
-        };
-        match next {
-            Some(fork) if fork > self.fork(block_timestamp) => next,
-            _ => None,
-        }
+        // Pick the scheduled fork with the smallest activation timestamp strictly
+        // greater than `block_timestamp`. Iterating all timestamp-based forks avoids
+        // bugs when intermediate forks (e.g. BPOs) are skipped in a network's schedule.
+        //
+        // NOTE: every timestamp-based fork MUST appear here in chronological order.
+        // Omitting a fork will silently cause `next_fork` to skip it; ties are
+        // broken by array position, so the order also encodes the canonical
+        // schedule independent of the `Fork` enum's discriminants.
+        [
+            Fork::Shanghai,
+            Fork::Cancun,
+            Fork::Prague,
+            Fork::Osaka,
+            Fork::BPO1,
+            Fork::BPO2,
+            Fork::BPO3,
+            Fork::BPO4,
+            Fork::BPO5,
+            Fork::Amsterdam,
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(pos, fork)| {
+            self.get_activation_timestamp_for_fork(fork)
+                .filter(|&t| t > block_timestamp)
+                .map(|t| (fork, t, pos))
+        })
+        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
+        .map(|(fork, _, _)| fork)
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
@@ -719,7 +721,11 @@ impl Genesis {
                 self.block_access_list_hash
                     .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
             );
-        let slot_number = self.slot_number;
+
+        let slot_number = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(self.slot_number.unwrap_or(0));
 
         BlockHeader {
             parent_hash: H256::zero(),
@@ -1141,5 +1147,48 @@ mod tests {
 
         let error_message = result.unwrap_err().to_string();
         assert!(error_message.contains("missing field `depositContractAddress`"),);
+    }
+
+    #[test]
+    fn next_fork_skips_unscheduled_intermediate_forks() {
+        // bal-devnet-7 layout: every post-merge fork up to Osaka at t=0, Amsterdam
+        // scheduled later, no BPOs scheduled. `next_fork` must return Amsterdam
+        // even though the BPO chain between Osaka and Amsterdam is empty.
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: Some(0),
+            amsterdam_time: Some(1_779_098_127),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(0), Some(Fork::Amsterdam));
+        assert_eq!(config.next_fork(1_779_098_126), Some(Fork::Amsterdam));
+        assert_eq!(config.next_fork(1_779_098_127), None);
+    }
+
+    #[test]
+    fn next_fork_picks_earliest_scheduled() {
+        // Contiguous schedule: at Cancun, next should be Prague (not Osaka).
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(100),
+            prague_time: Some(200),
+            osaka_time: Some(300),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(150), Some(Fork::Prague));
+        assert_eq!(config.next_fork(250), Some(Fork::Osaka));
+        assert_eq!(config.next_fork(300), None);
+    }
+
+    #[test]
+    fn next_fork_returns_none_when_at_last_scheduled() {
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(0), None);
     }
 }

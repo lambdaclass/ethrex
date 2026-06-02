@@ -8,11 +8,16 @@ use crate::{
         ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
         VMError,
     },
+    gas_cost::{
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
+        STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte as compute_cost_per_state_byte,
+    },
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
     memory::Memory,
+    opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
@@ -21,7 +26,7 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
@@ -435,6 +440,8 @@ pub struct VM<'a> {
     pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
+    /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
+    pub opcode_tracer: LevmOpcodeTracer,
     /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
@@ -442,13 +449,47 @@ pub struct VM<'a> {
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
     /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
-    pub state_gas_used: u64,
+    /// Signed: goes negative when inline refunds exceed gross charges in the local frame
+    /// (e.g. SSTORE 0→x→0 restoration matching an ancestor's charge).
+    pub state_gas_used: i64,
     /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
     pub state_gas_reservoir: u64,
-    /// EIP-8037/EIP-7702: Reduction to intrinsic state gas when existing authorities
-    /// are found during set_delegation. Tracked separately because state_gas_used
-    /// must not be reduced (it would inflate regular_gas in block accounting).
-    pub intrinsic_state_gas_refund: u64,
+    /// EIP-8037: Initial reservoir at tx start (before any execution). Captured in
+    /// add_intrinsic_gas so block-dimensional regular gas can be computed
+    /// independently of mid-tx reservoir activity (auth refunds, SSTORE credits).
+    pub state_gas_reservoir_initial: u64,
+    /// EIP-8037: Cumulative state gas that spilled to regular gas during execution
+    /// (when reservoir was insufficient). Subtracted when computing dimensional
+    /// regular gas for block accounting — EELS charge_state_gas spills don't
+    /// increment regular_gas_used.
+    pub state_gas_spill: u64,
+    /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
+    pub cost_per_state_byte: u64,
+    /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
+    pub state_gas_new_account: u64,
+    /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
+    pub state_gas_storage_set: u64,
+    /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
+    pub state_gas_auth_total: u64,
+    /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
+    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
+    /// `set_delegation` when no new delegation indicator bytes are written —
+    /// either the authority's code slot already holds an indicator or the
+    /// auth clears against an empty authority.
+    pub state_gas_auth_base: u64,
+    /// EIP-8037: state-gas refund channel.
+    /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
+    /// for refunds that bypass per-frame `state_gas_used` accounting. Populated by
+    /// `set_delegation` for existing-authority refunds, subtracted from block-level
+    /// state-gas at the end of `refund_sender`. Survives revert/halt/OOG since it lives
+    /// on the VM, not in any call-frame backup.
+    pub state_refund: u64,
+    /// EIP-8037: intrinsic state gas (`tx_env.intrinsic_state_gas` in EELS). Captured at
+    /// `add_intrinsic_gas` time. ethrex lumps intrinsic + execution into `state_gas_used`,
+    /// so on top-level error this field is what we leave behind when refunding the
+    /// execution portion to the reservoir — block accounting then bills the intrinsic
+    /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
+    pub intrinsic_state_gas: u64,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// Build dynamically according to the given fork config.
     pub(crate) opcode_table: [OpCodeFn; 256],
@@ -473,6 +514,29 @@ impl<'a> VM<'a> {
 
         let fork = env.config.fork;
 
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "byte-count constants are small (<200) and cpsb is bounded by block_gas_limit/year formula"
+        )]
+        let (
+            cpsb,
+            state_gas_new_account,
+            state_gas_storage_set,
+            state_gas_auth_total,
+            state_gas_auth_base,
+        ) = if fork >= Fork::Amsterdam {
+            let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
+            (
+                cpsb,
+                STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
+                STATE_BYTES_PER_STORAGE_SET * cpsb,
+                STATE_BYTES_PER_AUTH_TOTAL * cpsb,
+                STATE_BYTES_PER_AUTH_BASE * cpsb,
+            )
+        } else {
+            (0, 0, 0, 0, 0)
+        };
+
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
@@ -481,12 +545,21 @@ impl<'a> VM<'a> {
             hooks: get_hooks(&vm_type),
             storage_original_values: FxHashMap::default(),
             tracer,
+            opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
             state_gas_used: 0,
             state_gas_reservoir: 0,
-            intrinsic_state_gas_refund: 0,
+            state_gas_reservoir_initial: 0,
+            state_gas_spill: 0,
+            cost_per_state_byte: cpsb,
+            state_gas_new_account,
+            state_gas_storage_set,
+            state_gas_auth_total,
+            state_gas_auth_base,
+            state_refund: 0,
+            intrinsic_state_gas: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -560,11 +633,70 @@ impl<'a> VM<'a> {
         }
         // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
         self.state_gas_reservoir -= from_reservoir;
-        // Only increment state_gas_used AFTER the charge succeeds
+        // Only increment state_gas_used AFTER the charge succeeds.
+        // state_gas_used is i64; tx gas_limit caps charges well below i64::MAX.
         self.state_gas_used = self
             .state_gas_used
-            .checked_add(gas)
+            .checked_add(i64::try_from(gas).map_err(|_| InternalError::Overflow)?)
             .ok_or(InternalError::Overflow)?;
+        // Track the spill for block-accounting: EELS charge_state_gas spills
+        // don't count toward regular_gas_used for the regular dimension.
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_add(spill)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
+    }
+
+    /// EIP-8037: credit `amount` directly to the local frame's reservoir; `state_gas_used`
+    /// may go negative when the matching charge lives in an ancestor frame.
+    ///
+    /// Must only be called for Amsterdam+ forks.
+    pub fn credit_state_gas_refund(&mut self, amount: u64) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "credit_state_gas_refund called pre-Amsterdam"
+        );
+        self.state_gas_reservoir = self
+            .state_gas_reservoir
+            .checked_add(amount)
+            .ok_or(InternalError::Overflow)?;
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_sub(i64::try_from(amount).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
+    }
+
+    /// EIP-8037 `incorporate_child_on_error`: on child revert, restore the parent's
+    /// `state_gas_used` to its pre-child value and refund the child's net
+    /// `(state_gas_used + state_gas_left)` back into the parent's reservoir.
+    ///
+    /// In ethrex's shared-VM model the child holds the entire reservoir during its
+    /// execution, so `child.state_gas_left == self.state_gas_reservoir` (absolute,
+    /// not a delta against entry). `child.state_gas_used` can be negative when
+    /// inline refunds inside the child exceeded its gross charges.
+    pub fn incorporate_child_state_gas_on_revert(
+        &mut self,
+        state_gas_used_at_entry: i64,
+    ) -> Result<(), VMError> {
+        let child_state_gas_used = self
+            .state_gas_used
+            .checked_sub(state_gas_used_at_entry)
+            .ok_or(InternalError::Overflow)?;
+        let child_state_gas_left =
+            i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
+        self.state_gas_used = state_gas_used_at_entry;
+        let net_return = child_state_gas_used
+            .checked_add(child_state_gas_left)
+            .ok_or(InternalError::Overflow)?;
+        // net_return is always >= 0 by the spec invariant (reservoir conservation
+        // means a child cannot refund more than its ancestors charged); clamp
+        // defensively and cast — `as u64` is sound because of the `.max(0)`.
+        #[expect(clippy::as_conversions, reason = ".max(0) proves non-negativity")]
+        {
+            self.state_gas_reservoir = net_return.max(0) as u64;
+        }
         Ok(())
     }
 
@@ -579,6 +711,25 @@ impl<'a> VM<'a> {
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
+
+        // Empty bytecode would only execute STOP; skip the dispatch loop.
+        // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
+        // fail past this point and has no inner calls, so there's nothing to roll back.
+        if self.is_simple_transfer_fast_path() {
+            #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
+            let gas_used = self
+                .current_call_frame
+                .gas_limit
+                .checked_sub(self.current_call_frame.gas_remaining as u64)
+                .ok_or(InternalError::Underflow)?;
+            let context_result = ContextResult {
+                result: TxResult::Success,
+                gas_used,
+                gas_spent: gas_used,
+                output: Bytes::new(),
+            };
+            return self.finalize_execution(context_result);
+        }
 
         // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
         // after prepare_execution (nonce increment, etc.) but before actual execution.
@@ -601,6 +752,23 @@ impl<'a> VM<'a> {
         let report = self.finalize_execution(context_result)?;
 
         Ok(report)
+    }
+
+    /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into
+    /// `bytecode`.
+    #[inline(always)]
+    fn is_simple_transfer_fast_path(&self) -> bool {
+        !self.current_call_frame.is_create
+            && self.current_call_frame.bytecode.bytecode.is_empty()
+            // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
+            && self.current_call_frame.gas_remaining >= 0
+            && self.tx.authorization_list().is_none()
+            // Precompiles dispatch via run_execution even with empty bytecode.
+            && !precompiles::is_precompile(
+                &self.current_call_frame.to,
+                self.env.config.fork,
+                self.vm_type,
+            )
     }
 
     /// Main execution loop.
@@ -636,6 +804,21 @@ impl<'a> VM<'a> {
                 self.crypto,
             );
 
+            // EIP-8037 Amsterdam 2D accounting recomputes `block_gas_used` from
+            // `raw_consumed = gas_limit - gas_remaining` inside `refund_sender`. On a
+            // top-level precompile exceptional halt, `handle_precompile_result` already
+            // sets `ContextResult.gas_used = gas_limit`, but `gas_remaining` retains the
+            // untouched forwarded amount — under Amsterdam that would make the block
+            // report only the intrinsic portion. Zero it here so the block matches the
+            // `gas_used = gas_limit` contract from `handle_precompile_result`. Pre-Amsterdam
+            // reads `ctx_result.gas_used` directly and is unaffected by this path either way.
+            if self.env.config.fork >= Fork::Amsterdam
+                && let Ok(ctx) = &result
+                && !ctx.is_success()
+            {
+                gas_remaining = 0;
+            }
+
             call_frame.gas_remaining = gas_remaining as i64;
 
             return result;
@@ -647,8 +830,62 @@ impl<'a> VM<'a> {
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
         loop {
+            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
+            let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
+
+            // Hoist the active flag to avoid reading it twice per opcode.
+            let tracer_active = self.opcode_tracer.active;
+
+            // Struct-log pre-step capture (single branch on the fast path when disabled).
+            let gas_before_op = if tracer_active {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+                )]
+                let gas_before = self.current_call_frame.gas_remaining.max(0) as u64;
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "call depth bounded by STACK_LIMIT=1024, fits in u32"
+                )]
+                let depth = (self.call_frames.len() as u32).saturating_add(1);
+                let refund = self.substate.refunded_gas;
+                let stack_view = self.collect_stack_for_trace();
+                let mem_view = self.collect_memory_for_trace();
+                // mem_size always reflects actual memory size, regardless of enable_memory.
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "memory size is bounded by gas; fits in u64"
+                )]
+                let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
+                let storage_kv = self.read_storage_for_trace(opcode);
+                let return_data = if self.opcode_tracer.cfg.enable_return_data {
+                    self.current_call_frame.sub_return_data.clone()
+                } else {
+                    Bytes::new()
+                };
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "pc is usize, fits in u64 on supported targets"
+                )]
+                let pc_u64 = pc_of_current_op as u64;
+                self.opcode_tracer.pre_step_capture(
+                    pc_u64,
+                    opcode,
+                    gas_before,
+                    depth,
+                    refund,
+                    &stack_view,
+                    &mem_view,
+                    mem_size_for_trace,
+                    &return_data,
+                    storage_kv,
+                );
+                gas_before
+            } else {
+                0
+            };
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
@@ -661,6 +898,31 @@ impl<'a> VM<'a> {
             {
                 let time = opcode_time_start.elapsed();
                 timings.update(opcode, time);
+            }
+
+            // Struct-log post-step: patch gas_cost, refund-after-op, and error
+            // into the buffered entry.
+            if tracer_active {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+                )]
+                let gas_after = self.current_call_frame.gas_remaining.max(0) as u64;
+                // Prefer the explicit opcode-overhead cost written by CALL/CREATE handlers;
+                // fall back to the gas diff for all other opcodes.
+                let gas_cost = self
+                    .opcode_tracer
+                    .last_opcode_gas_cost
+                    .take()
+                    .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
+                // refund-after-op matches geth's structLogger timing: for SSTORE and
+                // (pre-London) SELFDESTRUCT, the refund counter shown is the value
+                // *after* the opcode's accounting applied. Other opcodes don't touch
+                // refund, so the post-op value equals the captured pre-op value.
+                let refund_after = self.substate.refunded_gas;
+                let err_str = error.get().map(|e| e.to_string());
+                self.opcode_tracer
+                    .finalize_step(gas_cost, refund_after, err_str.as_deref());
             }
 
             let result = match op_result {
@@ -733,12 +995,69 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
+        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
+        // refund only the EXECUTION portion of state gas to the reservoir; the intrinsic
+        // stays in `state_gas_used` so block accounting bills it. EELS keeps these in
+        // separate fields (`tx_output.state_gas_used` vs `tx_env.intrinsic_state_gas`);
+        // ethrex lumps them so we split on the way out:
+        //   tx_output.state_gas_left += tx_output.state_gas_used
+        //   tx_output.state_gas_used  = 0
+        // becomes in lumped form (with intrinsic preserved):
+        //   reservoir   += signed(state_gas_used − intrinsic)   [clamped at 0]
+        //   state_gas_used = intrinsic
+        // Collision is handled separately in the hook.
+        if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
+            if !ctx_result.is_collision() {
+                let intrinsic_signed =
+                    i64::try_from(self.intrinsic_state_gas).map_err(|_| InternalError::Overflow)?;
+                let execution_state_gas_used = self.state_gas_used.saturating_sub(intrinsic_signed);
+                let reservoir_signed = i64::try_from(self.state_gas_reservoir)
+                    .map_err(|_| InternalError::Overflow)?
+                    .saturating_add(execution_state_gas_used);
+                self.state_gas_reservoir =
+                    u64::try_from(reservoir_signed.max(0)).map_err(|_| InternalError::Overflow)?;
+                self.state_gas_used = intrinsic_signed;
+            }
+
+            // EIP-8037: on ANY top-level CREATE-tx
+            // failure (revert / halt / OOG / collision), refund the intrinsic
+            // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the reservoir.
+            // Also add to `state_refund` so block-level accounting subtracts it.
+            // EELS reference: fork.py::process_transaction:
+            //   if isinstance(tx.to, Bytes0):
+            //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+            //       tx_output.state_gas_left += new_account_refund
+            //       tx_output.state_refund   += new_account_refund
+            if self.is_create()? {
+                let new_account_refund = self.state_gas_new_account;
+                self.state_gas_reservoir = self
+                    .state_gas_reservoir
+                    .checked_add(new_account_refund)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_refund = self
+                    .state_refund
+                    .checked_add(new_account_refund)
+                    .ok_or(InternalError::Overflow)?;
+            }
+        }
+
         for hook in self.hooks.clone() {
             hook.borrow_mut()
                 .finalize_execution(self, &mut ctx_result)?;
         }
 
         self.tracer.exit_context(&ctx_result, true)?;
+
+        // Struct-log end-of-tx capture: record final output, gas used, and revert error.
+        // gas matches geth's `executionResult.Gas` which is post-refund (`receipt.GasUsed`).
+        if self.opcode_tracer.active {
+            self.opcode_tracer.output = ctx_result.output.clone();
+            self.opcode_tracer.gas_used = ctx_result.gas_spent;
+            self.opcode_tracer.error = match ctx_result.result {
+                TxResult::Revert(ref err) => Some(err.to_string()),
+                _ => None,
+            };
+        }
 
         // Only include logs if transaction succeeded. When a transaction reverts,
         // no logs should be emitted (including EIP-7708 Transfer logs).
@@ -748,19 +1067,116 @@ impl<'a> VM<'a> {
             Vec::new()
         };
 
+        // EIP-8037: `state_gas_used` is already net (signed; credits
+        // decrement it inline). Subtract `state_refund` (EIP-7702 tx-level channel) and
+        // clamp at zero for block accounting — `state_gas_used` may be negative when inline
+        // refunds exceed gross charges.
+        let state_refund_signed =
+            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
+        let net_state_gas_used: u64 = u64::try_from(
+            self.state_gas_used
+                .saturating_sub(state_refund_signed)
+                .max(0),
+        )
+        .map_err(|_| InternalError::Overflow)?;
+
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
             gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
-            state_gas_used: self
-                .state_gas_used
-                .saturating_sub(self.intrinsic_state_gas_refund),
+            state_gas_used: net_state_gas_used,
             output: std::mem::take(&mut ctx_result.output),
             logs,
         };
 
         Ok(report)
+    }
+
+    // ── Struct-log helper methods ─────────────────────────────────────────────
+
+    /// Collects the current stack in bottom-first order for struct-log emission.
+    ///
+    /// LEVM stack is top-first in memory (`values[offset]` = top), so we reverse
+    /// the active slice to produce the bottom-first wire format geth uses.
+    /// Returns an empty `Vec` when `cfg.disable_stack` is true.
+    pub fn collect_stack_for_trace(&self) -> Vec<U256> {
+        use crate::constants::STACK_LIMIT;
+        if self.opcode_tracer.cfg.disable_stack {
+            return Vec::new();
+        }
+        let s = &self.current_call_frame.stack;
+        // offset <= STACK_LIMIT by stack invariant.
+        s.values
+            .get(s.offset..STACK_LIMIT)
+            .map(|slice| slice.iter().rev().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Collects the live memory bytes for the current frame.
+    ///
+    /// Returns an empty `Vec` when `cfg.enable_memory` is false or memory is empty.
+    pub fn collect_memory_for_trace(&self) -> Vec<u8> {
+        if !self.opcode_tracer.cfg.enable_memory {
+            return Vec::new();
+        }
+        self.current_call_frame.memory.live_bytes()
+    }
+
+    /// Pre-reads the storage key/value for the current SLOAD or SSTORE opcode.
+    ///
+    /// Returns `None` when:
+    /// - `cfg.disable_storage` is set, or
+    /// - `opcode` is not SLOAD (0x54) or SSTORE (0x55), or
+    /// - the stack is empty (guard against underflow before the handler runs), or
+    /// - the storage read fails for any reason (including `AccountNotFound` —
+    ///   the trace omits the entry rather than emitting an ambiguous zero).
+    ///
+    /// For SLOAD: key = `stack.top`; value = the *current* stored value read from the DB.
+    /// For SSTORE: key = `stack.top`, value = `stack[top-1]` (the new value being written).
+    pub fn read_storage_for_trace(&mut self, opcode: u8) -> Option<(H256, H256)> {
+        const SLOAD: u8 = 0x54;
+        const SSTORE: u8 = 0x55;
+
+        if self.opcode_tracer.cfg.disable_storage {
+            return None;
+        }
+        if opcode != SLOAD && opcode != SSTORE {
+            return None;
+        }
+
+        // Need at least one element on stack for SLOAD, two for SSTORE.
+        use crate::constants::STACK_LIMIT;
+        let offset = self.current_call_frame.stack.offset;
+        if offset >= STACK_LIMIT {
+            return None; // stack empty
+        }
+
+        // SLOAD/SSTORE operate on the call's storage context (`to`), not the code's
+        // address. Under DELEGATECALL/CALLCODE these differ.
+        let addr = self.current_call_frame.to;
+
+        let stack_values = &self.current_call_frame.stack.values;
+        let key_u256 = *stack_values.get(offset)?;
+        let key = BigEndianHash::from_uint(&key_u256);
+
+        if opcode == SLOAD {
+            // Omit the entry on any read failure (incl. account not yet cached);
+            // a zero value would be indistinguishable from a legitimate never-written slot.
+            let v = self.get_storage_value(addr, key).ok()?;
+            let value = BigEndianHash::from_uint(&v);
+            Some((key, value))
+        } else {
+            // SSTORE: need two stack elements.
+            let next_offset = offset.checked_add(1)?;
+            if next_offset >= STACK_LIMIT {
+                return None;
+            }
+            // values[offset+1] is the new value being written (second from top = stack[top-1]).
+            let value_u256 = *self.current_call_frame.stack.values.get(next_offset)?;
+            let value = BigEndianHash::from_uint(&value_u256);
+            Some((key, value))
+        }
     }
 }
 

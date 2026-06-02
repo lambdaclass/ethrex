@@ -6,6 +6,12 @@ use std::path::Path;
 #[cfg(all(feature = "sp1", feature = "stateless"))]
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
+// test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
+// test-stateless reads zkevm@v0.4.1 (EIP-8025 canonical bundle) from a separate
+// `vectors_zkevm/` so the bundles don't overlay each other.
+#[cfg(feature = "stateless")]
+const TEST_FOLDER: &str = "vectors_zkevm/";
+#[cfg(not(feature = "stateless"))]
 const TEST_FOLDER: &str = "vectors/";
 
 // Base skips shared by all runs.
@@ -29,33 +35,7 @@ const EXTRA_SKIPS: &[&str] = &[
     "static_Call1MB1024Calldepth",
 ];
 #[cfg(feature = "stateless")]
-const EXTRA_SKIPS: &[&str] = &[
-    // zkevm@v0.3.3 tolerance tests: the fixture's `statelessOutputBytes` declares `valid = 1`
-    // because the executed path does not actually consume the malformed/extra/missing witness
-    // entry, but our RpcExecutionWitness conversion eagerly validates the full witness and
-    // rejects it. Re-enable once the witness conversion is lazy per EIP-8025 §Tolerance.
-    "validation_headers_malformed_rlp_header",
-    "validation_headers_missing_oldest_blockhash_ancestor",
-    "validation_headers_missing_parent_header",
-    "validation_state_extra_unused_trie_node",
-    // zkevm@v0.3.3 rejection tests: `statelessOutputBytes` declares `valid = 0` so the guest
-    // program must reject the deliberately-incomplete witness, but our stateless path runs
-    // to completion instead of detecting the missing entry. Re-enable once the witness
-    // completeness checks land (missing delegation/external-code bytecodes, non-contiguous
-    // header chain detection).
-    "validation_codes_missing_delegated_code_on_insufficient_balance_call",
-    "validation_codes_missing_external_code_read_target",
-    "validation_codes_missing_redelegation_old_marker",
-    "validation_codes_missing_sender_delegation_marker",
-    "validation_headers_non_contiguous_chain",
-    // zkevm@v0.3.3 conversion-time rejection: `statelessOutputBytes` declares `valid = 0` and
-    // our `into_execution_witness` correctly rejects the witness because it can't extract the
-    // initial state root without the parent header. Since 5a597e67d the runner treats
-    // conversion errors as unconditional regressions, so this correct-rejection-at-the-wrong-
-    // stage trips the test. Re-enable once conversion is lazy enough to defer the parent-
-    // header check to execution.
-    "validation_headers_empty_block_missing_mandatory_parent",
-];
+const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 
