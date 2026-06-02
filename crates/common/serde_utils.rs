@@ -317,6 +317,13 @@ pub mod u128 {
         }
     }
 
+    /// Deserializes an `Option<u128>` from either a `0x`-hex string or a bare
+    /// JSON number, for geth/reth genesis compatibility.
+    ///
+    /// **Precision**: bare numbers above `u64::MAX` are read through an `f64`
+    /// cast, losing ~3 decimal digits. Acceptable for sentinel-only fields like
+    /// `terminalTotalDifficulty`; if you need bit-exact `u128` here, add a new
+    /// deserializer rather than reusing this one.
     pub mod hex_str_opt {
         use serde::Serialize;
 
@@ -348,7 +355,9 @@ pub mod u128 {
                         // "PoS active" for TTD; reject them above instead.
                         f as u128
                     } else {
-                        return Err(D::Error::custom("Failed to deserialize u128 number"));
+                        return Err(D::Error::custom(format!(
+                            "u128 value must be a finite, non-negative number; got {n}"
+                        )));
                     };
                     Ok(Some(v))
                 }

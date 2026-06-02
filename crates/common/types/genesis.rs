@@ -821,7 +821,11 @@ mod tests {
         let negative = serde_json::from_str::<ChainConfig>(&format!(
             r#"{{"chainId":1,"terminalTotalDifficulty":-1,{dca}}}"#
         ));
-        assert!(negative.is_err(), "negative TTD must be rejected");
+        let err = negative.expect_err("negative TTD must be rejected");
+        assert!(
+            err.to_string().contains("finite, non-negative"),
+            "error should name the sign/finiteness cause, got: {err}"
+        );
     }
 
     #[test]
