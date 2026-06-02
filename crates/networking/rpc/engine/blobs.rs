@@ -64,6 +64,8 @@ impl RpcHandler for BlobsV1Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs");
 
+        // Intentional fall-through: before a canonical tip exists, there is no
+        // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
         if let Some(current_block_header) = context
             .storage
             .get_block_header(context.storage.get_latest_block_number().await?)?
@@ -157,6 +159,8 @@ async fn get_blobs_and_proof(
         return Err(RpcErr::TooLargeRequest);
     }
 
+    // Intentional fall-through: before a canonical tip exists, there is no
+    // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
     if let Some(current_block_header) = context
         .storage
         .get_block_header(context.storage.get_latest_block_number().await?)?
