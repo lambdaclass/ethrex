@@ -2586,11 +2586,6 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-    let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
-    let coinbase_backup = db
-        .current_accounts_state
-        .get(&block_header.coinbase)
-        .cloned();
     let env = Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
@@ -2613,6 +2608,15 @@ pub fn generic_system_contract_levm(
         config,
         ..Default::default()
     };
+
+    // Invariant relied upon below: with a zero gas price a system call charges no
+    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
+    // state change left to undo afterwards is the sender's nonce bump. If this ever
+    // becomes non-zero, the post-call cleanup must be revisited.
+    debug_assert!(
+        env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
+        "system calls must run with a zero gas price"
+    );
 
     // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
     // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
@@ -2651,20 +2655,10 @@ pub fn generic_system_contract_levm(
 
     let report = result?;
 
-    if let Some(system_account) = system_account_backup {
-        db.current_accounts_state
-            .insert(system_address, system_account);
-    } else {
-        // If the system account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&system_address);
-    }
-
-    if let Some(coinbase_account) = coinbase_backup {
-        db.current_accounts_state
-            .insert(block_header.coinbase, coinbase_account);
-    } else {
-        // If the coinbase account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&block_header.coinbase);
+    // Undo the sender nonce bump: it's the only state change a system call leaves
+    // behind given that the gas price is set to zero.
+    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
+        account.info.nonce = account.info.nonce.saturating_sub(1);
     }
 
     Ok(report)
@@ -3163,5 +3157,149 @@ mod bal_tests {
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
         assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+    }
+}
+
+#[cfg(test)]
+mod system_call_coinbase_tests {
+    //! Regression tests for the system-call coinbase collision. When a block's
+    //! fee recipient (coinbase) equals the system contract being called,
+    //! `generic_system_contract_levm`'s post-call coinbase restore must NOT clobber
+    //! the storage write the system call just made; otherwise the write is dropped
+    //! from the emitted state updates and the state root diverges from other clients.
+    use super::*;
+    use ethrex_common::types::{AccountState, AccountUpdate, ChainConfig, Code, CodeMetadata};
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_levm::db::Database;
+    use ethrex_levm::errors::DatabaseError;
+    use std::sync::Arc;
+
+    // EIP-2935 history-contract runtime bytecode.
+    const HISTORY_RUNTIME_CODE: &str = concat!(
+        "3373fffffffffffffffffffffffffffffffffffffffe1460465760203603604257",
+        "5f35600143038111604257611fff81430311604257611fff900654",
+        "5f5260205ff35b5f5ffd5b5f35611fff60014303065500",
+    );
+
+    struct Store {
+        chain_config: ChainConfig,
+        history_code: Code,
+    }
+
+    impl Database for Store {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            if address == HISTORY_STORAGE_ADDRESS.address {
+                return Ok(AccountState {
+                    nonce: 1,
+                    code_hash: self.history_code.hash,
+                    ..Default::default()
+                });
+            }
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(self.chain_config)
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            if code_hash == self.history_code.hash {
+                return Ok(self.history_code.clone());
+            }
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            let length = if code_hash == self.history_code.hash {
+                self.history_code.bytecode.len() as u64
+            } else {
+                0
+            };
+            Ok(CodeMetadata { length })
+        }
+    }
+
+    fn history_code() -> Code {
+        let bytes = hex::decode(HISTORY_RUNTIME_CODE).expect("history runtime code is valid hex");
+        Code::from_bytecode(Bytes::from(bytes), &NativeCrypto)
+    }
+
+    fn prague_db() -> GeneralizedDatabase {
+        GeneralizedDatabase::new(Arc::new(Store {
+            chain_config: ChainConfig {
+                prague_time: Some(0),
+                ..Default::default()
+            },
+            history_code: history_code(),
+        }))
+    }
+
+    fn parent_hash_value(parent_hash: H256) -> U256 {
+        U256::from_big_endian(parent_hash.as_bytes())
+    }
+
+    fn history_slot(block_number: u64) -> H256 {
+        H256::from_low_u64_be((block_number - 1) % 8191)
+    }
+
+    /// Run the EIP-2935 system call for block 42 with the given fee recipient and
+    /// return (slot value cached on the history contract, emitted state updates,
+    /// parent hash).
+    fn run_history_update(coinbase: Address) -> (Option<U256>, Vec<AccountUpdate>, H256) {
+        let mut db = prague_db();
+        let parent_hash = H256::from_low_u64_be(0x2935);
+        let block_number = 42;
+        let header = BlockHeader {
+            parent_hash,
+            coinbase,
+            number: block_number,
+            timestamp: 1,
+            ..Default::default()
+        };
+
+        LEVM::process_block_hash_history(&header, &mut db, VMType::L1, &NativeCrypto)
+            .expect("history system call executes");
+
+        let slot = history_slot(block_number);
+        let stored_value = db
+            .current_accounts_state
+            .get(&HISTORY_STORAGE_ADDRESS.address)
+            .and_then(|account| account.storage.get(&slot).copied());
+        let updates =
+            LEVM::get_state_transitions(&mut db).expect("state transitions are generated");
+
+        (stored_value, updates, parent_hash)
+    }
+
+    fn assert_history_write_emitted(coinbase: Address) {
+        let (stored_value, updates, parent_hash) = run_history_update(coinbase);
+        let slot = history_slot(42);
+        assert_eq!(
+            stored_value,
+            Some(parent_hash_value(parent_hash)),
+            "history storage must hold the parent hash after the system call"
+        );
+        assert!(
+            updates.iter().any(|update| {
+                update.address == HISTORY_STORAGE_ADDRESS.address
+                    && update.added_storage.get(&slot) == Some(&parent_hash_value(parent_hash))
+            }),
+            "the history-contract storage write must be emitted as a state update"
+        );
+    }
+
+    #[test]
+    fn ordinary_coinbase_preserves_history_storage_write() {
+        assert_history_write_emitted(Address::from_low_u64_be(0xbeef));
+    }
+
+    /// Regression: a fee recipient equal to the EIP-2935 history contract must not
+    /// cause the system call's storage write to be dropped by the coinbase restore.
+    #[test]
+    fn history_address_coinbase_preserves_history_storage_write() {
+        assert_history_write_emitted(HISTORY_STORAGE_ADDRESS.address);
     }
 }
