@@ -533,13 +533,13 @@ fn validate_attributes_v4(
             "V4 payload attributes missing parent_beacon_block_root".to_string(),
         ));
     }
-    // execution-apis#796: required field. The paired CL on
-    // glamsterdam-devnet-4 ships consensus-specs#5235 and supplies it.
-    if attributes.target_gas_limit.is_none() {
-        return Err(RpcErr::InvalidPayloadAttributes(
-            "V4 payload attributes missing target_gas_limit".to_string(),
-        ));
-    }
+    // execution-apis#796 makes target_gas_limit a required field on V4, but
+    // some Amsterdam devnets still run pre-#796 CLs that omit it. We keep it
+    // optional and fall back to --builder.gas-limit in build_payload_v4
+    // rather than rejecting, so EL rollout stays decoupled from CL rollout.
+    // TODO: once Amsterdam is finalized and all paired CLs ship #796, make an
+    // absent target_gas_limit a hard error here (reject with
+    // InvalidPayloadAttributes) instead of falling back.
     validate_timestamp_v4(attributes, head_block)
 }
 
@@ -560,11 +560,19 @@ async fn build_payload_v4(
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
 ) -> Result<u64, RpcErr> {
-    // validate_attributes_v4 guarantees target_gas_limit.is_some() before
-    // we reach this point (execution-apis#796).
-    let gas_ceil = attributes.target_gas_limit.ok_or_else(|| {
-        RpcErr::Internal("build_payload_v4 reached with no target_gas_limit".to_string())
-    })?;
+    // execution-apis#796: prefer the CL-supplied target gas limit. Pre-#796
+    // CLs on Amsterdam devnets may omit it; fall back to --builder.gas-limit
+    // and warn so the config drift stays visible.
+    // TODO: drop this fallback once #796 is mandatory on all paired CLs;
+    // validate_attributes_v4 should reject an absent field before we get here.
+    let gas_ceil = attributes.target_gas_limit.unwrap_or_else(|| {
+        warn!(
+            slot = attributes.slot_number,
+            gas_ceil = context.gas_ceil,
+            "FCUv4 payload attributes omit target_gas_limit; falling back to --builder.gas-limit (pre-execution-apis#796 CL)"
+        );
+        context.gas_ceil
+    });
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
@@ -703,19 +711,18 @@ mod tests {
         }
 
         #[tokio::test]
-        async fn v4_rejects_target_gas_limit_absent() {
-            // execution-apis#796: targetGasLimit is required on V4.
+        async fn v4_accepts_target_gas_limit_absent() {
+            // execution-apis#796 makes the field required, but we stay lenient
+            // for pre-#796 CLs on Amsterdam devnets: validation accepts an
+            // absent target_gas_limit and build_payload_v4 falls back to
+            // --builder.gas-limit.
             let context = amsterdam_active_context().await;
             let head = BlockHeader {
                 timestamp: 1,
                 ..Default::default()
             };
             let attrs = amsterdam_attributes(None);
-            let err = validate_attributes_v4(&attrs, &head, &context).unwrap_err();
-            let RpcErr::InvalidPayloadAttributes(msg) = err else {
-                panic!("expected InvalidPayloadAttributes, got {:?}", err);
-            };
-            assert!(msg.contains("target_gas_limit"), "got: {msg}");
+            assert!(validate_attributes_v4(&attrs, &head, &context).is_ok());
         }
 
         #[tokio::test]
