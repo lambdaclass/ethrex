@@ -391,4 +391,63 @@ mod tests {
         assert_eq!(request.storage_slot, H256::from_uint(&U256::from(1u64)));
         assert_eq!(request.block, BlockTag::Latest);
     }
+
+    #[test]
+    fn test_state_methods_default_block_to_latest_when_omitted() {
+        // Per execution-apis the Block parameter is optional and defaults to
+        // "latest". Each state method must parse a request with the block omitted
+        // and resolve it to the latest tag.
+        let addr = json!("0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        assert_eq!(
+            GetBalanceRequest::parse(&Some(vec![addr.clone()]))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetCodeRequest::parse(&Some(vec![addr.clone()]))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetTransactionCountRequest::parse(&Some(vec![addr.clone()]))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetStorageAtRequest::parse(&Some(vec![addr.clone(), json!("0x0")]))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+        assert_eq!(
+            GetProofRequest::parse(&Some(vec![addr.clone(), json!([])]))
+                .unwrap()
+                .block,
+            BlockTag::Latest
+        );
+    }
+
+    #[test]
+    fn test_get_storage_values_request_parse_defaults_to_latest() {
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": ["0x1"]
+        })]);
+        let request = GetStorageValuesRequest::parse(&params).unwrap();
+        assert_eq!(request.block, BlockTag::Latest);
+        let addr: Address = "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            request.requests.get(&addr).unwrap(),
+            &vec![H256::from_uint(&U256::from(1u64))]
+        );
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_empty() {
+        assert!(GetStorageValuesRequest::parse(&Some(vec![json!({})])).is_err());
+    }
 }
