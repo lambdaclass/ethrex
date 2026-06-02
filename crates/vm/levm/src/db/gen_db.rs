@@ -557,9 +557,10 @@ impl GeneralizedDatabase {
     }
 
     pub fn get_state_transitions(&mut self) -> Result<Vec<AccountUpdate>, VMError> {
-        // Exact upper bound: every emitted update corresponds to a modified entry in
-        // `current_accounts_state`, so its length is the tightest non-reallocating hint
-        // (never empty — the sender is always modified).
+        // Upper bound: `current_accounts_state` holds every *read* account, while the loop
+        // emits only *modified* ones, so on read-heavy blocks this over-reserves. Still a
+        // single non-reallocating alloc (never empty — the sender is always modified), which
+        // beats the repeated growth of starting from `vec![]`.
         let mut account_updates: Vec<AccountUpdate> =
             Vec::with_capacity(self.current_accounts_state.len());
         for (address, new_state_account) in self.current_accounts_state.iter() {

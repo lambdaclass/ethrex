@@ -473,12 +473,14 @@ impl<'a> VM<'a> {
         restore_cache_state(self.db, callframe_backup)
     }
 
-    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out
-    /// instead of cloning it. Only sound when the frame is about to be discarded and
-    /// nothing reads `call_frame_backup` afterward — i.e. the inner-call revert in
-    /// `handle_return`, where the frame is popped right after and its backup is dead.
-    /// (The top-level/error paths must keep cloning: `BackupHook::finalize` reads the
-    /// backup to build the tx-level undo snapshot.)
+    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out instead of
+    /// cloning it. Only sound when nothing reads `call_frame_backup` afterward: the inner-call
+    /// revert in `handle_return` (the frame is popped right after, so its backup is dead), and
+    /// the top-level / invalid-tx revert when no `BackupHook` is installed (normal L1 block
+    /// execution, gated on `VM::preserve_top_level_backup`).
+    ///
+    /// When a `BackupHook` IS present (L2 / stateless) the top-level paths must keep cloning,
+    /// because `BackupHook::finalize` reads the backup to build the tx-level undo snapshot.
     pub fn restore_cache_state_consuming(&mut self) -> Result<(), VMError> {
         let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)

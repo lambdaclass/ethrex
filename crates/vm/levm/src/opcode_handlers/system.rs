@@ -1104,9 +1104,10 @@ impl<'a> VM<'a> {
     /// Pop backup from stack and restore substate and cache if transaction reverted.
     ///
     /// `consume_backup` lets the caller move the frame's backup out (no clone) on the
-    /// revert path when the frame is about to be discarded; see
-    /// [`VM::restore_cache_state_consuming`]. The top-level call passes `false` because
-    /// `BackupHook::finalize` still reads the backup afterward.
+    /// revert path when nothing reads it afterward; see [`VM::restore_cache_state_consuming`].
+    /// The top-level call passes `true` for normal L1 execution and `false` when a
+    /// `BackupHook` is installed (L2 / stateless), since that hook reads the backup in
+    /// `finalize_execution` (gated on `VM::preserve_top_level_backup`).
     pub fn handle_state_backup(
         &mut self,
         ctx_result: &ContextResult,

@@ -54,6 +54,7 @@ use ethrex_levm::db::gen_db::{
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -588,6 +589,8 @@ impl LEVM {
         Self::prepare_block(block, db, vm_type, crypto)?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+        // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
+        let mut shared_memory_pool = Vec::with_capacity(1);
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -646,6 +649,7 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                &mut shared_memory_pool,
                 false,
                 crypto,
                 evm_config,
@@ -1092,6 +1096,8 @@ impl LEVM {
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
+                // Holds at most one root memory buffer (popped + reclaimed per tx).
+                let mut memory_pool = Vec::with_capacity(1);
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -1120,6 +1126,7 @@ impl LEVM {
                     &mut tx_db,
                     vm_type,
                     &mut stack_pool,
+                    &mut memory_pool,
                     false,
                     crypto,
                     evm_config,
@@ -2062,13 +2069,18 @@ impl LEVM {
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
         let chain_id = chain_config.chain_id;
 
-        // Parallel across sender groups, sequential within each group
+        // Parallel across sender groups, sequential within each group. The stack pool is reused
+        // across all groups a worker handles (it is `Send`).
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 if cancelled.load(Ordering::Relaxed) {
                     return;
                 }
+                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
+                // init; keep it local to this group's run, where it still amortizes the buffer
+                // alloc across the group's txs.
+                let mut memory_pool = Vec::with_capacity(1);
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 // Execute transactions sequentially within sender group
@@ -2081,6 +2093,7 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        &mut memory_pool,
                         true,
                         crypto,
                         evm_config,
@@ -2294,6 +2307,7 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
         config: EVMConfig,
@@ -2302,9 +2316,9 @@ impl LEVM {
         let mut env =
             Self::setup_env_with_config(tx, tx_sender, block_header, config, chain_id, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-        // Draw the root frame's stack from the shared pool (and adopt it for sub-frames), then
-        // return every stack to the pool afterwards so the next tx reuses them instead of
-        // allocating + zeroing a fresh 32 KB stack per transaction.
+        // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
+        // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
+        // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
         let mut vm = VM::new_pooled(
             env,
             db,
@@ -2313,10 +2327,11 @@ impl LEVM {
             vm_type,
             crypto,
             stack_pool,
+            memory_pool,
         )?;
         let result = vm.execute().map_err(VMError::into);
         // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
-        vm.reclaim_stacks_into(stack_pool);
+        vm.reclaim_into(stack_pool, memory_pool);
         result
     }
 

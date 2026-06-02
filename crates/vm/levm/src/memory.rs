@@ -31,6 +31,20 @@ impl Memory {
         }
     }
 
+    /// Resets this memory so its buffer can be reused from a pool by the next transaction:
+    /// drops all contents (length → 0, capacity retained) and rebases to 0.
+    ///
+    /// Truncating the buffer to length 0 is REQUIRED for correctness, not just hygiene:
+    /// [`Memory::resize`] only zero-fills bytes grown *past* `buffer.len()`, so handing a
+    /// non-empty buffer to the next tx would expose stale data from the previous one (a
+    /// consensus bug). Capacity is kept so the grown allocation is reused.
+    #[inline]
+    pub fn reset_for_reuse(&mut self) {
+        self.buffer.borrow_mut().clear();
+        self.len = 0;
+        self.current_base = 0;
+    }
+
     /// Gets the Memory for the next children callframe.
     #[inline]
     pub fn next_memory(&self) -> Memory {

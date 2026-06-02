@@ -489,6 +489,12 @@ pub struct VM<'a> {
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
+    /// Whether the top-level call-frame backup must be PRESERVED (deep-cloned) on the
+    /// revert / invalid-tx paths because a `BackupHook` will read it in `finalize_execution`
+    /// to build the tx-level undo snapshot. False for normal L1 block execution (no
+    /// `BackupHook`), where the backup is dead once the cache is restored and can be moved
+    /// out instead of cloned. Set true for L2 and for `stateless_execute`.
+    pub(crate) preserve_top_level_backup: bool,
     /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
     /// Signed: goes negative when inline refunds exceed gross charges in the local frame
     /// (e.g. SSTORE 0→x→0 restoration matching an ancestor's charge).
@@ -552,7 +558,16 @@ impl<'a> VM<'a> {
         vm_type: VMType,
         crypto: &'a dyn Crypto,
     ) -> Result<Self, VMError> {
-        Self::new_with_root_stack(env, db, tx, tracer, vm_type, crypto, Stack::default())
+        Self::new_with_root_stack(
+            env,
+            db,
+            tx,
+            tracer,
+            vm_type,
+            crypto,
+            Stack::default(),
+            Memory::default(),
+        )
     }
 
     /// Like [`VM::new`], but draws the root call-frame stack from `stack_pool` (falling back to a
@@ -560,8 +575,9 @@ impl<'a> VM<'a> {
     /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
     /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
     ///
-    /// Pair with [`VM::reclaim_stacks_into`] after execution to return every stack (root +
-    /// sub-frame) to `stack_pool` so the next transaction reuses them.
+    /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
+    /// to `stack_pool` and the root memory buffer to `memory_pool` so the next tx reuses them.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_pooled(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
@@ -570,22 +586,38 @@ impl<'a> VM<'a> {
         vm_type: VMType,
         crypto: &'a dyn Crypto,
         stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
     ) -> Result<Self, VMError> {
         // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
         // which is sound because the EVM never reads stack slots it didn't write — the same
         // invariant that already makes sub-frame pooling safe.
         let mut root_stack = stack_pool.pop().unwrap_or_default();
         root_stack.clear();
-        let mut vm = Self::new_with_root_stack(env, db, tx, tracer, vm_type, crypto, root_stack)?;
-        // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_stacks_into`.
+        // Reuse a pooled root memory buffer (capacity retained from a prior tx, contents dropped).
+        // `reclaim_into` truncates it to length 0, so `resize`'s zero-fill invariant holds. Only
+        // the root buffer is pooled: sub-frame memories are `Rc` clones of it (`next_memory`).
+        let mut root_memory = memory_pool.pop().unwrap_or_default();
+        root_memory.reset_for_reuse();
+        let mut vm = Self::new_with_root_stack(
+            env,
+            db,
+            tx,
+            tracer,
+            vm_type,
+            crypto,
+            root_stack,
+            root_memory,
+        )?;
+        // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
         mem::swap(&mut vm.stack_pool, stack_pool);
         Ok(vm)
     }
 
-    /// Returns every stack owned by this VM (the root call-frame stack plus any sub-frame stacks
-    /// still pooled internally) to `stack_pool` so the next transaction reuses them instead of
-    /// allocating. Must run on both the success and error paths of [`VM::execute`].
-    pub fn reclaim_stacks_into(mut self, stack_pool: &mut Vec<Stack>) {
+    /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
+    /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
+    /// still pooled internally) to `stack_pool`, and the root memory buffer to `memory_pool`.
+    /// Must run on both the success and error paths of [`VM::execute`].
+    pub fn reclaim_into(mut self, stack_pool: &mut Vec<Stack>, memory_pool: &mut Vec<Memory>) {
         // Hand the internal sub-frame pool back to the caller first.
         mem::swap(&mut self.stack_pool, stack_pool);
         // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
@@ -595,8 +627,17 @@ impl<'a> VM<'a> {
         let mut root_stack = self.current_call_frame.stack;
         root_stack.clear();
         stack_pool.push(root_stack);
+        // Reclaim the root memory buffer with its grown capacity. `reset_for_reuse` truncates it
+        // to length 0 (capacity kept) so the next tx's `resize` zero-fills correctly. At this
+        // point only the root frame holds the buffer (sub-frames are dropped), so the `Rc` is
+        // unique on the success path; on the error path the about-to-drop frames are never read
+        // again, so clearing the shared buffer is harmless.
+        let mut root_memory = self.current_call_frame.memory;
+        root_memory.reset_for_reuse();
+        memory_pool.push(root_memory);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new_with_root_stack(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
@@ -605,6 +646,7 @@ impl<'a> VM<'a> {
         vm_type: VMType,
         crypto: &'a dyn Crypto,
         root_stack: Stack,
+        root_memory: Memory,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -637,6 +679,10 @@ impl<'a> VM<'a> {
             (0, 0, 0, 0, 0)
         };
 
+        // L1 block execution installs no `BackupHook` (see `l1_hooks`), so the top-level backup
+        // is unread after restore and can be consumed; L2 / stateless keep it for the hook.
+        let preserve_top_level_backup = matches!(vm_type, VMType::L2(_));
+
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
@@ -649,6 +695,7 @@ impl<'a> VM<'a> {
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            preserve_top_level_backup,
             state_gas_used: 0,
             state_gas_reservoir: 0,
             state_gas_reservoir_initial: 0,
@@ -675,7 +722,7 @@ impl<'a> VM<'a> {
                 0,
                 0,
                 root_stack,
-                Memory::default(),
+                root_memory,
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
@@ -804,7 +851,13 @@ impl<'a> VM<'a> {
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
-            self.restore_cache_state()?;
+            // Consume the backup unless a `BackupHook` will read it (L2 / stateless); on L1 it
+            // is dead once the cache is restored.
+            if self.preserve_top_level_backup {
+                self.restore_cache_state()?;
+            } else {
+                self.restore_cache_state_consuming()?;
+            }
             return Err(e);
         }
 
@@ -1039,9 +1092,10 @@ impl<'a> VM<'a> {
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
-                // Keep the backup (clone): `BackupHook::finalize` reads it to build the
-                // tx-level undo snapshot after we return.
-                self.handle_state_backup(&result, false)?;
+                // Consume the backup (move it out) unless a `BackupHook` will read it afterward
+                // to build the tx-level undo snapshot (L2 / stateless). On L1 nothing reads it
+                // once the cache is restored, so cloning it would be dead work.
+                self.handle_state_backup(&result, !self.preserve_top_level_backup)?;
                 return Ok(result);
             }
 
@@ -1083,6 +1137,9 @@ impl<'a> VM<'a> {
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
         // Add backup hook to restore state after execution.
         self.add_hook(BackupHook::default());
+        // The hook reads the top-level backup in `finalize_execution`, so it must be preserved
+        // (cloned) on the revert paths even though this VM was built with the L1 `vm_type`.
+        self.preserve_top_level_backup = true;
         let report = self.execute()?;
         // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
@@ -1090,8 +1147,13 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        for hook in self.hooks.clone() {
-            hook.borrow_mut().prepare_execution(self)?;
+        // Clone each hook's `Rc` (cheap refcount bump) so the borrow on `self.hooks` is released
+        // and `self` can be passed mutably — without `self.hooks.clone()`'s per-tx `Vec` realloc.
+        // `self.hooks` is not mutated during the loop, so `get(i)` is always `Some` in range.
+        for i in 0..self.hooks.len() {
+            if let Some(hook) = self.hooks.get(i).map(Rc::clone) {
+                hook.borrow_mut().prepare_execution(self)?;
+            }
         }
 
         Ok(())
@@ -1147,9 +1209,12 @@ impl<'a> VM<'a> {
             }
         }
 
-        for hook in self.hooks.clone() {
-            hook.borrow_mut()
-                .finalize_execution(self, &mut ctx_result)?;
+        // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
+        for i in 0..self.hooks.len() {
+            if let Some(hook) = self.hooks.get(i).map(Rc::clone) {
+                hook.borrow_mut()
+                    .finalize_execution(self, &mut ctx_result)?;
+            }
         }
 
         self.tracer.exit_context(&ctx_result, true)?;
@@ -1312,12 +1377,14 @@ impl Substate {
         }
 
         // Add access lists contents to accessed accounts and accessed storage slots.
-        for (address, keys) in tx.access_list().clone() {
-            initial_accessed_addresses.insert(address);
+        // Iterate by reference (`Address`/`H256` are `Copy`); the old `.clone()` deep-copied
+        // the whole `Vec<(Address, Vec<H256>)>` per tx just to read it.
+        for (address, keys) in tx.access_list() {
+            initial_accessed_addresses.insert(*address);
             // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
+            let warm_slots = initial_accessed_storage_slots.entry(*address).or_default();
             for slot in keys {
-                warm_slots.insert(slot);
+                warm_slots.insert(*slot);
             }
         }
 
