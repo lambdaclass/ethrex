@@ -13,6 +13,11 @@ use crate::{
 };
 
 // -> https://github.com/ethereum/execution-apis/blob/d41fdf10fabbb73c4d126fb41809785d830acace/src/engine/cancun.md?plain=1#L186
+/// Maximum number of blob versioned hashes accepted by
+/// `engine_getBlobsV{1,2,3}`.
+/// Per the Engine API spec, clients must support at least 128.
+/// Despite the V1 in the name, V2 and V3 share this limit
+/// (see `get_blobs_and_proof`).
 const GET_BLOBS_V1_REQUEST_MAX_SIZE: usize = 128;
 
 #[derive(Debug, Serialize, Deserialize)]
