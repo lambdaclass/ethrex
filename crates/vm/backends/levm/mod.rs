@@ -255,7 +255,11 @@ impl LEVM {
 
             let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                tx_idx,
+                tx.compute_hash(crypto),
+                &report,
+            ));
 
             // EIP-7778: gas_spent (POST-REFUND) for receipt cumulative_gas_used
             cumulative_gas_used += report.gas_spent;

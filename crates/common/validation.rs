@@ -173,6 +173,7 @@ pub fn validate_block_access_list_hash(
     chain_config: &ChainConfig,
     computed_bal: &crate::types::block_access_list::BlockAccessList,
     transaction_count: usize,
+    crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
     use crate::constants::BAL_ITEM_COST;
 
@@ -229,7 +230,7 @@ pub fn validate_block_access_list_hash(
         });
     }
 
-    let computed_hash = computed_bal.compute_hash();
+    let computed_hash = computed_bal.compute_hash(crypto);
     let valid = header
         .block_access_list_hash
         .map(|expected_hash| expected_hash == computed_hash)

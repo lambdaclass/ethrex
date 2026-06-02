@@ -545,13 +545,13 @@ impl BlockAccessList {
 
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
-    pub fn compute_hash(&self) -> H256 {
+    pub fn compute_hash(&self, crypto: &dyn ethrex_crypto::Crypto) -> H256 {
         if self.inner.is_empty() {
             return *EMPTY_BLOCK_ACCESS_LIST_HASH;
         }
 
         let buf = self.encode_to_vec();
-        keccak(buf)
+        H256(crypto.keccak256(&buf))
     }
 
     /// Builds a validation index for fast per-tx BAL verification.

@@ -444,6 +444,7 @@ impl Blockchain {
                 &chain_config,
                 bal,
                 block.body.transactions.len(),
+                &NativeCrypto,
             )?;
         }
 
@@ -703,6 +704,7 @@ impl Blockchain {
                                 &chain_config,
                                 bal,
                                 block.body.transactions.len(),
+                                &NativeCrypto,
                             )?;
                         }
 
@@ -1330,6 +1332,7 @@ impl Blockchain {
                 chain_config,
                 bal,
                 block.body.transactions.len(),
+                &NativeCrypto,
             )?;
         }
 

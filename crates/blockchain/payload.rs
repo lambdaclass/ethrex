@@ -855,8 +855,9 @@ impl Blockchain {
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
-        context.payload.header.block_access_list_hash =
-            block_access_list.as_ref().map(|bal| bal.compute_hash());
+        context.payload.header.block_access_list_hash = block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash(&NativeCrypto));
         context.block_access_list = block_access_list;
 
         let mut logs = vec![];
