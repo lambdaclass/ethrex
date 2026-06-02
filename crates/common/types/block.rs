@@ -625,10 +625,10 @@ pub enum InvalidBlockHeaderError {
     #[error("Requests hash is not present")]
     RequestsHashNotPresent,
     // Other fork errors
-    #[error("Withdrawals root is not present")]
-    WithdrawalsRootNotPresent,
-    #[error("Withdrawals root is present")]
-    WithdrawalsRootPresent,
+    #[error("Withdrawals root is missing after Shanghai")]
+    WithdrawalsRootMissingPostShanghai,
+    #[error("Withdrawals root is present before Shanghai")]
+    WithdrawalsRootUnexpectedPreShanghai,
     #[error("Excess blob gas is present")]
     ExcessBlobGasPresent,
     #[error("Blob gas used is present")]
@@ -647,10 +647,10 @@ pub enum InvalidBlockHeaderError {
 pub enum InvalidBlockBodyError {
     #[error("Withdrawals root does not match")]
     WithdrawalsRootNotMatch,
-    #[error("Withdrawals are not present")]
-    WithdrawalsNotPresent,
-    #[error("Withdrawals are present")]
-    WithdrawalsPresent,
+    #[error("Withdrawals are missing from block body")]
+    WithdrawalsMissingFromBody,
+    #[error("Withdrawals are unexpectedly present in block body")]
+    WithdrawalsUnexpectedInBody,
     #[error("Transactions root does not match")]
     TransactionsRootNotMatch,
     #[error("Ommers is not empty")]
@@ -741,10 +741,10 @@ pub fn validate_block_body(
             }
         }
         (Some(_), None) => {
-            return Err(InvalidBlockBodyError::WithdrawalsNotPresent);
+            return Err(InvalidBlockBodyError::WithdrawalsMissingFromBody);
         }
         (None, Some(_)) => {
-            return Err(InvalidBlockBodyError::WithdrawalsPresent);
+            return Err(InvalidBlockBodyError::WithdrawalsUnexpectedInBody);
         }
         (None, None) => {}
     }
@@ -757,7 +757,7 @@ pub fn validate_shanghai_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.withdrawals_root.is_none() {
-        return Err(InvalidBlockHeaderError::WithdrawalsRootNotPresent);
+        return Err(InvalidBlockHeaderError::WithdrawalsRootMissingPostShanghai);
     }
 
     Ok(())
@@ -768,7 +768,7 @@ pub fn validate_pre_shanghai_header_fields(
     header: &BlockHeader,
 ) -> Result<(), InvalidBlockHeaderError> {
     if header.withdrawals_root.is_some() {
-        return Err(InvalidBlockHeaderError::WithdrawalsRootPresent);
+        return Err(InvalidBlockHeaderError::WithdrawalsRootUnexpectedPreShanghai);
     }
 
     Ok(())
@@ -1038,7 +1038,7 @@ mod test {
         };
         assert!(matches!(
             validate_shanghai_header_fields(&header_without_root),
-            Err(InvalidBlockHeaderError::WithdrawalsRootNotPresent)
+            Err(InvalidBlockHeaderError::WithdrawalsRootMissingPostShanghai)
         ));
 
         let header_with_root = BlockHeader {
@@ -1057,7 +1057,7 @@ mod test {
         };
         assert!(matches!(
             validate_pre_shanghai_header_fields(&header_with_root),
-            Err(InvalidBlockHeaderError::WithdrawalsRootPresent)
+            Err(InvalidBlockHeaderError::WithdrawalsRootUnexpectedPreShanghai)
         ));
 
         // withdrawals_root absent before Shanghai: expected normal case.
@@ -1085,7 +1085,7 @@ mod test {
 
         assert!(matches!(
             validate_block_body(&header, &body, &NativeCrypto),
-            Err(InvalidBlockBodyError::WithdrawalsNotPresent)
+            Err(InvalidBlockBodyError::WithdrawalsMissingFromBody)
         ));
     }
 
@@ -1105,7 +1105,7 @@ mod test {
 
         assert!(matches!(
             validate_block_body(&header, &body, &NativeCrypto),
-            Err(InvalidBlockBodyError::WithdrawalsPresent)
+            Err(InvalidBlockBodyError::WithdrawalsUnexpectedInBody)
         ));
     }
 
