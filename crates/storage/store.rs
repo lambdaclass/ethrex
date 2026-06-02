@@ -161,6 +161,18 @@ impl CodeCache {
     }
 }
 
+/// Snapshot of the resources needed to serve account/storage reads at a fixed
+/// state root without re-acquiring locks per access. Built once via
+/// [`Store::begin_storage_read_session`] and reused for the lifetime of a
+/// block's execution. The FKV cursor is precomputed into `Nibbles`, so each
+/// read is a pure `Arc` clone with no per-access allocation.
+#[derive(Clone)]
+pub struct StorageReadSession {
+    read_view: Arc<dyn StorageReadView>,
+    trie_cache: Arc<TrieLayerCache>,
+    last_written: Arc<Nibbles>,
+}
+
 /// Main storage interface for the ethrex client.
 ///
 /// The `Store` provides a high-level API for all blockchain data operations:
@@ -2472,8 +2484,9 @@ impl Store {
             .read()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        let last_written = Arc::new(Nibbles::from_hex(self.last_written()?));
+        let use_fkv =
+            Self::flatkeyvalue_computed_with_last_written(account_hash, (*last_written).as_ref());
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2524,16 +2537,18 @@ impl Store {
             .read()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let last_written = self.last_written()?;
+        let last_written = Arc::new(Nibbles::from_hex(self.last_written()?));
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
         // so open_storage_trie_shared falls through to the FKV path.
-        let storage_root =
-            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
-                *EMPTY_TRIE_HASH
-            } else {
-                storage_root
-            };
+        let storage_root = if Self::flatkeyvalue_computed_with_last_written(
+            account_hash,
+            (*last_written).as_ref(),
+        ) {
+            *EMPTY_TRIE_HASH
+        } else {
+            storage_root
+        };
         let storage_trie = self.open_storage_trie_shared(
             account_hash,
             state_root,
@@ -2548,6 +2563,75 @@ impl Store {
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
             .transpose()
+    }
+
+    /// Snapshot the per-read invariant resources (DB read view, trie diff-layer
+    /// cache, FKV cursor) once, so callers serving many reads at a fixed state
+    /// root don't re-acquire the locks and allocate a fresh read view on every
+    /// access. `state_root` is fixed for the snapshot's user, and `trie_cache`
+    /// only grows additional ancestor layers while the FKV cursor only advances,
+    /// so a snapshot taken at the start of a block's execution stays correct for
+    /// every read against that state.
+    pub fn begin_storage_read_session(&self) -> Result<StorageReadSession, StoreError> {
+        Ok(StorageReadSession {
+            read_view: self.backend.begin_read()?,
+            trie_cache: self
+                .trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
+            last_written: Arc::new(Nibbles::from_hex(self.last_written()?)),
+        })
+    }
+
+    /// Like [`Self::get_storage_at_root_with_known_storage_root`] but reuses a
+    /// previously-acquired [`StorageReadSession`] instead of re-locking.
+    pub fn get_storage_with_session(
+        &self,
+        session: &StorageReadSession,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let storage_root = if Self::flatkeyvalue_computed_with_last_written(
+            account_hash,
+            (*session.last_written).as_ref(),
+        ) {
+            *EMPTY_TRIE_HASH
+        } else {
+            storage_root
+        };
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            session.read_view.clone(),
+            session.trie_cache.clone(),
+            session.last_written.clone(),
+        )?;
+        let hashed_key = hash_key_fixed(&storage_key);
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    /// Like [`Self::get_account_state_by_root`] but reuses a previously-acquired
+    /// [`StorageReadSession`] instead of re-locking and re-opening the backend.
+    pub fn get_account_state_with_session(
+        &self,
+        session: &StorageReadSession,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            session.read_view.clone(),
+            session.trie_cache.clone(),
+            session.last_written.clone(),
+        )?;
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -3059,7 +3143,7 @@ impl Store {
         state_root: H256,
         read_view: Arc<dyn StorageReadView>,
         cache: Arc<TrieLayerCache>,
-        last_written: Vec<u8>,
+        last_written: Arc<Nibbles>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
@@ -3082,7 +3166,7 @@ impl Store {
         storage_root: H256,
         read_view: Arc<dyn StorageReadView>,
         cache: Arc<TrieLayerCache>,
-        last_written: Vec<u8>,
+        last_written: Arc<Nibbles>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
@@ -3444,7 +3528,7 @@ fn flatkeyvalue_generator(
             Box::new(BackendTrieDB::new_for_accounts_with_view(
                 backend.clone(),
                 read_tx.clone(),
-                last_written.clone(),
+                Arc::new(Nibbles::from_hex(last_written.clone())),
             )?),
             state_root,
         )
@@ -3475,7 +3559,7 @@ fn flatkeyvalue_generator(
                     backend.clone(),
                     read_tx.clone(),
                     account_hash,
-                    path.as_ref().to_vec(),
+                    Arc::new(Nibbles::from_hex(path.as_ref().to_vec())),
                 )?),
                 account_state.storage_root,
             )
