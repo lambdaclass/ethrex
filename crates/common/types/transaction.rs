@@ -1912,11 +1912,16 @@ impl FrameTransaction {
             }
             // Reserved flag bits 3-7 must be zero
             if frame.flags >= 8 {
-                return Err(format!("Frame {i}: reserved flag bits must be zero (flags={:#04x})", frame.flags));
+                return Err(format!(
+                    "Frame {i}: reserved flag bits must be zero (flags={:#04x})",
+                    frame.flags
+                ));
             }
             // VERIFY frames must have non-zero scope in flags
             if frame.mode == 1 && (frame.flags & 0x03) == 0 {
-                return Err(format!("Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"));
+                return Err(format!(
+                    "Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"
+                ));
             }
             // Per EIP-8141 spec line 140, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
@@ -1951,9 +1956,7 @@ impl FrameTransaction {
                 }
                 // Must not be last frame
                 if i + 1 >= self.frames.len() {
-                    return Err(format!(
-                        "Frame {i}: atomic batch flag on last frame"
-                    ));
+                    return Err(format!("Frame {i}: atomic batch flag on last frame"));
                 }
                 // Next frame must also be SENDER
                 if self.frames[i + 1].mode != 2 {
@@ -2624,11 +2627,7 @@ mod serde_impl {
             s.serialize_field("sender", &format!("{:#x}", self.sender))?;
             s.serialize_field(
                 "frames",
-                &self
-                    .frames
-                    .iter()
-                    .map(FrameEntry::from)
-                    .collect::<Vec<_>>(),
+                &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
             )?;
             s.serialize_field(
                 "maxPriorityFeePerGas",
@@ -4305,7 +4304,7 @@ mod tests {
         }
         // Test mode with scope restriction (bits 0-1 of flags) and atomic batch (bit 2 of flags)
         let frame = Frame {
-            mode: 2, // SENDER
+            mode: 2,            // SENDER
             flags: 0x01 | 0x04, // scope=1 + atomic_batch
             target: Some(Address::from_low_u64_be(0x1234)),
             gas_limit: 50_000,
@@ -4577,5 +4576,57 @@ mod tests {
         sender_tx
             .validate_static_constraints()
             .expect("SENDER frames may carry non-zero value");
+    }
+
+    // ── EIP-8141 fork-gate predicate tests ──
+
+    fn chain_config_with_hegota(hegota_time: Option<u64>) -> crate::types::ChainConfig {
+        crate::types::ChainConfig {
+            hegota_time,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_frame_tx_pre_fork_chain_config_rejects() {
+        let cfg = chain_config_with_hegota(None);
+        assert!(!cfg.is_hegota_activated(0));
+        assert!(!cfg.is_hegota_activated(u64::MAX));
+    }
+
+    #[test]
+    fn test_frame_tx_post_fork_admits() {
+        let cfg = chain_config_with_hegota(Some(1000));
+        assert!(cfg.is_hegota_activated(2000));
+    }
+
+    #[test]
+    fn test_frame_tx_fork_boundary_admits() {
+        let activation_time = 1_700_000_000u64;
+        let cfg = chain_config_with_hegota(Some(activation_time));
+        assert!(cfg.is_hegota_activated(activation_time));
+        assert!(!cfg.is_hegota_activated(activation_time - 1));
+    }
+
+    #[test]
+    fn test_frame_tx_devnet_fork_epoch_zero_admits() {
+        let cfg = chain_config_with_hegota(Some(0));
+        assert!(cfg.is_hegota_activated(0));
+        assert!(cfg.is_hegota_activated(1));
+        assert!(cfg.is_hegota_activated(u64::MAX));
+    }
+
+    #[test]
+    fn test_frame_tx_pre_fork_rlp_roundtrip_still_decodes() {
+        // RLP decoding is fork-unaware and must stay lossless so validators surface
+        // a FrameTxPreFork error downstream rather than a corrupt-RLP error.
+        let tx = make_test_frame_tx();
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.chain_id, tx.chain_id);
+        assert_eq!(decoded.nonce, tx.nonce);
+        assert_eq!(decoded.sender, tx.sender);
     }
 }
