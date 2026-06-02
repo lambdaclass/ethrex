@@ -723,12 +723,13 @@ fn validate_attributes_v5(
     Ok(())
 }
 
-/// V5 payload-build hook. Decodes the IL transactions for log/observability
-/// but does NOT yet thread them into `BuildPayloadArgs` — that wiring lands
-/// in Phase 5.1 (`BuildPayloadArgs::inclusion_list_transactions`). For now,
-/// the locally-built block does not honor the IL during construction; the
-/// remote-validation path in `engine_newPayloadV6` is the authoritative
-/// satisfaction check.
+/// V5 payload-build hook. Decodes the IL transactions, threads them into
+/// `BuildPayloadArgs::inclusion_list_transactions` (so they also hash into the
+/// payload id) and into `initiate_payload_build`, so the locally-built block
+/// force-includes the IL during construction via
+/// `apply_inclusion_list_transactions`. The `engine_newPayloadV6`
+/// satisfaction check remains the authoritative validation for received
+/// blocks. Malformed IL byte strings are skipped, not fatal (see below).
 async fn build_payload_v5(
     attributes: &PayloadAttributesV5,
     context: RpcApiContext,
