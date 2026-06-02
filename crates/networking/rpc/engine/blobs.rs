@@ -316,6 +316,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn blobs_v1_returns_full_before_osaka() {
+        let context = context_with_chain_config(false).await;
+        let (bundle, hashes) = sample_bundle(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
+            .unwrap();
+
+        let request = BlobsV1Request {
+            blob_versioned_hashes: hashes,
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![Some(BlobAndProofV1 {
+            blob: bundle.blobs[0],
+            proof: bundle.proofs[0],
+        })])
+        .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
     async fn blobs_v1_rejects_after_osaka() {
         let context = context_with_chain_config(true).await;
         let request = BlobsV1Request {
