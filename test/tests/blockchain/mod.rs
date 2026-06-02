@@ -3,6 +3,8 @@ mod eip7702_revert_authority_tests;
 mod eip7702_zero_transfer_tests;
 mod l1_tx_type_tests;
 mod logs_bloom_tests;
+mod mempool_cells_tests;
 mod mempool_tests;
+mod sampling_tests;
 mod smoke_tests;
 mod wrong_chain_id_tests;

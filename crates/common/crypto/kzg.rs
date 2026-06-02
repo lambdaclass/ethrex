@@ -271,6 +271,50 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
 }
 
+/// Compute all `CELLS_PER_EXT_BLOB` cells for a blob.
+/// Returns one `[u8; BYTES_PER_CELL]` per cell.
+#[cfg(feature = "c-kzg")]
+pub fn compute_cells(blob: &Blob) -> Result<Vec<[u8; BYTES_PER_CELL]>, KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+    let c_blob: c_kzg::Blob = (*blob).into();
+    let boxed = c_kzg_settings
+        .compute_cells(&c_blob)
+        .map_err(KzgError::CKzg)?;
+    Ok(boxed.iter().map(|cell| cell.to_bytes()).collect())
+}
+
+/// Verify KZG cell proofs for a subset of cells (partial batch).
+/// `commitments`, `cell_indices`, `cells`, and `proofs` must all have the same length.
+#[allow(unused_variables)]
+pub fn verify_cell_kzg_proof_batch_partial(
+    commitments: &[Commitment],
+    cell_indices: &[u64],
+    cells: &[[u8; BYTES_PER_CELL]],
+    proofs: &[Proof],
+) -> Result<bool, KzgError> {
+    #[cfg(not(feature = "c-kzg"))]
+    {
+        return Err(KzgError::Unimplemented(
+            "verify_cell_kzg_proof_batch_partial requires the c-kzg feature".to_string(),
+        ));
+    }
+    #[cfg(feature = "c-kzg")]
+    {
+        let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+        let c_commitments: Vec<c_kzg::Bytes48> = commitments.iter().map(|c| (*c).into()).collect();
+        let c_cells: Vec<c_kzg::Cell> = cells.iter().map(|c| c_kzg::Cell::new(*c)).collect();
+        let c_proofs: Vec<c_kzg::Bytes48> = proofs.iter().map(|p| (*p).into()).collect();
+        c_kzg::KzgSettings::verify_cell_kzg_proof_batch(
+            c_kzg_settings,
+            &c_commitments,
+            cell_indices,
+            &c_cells,
+            &c_proofs,
+        )
+        .map_err(KzgError::from)
+    }
+}
+
 #[cfg(feature = "c-kzg")]
 pub fn blob_to_commitment_and_cell_proofs(
     blob: &Blob,

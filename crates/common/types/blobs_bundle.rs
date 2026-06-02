@@ -14,6 +14,8 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "c-kzg")]
+use super::BYTES_PER_CELL;
 use super::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB, SAFE_BYTES_PER_BLOB};
 
 pub type Bytes48 = [u8; 48];
@@ -219,6 +221,64 @@ impl BlobsBundle {
         self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)?;
 
         Ok(())
+    }
+
+    /// Structural validation for eth/72 elided bundles: blobs are omitted while
+    /// commitments and cell proofs are present. Skips the empty-blob check and
+    /// KZG proof verification (proofs are verified once cells are fetched via
+    /// `GetCells`). The commitment list defines the blob count.
+    #[cfg(feature = "c-kzg")]
+    pub fn validate_elided(
+        &self,
+        tx: &super::EIP4844Transaction,
+        fork: super::Fork,
+    ) -> Result<(), BlobsBundleError> {
+        use super::CELLS_PER_EXT_BLOB;
+
+        let blob_count = self.commitments.len();
+
+        if blob_count == 0 {
+            return Err(BlobsBundleError::BlobBundleEmptyError);
+        }
+        if blob_count > max_blobs_per_block(fork) {
+            return Err(BlobsBundleError::MaxBlobsExceeded);
+        }
+        // The elided form only exists on eth/72 (Osaka+) with the cell-proof wrapper.
+        if self.version == 0 || fork < Fork::Osaka {
+            return Err(BlobsBundleError::InvalidBlobVersionForFork);
+        }
+        if blob_count != tx.blob_versioned_hashes.len()
+            || blob_count * CELLS_PER_EXT_BLOB != self.proofs.len()
+        {
+            return Err(BlobsBundleError::BlobsBundleWrongLen);
+        }
+
+        self.validate_blob_commitment_hashes(&tx.blob_versioned_hashes)
+    }
+
+    /// Return cells for the requested column indices (one inner Vec per blob).
+    /// `column_mask` is a 128-bit bitmask; bit i set means column i is requested.
+    /// Returns an error if blobs are missing (elided) or the c-kzg feature is absent.
+    #[cfg(feature = "c-kzg")]
+    pub fn cells_for_columns(
+        &self,
+        column_mask: u128,
+    ) -> Result<Vec<Vec<[u8; BYTES_PER_CELL]>>, BlobsBundleError> {
+        let mut result = Vec::with_capacity(self.blobs.len());
+        for blob in &self.blobs {
+            let all_cells = ethrex_crypto::kzg::compute_cells(blob)?;
+            let mut blob_cells = vec![];
+            for col in 0..128u32 {
+                if (column_mask >> col) & 1 == 1 {
+                    let cell = all_cells
+                        .get(col as usize)
+                        .ok_or(BlobsBundleError::BlobToCommitmentAndProofError)?;
+                    blob_cells.push(*cell);
+                }
+            }
+            result.push(blob_cells);
+        }
+        Ok(result)
     }
 
     pub fn validate_blob_commitment_hashes(

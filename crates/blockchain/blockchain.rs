@@ -47,6 +47,7 @@ pub mod error;
 pub mod fork_choice;
 pub mod mempool;
 pub mod payload;
+pub mod sampling;
 pub mod tracing;
 pub mod vm;
 
@@ -258,6 +259,9 @@ pub struct BlockchainOptions {
     /// `--no-bal-parallel-trie`) to fall back to streaming `AccountUpdate`s from
     /// the executor and merkleizing post-execution.
     pub bal_parallel_trie_enabled: bool,
+    /// EIP-8070: when true, activate the sampler/provider state machine.
+    /// When false (default), the node always acts as provider (p=1.0).
+    pub blob_sampling_enabled: bool,
 }
 
 impl Default for BlockchainOptions {
@@ -272,6 +276,7 @@ impl Default for BlockchainOptions {
             bal_parallel_exec_enabled: true,
             bal_prefetch_enabled: true,
             bal_parallel_trie_enabled: true,
+            blob_sampling_enabled: false,
         }
     }
 }
@@ -370,9 +375,14 @@ impl Blockchain {
     }
 
     pub fn new(store: Store, blockchain_opts: BlockchainOptions) -> Self {
+        let mempool = if blockchain_opts.blob_sampling_enabled {
+            Mempool::new_with_sampling(blockchain_opts.max_mempool_size)
+        } else {
+            Mempool::new(blockchain_opts.max_mempool_size)
+        };
         Self {
             storage: store,
-            mempool: Mempool::new(blockchain_opts.max_mempool_size),
+            mempool,
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
@@ -2684,7 +2694,13 @@ impl Blockchain {
 
         // Validate blobs bundle after checking if it's already added.
         if let Transaction::EIP4844Transaction(transaction) = &transaction {
-            blobs_bundle.validate(transaction, fork)?;
+            // eth/72 elided bundles carry commitments + cell proofs but no blobs;
+            // full KZG verification is deferred until cells are fetched via GetCells.
+            if blobs_bundle.blobs.is_empty() && !blobs_bundle.commitments.is_empty() {
+                blobs_bundle.validate_elided(transaction, fork)?;
+            } else {
+                blobs_bundle.validate(transaction, fork)?;
+            }
         }
 
         let sender = transaction.sender(&NativeCrypto)?;

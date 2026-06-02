@@ -2,7 +2,7 @@ use crate::authentication::authenticate;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
-use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
+use crate::engine::blobs::{BlobsV2Request, BlobsV3Request, BlobsV4Request};
 use crate::engine::client_version::GetClientVersionV1Request;
 use crate::engine::payload::{
     GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
@@ -1183,7 +1183,7 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 /// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
 /// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
-/// - Blob retrieval: `engine_getBlobsV1/V2/V3`
+/// - Blob retrieval: `engine_getBlobsV1/V2/V3/V4`
 /// - Capabilities: `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
 pub async fn map_engine_requests(
     req: &RpcRequest,
@@ -1234,6 +1234,7 @@ pub async fn map_engine_requests(
         "engine_getBlobsV1" => BlobsV1Request::call(req, context).await,
         "engine_getBlobsV2" => BlobsV2Request::call(req, context).await,
         "engine_getBlobsV3" => BlobsV3Request::call(req, context).await,
+        "engine_getBlobsV4" => BlobsV4Request::call(req, context).await,
         "engine_getClientVersionV1" => GetClientVersionV1Request::call(req, context).await,
         unknown_engine_method => Err(RpcErr::MethodNotFound(unknown_engine_method.to_owned())),
     }

@@ -1,7 +1,10 @@
+use std::time::Duration;
+
+use bytes::Bytes;
 use ethrex_common::{
     H256,
     serde_utils::{self},
-    types::{Blob, Proof},
+    types::{BYTES_PER_CELL, Blob, CELLS_PER_EXT_BLOB, Proof},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -198,6 +201,218 @@ async fn get_blobs_and_proof(
         .collect();
 
     Ok(res)
+}
+
+// ── engine_getBlobsV4 ────────────────────────────────────────────────────────
+
+/// Per-blob response for `engine_getBlobsV4`.
+///
+/// `blob_cells`: one entry per requested column (matching the bit-order of
+/// `indices_bitarray`); each entry is the 2048-byte cell as a 0x-prefixed hex
+/// string, or `null` when the cell is not available locally.
+///
+/// `proofs`: per-cell KZG proof taken from the sidecar bundle at position
+/// `blob_idx * CELLS_PER_EXT_BLOB + column`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobCellsAndProofsV1 {
+    /// One hex-encoded cell (2048 bytes) or `null` per requested column.
+    #[serde(with = "opt_bytes_vec")]
+    pub blob_cells: Vec<Option<Bytes>>,
+    /// KZG cell proofs (48 bytes each), positionally aligned with `blob_cells`.
+    /// A proof is the valid sidecar proof for that column; the proof entry for a
+    /// `null` cell (one we don't hold) is present but should be ignored by the
+    /// caller, since there is no cell to verify against it.
+    #[serde(with = "serde_utils::bytes48::vec")]
+    pub proofs: Vec<Proof>,
+}
+
+/// Serde helper: serialize `Vec<Option<Bytes>>` as an array of hex strings or null.
+mod opt_bytes_vec {
+    use bytes::Bytes;
+    use serde::Serializer;
+
+    pub fn serialize<S>(value: &Vec<Option<Bytes>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(value.len()))?;
+        for item in value {
+            match item {
+                Some(b) => seq.serialize_element(&format!("0x{b:x}"))?,
+                None => seq.serialize_element(&serde_json::Value::Null)?,
+            }
+        }
+        seq.end()
+    }
+}
+
+/// Request body for `engine_getBlobsV4`.
+pub struct BlobsV4Request {
+    /// Versioned blob hashes to look up.
+    versioned_blob_hashes: Vec<H256>,
+    /// Bitmask of column indices to return (bit i set ⇒ return column i).
+    /// Encoded as a 16-byte big-endian hex string on the wire.
+    indices_bitarray: u128,
+}
+
+impl RpcHandler for BlobsV4Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        let params = params
+            .as_ref()
+            .ok_or(RpcErr::BadParams("No params provided".to_owned()))?;
+        if params.len() != 2 {
+            return Err(RpcErr::BadParams("Expected 2 params".to_owned()));
+        }
+        let versioned_blob_hashes: Vec<H256> = serde_json::from_value(params[0].clone())?;
+        let indices_bitarray = parse_indices_bitarray(&params[1])?;
+        Ok(BlobsV4Request {
+            versioned_blob_hashes,
+            indices_bitarray,
+        })
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        debug!("Received new engine request: getBlobsV4");
+
+        if self.versioned_blob_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+            return Err(RpcErr::TooLargeRequest);
+        }
+
+        // Osaka fork guard (mirrors getBlobsV3). On an empty chain the head header
+        // is absent; treat the timestamp as 0 (pre-Osaka) so the guard still
+        // rejects rather than silently serving on a pre-genesis chain.
+        let head_ts = context
+            .storage
+            .get_block_header(context.storage.get_latest_block_number().await?)?
+            .map(|h| h.timestamp)
+            .unwrap_or(0);
+        if !context
+            .storage
+            .get_chain_config()
+            .is_osaka_activated(head_ts)
+        {
+            return Err(RpcErr::UnsupportedFork(
+                "getBlobsV4 engine only supported for Osaka".to_string(),
+            ));
+        }
+
+        let mask = self.indices_bitarray;
+        let hashes = self.versioned_blob_hashes.clone();
+        let mempool = &context.blockchain.mempool;
+
+        // Wrap the per-hash resolution in a 500 ms timeout; return whatever
+        // is ready on elapse rather than erroring.
+        let result = tokio::time::timeout(Duration::from_millis(500), async {
+            let mut responses: Vec<Option<BlobCellsAndProofsV1>> = Vec::with_capacity(hashes.len());
+
+            for versioned_hash in &hashes {
+                // Resolve: versioned_hash → (tx_hash, blob_index).
+                let lookup = mempool
+                    .get_tx_and_blob_idx_by_versioned_hash(*versioned_hash)
+                    .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+                let Some((tx_hash, blob_idx)) = lookup else {
+                    responses.push(None);
+                    continue;
+                };
+
+                let bundle = mempool
+                    .get_blobs_bundle(tx_hash)
+                    .map_err(|e| RpcErr::Internal(e.to_string()))?;
+
+                let Some(bundle) = bundle else {
+                    responses.push(None);
+                    continue;
+                };
+
+                // Cell proofs only exist in the cell-proof wrapper (version != 0,
+                // Osaka). A version-0 bundle cannot supply per-cell proofs, so
+                // return null rather than fabricating a zero proof.
+                if bundle.version == 0 {
+                    responses.push(None);
+                    continue;
+                }
+
+                // Columns requested for this blob.
+                let mut cells: Vec<Option<Bytes>> = Vec::new();
+                let mut proofs: Vec<Proof> = Vec::new();
+
+                // Optionally compute all cells from the bundle blob (when the blob is present).
+                #[cfg(feature = "c-kzg")]
+                let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = bundle
+                    .blobs
+                    .get(blob_idx)
+                    .and_then(|b| ethrex_common::crypto::kzg::compute_cells(b).ok());
+                #[cfg(not(feature = "c-kzg"))]
+                let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = None;
+
+                for col in 0..CELLS_PER_EXT_BLOB {
+                    if (mask >> col) & 1 == 0 {
+                        continue;
+                    }
+                    // Proof for this column from the sidecar. If it's missing
+                    // (malformed bundle: fewer proofs than blob_count*128), we
+                    // cannot serve a trustworthy cell — emit a null cell rather
+                    // than pairing a real cell with a fabricated zero proof.
+                    let proof_idx = blob_idx * CELLS_PER_EXT_BLOB + col;
+                    let Some(&proof) = bundle.proofs.get(proof_idx) else {
+                        cells.push(None);
+                        proofs.push([0u8; 48]); // positional placeholder for the null cell
+                        continue;
+                    };
+
+                    // Cell: prefer stored (verified), then computed from full blob, else null.
+                    let cell_opt = if let Some(cell) = mempool.get_cell(tx_hash, blob_idx, col) {
+                        Some(Bytes::copy_from_slice(cell.as_ref()))
+                    } else if let Some(ref all) = computed_cells {
+                        all.get(col).map(|c| Bytes::copy_from_slice(c.as_ref()))
+                    } else {
+                        None
+                    };
+                    cells.push(cell_opt);
+                    proofs.push(proof);
+                }
+
+                responses.push(Some(BlobCellsAndProofsV1 {
+                    blob_cells: cells,
+                    proofs,
+                }));
+            }
+
+            Ok::<_, RpcErr>(responses)
+        })
+        .await;
+
+        let responses = match result {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Err(e),
+            // Timeout: return nulls for all hashes rather than erroring.
+            Err(_elapsed) => (0..hashes.len()).map(|_| None).collect(),
+        };
+
+        serde_json::to_value(responses).map_err(|e| RpcErr::Internal(e.to_string()))
+    }
+}
+
+/// Parse the 16-byte big-endian hex `indices_bitarray` param.
+fn parse_indices_bitarray(value: &Value) -> Result<u128, RpcErr> {
+    let hex_str = value
+        .as_str()
+        .ok_or_else(|| RpcErr::BadParams("indices_bitarray must be a hex string".into()))?;
+    let stripped = hex_str.strip_prefix("0x").unwrap_or(hex_str);
+    let bytes = hex::decode(stripped)
+        .map_err(|_| RpcErr::BadParams("indices_bitarray: invalid hex".into()))?;
+    if bytes.len() != 16 {
+        return Err(RpcErr::BadParams(format!(
+            "indices_bitarray must be 16 bytes, got {}",
+            bytes.len()
+        )));
+    }
+    let mut arr = [0u8; 16];
+    arr.copy_from_slice(&bytes);
+    Ok(u128::from_be_bytes(arr))
 }
 
 #[cfg(test)]
@@ -402,5 +617,136 @@ mod tests {
         };
         let result = request.handle(context).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    // ── BlobsV4 tests ─────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn blobs_v4_requires_osaka() {
+        let context = context_with_chain_config(false).await;
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::from_low_u64_be(1)],
+            indices_bitarray: u128::MAX,
+        };
+        let err = request.handle(context).await.unwrap_err();
+        assert!(matches!(err, RpcErr::UnsupportedFork(_)));
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_rejects_too_many_hashes() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE + 1],
+            indices_bitarray: 0,
+        };
+        let err = request.handle(context).await.unwrap_err();
+        assert!(matches!(err, RpcErr::TooLargeRequest));
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_unknown_hash_returns_null_entry() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::from_low_u64_be(999)],
+            indices_bitarray: u128::MAX,
+        };
+        let result = request.handle(context).await.unwrap();
+        // One null entry for the unknown hash.
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        assert!(arr[0].is_null());
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_parse_wrong_bitarray_length_rejected() {
+        let err = parse_indices_bitarray(&serde_json::json!("0xdeadbeef")).unwrap_err();
+        assert!(matches!(err, RpcErr::BadParams(_)));
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_parse_valid_bitarray() {
+        let mask: u128 = 0x0000_0000_0000_0000_0000_0000_0000_0001;
+        let hex = format!("0x{}", hex::encode(mask.to_be_bytes()));
+        let parsed = parse_indices_bitarray(&serde_json::json!(hex)).unwrap();
+        assert_eq!(parsed, mask);
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_stored_cells_preferred_over_computed() {
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle.clone())
+            .unwrap();
+
+        // Store a recognizable cell for blob 0, column 0.
+        let cell_bytes = Box::new([0xABu8; BYTES_PER_CELL]);
+        context
+            .blockchain
+            .mempool
+            .store_cells(tx_hash, 1, vec![(0, 0, cell_bytes)])
+            .unwrap();
+
+        // Request only column 0.
+        let mask: u128 = 1;
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: mask,
+        };
+        let result = request.handle(context).await.unwrap();
+        let arr = result.as_array().unwrap();
+        assert_eq!(arr.len(), 1);
+        let entry = &arr[0];
+        assert!(!entry.is_null());
+        // blob_cells[0] should be the stored 0xAB... cell.
+        let blob_cells = entry["blobCells"].as_array().unwrap();
+        assert_eq!(blob_cells.len(), 1);
+        assert!(!blob_cells[0].is_null());
+        let hex_cell = blob_cells[0].as_str().unwrap();
+        // 2048 bytes = 4096 hex chars + "0x" prefix.
+        assert_eq!(hex_cell.len(), 4096 + 2);
+        // All bytes should be 0xAB.
+        let decoded = hex::decode(&hex_cell[2..]).unwrap();
+        assert!(decoded.iter().all(|&b| b == 0xAB));
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_missing_stored_and_no_blob_returns_null_cell() {
+        let context = context_with_chain_config(true).await;
+        // Create a bundle with blobs elided (empty blobs vec) but valid commitments/proofs.
+        let commitments: Vec<Commitment> = vec![[0u8; 48]];
+        let proofs: Vec<Proof> = vec![[2u8; 48]; CELLS_PER_EXT_BLOB];
+        let hashes: Vec<H256> = commitments
+            .iter()
+            .map(kzg_commitment_to_versioned_hash)
+            .collect();
+        let bundle = BlobsBundle {
+            blobs: vec![], // elided
+            commitments,
+            proofs,
+            version: 1,
+        };
+        let tx_hash = H256::from_low_u64_be(77);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+
+        // No stored cells, blob is elided — expect null cell.
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: 1, // column 0 only
+        };
+        let result = request.handle(context).await.unwrap();
+        let arr = result.as_array().unwrap();
+        // The hash resolved, so we get Some(BlobCellsAndProofsV1) with a null cell.
+        let entry = &arr[0];
+        if !entry.is_null() {
+            let blob_cells = entry["blobCells"].as_array().unwrap();
+            assert!(blob_cells[0].is_null());
+        }
+        // else: blob_idx=0 is out of bounds for empty blobs slice → None entry, also acceptable.
     }
 }

@@ -230,6 +230,7 @@ pub async fn init_l2(
         r#type: BlockchainType::L2(l2_config),
         perf_logs_enabled: true,
         max_blobs_per_block: None, // L2 doesn't support blob transactions
+        blob_sampling_enabled: false, // L2 rejects blob txs; no eth/72 sampling
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
         bal_parallel_exec_enabled: true,

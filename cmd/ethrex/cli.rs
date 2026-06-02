@@ -440,6 +440,15 @@ pub struct Options {
         env = "ETHREX_PRECOMPUTE_WITNESSES"
     )]
     pub precompute_witnesses: bool,
+    #[arg(
+        long = "blob-sampling",
+        action = ArgAction::SetTrue,
+        default_value = "false",
+        help = "Enable EIP-8070 PeerDAS blob sampling (sampler/provider state machine). Disabled by default; when off the node always acts as provider (p=1.0).",
+        help_heading = "P2P options",
+        env = "ETHREX_BLOB_SAMPLING"
+    )]
+    pub blob_sampling: bool,
 }
 
 impl Options {
@@ -532,6 +541,7 @@ impl Default for Options {
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,
             no_bal_parallel_trie: false,
+            blob_sampling: false,
         }
     }
 }
