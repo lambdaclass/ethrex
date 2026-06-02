@@ -1227,4 +1227,26 @@ mod tests {
             Some(1000)
         );
     }
+
+    #[test]
+    fn chain_config_accepts_heze_and_bogota_aliases_for_hegota_time() {
+        for key in [
+            "hegotaTime",
+            "hezeTime",
+            "heze_time",
+            "bogotaTime",
+            "bogota_time",
+        ] {
+            let json = format!(
+                r#"{{
+                    "chainId": 1,
+                    "depositContractAddress": "0x0000000000000000000000000000000000000000",
+                    "{key}": 1700000000
+                }}"#
+            );
+            let cfg: ChainConfig = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("alias {key} must deserialize: {e}"));
+            assert_eq!(cfg.hegota_time, Some(1_700_000_000), "alias {key}");
+        }
+    }
 }
