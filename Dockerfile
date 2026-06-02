@@ -25,6 +25,8 @@ ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 ARG CARGO_BINSTALL_VERSION=v1.19.1
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
+    # uname -m (NOT $TARGETARCH): cargo-chef is a build-platform tool, must match
+    # the stage's execution arch, not the target image arch.
     curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/download/${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz \
       | tar -xz -C /usr/local/cargo/bin \
     && cargo binstall --no-confirm cargo-chef

@@ -52,16 +52,15 @@ GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
 VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
-STAMP_FILE := .docker_build_stamp
-$(STAMP_FILE): $(shell find crates cmd tooling/repl tooling/monitor -type f -name '*.rs') Cargo.toml Dockerfile
+# Always invoke docker build; BuildKit's layer cache makes a no-op rebuild
+# sub-second, and GIT_SHA/VERSION are late-stage ARGs, so this keeps the baked
+# git metadata accurate without a stamp file that can't see commit/branch changes.
+build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
 	docker build \
 		--build-arg GIT_SHA=$(GIT_SHA) \
 		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE) .
-	touch $(STAMP_FILE)
-
-build-image: $(STAMP_FILE) ## 🐳 Build the Docker image (override tag with TAG=foo)
 
 run-image: build-image ## 🏃 Run the Docker image
 	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
