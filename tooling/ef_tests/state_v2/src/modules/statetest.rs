@@ -90,7 +90,7 @@ async fn run_case(
     emit_trace: bool,
 ) -> Result<bool, RunnerError> {
     let (mut db, initial_block_hash, storage, _genesis) =
-        load_initial_state(test, &test_case.fork).await;
+        load_initial_state(test, &test_case.fork, true).await;
     let env = get_vm_env_for_test(test.env, test_case)?;
     let tx = get_tx_from_test_case(test_case).await?;
 

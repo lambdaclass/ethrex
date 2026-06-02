@@ -13,6 +13,7 @@
 pub mod codec;
 mod discv4_handlers;
 mod discv5_handlers;
+pub mod lookup;
 pub mod server;
 
 pub use server::{DiscoveryServer, DiscoveryServerError, is_discv4_packet};
