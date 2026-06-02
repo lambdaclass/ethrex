@@ -298,12 +298,18 @@ pub struct Options {
     #[arg(
         long = "p2p.addr",
         value_name = "ADDRESS",
-        help = "Bind address for the TCP RLPx socket. Also used as the default bind address for UDP discovery unless --discovery.addr is set.",
-        long_help = "The address to bind the TCP RLPx socket to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.",
+        value_delimiter = ',',
+        num_args = 0..,
+        help = "Bind address(es) for the TCP RLPx transport. Also used as the default bind address for UDP discovery unless --discovery.addr is set.",
+        long_help = "One or two comma-separated addresses to bind RLPx TCP listeners to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. \
+            Supply a single IPv4 address for IPv4-only, a single IPv6 address for IPv6-only, \
+            or both (e.g. 0.0.0.0,::) for dual-stack. \
+            Defaults to the auto-detected local IP. \
+            See also --nat.extip to announce a different external address.",
         help_heading = "P2P options",
         env = "ETHREX_P2P_ADDR"
     )]
-    pub p2p_addr: Option<String>,
+    pub p2p_addr: Vec<String>,
     #[arg(
         long = "nat.extip",
         value_name = "IP",
@@ -481,7 +487,7 @@ impl Default for Options {
             authrpc_port: Default::default(),
             authrpc_jwtsecret: Default::default(),
             p2p_disabled: Default::default(),
-            p2p_addr: None,
+            p2p_addr: vec![],
             nat_extip: None,
             p2p_port: Default::default(),
             discovery_addr: None,

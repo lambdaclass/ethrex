@@ -126,8 +126,8 @@ P2P options:
       --p2p.disabled
           [env: ETHREX_P2P_DISABLED=]
 
-      --p2p.addr <ADDRESS>
-          The address to bind the TCP RLPx socket to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
+      --p2p.addr [<ADDRESS>...]
+          One or two comma-separated addresses to bind RLPx TCP listeners to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Supply a single IPv4 address for IPv4-only, a single IPv6 address for IPv6-only, or both (e.g. 0.0.0.0,::) for dual-stack. Defaults to the auto-detected local IP. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
 
@@ -359,8 +359,8 @@ P2P options:
 
           [env: ETHREX_P2P_DISABLED=]
 
-      --p2p.addr <ADDRESS>
-          The address to bind the TCP RLPx socket to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
+      --p2p.addr [<ADDRESS>...]
+          One or two comma-separated addresses to bind RLPx TCP listeners to. Also used as the default bind address for UDP discovery unless --discovery.addr is set. Supply a single IPv4 address for IPv4-only, a single IPv6 address for IPv6-only, or both (e.g. 0.0.0.0,::) for dual-stack. Defaults to the auto-detected local IP. See also --nat.extip to announce a different external address.
 
           [env: ETHREX_P2P_ADDR=]
 
