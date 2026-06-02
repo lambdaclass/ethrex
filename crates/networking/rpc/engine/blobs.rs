@@ -64,7 +64,7 @@ impl RpcHandler for BlobsV1Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs");
 
-        if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+        if self.blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
 
@@ -140,7 +140,7 @@ async fn get_blobs_and_proof(
     context: RpcApiContext,
     version: u64,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
-    if blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+    if blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
         return Err(RpcErr::TooLargeRequest);
     }
 
@@ -322,5 +322,33 @@ mod tests {
 
         let err = request.handle(context).await.unwrap_err();
         assert!(matches!(err, RpcErr::TooLargeRequest));
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_accepts_max_hashes() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV1Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected =
+            serde_json::to_value(vec![None::<BlobAndProofV1>; GET_BLOBS_V1_REQUEST_MAX_SIZE])
+                .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_accepts_max_hashes() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected =
+            serde_json::to_value(vec![None::<BlobAndProofV2>; GET_BLOBS_V1_REQUEST_MAX_SIZE])
+                .unwrap();
+        assert_eq!(result, expected);
     }
 }
