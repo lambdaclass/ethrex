@@ -355,9 +355,19 @@ impl GeneralizedDatabase {
         }
 
         // Initial-state fast path.
+        //
+        // Clone info/flags only, NOT the storage map. The streaming executor drains
+        // `current_accounts_state` into `initial_accounts_state` every few txs, so a hot account
+        // (token contracts, etc.) is re-faulted here repeatedly with an ever-growing storage map
+        // it barely reads. The touched slots are faulted back in lazily by `get_storage_value`,
+        // which resolves a `current` miss against `initial` (the committed baseline) before the
+        // store — so this stays correct and the diff invariant holds. See `clone_without_storage`.
         if let Some(account) = self.initial_accounts_state.get(&address) {
-            let clone = account.clone();
-            return Ok(self.current_accounts_state.entry(address).or_insert(clone));
+            let shallow = account.clone_without_storage();
+            return Ok(self
+                .current_accounts_state
+                .entry(address)
+                .or_insert(shallow));
         }
 
         // Lazy-BAL hook: if the cursor finds this address, materialize info from the BAL
@@ -745,8 +755,34 @@ impl GeneralizedDatabase {
                 continue;
             }
 
-            self.initial_accounts_state
-                .insert(address, new_state_account);
+            // Fold this flush's committed state into the diff baseline. With the info-only clone
+            // in `load_account`, `new_state_account.storage` holds only the slots touched this
+            // batch, so we MERGE them into the existing baseline instead of replacing it: a plain
+            // replace would drop the committed values of slots written in an earlier batch but not
+            // re-touched here (the old full-storage clone preserved them implicitly, which is why
+            // a replace was correct before). On destroy the prior storage is invalid, so the
+            // drained account is authoritative and replaces it wholesale (old behavior).
+            match self.initial_accounts_state.get_mut(&address) {
+                Some(initial_account)
+                    if !matches!(
+                        new_state_account.status,
+                        AccountStatus::Destroyed | AccountStatus::DestroyedModified
+                    ) =>
+                {
+                    // Move each field out of the about-to-be-dropped drained account.
+                    initial_account.info = new_state_account.info;
+                    initial_account.status = new_state_account.status;
+                    initial_account.has_storage = new_state_account.has_storage;
+                    initial_account.exists = new_state_account.exists;
+                    // `extend` overwrites touched slots with their committed value and keeps
+                    // untouched baseline slots from earlier batches.
+                    initial_account.storage.extend(new_state_account.storage);
+                }
+                _ => {
+                    self.initial_accounts_state
+                        .insert(address, new_state_account);
+                }
+            }
 
             let account_update = AccountUpdate {
                 address,
@@ -992,6 +1028,30 @@ impl<'a> VM<'a> {
         });
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         if let Some(value) = bal_hit {
+            let account = self
+                .db
+                .current_accounts_state
+                .get_mut(&address)
+                .ok_or(InternalError::AccountNotFound)?;
+            account.storage.insert(key, value);
+            return Ok(value);
+        }
+
+        // Resolve against `initial_accounts_state` before the store. With the info-only clone in
+        // `load_account`, `current.storage` starts empty on a re-fault, but `initial` holds this
+        // slot's committed in-block value (from the per-flush drain-back) — whereas `self.store`
+        // only has the stale pre-block value (in-block writes go to the merkleizer, never back to
+        // the store). Reading `initial` first returns the committed value and keeps the slot in
+        // `initial` (the diff baseline), so the invariant "every key in `current.storage` is also
+        // in `initial.storage`" is preserved. `.copied()` releases the immutable borrow before
+        // the mutable one below.
+        if let Some(value) = self
+            .db
+            .initial_accounts_state
+            .get(&address)
+            .and_then(|account| account.storage.get(&key))
+            .copied()
+        {
             let account = self
                 .db
                 .current_accounts_state
