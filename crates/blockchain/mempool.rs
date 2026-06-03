@@ -572,9 +572,13 @@ impl Mempool {
             let blob = if data_cols_present {
                 // Fast path: data columns 0..63 are present; concatenate directly.
                 let mut all_cell_bytes = [[0u8; KZG_BYTES_PER_CELL]; CELLS_PER_EXT_BLOB];
-                for col in 0..CELLS_PER_EXT_BLOB / 2 {
+                for (col, slot) in all_cell_bytes
+                    .iter_mut()
+                    .enumerate()
+                    .take(CELLS_PER_EXT_BLOB / 2)
+                {
                     if let Some(cell) = tx_cells.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col)) {
-                        all_cell_bytes[col] = **cell;
+                        *slot = **cell;
                     }
                 }
                 cells_to_blob(&all_cell_bytes)
@@ -584,13 +588,12 @@ impl Mempool {
                 let mut cell_bytes: Vec<[u8; KZG_BYTES_PER_CELL]> =
                     Vec::with_capacity(mask.count_ones() as usize);
                 for col in 0..CELLS_PER_EXT_BLOB {
-                    if (mask >> col) & 1 == 1 {
-                        if let Some(cell) =
+                    if (mask >> col) & 1 == 1
+                        && let Some(cell) =
                             tx_cells.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col))
-                        {
-                            indices.push(col as u64);
-                            cell_bytes.push(**cell);
-                        }
+                    {
+                        indices.push(col as u64);
+                        cell_bytes.push(**cell);
                     }
                 }
                 // If we can't get ≥64 cells for this specific blob, skip the tx.

@@ -20,11 +20,12 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccessList, BlobsBundle, DEFAULT_BUILDER_GAS_CEIL, EIP4844Transaction,
-        ELASTICITY_MULTIPLIER, GenesisAccount, MempoolTransaction, Transaction,
+        AccessList, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB, DEFAULT_BUILDER_GAS_CEIL,
+        EIP4844Transaction, ELASTICITY_MULTIPLIER, GenesisAccount, MempoolTransaction, Transaction,
         kzg_commitment_to_versioned_hash,
     },
 };
+use ethrex_crypto::kzg::compute_cells;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::{Message as SecpMessage, SECP256K1, SecretKey};
 
@@ -32,6 +33,17 @@ use secp256k1::{Message as SecpMessage, SECP256K1, SecretKey};
 const PRAGUE_MAX_BLOBS: usize = 9;
 /// Number of blob txs to inject — must exceed PRAGUE_MAX_BLOBS to trigger the bug.
 const BLOB_TX_COUNT: usize = 15;
+
+/// Valid sample blob: every 32-byte field element stays below the BLS modulus
+/// (low bytes only).
+fn sample_blob() -> [u8; ethrex_common::types::BYTES_PER_BLOB] {
+    let mut blob = [0u8; ethrex_common::types::BYTES_PER_BLOB];
+    for i in 0..ethrex_common::types::FIELD_ELEMENTS_PER_BLOB {
+        blob[i * 32 + 28] = (i & 0xFF) as u8;
+        blob[i * 32 + 31] = ((i >> 8) & 0xFF) as u8;
+    }
+    blob
+}
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
@@ -130,12 +142,19 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
 
     let genesis_header = store.get_block_header(0).unwrap().unwrap();
 
-    // Dummy commitment: all-zeros. kzg_commitment_to_versioned_hash derives a
-    // versioned hash from it; we use that as blob_versioned_hashes.
-    let dummy_commitment = [0u8; 48];
-    let versioned_hash = kzg_commitment_to_versioned_hash(&dummy_commitment);
+    // Build one real version-1 blob bundle and its 128 cells. All txs reuse the
+    // same blob; what matters is that the elided bundle has a real commitment +
+    // cell proofs and that the cells are stored, so the builder (Phase B) can
+    // reconstruct the full blob and actually include the tx, exercising the cap
+    // (Phase A) on genuinely included blobs rather than skipped ones.
+    let blob = sample_blob();
+    let full_bundle =
+        BlobsBundle::create_from_blobs(&vec![blob], Some(1)).expect("create_from_blobs");
+    let commitment = full_bundle.commitments[0];
+    let versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
+    let cells = compute_cells(&blob).expect("compute_cells");
 
-    // Insert BLOB_TX_COUNT elided blob txs into the mempool.
+    // Insert BLOB_TX_COUNT elided blob txs (+ their cells) into the mempool.
     for nonce in 0..BLOB_TX_COUNT {
         let mut tx = EIP4844Transaction {
             chain_id,
@@ -171,17 +190,28 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
             .add_transaction(tx_hash, sender, mempool_tx)
             .expect("add_transaction");
 
-        // Elided bundle: blobs empty, 1 commitment.
+        // Elided bundle: blobs empty, real commitment + cell proofs.
         let elided_bundle = BlobsBundle {
             blobs: vec![],
-            commitments: vec![dummy_commitment],
-            proofs: vec![],
+            commitments: vec![commitment],
+            proofs: full_bundle.proofs.clone(),
             version: 1,
         };
         blockchain
             .mempool
             .add_blobs_bundle(tx_hash, elided_bundle)
             .expect("add_blobs_bundle");
+
+        // Store all 128 cells so the builder can reconstruct the full blob.
+        let cell_entries: Vec<(usize, usize, Box<[u8; BYTES_PER_CELL]>)> = cells
+            .iter()
+            .enumerate()
+            .map(|(col, c)| (0usize, col, Box::new(*c)))
+            .collect();
+        blockchain
+            .mempool
+            .store_cells(tx_hash, 1, cell_entries)
+            .expect("store_cells");
     }
 
     let args = BuildPayloadArgs {
