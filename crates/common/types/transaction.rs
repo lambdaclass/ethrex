@@ -5057,4 +5057,74 @@ mod tests {
         assert!(tx.total_gas_limit() >= base + 6700);
         assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
     }
+
+    #[test]
+    fn golden_frame_tx_rlp_and_sig_hash() {
+        // Regression lock for the EIP-8141 signatures-list wire format (spec
+        // commit fe0940cae2). No external EEST reference vectors exist yet;
+        // these values are the current canonical output and must only change
+        // with a deliberate, reviewed format change.
+        let tx = FrameTransaction {
+            chain_id: 1,
+            nonce: 7,
+            sender: Address::from_low_u64_be(0xABCD),
+            frames: vec![
+                Frame {
+                    mode: 1,
+                    flags: 3,
+                    target: None,
+                    gas_limit: 0x5208,
+                    value: U256::zero(),
+                    data: Bytes::from_static(&[0x11, 0x22]),
+                },
+                Frame {
+                    mode: 2,
+                    flags: 0,
+                    target: Some(Address::from_low_u64_be(0x1234)),
+                    gas_limit: 0x9c40,
+                    value: U256::zero(),
+                    data: Bytes::new(),
+                },
+            ],
+            signatures: vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_SECP256K1,
+                signer: Address::from_low_u64_be(0xABCD),
+                msg: Bytes::new(),
+                signature: Bytes::from(vec![0x01u8; 65]),
+            }],
+            max_priority_fee_per_gas: 0x3b9aca00,
+            max_fee_per_gas: 0x6fc23ac00,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: vec![],
+            inner_hash: OnceCell::new(),
+            cached_canonical: OnceCell::new(),
+        };
+
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let rlp_hex = hex::encode(&buf);
+        // GOLDEN_RLP: obtained from first run
+        assert_eq!(rlp_hex, "f8ab010794000000000000000000000000000000000000abcde8ca01038082520880821122dc0280940000000000000000000000000000000000001234829c408080f85cf85a8094000000000000000000000000000000000000abcd80b8410101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101010101843b9aca008506fc23ac0080c0");
+
+        // Round-trips losslessly.
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, tx);
+
+        let sig_hash = tx.compute_sig_hash();
+        // GOLDEN_SIG_HASH: obtained from first run
+        assert_eq!(
+            format!("{:#x}", sig_hash),
+            "0x87d1a9ce8a1f242345bb20deab5e5111a41780814ea497fbd20700a60a2ecd8d",
+        );
+
+        // Elision invariant: changing empty-msg signature bytes must NOT change sig_hash.
+        let mut tx2 = tx.clone();
+        tx2.signatures[0].signature = Bytes::from(vec![0x02u8; 65]);
+        assert_eq!(
+            tx.compute_sig_hash(),
+            tx2.compute_sig_hash(),
+            "sig_hash must be independent of empty-msg signature bytes",
+        );
+    }
 }
