@@ -11,7 +11,7 @@ use bytes::Bytes;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::constants::EMPTY_KECCAK_HASH;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -843,10 +843,10 @@ impl LEVM {
             }
 
             // Detect account removal (EIP-161): post-state empty but pre-state existed
-            let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCACK_HASH;
+            let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCAK_HASH;
             let pre_empty = prestate.balance.is_zero()
                 && prestate.nonce == 0
-                && prestate.code_hash == *EMPTY_KECCACK_HASH;
+                && prestate.code_hash == *EMPTY_KECCAK_HASH;
             let removed = post_empty && !pre_empty;
 
             let balance_changed = acct_changes
@@ -1654,7 +1654,7 @@ impl LEVM {
                 let seeded_hash = if seeded_pos > 0 {
                     let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
                     if seeded_code.is_empty() {
-                        *EMPTY_KECCACK_HASH
+                        *EMPTY_KECCAK_HASH
                     } else {
                         ethrex_common::utils::keccak(seeded_code)
                     }
@@ -1667,7 +1667,7 @@ impl LEVM {
                             store
                                 .get_account_state(*addr)
                                 .map(|a| a.code_hash)
-                                .unwrap_or(*EMPTY_KECCACK_HASH)
+                                .unwrap_or(*EMPTY_KECCAK_HASH)
                         })
                 };
                 if account.info.code_hash != seeded_hash {
@@ -1782,7 +1782,7 @@ impl LEVM {
             if let Some(expected_code) = find_exact_change_code(&acct.code_changes, withdrawal_idx)
             {
                 let code_hash = if expected_code.is_empty() {
-                    *EMPTY_KECCACK_HASH
+                    *EMPTY_KECCAK_HASH
                 } else {
                     ethrex_common::utils::keccak(expected_code)
                 };
@@ -1932,7 +1932,7 @@ impl LEVM {
             // Code
             if !has_exact_change_code(&acct.code_changes, withdrawal_idx) {
                 let seeded_hash = match acct.code_changes.last() {
-                    Some(c) if c.new_code.is_empty() => *EMPTY_KECCACK_HASH,
+                    Some(c) if c.new_code.is_empty() => *EMPTY_KECCAK_HASH,
                     Some(c) => ethrex_common::utils::keccak(&c.new_code),
                     None => {
                         db.store
@@ -2146,7 +2146,7 @@ impl LEVM {
                 store
                     .get_account_state(ac.address)
                     .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
                     .map(|s| s.code_hash)
             })
             .collect();
@@ -2940,7 +2940,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(100),
                 nonce: 5,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: *EMPTY_KECCAK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -2967,7 +2967,7 @@ mod bal_tests {
         // Last balance entry wins
         assert_eq!(info.balance, U256::from(80));
         assert_eq!(info.nonce, 6);
-        assert_eq!(info.code_hash, *EMPTY_KECCACK_HASH);
+        assert_eq!(info.code_hash, *EMPTY_KECCAK_HASH);
         // Storage
         let key = ethrex_common::utils::u256_to_h256(U256::from(42));
         assert_eq!(*u.added_storage.get(&key).unwrap(), U256::from(999));
@@ -2982,7 +2982,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(1000),
                 nonce: 0,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: *EMPTY_KECCAK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -3023,7 +3023,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(50),
                 nonce: 1,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: *EMPTY_KECCAK_HASH,
                 storage_root: H256::zero(),
             },
         );

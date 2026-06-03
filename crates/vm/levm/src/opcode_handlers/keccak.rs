@@ -54,7 +54,7 @@ impl OpcodeHandler for OpKeccak256Handler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ethrex_common::constants::EMPTY_KECCACK_HASH;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
     use ethrex_crypto::{Crypto, NativeCrypto};
 
     #[test]
@@ -65,11 +65,11 @@ mod tests {
 
     #[test]
     fn empty_keccak_const_matches_common_constant() {
-        // Guards against drift between this const and `EMPTY_KECCACK_HASH`
-        // in `ethrex_common::constants` (note: the latter has a typo'd name).
+        // Guards against drift between this const and `EMPTY_KECCAK_HASH`
+        // in `ethrex_common::constants`.
         assert_eq!(
             EMPTY_KECCAK_U256,
-            u256_from_big_endian(EMPTY_KECCACK_HASH.as_bytes())
+            u256_from_big_endian(EMPTY_KECCAK_HASH.as_bytes())
         );
     }
 }
