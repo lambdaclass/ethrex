@@ -2594,6 +2594,37 @@ impl Store {
         storage_root: H256,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
+        let hashed_key = hash_key_fixed(&storage_key);
+        // Fast path: when the FKV generator has already swept this slot's leaf
+        // path, the read is a single flat lookup. Bypass `Trie::open` (which
+        // allocates a fresh `BackendTrieDB` + `TrieWrapper` per read) and read the
+        // flat KV directly, replicating `Trie::get`'s FKV short-circuit through
+        // `TrieWrapper`: diff-layer cache first, then `STORAGE_FLATKEYVALUE`.
+        let prefixed = apply_prefix(Some(account_hash), Nibbles::from_bytes(&hashed_key));
+        let prefixed_bytes = prefixed.as_ref();
+        if let Some(value) = session.trie_cache.get(state_root, prefixed_bytes) {
+            return if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(U256::decode(&value).map_err(StoreError::RLPDecode)?))
+            };
+        }
+        if (*session.last_written).as_ref() >= prefixed_bytes {
+            let Some(rlp) = session
+                .read_view
+                .get(STORAGE_FLATKEYVALUE, prefixed_bytes)?
+            else {
+                return Ok(None);
+            };
+            return if rlp.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(U256::decode(&rlp).map_err(StoreError::RLPDecode)?))
+            };
+        }
+
+        // Not yet swept by FKV: fall back to the trie walk (identical to the
+        // original path, including the storage-root override).
         let storage_root = if Self::flatkeyvalue_computed_with_last_written(
             account_hash,
             (*session.last_written).as_ref(),
@@ -2610,7 +2641,6 @@ impl Store {
             session.trie_cache.clone(),
             session.last_written.clone(),
         )?;
-        let hashed_key = hash_key_fixed(&storage_key);
         storage_trie
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
@@ -2625,6 +2655,31 @@ impl Store {
         state_root: H256,
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
+        // Fast path: covered account leaf -> single flat read, no `Trie::open`.
+        // Mirrors `get_account_states_batch_by_root`: diff-layer cache first,
+        // then `ACCOUNT_FLATKEYVALUE` when the FKV cursor has swept the leaf.
+        let hashed_address = hash_address_fixed(&address);
+        let path = Nibbles::from_bytes(hashed_address.as_bytes());
+        let path_bytes = path.as_ref();
+        if let Some(value) = session.trie_cache.get(state_root, path_bytes) {
+            return if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(AccountState::decode(&value)?))
+            };
+        }
+        if (*session.last_written).as_ref() >= path_bytes {
+            let Some(encoded) = session.read_view.get(ACCOUNT_FLATKEYVALUE, path_bytes)? else {
+                return Ok(None);
+            };
+            return if encoded.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(AccountState::decode(&encoded)?))
+            };
+        }
+
+        // Not yet swept by FKV: fall back to the trie walk.
         let state_trie = self.open_state_trie_shared(
             state_root,
             session.read_view.clone(),
