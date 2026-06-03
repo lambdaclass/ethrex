@@ -1748,6 +1748,13 @@ impl Frame {
     pub fn is_atomic_batch(&self) -> bool {
         (self.flags >> 2) & 1 == 1
     }
+
+    /// An expiry verifier frame is a VERIFY frame targeting EXPIRY_VERIFIER
+    /// (EIP-8141, spec commit 0b197156).
+    pub fn is_expiry_verifier(&self) -> bool {
+        self.execution_mode() == FrameMode::Verify
+            && self.target == Some(frame_tx_expiry_verifier())
+    }
 }
 
 impl RLPEncode for Frame {
@@ -1834,6 +1841,16 @@ pub fn frame_tx_entry_point() -> Address {
     Address::from_low_u64_be(FRAME_TX_ENTRY_POINT_U64)
 }
 
+/// EXPIRY_VERIFIER predeploy address (EIP-8141, spec commit 0b197156).
+pub const FRAME_TX_EXPIRY_VERIFIER_U64: u64 = 0x8141;
+/// Required `data` length for an expiry verifier frame (8-byte BE deadline).
+pub const FRAME_TX_EXPIRY_DATA_LENGTH: usize = 8;
+
+/// Returns the EXPIRY_VERIFIER `Address` (0x…8141) per EIP-8141.
+pub fn frame_tx_expiry_verifier() -> Address {
+    Address::from_low_u64_be(FRAME_TX_EXPIRY_VERIFIER_U64)
+}
+
 impl FrameTransaction {
     /// Compute the signature hash per EIP-8141:
     /// VERIFY frame data is elided before hashing.
@@ -1845,7 +1862,10 @@ impl FrameTransaction {
             .frames
             .iter()
             .map(|f| {
-                if f.execution_mode() == FrameMode::Verify {
+                // Expiry verifier frames keep their data: it is the sender-
+                // authored deadline and is covered by the signature
+                // (spec commit 0b197156). All other VERIFY data is elided.
+                if f.execution_mode() == FrameMode::Verify && !f.is_expiry_verifier() {
                     // Only `data` is elided; per spec line 770 everything else
                     // on a VERIFY frame (including `value`) remains covered.
                     Frame {
@@ -1889,6 +1909,18 @@ impl FrameTransaction {
             .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
     }
 
+    /// The expiry deadline (8-byte big-endian) of this transaction's expiry
+    /// verifier frame, if one exists with well-formed data.
+    pub fn expiry_deadline(&self) -> Option<u64> {
+        self.frames
+            .iter()
+            .find(|f| f.is_expiry_verifier())
+            .and_then(|f| {
+                let bytes: [u8; FRAME_TX_EXPIRY_DATA_LENGTH] = f.data.as_ref().try_into().ok()?;
+                Some(u64::from_be_bytes(bytes))
+            })
+    }
+
     /// Validate static constraints per EIP-8141 spec.
     /// Returns an error string if the transaction is invalid.
     pub fn validate_static_constraints(&self) -> Result<(), String> {
@@ -1904,6 +1936,7 @@ impl FrameTransaction {
         // Tracked as u128 so the running addition itself cannot overflow; the
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
+        let mut expiry_frame_count: usize = 0;
         for (i, frame) in self.frames.iter().enumerate() {
             // Reject reserved execution modes (3-255)
             if frame.mode >= 3 {
@@ -1916,11 +1949,25 @@ impl FrameTransaction {
                     frame.flags
                 ));
             }
-            // VERIFY frames must have non-zero scope in flags
-            if frame.mode == 1 && (frame.flags & 0x03) == 0 {
-                return Err(format!(
-                    "Frame {i}: VERIFY frames must permit a non-zero APPROVE scope"
-                ));
+            // Expiry verifier frames (EIP-8141, spec commit 0b197156): VERIFY
+            // frames targeting EXPIRY_VERIFIER must have flags == 0, value == 0
+            // (already enforced by the non-SENDER value rule below), and exactly
+            // EXPIRY_DATA_LENGTH bytes of data; at most one per transaction.
+            if frame.is_expiry_verifier() {
+                expiry_frame_count = expiry_frame_count.saturating_add(1);
+                if expiry_frame_count > 1 {
+                    return Err(format!("Frame {i}: more than one expiry verifier frame"));
+                }
+                if frame.flags != 0 {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame must have flags == 0"
+                    ));
+                }
+                if frame.data.len() != FRAME_TX_EXPIRY_DATA_LENGTH {
+                    return Err(format!(
+                        "Frame {i}: expiry verifier frame data must be {FRAME_TX_EXPIRY_DATA_LENGTH} bytes"
+                    ));
+                }
             }
             // Per EIP-8141 spec line 140, only SENDER frames may carry a
             // non-zero value. DEFAULT and VERIFY frames with a non-zero
@@ -4258,7 +4305,7 @@ mod tests {
             },
             Frame {
                 mode: FrameMode::Verify as u8,
-                flags: 0x04 | 0x03, // atomic batch + scope (VERIFY needs non-zero scope)
+                flags: 0x04 | 0x03, // atomic batch + scope bits
                 target: None,
                 gas_limit: 21_000,
                 value: U256::zero(),
@@ -4327,7 +4374,7 @@ mod tests {
         for mode_val in [0u8, 1, 2] {
             let frame = Frame {
                 mode: mode_val,
-                flags: if mode_val == 1 { 0x03 } else { 0x00 }, // VERIFY needs nonzero scope
+                flags: if mode_val == 1 { 0x03 } else { 0x00 },
                 target: Some(Address::from_low_u64_be(0x1234)),
                 gas_limit: 50_000,
                 value: U256::zero(),
@@ -4663,5 +4710,89 @@ mod tests {
         assert_eq!(decoded.chain_id, tx.chain_id);
         assert_eq!(decoded.nonce, tx.nonce);
         assert_eq!(decoded.sender, tx.sender);
+    }
+
+    // ── EIP-8141 expiry verifier frame tests (spec commit 0b197156) ──
+
+    fn expiry_frame(deadline: u64) -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0x00,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::copy_from_slice(&deadline.to_be_bytes()),
+        }
+    }
+
+    #[test]
+    fn expiry_verifier_frame_passes_static_validation() {
+        let mut tx = make_test_frame_tx();
+        tx.frames.insert(0, expiry_frame(1_700_000_000));
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn expiry_verifier_frame_rejects_bad_data_length() {
+        let mut tx = make_test_frame_tx();
+        let mut f = expiry_frame(0);
+        f.data = Bytes::from_static(b"short");
+        tx.frames.insert(0, f);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("8 bytes"), "{err}");
+    }
+
+    #[test]
+    fn expiry_verifier_frame_rejects_nonzero_flags() {
+        let mut tx = make_test_frame_tx();
+        let mut f = expiry_frame(0);
+        f.flags = 0x01;
+        tx.frames.insert(0, f);
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("flags == 0"), "{err}");
+    }
+
+    #[test]
+    fn at_most_one_expiry_verifier_frame() {
+        let mut tx = make_test_frame_tx();
+        tx.frames.insert(0, expiry_frame(1));
+        tx.frames.insert(0, expiry_frame(2));
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("more than one expiry"), "{err}");
+    }
+
+    #[test]
+    fn verify_frame_with_zero_scope_is_now_statically_valid() {
+        // Spec commit 0b197156 removed the VERIFY-needs-nonzero-scope rule.
+        // make_test_frame_tx() frame[0] is VERIFY with flags=0x03 targeting sender;
+        // setting flags to 0 makes it a zero-scope VERIFY (not an expiry frame,
+        // since target is the sender address, not EXPIRY_VERIFIER).
+        let mut tx = make_test_frame_tx();
+        tx.frames[0].flags = 0x00;
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn sig_hash_covers_expiry_deadline_but_not_other_verify_data() {
+        let mut tx_a = make_test_frame_tx();
+        tx_a.frames.insert(0, expiry_frame(100));
+        let mut tx_b = make_test_frame_tx();
+        tx_b.frames.insert(0, expiry_frame(200));
+        // Different deadlines -> different sig hashes (expiry data covered).
+        assert_ne!(tx_a.compute_sig_hash(), tx_b.compute_sig_hash());
+
+        // Different NON-expiry VERIFY data -> same sig hash (still elided).
+        let tx_c = make_test_frame_tx();
+        let mut tx_d = make_test_frame_tx();
+        tx_d.frames[0].data = Bytes::from_static(b"different_verify_data");
+        assert_eq!(tx_c.compute_sig_hash(), tx_d.compute_sig_hash());
+    }
+
+    #[test]
+    fn expiry_deadline_parses_or_none() {
+        let mut tx = make_test_frame_tx();
+        assert_eq!(tx.expiry_deadline(), None);
+        tx.frames.insert(0, expiry_frame(1_700_000_123));
+        assert_eq!(tx.expiry_deadline(), Some(1_700_000_123));
     }
 }
