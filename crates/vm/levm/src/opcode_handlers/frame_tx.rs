@@ -13,11 +13,9 @@ use crate::{
     gas_cost,
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
-    precompiles,
     utils::size_offset_to_usize,
     vm::VM,
 };
-use bytes::Bytes;
 use ethrex_common::{Address, U256, types::FrameMode, types::Log};
 
 /// Convert a u64 index to usize, returning InvalidOpcode on overflow.
@@ -487,15 +485,6 @@ pub fn execute_default_code(
     }
 }
 
-/// VERIFY mode default code: validate a signature and call APPROVE.
-/// SECP256K1N / 2 -- signatures with s > this value are rejected
-const SECP256K1N_DIV_2: U256 = U256([
-    0xDFE92F46681B20A0,
-    0x5D576E7357A4501D,
-    0xFFFFFFFFFFFFFFFF,
-    0x7FFFFFFFFFFFFFFF,
-]);
-
 fn execute_default_verify(
     vm: &mut VM<'_>,
     frame: &ethrex_common::types::Frame,
@@ -517,125 +506,35 @@ fn execute_default_verify(
         return Ok((false, 0, Vec::new()));
     }
 
-    // Need at least 1 byte for signature_type
-    if frame.data.is_empty() {
+    // EIP-8141 (spec commit fe0940cae2): the default account approves only if
+    // the outer signature list contains a SECP256K1 signature over the
+    // canonical sig_hash (empty msg) whose signer is the resolved target.
+    // Signatures were already validated in execute_frame_tx, so a match here is
+    // sufficient — no in-frame crypto.
+    let has_sender_sig = ctx.tx.signatures.iter().any(|s| {
+        s.scheme == ethrex_common::types::FRAME_SIG_SCHEME_SECP256K1
+            && s.msg.is_empty()
+            && s.signer == target
+    });
+    if !has_sender_sig {
         return Ok((false, 0, Vec::new()));
     }
-    let signature_type = frame.data[0];
-    let sig_hash = ctx.sig_hash;
 
-    let mut gas_remaining = frame.gas_limit;
-
-    match signature_type {
-        // secp256k1
-        0x0 => {
-            // data layout: [type(1), v(1), r(32), s(32)] = 66 bytes
-            if frame.data.len() != 66 {
-                return Ok((false, 0, Vec::new()));
-            }
-            let v = frame.data[1];
-            let r = &frame.data[2..34];
-            let s = &frame.data[34..66];
-
-            // Reject high-s signatures
-            let s_val = U256::from_big_endian(s);
-            if s_val > SECP256K1N_DIV_2 {
-                return Ok((false, 0, Vec::new()));
-            }
-
-            // Build ecrecover calldata: [hash(32), v_padded(32), r(32), s(32)]
-            let mut calldata = vec![0u8; 128];
-            calldata[..32].copy_from_slice(sig_hash.as_bytes());
-            // v goes in the last byte of the second 32-byte word
-            calldata[63] = v;
-            calldata[64..96].copy_from_slice(r);
-            calldata[96..128].copy_from_slice(s);
-
-            let result = precompiles::ecrecover(
-                &Bytes::from(calldata),
-                &mut gas_remaining,
-                vm.env.config.fork,
-            )?;
-
-            // Check recovered address is not zero (change 9)
-            if result.len() != 32 {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-            let recovered = Address::from_slice(&result[12..]);
-            if recovered == Address::zero() {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-
-            // Check recovered address matches target
-            if target != recovered {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-        }
-        // P256
-        0x1 => {
-            // data layout: [type(1), r(32), s(32), qx(32), qy(32)] = 129 bytes
-            if frame.data.len() != 129 {
-                return Ok((false, 0, Vec::new()));
-            }
-            let r = &frame.data[1..33];
-            let s = &frame.data[33..65];
-            let qx = &frame.data[65..97];
-            let qy = &frame.data[97..129];
-
-            // P256 address with domain separator (change 7):
-            // keccak256(P256_ADDRESS_DOMAIN || qx || qy)[12:]
-            // where P256_ADDRESS_DOMAIN = 0x01 (one byte)
-            let mut domain_input = Vec::with_capacity(1 + 32 + 32);
-            domain_input.push(0x01u8); // P256_ADDRESS_DOMAIN
-            domain_input.extend_from_slice(qx);
-            domain_input.extend_from_slice(qy);
-            let hash = ethrex_crypto::keccak::keccak_hash(&domain_input);
-            let derived_address = Address::from_slice(&hash[12..]);
-            if target != derived_address {
-                return Ok((false, 0, Vec::new()));
-            }
-
-            // Build P256VERIFY calldata: [hash(32), r(32), s(32), qx(32), qy(32)]
-            let mut calldata = vec![0u8; 160];
-            calldata[..32].copy_from_slice(sig_hash.as_bytes());
-            calldata[32..64].copy_from_slice(r);
-            calldata[64..96].copy_from_slice(s);
-            calldata[96..128].copy_from_slice(qx);
-            calldata[128..160].copy_from_slice(qy);
-
-            let result = precompiles::p_256_verify(
-                &Bytes::from(calldata),
-                &mut gas_remaining,
-                vm.env.config.fork,
-            )?;
-
-            // P256VERIFY returns 32-byte value with 1 on success, empty on failure
-            if result.len() != 32 || result[31] != 1 {
-                return Ok((false, frame.gas_limit - gas_remaining, Vec::new()));
-            }
-        }
-        // Unknown signature type
-        _ => return Ok((false, 0, Vec::new())),
-    }
-
-    let gas_used = frame.gas_limit - gas_remaining;
-
-    // Call APPROVE with allowed_scope
     apply_approve(vm, allowed_scope, target)?;
 
-    // Mark approve as called in the current frame
     let ctx = vm
         .frame_tx_context
         .as_mut()
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
     ctx.approve_called_in_current_frame = true;
 
-    Ok((true, gas_used, Vec::new()))
+    Ok((true, 0, Vec::new()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bytes::Bytes;
 
     /// Mirrors the Underflow -> RevertOpcode mapping used inside apply_approve
     /// so the invariant can be exercised without constructing a full VM.
