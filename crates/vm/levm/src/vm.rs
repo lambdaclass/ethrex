@@ -743,6 +743,20 @@ impl<'a> VM<'a> {
             // gas allotted to skipped frames is refunded at the end of the
             // transaction, so we record `gas_used = 0` and do NOT add the
             // frame's `gas_limit` to `total_gas_used`.
+            //
+            // Note (EIP-8141 @ 0b197156): an expiry verifier frame has flags
+            // == 0, so it can only be a batch TERMINATOR, never a flagged
+            // member. A failed batch therefore skips a trailing expiry frame
+            // and its deadline is not checked at execution time. This is
+            // benign, not a bypass: `compute_sig_hash` commits to the full
+            // frame layout (modes, flags incl. the atomic-batch flag, targets,
+            // and the expiry deadline), and the VERIFY signature is recovered
+            // over that hash — so no relayer/proposer can wrap a signed tx's
+            // expiry frame in a failing batch. Only the sender can build this
+            // layout, and doing so merely disarms their own expiry. The normal
+            // pattern (a standalone expiry VERIFY frame, not batched) is fully
+            // enforced. The skip itself is spec-mandated batch semantics; do
+            // not change it unilaterally — that would be a consensus divergence.
             if let Some(end_idx) = skip_until_batch_end {
                 if frame_idx <= end_idx {
                     let ctx = self.frame_tx_context.as_mut().ok_or(VMError::Internal(
