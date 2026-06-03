@@ -1804,6 +1804,51 @@ impl RLPDecode for Frame {
     }
 }
 
+/// EIP-8141 transaction signature (spec commit fe0940cae2). RLP: `[scheme, signer, msg, signature]`.
+/// `scheme`: 0 = SECP256K1 (sig = v||r||s, 65 bytes), 1 = P256 (sig = r||s||qx||qy, 128 bytes).
+/// `msg`: empty = signs compute_sig_hash(tx); 32 bytes = signs that explicit digest.
+/// Raw `signature` bytes are intentionally not EVM-introspectable.
+#[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
+pub struct FrameSignature {
+    pub scheme: u8,
+    #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
+    pub signer: Address,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub msg: Bytes,
+    #[rkyv(with=crate::rkyv_utils::BytesWrapper)]
+    pub signature: Bytes,
+}
+
+impl RLPEncode for FrameSignature {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.scheme)
+            .encode_field(&self.signer)
+            .encode_field(&self.msg)
+            .encode_field(&self.signature)
+            .finish();
+    }
+}
+
+impl RLPDecode for FrameSignature {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(FrameSignature, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (scheme, decoder) = decoder.decode_field("scheme")?;
+        let (signer, decoder) = decoder.decode_field("signer")?;
+        let (msg, decoder) = decoder.decode_field("msg")?;
+        let (signature, decoder) = decoder.decode_field("signature")?;
+        Ok((
+            FrameSignature {
+                scheme,
+                signer,
+                msg,
+                signature,
+            },
+            decoder.finish()?,
+        ))
+    }
+}
+
 /// EIP-8141 Frame Transaction
 /// A transaction whose validity and gas payment are defined abstractly via frames.
 /// No ECDSA signature — sender is explicit. Authentication happens via APPROVE opcode.
@@ -1814,6 +1859,9 @@ pub struct FrameTransaction {
     #[rkyv(with=crate::rkyv_utils::H160Wrapper)]
     pub sender: Address,
     pub frames: Vec<Frame>,
+    /// EIP-8141 outer signature list (spec commit fe0940cae2). Validated
+    /// before any frame executes; referenced by VERIFY frames and SIGPARAM.
+    pub signatures: Vec<FrameSignature>,
     pub max_priority_fee_per_gas: u64,
     pub max_fee_per_gas: u64,
     #[rkyv(with=crate::rkyv_utils::U256Wrapper)]
@@ -1834,6 +1882,9 @@ pub const FRAME_TX_PER_FRAME_COST: u64 = 475;
 pub const FRAME_TX_ENTRY_POINT_U64: u64 = 0xaa;
 /// Maximum number of frames allowed per EIP-8141 frame transaction.
 pub const FRAME_TX_MAX_FRAMES: usize = 64;
+/// EIP-8141 signature schemes (spec commit fe0940cae2).
+pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 0;
+pub const FRAME_SIG_SCHEME_P256: u8 = 1;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
 /// DEFAULT/VERIFY frames per EIP-8141.
@@ -1933,6 +1984,28 @@ impl FrameTransaction {
                 "Frame count must be between 1 and {FRAME_TX_MAX_FRAMES}"
             ));
         }
+        // EIP-8141 signature list validation (spec commit fe0940cae2): scheme
+        // must be a known value; msg must be empty or a non-zero 32-byte digest.
+        for (i, sig) in self.signatures.iter().enumerate() {
+            if sig.scheme != FRAME_SIG_SCHEME_SECP256K1 && sig.scheme != FRAME_SIG_SCHEME_P256 {
+                return Err(format!("Signature {i}: unsupported scheme {}", sig.scheme));
+            }
+            match sig.msg.len() {
+                0 => {}
+                32 => {
+                    if sig.msg.iter().all(|&b| b == 0) {
+                        return Err(format!(
+                            "Signature {i}: explicit msg must not be zero digest"
+                        ));
+                    }
+                }
+                other => {
+                    return Err(format!(
+                        "Signature {i}: msg must be empty or 32 bytes, got {other}"
+                    ));
+                }
+            }
+        }
         // Tracked as u128 so the running addition itself cannot overflow; the
         // bound below rejects tx-level totals that don't fit in signed i64.
         let mut total_frame_gas: u128 = 0;
@@ -2011,6 +2084,7 @@ impl RLPEncode for FrameTransaction {
             .encode_field(&self.nonce)
             .encode_field(&self.sender)
             .encode_field(&self.frames)
+            .encode_field(&self.signatures)
             .encode_field(&self.max_priority_fee_per_gas)
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
@@ -2026,6 +2100,7 @@ impl RLPDecode for FrameTransaction {
         let (nonce, decoder) = decoder.decode_field("nonce")?;
         let (sender, decoder) = decoder.decode_field("sender")?;
         let (frames, decoder) = decoder.decode_field("frames")?;
+        let (signatures, decoder) = decoder.decode_field("signatures")?;
         let (max_priority_fee_per_gas, decoder) =
             decoder.decode_field("max_priority_fee_per_gas")?;
         let (max_fee_per_gas, decoder) = decoder.decode_field("max_fee_per_gas")?;
@@ -2036,6 +2111,7 @@ impl RLPDecode for FrameTransaction {
             nonce,
             sender,
             frames,
+            signatures,
             max_priority_fee_per_gas,
             max_fee_per_gas,
             max_fee_per_blob_gas,
@@ -2654,7 +2730,7 @@ mod serde_impl {
         where
             S: serde::Serializer,
         {
-            let mut s = serializer.serialize_struct("FrameTransaction", 9)?;
+            let mut s = serializer.serialize_struct("FrameTransaction", 10)?;
             s.serialize_field("type", &TxType::Frame)?;
             s.serialize_field("chainId", &format!("{:#x}", self.chain_id))?;
             s.serialize_field("nonce", &format!("{:#x}", self.nonce))?;
@@ -2663,6 +2739,7 @@ mod serde_impl {
                 "frames",
                 &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
             )?;
+            s.serialize_field("signatures", &self.signatures.len())?;
             s.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
@@ -4281,6 +4358,12 @@ mod tests {
                     data: Bytes::from_static(b"call_data"),
                 },
             ],
+            signatures: vec![FrameSignature {
+                scheme: FRAME_SIG_SCHEME_SECP256K1,
+                signer: Address::from_low_u64_be(0xABCD),
+                msg: Bytes::new(),
+                signature: Bytes::from(vec![0u8; 65]),
+            }],
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
@@ -4522,6 +4605,7 @@ mod tests {
             nonce: 0,
             sender: Address::from_low_u64_be(0xABCD),
             frames,
+            signatures: vec![],
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
@@ -4612,6 +4696,7 @@ mod tests {
                 value: U256::from(1u64),
                 data: Bytes::new(),
             }],
+            signatures: vec![],
             max_priority_fee_per_gas: 1_000_000_000,
             max_fee_per_gas: 30_000_000_000,
             max_fee_per_blob_gas: U256::zero(),
@@ -4794,5 +4879,66 @@ mod tests {
         assert_eq!(tx.expiry_deadline(), None);
         tx.frames.insert(0, expiry_frame(1_700_000_123));
         assert_eq!(tx.expiry_deadline(), Some(1_700_000_123));
+    }
+
+    #[test]
+    fn signature_rlp_roundtrip() {
+        let sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0x1234),
+            msg: Bytes::from(vec![7u8; 32]),
+            signature: Bytes::from(vec![9u8; 128]),
+        };
+        let mut buf = Vec::new();
+        sig.encode(&mut buf);
+        let (decoded, rest) = FrameSignature::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, sig);
+    }
+
+    #[test]
+    fn frame_tx_with_signatures_rlp_roundtrip() {
+        let tx = make_test_frame_tx();
+        assert!(!tx.signatures.is_empty());
+        let mut buf = Vec::new();
+        tx.encode(&mut buf);
+        let (decoded, rest) = FrameTransaction::decode_unfinished(&buf).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded.signatures, tx.signatures);
+        assert_eq!(decoded.frames, tx.frames);
+        assert_eq!(decoded.nonce, tx.nonce);
+    }
+
+    #[test]
+    fn static_validation_rejects_unknown_scheme() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].scheme = 2;
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("unsupported scheme"),
+        );
+    }
+
+    #[test]
+    fn static_validation_rejects_bad_msg_length() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].msg = Bytes::from(vec![1u8; 16]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("32 bytes"),
+        );
+    }
+
+    #[test]
+    fn static_validation_rejects_zero_explicit_msg() {
+        let mut tx = make_test_frame_tx();
+        tx.signatures[0].msg = Bytes::from(vec![0u8; 32]);
+        assert!(
+            tx.validate_static_constraints()
+                .unwrap_err()
+                .contains("zero digest"),
+        );
     }
 }
