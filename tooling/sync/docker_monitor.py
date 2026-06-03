@@ -58,6 +58,9 @@ PHASE_COMPLETION_PATTERNS = {
     "State Healing": r"✓ STATE HEALING complete: ([\d,]+) state paths healed in (\d+:\d{2}:\d{2})",
     "Storage Healing": r"✓ STORAGE HEALING complete: ([\d,]+) storage accounts healed in (\d+:\d{2}:\d{2})",
     "Bytecodes": r"✓ BYTECODES complete: ([\d,]+) bytecodes in (\d+:\d{2}:\d{2})",
+    "State Root Validation": r"✓ STATE ROOT VALIDATION complete: ([\w ]+) in (\d+:\d{2}:\d{2})",
+    "Storage Root Validation": r"✓ STORAGE ROOT VALIDATION complete: ([\w ]+) in (\d+:\d{2}:\d{2})",
+    "Bytecode Validation": r"✓ BYTECODE VALIDATION complete: ([\w ]+) in (\d+:\d{2}:\d{2})",
 }
 
 
