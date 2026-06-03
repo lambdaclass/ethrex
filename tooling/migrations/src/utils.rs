@@ -161,7 +161,7 @@ pub fn migrate_transaction(tx: LibmdbxTransaction) -> Transaction {
                         chain_id: auth.chain_id,
                         address: auth.address,
                         nonce: auth.nonce,
-                        y_parity: auth.y_parity.try_into().unwrap_or(u8::MAX),
+                        y_parity: auth.y_parity,
                         r_signature: auth.r_signature,
                         s_signature: auth.s_signature,
                     })

@@ -159,7 +159,7 @@ pub fn prepare_vm_for_tx<'a>(
                 chain_id: auth_tuple.chain_id,
                 address: auth_tuple.address,
                 nonce: auth_tuple.nonce,
-                y_parity: auth_tuple.v.try_into().unwrap_or(u8::MAX),
+                y_parity: auth_tuple.v,
                 r_signature: auth_tuple.r,
                 s_signature: auth_tuple.s,
             })

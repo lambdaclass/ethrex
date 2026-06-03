@@ -1891,27 +1891,23 @@ mod serde_impl {
                 chain_id: value.chain_id,
                 address: value.address,
                 nonce: value.nonce,
-                y_parity: U256::from(value.y_parity),
+                y_parity: value.y_parity,
                 r: value.r_signature,
                 s: value.s_signature,
             }
         }
     }
 
-    impl TryFrom<AuthorizationTupleEntry> for AuthorizationTuple {
-        type Error = String;
-
-        // EIP-7702 bounds y_parity to < 2**8; reject anything that doesn't fit a u8.
-        fn try_from(entry: AuthorizationTupleEntry) -> Result<AuthorizationTuple, Self::Error> {
-            Ok(AuthorizationTuple {
+    impl From<AuthorizationTupleEntry> for AuthorizationTuple {
+        fn from(entry: AuthorizationTupleEntry) -> AuthorizationTuple {
+            AuthorizationTuple {
                 chain_id: entry.chain_id,
                 address: entry.address,
                 nonce: entry.nonce,
-                y_parity: TryInto::<u8>::try_into(entry.y_parity)
-                    .map_err(|_| "authorization tuple y_parity exceeds 2**8".to_string())?,
+                y_parity: entry.y_parity,
                 r_signature: entry.r,
                 s_signature: entry.s,
-            })
+            }
         }
     }
 
@@ -2452,9 +2448,8 @@ mod serde_impl {
                     "authorizationList",
                 )?
                 .into_iter()
-                .map(AuthorizationTuple::try_from)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(serde::de::Error::custom)?,
+                .map(AuthorizationTuple::from)
+                .collect::<Vec<_>>(),
                 signature_y_parity: u8::from_str_radix(
                     deserialize_field::<String, D>(&mut map, "yParity")?.trim_start_matches("0x"),
                     16,
@@ -2838,9 +2833,8 @@ mod serde_impl {
                     .authorization_list
                     .unwrap_or_default()
                     .into_iter()
-                    .map(AuthorizationTuple::try_from)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(GenericTransactionError::InvalidField)?,
+                    .map(AuthorizationTuple::from)
+                    .collect(),
                 ..Default::default()
             })
         }
@@ -3552,7 +3546,7 @@ mod tests {
                 chain_id: U256::from(65536999),
                 address: H160::from_str("0x000a52D537c4150ec274dcE3962a0d179B7E71B1").unwrap(),
                 nonce: 2,
-                y_parity: 1,
+                y_parity: U256::one(),
                 r_signature: U256::from(22),
                 s_signature: U256::from(37),
             }],

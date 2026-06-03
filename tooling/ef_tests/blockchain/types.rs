@@ -553,7 +553,7 @@ impl From<Transaction> for EIP7702Transaction {
                     chain_id: a.chain_id,
                     address: a.address,
                     nonce: a.nonce.try_into().unwrap(),
-                    y_parity: a.v.try_into().unwrap_or(u8::MAX),
+                    y_parity: a.v,
                     r_signature: a.r,
                     s_signature: a.s,
                 })

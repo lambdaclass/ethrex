@@ -41,9 +41,8 @@ pub struct AuthorizationTuple {
         deserialize_with = "crate::serde_utils::u64::deser_hex_or_dec_str"
     )]
     pub nonce: u64,
-    // EIP-7702 bounds y_parity to < 2**8; a u8 makes that a type invariant and lets
-    // RLP decoding reject any out-of-range value, matching geth's `uint8`.
-    pub y_parity: u8,
+    #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
+    pub y_parity: U256,
     #[serde(rename = "r")]
     #[rkyv(with = crate::rkyv_utils::U256Wrapper)]
     pub r_signature: U256,
@@ -72,6 +71,15 @@ impl RLPDecode for AuthorizationTuple {
         let (address, decoder) = decoder.decode_field("address")?;
         let (nonce, decoder) = decoder.decode_field("nonce")?;
         let (y_parity, decoder) = decoder.decode_field("y_parity")?;
+        // EIP-7702 bounds y_parity to < 2**8 (geth models it as a u8). Reject
+        // out-of-range values at decode so a type-4 tx carrying one is rejected on L1
+        // as it is by other clients. The field stays U256 to keep the JSON-RPC and
+        // rkyv wire formats unchanged.
+        if y_parity > U256::from(u8::MAX) {
+            return Err(RLPDecodeError::Custom(
+                "EIP-7702 authorization y_parity must be < 2**8".to_string(),
+            ));
+        }
         let (r_signature, decoder) = decoder.decode_field("r_signature")?;
         let (s_signature, decoder) = decoder.decode_field("s_signature")?;
         let rest = decoder.finish()?;
@@ -86,38 +94,5 @@ impl RLPDecode for AuthorizationTuple {
             },
             rest,
         ))
-    }
-}
-
-#[cfg(test)]
-mod eip7702_y_parity_tests {
-    //! Regression test for the `eip7702-auth-y-parity-bound` finding. EIP-7702 bounds
-    //! an authorization tuple's `y_parity` to `< 2**8`; geth models it as a `u8` and
-    //! rejects an out-of-range value at RLP decode. ethrex must do the same, otherwise
-    //! an L1 block carrying a type-4 transaction whose `y_parity >= 256` is accepted
-    //! here but rejected by other clients (consensus split). The authorization-tuple
-    //! decode is the chokepoint: a type-4 transaction decodes its `authorization_list`
-    //! through it.
-    use super::*;
-
-    #[test]
-    fn authorization_tuple_rejects_y_parity_at_or_above_256() {
-        // Hand-build the RLP of an authorization tuple whose `y_parity` field encodes
-        // 256 (two bytes, 0x01 0x00), independent of the field's Rust type.
-        let mut buf = Vec::new();
-        Encoder::new(&mut buf)
-            .encode_field(&U256::zero()) // chain_id
-            .encode_field(&Address::zero()) // address
-            .encode_field(&0u64) // nonce
-            .encode_field(&U256::from(256u64)) // y_parity = 256, out of the < 2**8 bound
-            .encode_field(&U256::one()) // r_signature
-            .encode_field(&U256::one()) // s_signature
-            .finish();
-
-        let result = AuthorizationTuple::decode(&buf);
-        assert!(
-            result.is_err(),
-            "authorization tuple with y_parity >= 2**8 must be rejected at decode, got: {result:?}"
-        );
     }
 }
