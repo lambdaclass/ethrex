@@ -1599,12 +1599,16 @@ impl Store {
             let version = read_store_schema_version(&db_path)?;
 
             match version {
-                None if db_path.exists() && !dir_is_empty(&db_path)? => {
+                None if db_path.exists() && dir_contains_existing_db(&db_path)? => {
                     // Pre-metadata DB — cannot migrate safely
                     return Err(StoreError::NotFoundDBVersion);
                 }
                 None => {
-                    // Fresh / empty directory — write initial metadata
+                    // No metadata and no recognizable database files. The directory
+                    // may still hold unrelated files (e.g. a JWT secret placed in the
+                    // datadir by tooling such as EthDocker, see issue #5680), so treat
+                    // this as a fresh datadir and write the initial metadata instead
+                    // of erroring out.
                     init_metadata_file(&db_path)?;
                 }
                 Some(v) if v < 1 => {
@@ -3481,9 +3485,24 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-fn dir_is_empty(path: &Path) -> Result<bool, StoreError> {
-    let is_empty = std::fs::read_dir(path)?.next().is_none();
-    Ok(is_empty)
+/// Returns `true` if `path` contains files that look like an existing on-disk
+/// database, as opposed to unrelated files that merely share the datadir.
+///
+/// Previously the caller treated *any* non-empty directory as a pre-metadata
+/// database, which made startup fail when unrelated files lived alongside the DB
+/// — e.g. EthDocker writes the JWT secret into the datadir (issue #5680). We
+/// instead look for RocksDB's marker files, so a datadir that only contains such
+/// unrelated files is correctly treated as fresh.
+fn dir_contains_existing_db(path: &Path) -> Result<bool, StoreError> {
+    for entry in std::fs::read_dir(path)? {
+        let file_name = entry?.file_name();
+        let name = file_name.to_string_lossy();
+        // Marker files present in every initialized RocksDB database directory.
+        if name == "CURRENT" || name == "IDENTITY" || name.starts_with("MANIFEST-") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Checks whether a valid (or migratable) database exists at the given path
@@ -3685,5 +3704,39 @@ mod merge_tests {
         let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
         let out = tx_locations_merge(None, vec![p3]).unwrap();
         assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod datadir_tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn empty_dir_has_no_existing_db() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(!dir_contains_existing_db(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_only_unrelated_files_has_no_existing_db() {
+        // Regression for #5680: a JWT secret (or any unrelated file) in the
+        // datadir must not be mistaken for an existing database.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("jwt.hex"), "0xdeadbeef").unwrap();
+        fs::write(dir.path().join("LOG"), "noise").unwrap();
+        assert!(!dir_contains_existing_db(dir.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_rocksdb_markers_has_existing_db() {
+        // A `CURRENT` file (and, separately, a `MANIFEST-*` file) marks a real DB.
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("CURRENT"), "MANIFEST-000001\n").unwrap();
+        assert!(dir_contains_existing_db(dir.path()).unwrap());
+
+        let dir2 = tempfile::tempdir().unwrap();
+        fs::write(dir2.path().join("MANIFEST-000007"), "x").unwrap();
+        assert!(dir_contains_existing_db(dir2.path()).unwrap());
     }
 }
