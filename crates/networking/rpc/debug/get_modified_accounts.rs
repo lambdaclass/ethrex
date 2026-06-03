@@ -154,8 +154,8 @@ fn diff_state_roots(
     loop {
         // Copy peeked keys/values upfront so borrows on the Peekable
         // wrappers are released before the mutable next() calls below.
-        let s_entry = start_iter.peek().map(|(h, s)| (*h, s.clone()));
-        let e_entry = end_iter.peek().map(|(h, s)| (*h, s.clone()));
+        let s_entry = start_iter.peek().map(|(h, s)| (*h, *s));
+        let e_entry = end_iter.peek().map(|(h, s)| (*h, *s));
 
         match (s_entry, e_entry) {
             (None, None) => break,
