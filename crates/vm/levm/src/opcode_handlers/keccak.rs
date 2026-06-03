@@ -11,11 +11,11 @@ use crate::{
     utils::size_offset_to_usize,
     vm::VM,
 };
-use ethrex_common::U256;
-use ethrex_common::utils::u256_from_big_endian;
+use ethrex_common::{U256, utils::u256_from_big_endian};
 
-/// `keccak256("")` as a `U256`. Returned directly for zero-length input so the
-/// hot path skips the permutation entirely (matches what other clients do).
+/// `keccak256("")` as a `U256`. Returned directly for zero-length input so we
+/// skip the permutation entirely; the result is a well-known constant
+/// (matches what other clients do).
 const EMPTY_KECCAK_U256: U256 = U256([
     0x7bfad8045d85a470,
     0xe500b653ca82273b,
@@ -54,11 +54,22 @@ impl OpcodeHandler for OpKeccak256Handler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethrex_common::constants::EMPTY_KECCACK_HASH;
     use ethrex_crypto::{Crypto, NativeCrypto};
 
     #[test]
     fn empty_keccak_const_matches_hash() {
         let expected = u256_from_big_endian(&NativeCrypto.keccak256(&[]));
         assert_eq!(EMPTY_KECCAK_U256, expected);
+    }
+
+    #[test]
+    fn empty_keccak_const_matches_common_constant() {
+        // Guards against drift between this const and `EMPTY_KECCACK_HASH`
+        // in `ethrex_common::constants` (note: the latter has a typo'd name).
+        assert_eq!(
+            EMPTY_KECCAK_U256,
+            u256_from_big_endian(EMPTY_KECCACK_HASH.as_bytes())
+        );
     }
 }
