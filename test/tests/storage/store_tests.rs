@@ -155,11 +155,8 @@ async fn test_genesis_block(mut store: Store) {
         .await
         .expect("skip-validation trusts the stored genesis");
 
-    // Symmetric trust: BOTH the stored genesis block and the stored chain
-    // config are kept as-is. The supplied (hive) genesis must not leak into
-    // either — neither the genesis header nor the chain config is overwritten.
-    // (Asserted before the rejection case below, whose set_chain_config runs
-    // before erroring and would otherwise pollute the stored config.)
+    // The stored genesis block/state is trusted and kept as-is: the supplied
+    // (hive) genesis header must not overwrite the stored kurtosis one.
     let stored_header = store
         .get_block_header(0)
         .expect("load genesis header")
@@ -169,10 +166,13 @@ async fn test_genesis_block(mut store: Store) {
         kurtosis_hash,
         "skip-validation must preserve the stored genesis block"
     );
+    // The chain config, however, is always applied from the supplied genesis
+    // file. `chain_config` is not reloaded from the datadir on boot, so it must
+    // come from the genesis file or it would be left at its (wrong) default.
     assert_eq!(
         store.get_chain_config(),
-        kurtosis_config,
-        "skip-validation must preserve the stored chain config"
+        hive_config,
+        "skip-validation must apply the chain config from the supplied genesis"
     );
 
     // Without skip-validation, a mismatching genesis is rejected.

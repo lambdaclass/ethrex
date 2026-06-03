@@ -2273,10 +2273,11 @@ impl Store {
         self.add_initial_state_inner(genesis, false).await
     }
 
-    /// Like [`Store::add_initial_state`], but trusts a pre-existing datadir
-    /// instead of validating it against the provided genesis. If a genesis
+    /// Like [`Store::add_initial_state`], but trusts a pre-existing datadir's
+    /// state instead of validating it against the provided genesis. If a genesis
     /// header is already stored, it is kept as-is rather than recomputing the
-    /// genesis state root from `genesis.alloc` and rejecting on mismatch.
+    /// genesis state root from `genesis.alloc` and rejecting on mismatch. The
+    /// chain config from the genesis file is still applied either way.
     ///
     /// Intended for booting a datadir produced out-of-band (e.g. by a state
     /// generator that writes the state trie directly and emits a genesis file
@@ -2304,17 +2305,13 @@ impl Store {
 
         let stored_genesis_header = self.load_block_header(genesis_block_number)?;
 
-        // In skip-validation mode with a genesis already in the datadir, trust
-        // the stored state wholesale: leave the chain config untouched too,
-        // rather than overwriting it from the supplied (possibly stripped)
-        // genesis file. Overwriting could silently swap the fork schedule or
-        // chainId out from under a datadir we were told to trust.
-        let trust_stored = skip_genesis_validation && stored_genesis_header.is_some();
-
-        // Set chain config
-        if !trust_stored {
-            self.set_chain_config(&genesis.config).await?;
-        }
+        // Always set the chain config from the genesis file. The in-memory
+        // `chain_config` starts at `Default::default()` on every boot and is
+        // not reloaded from the datadir, so skipping this would leave the store
+        // with the wrong chainId and an empty fork schedule. Skip-validation
+        // only waives the genesis state-root/header check; the `config` section
+        // of the genesis file is still authoritative and must be applied.
+        self.set_chain_config(&genesis.config).await?;
 
         // The cache can't be empty
         if let Some(number) = self.load_latest_block_number().await? {
@@ -2328,7 +2325,7 @@ impl Store {
             Some(header) if skip_genesis_validation => {
                 info!(
                     stored_genesis = %header.hash(),
-                    "Skipping genesis validation; trusting the genesis and chain config already stored in the datadir"
+                    "Skipping genesis state validation; trusting the genesis header and state already stored in the datadir"
                 );
                 return Ok(());
             }
