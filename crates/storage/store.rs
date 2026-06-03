@@ -2270,6 +2270,30 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, false).await
+    }
+
+    /// Like [`Store::add_initial_state`], but trusts a pre-existing datadir
+    /// instead of validating it against the provided genesis. If a genesis
+    /// header is already stored, it is kept as-is rather than recomputing the
+    /// genesis state root from `genesis.alloc` and rejecting on mismatch.
+    ///
+    /// Intended for booting a datadir produced out-of-band (e.g. by a state
+    /// generator that writes the state trie directly and emits a genesis file
+    /// with an empty `alloc`), where the operator vouches for the stored state
+    /// root. Has no effect on a fresh datadir: the genesis is built normally.
+    pub async fn add_initial_state_skip_validation(
+        &mut self,
+        genesis: Genesis,
+    ) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, true).await
+    }
+
+    async fn add_initial_state_inner(
+        &mut self,
+        genesis: Genesis,
+        skip_genesis_validation: bool,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -2290,6 +2314,13 @@ impl Store {
         }
 
         match self.load_block_header(genesis_block_number)? {
+            Some(header) if skip_genesis_validation => {
+                info!(
+                    stored_genesis = %header.hash(),
+                    "Skipping genesis validation; trusting the genesis already stored in the datadir"
+                );
+                return Ok(());
+            }
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());

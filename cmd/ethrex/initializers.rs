@@ -150,6 +150,17 @@ pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<S
     Ok(store)
 }
 
+/// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
+/// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
+pub async fn init_store_trusting(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+) -> Result<Store, StoreError> {
+    let mut store = open_store(datadir.as_ref())?;
+    store.add_initial_state_skip_validation(genesis).await?;
+    Ok(store)
+}
+
 /// Initializes a pre-existing Store
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
     let store = open_store(datadir)?;
@@ -542,7 +553,12 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store_result = if opts.skip_genesis_validation {
+        init_store_trusting(&datadir, genesis).await
+    } else {
+        init_store(&datadir, genesis).await
+    };
+    let store = match store_result {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {

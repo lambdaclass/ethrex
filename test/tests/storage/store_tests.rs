@@ -139,9 +139,17 @@ async fn test_genesis_block(mut store: Store) {
         .add_initial_state(genesis_kurtosis)
         .await
         .expect("second genesis with same block");
-    let result = store.add_initial_state(genesis_hive).await;
+    let result = store.add_initial_state(genesis_hive.clone()).await;
     assert!(result.is_err());
     assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
+
+    // With validation skipped, the mismatching genesis is trusted instead of
+    // rejected: the stored (kurtosis) genesis is kept as-is and the call
+    // returns Ok rather than IncompatibleChainConfig.
+    store
+        .add_initial_state_skip_validation(genesis_hive)
+        .await
+        .expect("skip-validation trusts the stored genesis");
 }
 
 fn remove_test_dbs(path: &str) {
