@@ -464,6 +464,26 @@ pub struct FrameTxContext {
     pub approve_called_in_current_frame: bool,
 }
 
+impl FrameTxContext {
+    /// Capture the approval state at atomic-batch entry. A batch revert rolls
+    /// back the payer's balance deduction and the sender nonce increment, so
+    /// approvals granted inside the batch must be rolled back with it —
+    /// otherwise a reverted APPROVE would leave the transaction authorized
+    /// by a frame whose effects no longer exist.
+    pub fn approval_snapshot(&self) -> (bool, Option<Address>) {
+        (self.sender_approved, self.payer_address)
+    }
+
+    /// Restore the approval state captured by `approval_snapshot` when the
+    /// enclosing atomic batch reverts. Approvals granted before the batch
+    /// are unaffected (the snapshot includes them).
+    pub fn restore_approvals(&mut self, snapshot: (bool, Option<Address>)) {
+        let (sender_approved, payer_address) = snapshot;
+        self.sender_approved = sender_approved;
+        self.payer_address = payer_address;
+    }
+}
+
 pub struct VM<'a> {
     /// Stack of parent call frames (for nested calls).
     pub call_frames: Vec<CallFrame>,
@@ -713,6 +733,7 @@ impl<'a> VM<'a> {
         let mut in_atomic_batch = false;
         let mut batch_start_idx: usize = 0;
         let mut batch_logs_start: usize = 0;
+        let mut batch_approval_snapshot: (bool, Option<Address>) = (false, None);
         let mut skip_until_batch_end: Option<usize> = None; // skip remaining frames in a failed batch
 
         // Execute frames sequentially
@@ -764,6 +785,14 @@ impl<'a> VM<'a> {
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
                 batch_logs_start = all_logs.len();
+                // Snapshot approvals at batch entry: a batch revert must also
+                // roll back approvals granted inside the batch (their balance
+                // and nonce effects are reverted with the substate).
+                batch_approval_snapshot = self
+                    .frame_tx_context
+                    .as_ref()
+                    .map(|c| c.approval_snapshot())
+                    .unwrap_or((false, None));
             }
 
             let ctx =
@@ -996,6 +1025,8 @@ impl<'a> VM<'a> {
                         );
                     }
                 }
+                // Roll back approvals granted inside the reverted batch.
+                ctx.restore_approvals(batch_approval_snapshot);
                 // Remove only logs from the batch, preserving pre-batch logs
                 all_logs.truncate(batch_logs_start);
 
@@ -1774,5 +1805,60 @@ mod atomic_batch_end_tests {
         // [DEFAULT+flag, VERIFY no-flag (scope bits only), SENDER no-flag]
         let frames = vec![frame(0x04, 0), frame(0x01, 1), frame(0x00, 2)];
         assert_eq!(find_batch_end(&frames, 0), 1);
+    }
+}
+
+#[cfg(test)]
+mod atomic_batch_approval_rollback_tests {
+    use super::FrameTxContext;
+    use ethrex_common::Address;
+
+    fn minimal_ctx() -> FrameTxContext {
+        FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frames: Vec::new(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx: ethrex_common::types::FrameTransaction::default(),
+            approve_called_in_current_frame: false,
+        }
+    }
+
+    #[test]
+    fn batch_revert_rolls_back_in_batch_approvals() {
+        let mut ctx = minimal_ctx();
+        // execute_frame_tx snapshots at batch entry...
+        let snapshot = ctx.approval_snapshot();
+        // ...an in-batch frame calls APPROVE(EXECUTION_AND_PAYMENT)...
+        ctx.sender_approved = true;
+        ctx.payer_address = Some(Address::from_low_u64_be(0xBEEF));
+        // ...a later in-batch frame fails and the batch reverts:
+        ctx.restore_approvals(snapshot);
+        assert!(
+            !ctx.sender_approved,
+            "in-batch sender approval must not survive batch revert"
+        );
+        assert!(
+            ctx.payer_address.is_none(),
+            "in-batch payer approval must not survive batch revert"
+        );
+    }
+
+    #[test]
+    fn pre_batch_approvals_survive_batch_revert() {
+        let mut ctx = minimal_ctx();
+        // Approval granted by a frame BEFORE the batch:
+        ctx.sender_approved = true;
+        ctx.payer_address = Some(Address::from_low_u64_be(0xA11CE));
+        let snapshot = ctx.approval_snapshot();
+        // In-batch frame does something; batch reverts:
+        ctx.restore_approvals(snapshot);
+        assert!(
+            ctx.sender_approved,
+            "pre-batch sender approval must survive"
+        );
+        assert_eq!(ctx.payer_address, Some(Address::from_low_u64_be(0xA11CE)));
     }
 }
