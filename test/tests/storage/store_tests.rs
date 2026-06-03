@@ -2,7 +2,7 @@ use bytes::Bytes;
 use ethereum_types::{H256, U256};
 use ethrex_common::{
     Address, Bloom, H160,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
     types::{
         AccountState, BlockBody, BlockHeader, ChainConfig, Code, Genesis, Receipt, Transaction,
         TxType,
@@ -66,7 +66,7 @@ async fn test_iter_accounts(store: Store) {
                 AccountState {
                     nonce: 2 * i,
                     balance: U256::from(3 * i),
-                    code_hash: *EMPTY_KECCACK_HASH,
+                    code_hash: *EMPTY_KECCAK_HASH,
                     storage_root: *EMPTY_TRIE_HASH,
                 },
             )
@@ -107,7 +107,7 @@ async fn test_iter_storage(store: Store) {
             nonce: 1,
             balance: U256::zero(),
             storage_root,
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
         }
         .encode_to_vec(),
     )
@@ -219,7 +219,7 @@ fn create_block_for_testing() -> (BlockHeader, BlockBody) {
         blob_gas_used: Some(0x00),
         excess_blob_gas: Some(0x00),
         parent_beacon_block_root: Some(H256::zero()),
-        requests_hash: Some(*EMPTY_KECCACK_HASH),
+        requests_hash: Some(*EMPTY_KECCAK_HASH),
         ..Default::default()
     };
     let block_body = BlockBody {
