@@ -21,7 +21,8 @@ use ethrex_common::{
     Address, H160, H256, U256,
     tracing::CallType,
     types::{
-        AccessListEntry, Code, Fork, FrameMode, Log, Transaction, TxType, fee_config::FeeConfig,
+        AccessListEntry, Code, Fork, Frame, FrameMode, Log, Transaction, TxType,
+        fee_config::FeeConfig,
     },
 };
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -496,6 +497,18 @@ pub struct VM<'a> {
     pub(crate) opcode_table: [OpCodeFn; 256],
 }
 
+/// Find the end of the atomic batch containing `failed_idx`, per EIP-8141:
+/// a batch is a maximal contiguous run of frames whose ATOMIC_BATCH_FLAG is
+/// set, terminated by the first frame without the flag — any mode (spec
+/// commit 8b61fdc4). Returns the index of the batch's terminating frame.
+fn find_batch_end(frames: &[Frame], failed_idx: usize) -> usize {
+    frames
+        .get(failed_idx..)
+        .and_then(|rest| rest.iter().position(|f| !f.is_atomic_batch()))
+        .map(|offset| failed_idx.saturating_add(offset))
+        .unwrap_or(failed_idx)
+}
+
 impl<'a> VM<'a> {
     pub fn new(
         env: Environment,
@@ -740,7 +753,7 @@ impl<'a> VM<'a> {
                 self.current_call_frame.call_frame_backup.clear();
             }
 
-            // Start a new atomic batch if this SENDER frame has the batch flag
+            // Start a new atomic batch if this frame has the batch flag
             // and we're not already in one.
             if !in_atomic_batch && frame.is_atomic_batch() {
                 self.substate.push_backup(); // batch-level snapshot
@@ -986,13 +999,9 @@ impl<'a> VM<'a> {
                 // Remove only logs from the batch, preserving pre-batch logs
                 all_logs.truncate(batch_logs_start);
 
-                // Find the end of this batch (the next SENDER frame without the flag)
-                let batch_end = frame_tx.frames[frame_idx..]
-                    .iter()
-                    .enumerate()
-                    .find(|(_, f)| f.execution_mode() == FrameMode::Sender && !f.is_atomic_batch())
-                    .map(|(offset, _)| frame_idx + offset)
-                    .unwrap_or(frame_idx);
+                // Find the end of this batch (the first frame at or after the
+                // failing one without the flag — any mode, spec commit 8b61fdc4)
+                let batch_end = find_batch_end(&frame_tx.frames, frame_idx);
 
                 if batch_end > frame_idx {
                     skip_until_batch_end = Some(batch_end);
@@ -1003,7 +1012,7 @@ impl<'a> VM<'a> {
                 continue;
             }
 
-            // If this is the last frame of a batch (SENDER without flag), commit the batch
+            // If this is the last frame of a batch (a frame without the flag), commit the batch
             if in_atomic_batch && !frame.is_atomic_batch() {
                 self.substate.commit_backup(); // commit batch-level snapshot
                 in_atomic_batch = false;
@@ -1721,5 +1730,49 @@ mod frame_tx_7702_delegation_tests {
             !runs_default_code(is_delegation, &code),
             "contract with code must take the CallFrame branch, not default code"
         );
+    }
+}
+
+#[cfg(test)]
+mod atomic_batch_end_tests {
+    use super::find_batch_end;
+    use ethrex_common::types::Frame;
+
+    fn frame(flags: u8, mode: u8) -> Frame {
+        Frame {
+            mode,
+            flags,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn batch_end_is_first_unflagged_frame_any_mode() {
+        // [SENDER+flag, DEFAULT no-flag, SENDER no-flag]: the pre-8b61fdc4
+        // SENDER-only finder would skip past the DEFAULT terminator to index
+        // 2; the spec says the batch ends at index 1.
+        let frames = vec![frame(0x04, 2), frame(0x00, 0), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 0), 1);
+    }
+
+    #[test]
+    fn batch_end_spans_consecutive_flagged_frames() {
+        let frames = vec![frame(0x04, 2), frame(0x04, 0), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 0), 2);
+        assert_eq!(find_batch_end(&frames, 1), 2);
+    }
+
+    #[test]
+    fn failing_terminator_frame_is_its_own_end() {
+        // The failing frame is the unflagged terminator: nothing to skip.
+        let frames = vec![frame(0x04, 2), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 1), 1);
+    }
+
+    #[test]
+    fn verify_frame_terminates_batch() {
+        // [DEFAULT+flag, VERIFY no-flag (scope bits only), SENDER no-flag]
+        let frames = vec![frame(0x04, 0), frame(0x01, 1), frame(0x00, 2)];
+        assert_eq!(find_batch_end(&frames, 0), 1);
     }
 }
