@@ -152,7 +152,7 @@ pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<S
 
 /// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
 /// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
-pub async fn init_store_trusting(
+pub async fn init_store_skip_validation(
     datadir: impl AsRef<Path>,
     genesis: Genesis,
 ) -> Result<Store, StoreError> {
@@ -554,7 +554,7 @@ pub async fn init_l1(
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
     let store_result = if opts.skip_genesis_validation {
-        init_store_trusting(&datadir, genesis).await
+        init_store_skip_validation(&datadir, genesis).await
     } else {
         init_store(&datadir, genesis).await
     };

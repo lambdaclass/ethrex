@@ -2302,8 +2302,19 @@ impl Store {
 
         let genesis_hash = genesis_block.hash();
 
+        let stored_genesis_header = self.load_block_header(genesis_block_number)?;
+
+        // In skip-validation mode with a genesis already in the datadir, trust
+        // the stored state wholesale: leave the chain config untouched too,
+        // rather than overwriting it from the supplied (possibly stripped)
+        // genesis file. Overwriting could silently swap the fork schedule or
+        // chainId out from under a datadir we were told to trust.
+        let trust_stored = skip_genesis_validation && stored_genesis_header.is_some();
+
         // Set chain config
-        self.set_chain_config(&genesis.config).await?;
+        if !trust_stored {
+            self.set_chain_config(&genesis.config).await?;
+        }
 
         // The cache can't be empty
         if let Some(number) = self.load_latest_block_number().await? {
@@ -2313,11 +2324,11 @@ impl Store {
             self.latest_block_header.update(latest_block_header);
         }
 
-        match self.load_block_header(genesis_block_number)? {
+        match stored_genesis_header {
             Some(header) if skip_genesis_validation => {
                 info!(
                     stored_genesis = %header.hash(),
-                    "Skipping genesis validation; trusting the genesis already stored in the datadir"
+                    "Skipping genesis validation; trusting the genesis and chain config already stored in the datadir"
                 );
                 return Ok(());
             }

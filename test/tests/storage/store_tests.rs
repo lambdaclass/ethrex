@@ -131,6 +131,14 @@ async fn test_genesis_block(mut store: Store) {
     let genesis_kurtosis: Genesis =
         serde_json::from_str(GENESIS_KURTOSIS).expect("deserialize kurtosis.json");
     let genesis_hive: Genesis = serde_json::from_str(GENESIS_HIVE).expect("deserialize hive.json");
+
+    let kurtosis_hash = genesis_kurtosis.get_block().hash();
+    let kurtosis_config = genesis_kurtosis.config;
+    let hive_hash = genesis_hive.get_block().hash();
+    let hive_config = genesis_hive.config;
+    assert_ne!(kurtosis_hash, hive_hash);
+    assert_ne!(kurtosis_config, hive_config);
+
     store
         .add_initial_state(genesis_kurtosis.clone())
         .await
@@ -139,17 +147,56 @@ async fn test_genesis_block(mut store: Store) {
         .add_initial_state(genesis_kurtosis)
         .await
         .expect("second genesis with same block");
+
+    // With validation skipped, the mismatching genesis is trusted instead of
+    // rejected: the call returns Ok rather than IncompatibleChainConfig.
+    store
+        .add_initial_state_skip_validation(genesis_hive.clone())
+        .await
+        .expect("skip-validation trusts the stored genesis");
+
+    // Symmetric trust: BOTH the stored genesis block and the stored chain
+    // config are kept as-is. The supplied (hive) genesis must not leak into
+    // either — neither the genesis header nor the chain config is overwritten.
+    // (Asserted before the rejection case below, whose set_chain_config runs
+    // before erroring and would otherwise pollute the stored config.)
+    let stored_header = store
+        .get_block_header(0)
+        .expect("load genesis header")
+        .expect("genesis header present");
+    assert_eq!(
+        stored_header.hash(),
+        kurtosis_hash,
+        "skip-validation must preserve the stored genesis block"
+    );
+    assert_eq!(
+        store.get_chain_config(),
+        kurtosis_config,
+        "skip-validation must preserve the stored chain config"
+    );
+
+    // Without skip-validation, a mismatching genesis is rejected.
     let result = store.add_initial_state(genesis_hive.clone()).await;
     assert!(result.is_err());
     assert!(matches!(result, Err(StoreError::IncompatibleChainConfig)));
 
-    // With validation skipped, the mismatching genesis is trusted instead of
-    // rejected: the stored (kurtosis) genesis is kept as-is and the call
-    // returns Ok rather than IncompatibleChainConfig.
-    store
+    // Fresh datadir: skip-validation has no genesis to trust, so it builds the
+    // supplied genesis normally rather than short-circuiting.
+    let mut fresh = Store::new("memory", EngineType::InMemory).expect("fresh in-memory store");
+    fresh
         .add_initial_state_skip_validation(genesis_hive)
         .await
-        .expect("skip-validation trusts the stored genesis");
+        .expect("skip-validation on a fresh datadir builds genesis");
+    assert_eq!(
+        fresh
+            .get_block_header(0)
+            .expect("load fresh genesis header")
+            .expect("fresh genesis header present")
+            .hash(),
+        hive_hash,
+        "skip-validation on a fresh datadir must build the supplied genesis"
+    );
+    assert_eq!(fresh.get_chain_config(), hive_config);
 }
 
 fn remove_test_dbs(path: &str) {
