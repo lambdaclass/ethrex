@@ -904,7 +904,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_WITHDRAWALS_HASH};
+    use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_WITHDRAWALS_HASH};
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
     use ethereum_types::H160;
     use hex_literal::hex;
