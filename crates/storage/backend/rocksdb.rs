@@ -84,8 +84,10 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        // opts.enable_statistics();
-        // opts.set_stats_dump_period_sec(600);
+        // Ticker/histogram statistics (default level kExceptDetailedTimers) dumped
+        // to the LOG every 10 minutes; used to measure block cache hit rates.
+        opts.enable_statistics();
+        opts.set_stats_dump_period_sec(600);
 
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
@@ -97,7 +99,7 @@ impl RocksDBBackend {
 
         // Shared block cache for all column families: caches decompressed SST data
         // blocks in userspace, reducing kernel I/O for hot data (trie nodes, accounts).
-        let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
+        let block_cache = Cache::new_lru_cache(16 * 1024 * 1024 * 1024); // 16GB
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
