@@ -1,6 +1,5 @@
 use crate::authentication::authenticate;
 use crate::debug::account_range::AccountRangeRequest;
-use crate::debug::block_access_list::BlockAccessListRequest;
 use crate::debug::chain_config::ChainConfigRequest;
 use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
