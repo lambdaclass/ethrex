@@ -2138,4 +2138,105 @@ mod frame_sig_validation_tests {
             "mismatched P256 signer should fail"
         );
     }
+
+    #[test]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed-size buffers with well-known bounds in test code"
+    )]
+    fn p256_positive_and_tampered() {
+        // Regression lock for the EIP-8141 P256 signature validation path
+        // (spec commit fe0940cae2). No external EEST reference vectors exist
+        // yet; these values exercise validate_frame_signatures end-to-end
+        // through P256VERIFY with a real p256-crate signature.
+        //
+        // Path used: live p256::ecdsa signing (p256 0.13.2 has `ecdsa` +
+        // `arithmetic` features enabled in levm's Cargo.toml).
+        use p256::ecdsa::SigningKey;
+        use p256::ecdsa::signature::hazmat::PrehashSigner;
+
+        // Fixed private key — deterministic, no randomness.
+        let pk_bytes: [u8; 32] = [
+            0xc9, 0x11, 0x0e, 0xa2, 0xf8, 0x7f, 0x3c, 0x06,
+            0x74, 0x1a, 0x4d, 0x35, 0x62, 0xb2, 0x11, 0x7d,
+            0x3e, 0x6a, 0x5c, 0x0b, 0x28, 0x0c, 0x3a, 0x0f,
+            0x56, 0x2e, 0x38, 0xa7, 0x21, 0xb0, 0x98, 0xc4,
+        ];
+        let signing_key = SigningKey::from_bytes(&pk_bytes.into()).unwrap();
+        let verifying_key = signing_key.verifying_key();
+        let encoded = verifying_key.to_encoded_point(false);
+        let encoded_bytes = encoded.as_bytes();
+        // Uncompressed point: 0x04 || qx (32B) || qy (32B)
+        let qx = &encoded_bytes[1..33];
+        let qy = &encoded_bytes[33..65];
+
+        // Fixed 32-byte non-zero digest (explicit msg path — sig_hash arg unused).
+        let digest: [u8; 32] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+        ];
+
+        // sign_prehash is deterministic for p256 with RFC-6979 nonce.
+        let raw_sig: p256::ecdsa::Signature = signing_key.sign_prehash(&digest).unwrap();
+        let sig_bytes_der = raw_sig.to_bytes(); // r || s (64 bytes, DER-unwrapped)
+        let r = &sig_bytes_der[..32];
+        let s = &sig_bytes_der[32..64];
+
+        // Derive signer: keccak256(qx || qy)[12..] — matches validate_frame_signatures.
+        let mut pk_concat = Vec::with_capacity(64);
+        pk_concat.extend_from_slice(qx);
+        pk_concat.extend_from_slice(qy);
+        let h = ethrex_crypto::keccak::keccak_hash(&pk_concat);
+        let signer = Address::from_slice(&h[12..]);
+
+        // Build the 128-byte signature: r || s || qx || qy.
+        let mut signature_blob = vec![0u8; 128];
+        signature_blob[..32].copy_from_slice(r);
+        signature_blob[32..64].copy_from_slice(s);
+        signature_blob[64..96].copy_from_slice(qx);
+        signature_blob[96..128].copy_from_slice(qy);
+
+        let valid_sig = FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer,
+            // Explicit 32-byte msg: sig_hash arg to validate_frame_signatures
+            // is irrelevant for this entry.
+            msg: Bytes::copy_from_slice(&digest),
+            signature: Bytes::from(signature_blob.clone()),
+        };
+
+        // Positive: real P256 signature → passes.
+        assert!(
+            validate_frame_signatures(
+                std::slice::from_ref(&valid_sig),
+                H256::zero(),
+                hegota()
+            ),
+            "valid P256 signature must pass",
+        );
+
+        // Tampered r byte: flip one bit in r → curve verification fails.
+        let mut tampered_blob = signature_blob.clone();
+        tampered_blob[0] ^= 0x01;
+        let tampered_r = FrameSignature {
+            signature: Bytes::from(tampered_blob),
+            ..valid_sig.clone()
+        };
+        assert!(
+            !validate_frame_signatures(&[tampered_r], H256::zero(), hegota()),
+            "flipped r byte must fail curve verification",
+        );
+
+        // Wrong signer: signer-derivation check fires.
+        let wrong_signer = FrameSignature {
+            signer: Address::from_low_u64_be(0xDEAD),
+            ..valid_sig
+        };
+        assert!(
+            !validate_frame_signatures(&[wrong_signer], H256::zero(), hegota()),
+            "wrong signer must fail",
+        );
+    }
 }
