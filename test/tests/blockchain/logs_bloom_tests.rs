@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 
 use ethrex_blockchain::Blockchain;
+use ethrex_blockchain::error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
     Block, BlockBody, BlockHeader, ChainConfig, ELASTICITY_MULTIPLIER, Genesis, GenesisAccount,
@@ -100,10 +101,17 @@ async fn rejects_block_with_mismatched_logs_bloom() {
     let block = Block::new(header, body);
     let blockchain = Blockchain::default_with_store(store);
 
-    let result = blockchain.add_block(block);
+    // Assert the *specific* rejection reason. The block is otherwise valid (correct
+    // receipts root, state root, etc.), so a bare `is_err()` could mask the bloom check
+    // silently rotting behind some other failure.
+    let err = blockchain.add_block(block).expect_err(
+        "a block whose header logs_bloom does not match the executed receipts must be rejected",
+    );
     assert!(
-        result.is_err(),
-        "a block whose header logs_bloom does not match the executed receipts must be \
-         rejected, but add_block returned: {result:?}"
+        matches!(
+            err,
+            ChainError::InvalidBlock(InvalidBlockError::LogsBloomMismatch)
+        ),
+        "expected LogsBloomMismatch, got: {err:?}"
     );
 }
