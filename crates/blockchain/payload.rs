@@ -610,7 +610,8 @@ impl Blockchain {
                 debug!("No more gas to run transactions");
                 break;
             };
-            if !blob_txs.is_empty() && context.blobs_bundle.blobs.len() >= max_blob_number_per_block
+            if !blob_txs.is_empty()
+                && context.blobs_bundle.commitments.len() >= max_blob_number_per_block
             {
                 debug!("No more blob gas to run blob transactions");
                 blob_txs.clear();
@@ -789,7 +790,9 @@ impl Blockchain {
                 StoreError::Custom(format!("No blobs bundle found for blob tx {tx_hash}")).into(),
             );
         };
-        if context.blobs_bundle.blobs.len() + blobs_bundle.blobs.len() > max_blob_number_per_block {
+        if context.blobs_bundle.commitments.len() + blobs_bundle.commitments.len()
+            > max_blob_number_per_block
+        {
             // This error will only be used for debug tracing
             return Err(EvmError::Custom("max data blobs reached".to_string()).into());
         };
@@ -798,7 +801,7 @@ impl Blockchain {
         // Update context with blob data
         let prev_blob_gas = context.payload.header.blob_gas_used.unwrap_or_default();
         context.payload.header.blob_gas_used =
-            Some(prev_blob_gas + (blobs_bundle.blobs.len() * GAS_PER_BLOB as usize) as u64);
+            Some(prev_blob_gas + (blobs_bundle.commitments.len() * GAS_PER_BLOB as usize) as u64);
         context.blobs_bundle += blobs_bundle;
         Ok(receipt)
     }
