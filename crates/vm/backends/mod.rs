@@ -169,7 +169,8 @@ impl Evm {
         let fork = chain_config.fork(block_header.timestamp);
 
         // EIP-8141: the expiry verifier predeploy must exist from Hegota
-        // activation onward (spec commit 0b197156). Idempotent install.
+        // activation onward (spec commit 0b197156). Idempotent install for the
+        // payload-build path; the block-import path is hooked in prepare_block.
         if fork >= Fork::Hegota && matches!(self.vm_type, VMType::L1) {
             LEVM::install_expiry_verifier_code(&mut self.db)?;
         }

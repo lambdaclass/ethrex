@@ -1368,20 +1368,27 @@ impl LEVM {
     /// the existing code differs, so exactly one account update is produced
     /// (at the first Hegota block) and none afterwards.
     pub fn install_expiry_verifier_code(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        // Predeploy convention (matches the genesis predeploys 4788/2935/7002/7251).
+        const PREDEPLOY_NONCE: u64 = 1;
+
         let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
         if current.bytecode.as_ref() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
         }
         let code = Code::from_bytecode(Bytes::from_static(&EXPIRY_VERIFIER_RUNTIME_BYTECODE));
         let code_hash = code.hash;
-        // Record BAL code change if recording is active.
+        // Record BAL code/nonce changes if recording is active, so a BAL
+        // reconstructor reproduces the same post-state (it takes nonce from
+        // prestate otherwise).
         if let Some(recorder) = db.bal_recorder_mut() {
             recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.bytecode.clone());
+            recorder.record_nonce_change(EXPIRY_VERIFIER_PREDEPLOY.address, PREDEPLOY_NONCE);
         }
         let acc = db
             .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
             .map_err(EvmError::from)?;
         acc.info.code_hash = code_hash;
+        acc.info.nonce = PREDEPLOY_NONCE;
         db.codes.entry(code_hash).or_insert(code);
         Ok(())
     }
@@ -1485,6 +1492,13 @@ impl LEVM {
         // TODO: I don't like deciding the behavior based on the VMType here.
         if let VMType::L2(_) = vm_type {
             return Ok(());
+        }
+
+        // EIP-8141: the expiry verifier predeploy must exist from Hegota
+        // activation onward (spec commit 0b197156). Idempotent install; also
+        // hooked in apply_system_calls for the payload-build path.
+        if fork >= Fork::Hegota {
+            Self::install_expiry_verifier_code(db)?;
         }
 
         if block_header.parent_beacon_block_root.is_some() && fork >= Fork::Cancun {
