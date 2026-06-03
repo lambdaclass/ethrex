@@ -127,10 +127,9 @@ async fn test_fcu_v3_finalized_ancestor_returns_valid_with_null_payload_id() {
     );
 }
 
-// execution-apis#796: PayloadAttributesV4 carries a CL-supplied targetGasLimit.
-// Deserialization is permissive (absent / null parse to None); the spec
-// contract is enforced in validate_attributes_v4, exercised by the e2e tests
-// below.
+// execution-apis#796: PayloadAttributesV4 carries a required CL-supplied
+// targetGasLimit. An absent or null value fails deserialization, so the FCUv4
+// request is rejected (see parse_v4); the e2e tests below exercise that path.
 #[test]
 fn payload_attributes_v4_parses_target_gas_limit_when_present() {
     let json = serde_json::json!({
@@ -143,12 +142,12 @@ fn payload_attributes_v4_parses_target_gas_limit_when_present() {
         "targetGasLimit": "0x2faf080",
     });
     let attrs: PayloadAttributesV4 = serde_json::from_value(json).unwrap();
-    assert_eq!(attrs.target_gas_limit, Some(50_000_000));
+    assert_eq!(attrs.target_gas_limit, 50_000_000);
     assert_eq!(attrs.slot_number, 0x10);
 }
 
 #[test]
-fn payload_attributes_v4_accepts_missing_target_gas_limit() {
+fn payload_attributes_v4_rejects_missing_target_gas_limit() {
     let json = serde_json::json!({
         "timestamp": "0x65",
         "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
@@ -157,12 +156,11 @@ fn payload_attributes_v4_accepts_missing_target_gas_limit() {
         "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
         "slotNumber": "0x10",
     });
-    let attrs: PayloadAttributesV4 = serde_json::from_value(json).unwrap();
-    assert!(attrs.target_gas_limit.is_none());
+    assert!(serde_json::from_value::<PayloadAttributesV4>(json).is_err());
 }
 
 #[test]
-fn payload_attributes_v4_parses_explicit_null_target_gas_limit() {
+fn payload_attributes_v4_rejects_null_target_gas_limit() {
     let json = serde_json::json!({
         "timestamp": "0x65",
         "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
@@ -172,8 +170,7 @@ fn payload_attributes_v4_parses_explicit_null_target_gas_limit() {
         "slotNumber": "0x10",
         "targetGasLimit": null,
     });
-    let attrs: PayloadAttributesV4 = serde_json::from_value(json).unwrap();
-    assert!(attrs.target_gas_limit.is_none());
+    assert!(serde_json::from_value::<PayloadAttributesV4>(json).is_err());
 }
 
 // Builds an in-memory store from l1.json with Amsterdam (= upstream
@@ -245,24 +242,22 @@ async fn fcu_v4_accepts_target_gas_limit_present() {
     );
 }
 
-// We keep targetGasLimit optional for pre-#796 CLs still running on Amsterdam
-// devnets: an absent field is accepted and build_payload_v4 falls back to
-// --builder.gas-limit instead of rejecting.
+// execution-apis#796: targetGasLimit is required on V4; an absent field is
+// rejected at deserialization, so the FCUv4 request fails to parse.
 #[tokio::test]
-async fn fcu_v4_accepts_target_gas_limit_absent() {
+async fn fcu_v4_rejects_target_gas_limit_absent() {
     let store = amsterdam_test_store().await;
     let genesis = store.get_block_header(0).unwrap().unwrap();
     let request = fcu_v4_request(genesis.hash(), genesis.timestamp + 12, None);
 
     let context = default_context_with_storage(store).await;
-    let response = ForkChoiceUpdatedV4::call(&request, context)
+    let err = ForkChoiceUpdatedV4::call(&request, context)
         .await
-        .expect("FCU V4 call should succeed with fallback gas limit");
+        .expect_err("FCU V4 must reject attributes without targetGasLimit");
 
     assert!(
-        !response["payloadId"].is_null(),
-        "payloadId must be set when targetGasLimit is absent (fallback); got {:?}",
-        response["payloadId"]
+        matches!(err, RpcErr::InvalidPayloadAttributes(_)),
+        "got: {err:?}"
     );
 }
 
