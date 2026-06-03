@@ -1049,8 +1049,12 @@ impl<'a> VM<'a> {
                 in_atomic_batch = false;
             }
 
-            // VERIFY frame enforcement: if VERIFY frame didn't call APPROVE, TX is invalid
-            if frame.execution_mode() == FrameMode::Verify && !ctx.approve_called_in_current_frame {
+            // VERIFY frame enforcement (spec commit 0b197156): a reverted
+            // VERIFY frame invalidates the transaction. A VERIFY frame that
+            // succeeds WITHOUT calling APPROVE is valid (e.g. the expiry
+            // verifier frame). Batched VERIFY reverts take the batch-unroll
+            // path above instead (it `continue`s before reaching this check).
+            if frame.execution_mode() == FrameMode::Verify && !frame_success {
                 tx_invalid = true;
                 break;
             }
