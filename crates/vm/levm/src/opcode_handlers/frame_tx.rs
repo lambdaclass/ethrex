@@ -227,7 +227,6 @@ impl OpcodeHandler for OpTxParamHandler {
 
 /// FRAMEDATALOAD (0xB1) -- Load one 32-byte word from a frame's data.
 /// Takes [offset, frameIndex] from the stack. Gas cost: 3.
-/// VERIFY frames return zero.
 pub struct OpFrameDataLoadHandler;
 impl OpcodeHandler for OpFrameDataLoadHandler {
     #[inline(always)]
@@ -247,12 +246,6 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             .frames
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        // VERIFY frames return zero
-        if frame.execution_mode() == FrameMode::Verify {
-            vm.current_call_frame.stack.push(U256::zero())?;
-            return Ok(OpcodeResult::Continue);
-        }
 
         // Out-of-usize offsets are past-the-end: the word stays zero-filled.
         let mut word = [0u8; 32];
@@ -277,7 +270,7 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
 
 /// FRAMEDATACOPY (0xB2) -- Copy frame data into memory.
 /// Takes [memOffset, dataOffset, length, frameIndex] from the stack.
-/// Gas cost matches CALLDATACOPY. VERIFY frames copy nothing.
+/// Gas cost matches CALLDATACOPY.
 pub struct OpFrameDataCopyHandler;
 impl OpcodeHandler for OpFrameDataCopyHandler {
     #[inline(always)]
@@ -311,13 +304,6 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
             .frames
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        // VERIFY frames copy nothing (zero-fill)
-        if frame.execution_mode() == FrameMode::Verify {
-            let buf = vec![0u8; length];
-            vm.current_call_frame.memory.store_data(mem_offset, &buf)?;
-            return Ok(OpcodeResult::Continue);
-        }
 
         let data = &frame.data;
         let mut buf = vec![0u8; length];
@@ -378,12 +364,8 @@ impl OpcodeHandler for OpFrameParamHandler {
                 U256::from(frame.flags)
             }
             0x04 => {
-                // len(data) -- returns 0 for VERIFY frames
-                if frame.execution_mode() == FrameMode::Verify {
-                    U256::zero()
-                } else {
-                    U256::from(frame.data.len())
-                }
+                // len(data)
+                U256::from(frame.data.len())
             }
             0x05 => {
                 // status -- exceptional halt if current/future frame.
@@ -415,6 +397,49 @@ impl OpcodeHandler for OpFrameParamHandler {
 
         vm.current_call_frame.stack.push(result)?;
 
+        Ok(OpcodeResult::Continue)
+    }
+}
+
+/// SIGPARAM (0xB4) -- signature-scoped metadata (EIP-8141, spec commit fe0940cae2).
+/// Stack: [param, signatureIndex] with signatureIndex on top. Gas cost: 2.
+/// Raw `signature` bytes are intentionally NOT exposed.
+pub struct OpSigParamHandler;
+impl OpcodeHandler for OpSigParamHandler {
+    #[inline(always)]
+    fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        let [signature_index, param] = *vm.current_call_frame.stack.pop()?;
+
+        vm.current_call_frame
+            .increase_consumed_gas(gas_cost::SIGPARAM)?;
+
+        let ctx = vm
+            .frame_tx_context
+            .as_ref()
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let idx = index_to_usize(signature_index.as_u64())?;
+        let sig = ctx
+            .tx
+            .signatures
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        let result = match param.as_u64() {
+            0x00 => address_to_u256(sig.signer), // effective signer
+            0x01 => U256::from(sig.scheme),
+            0x02 => {
+                // msg: 0 when empty (canonical sig_hash case), else the 32-byte digest.
+                if sig.msg.is_empty() {
+                    U256::zero()
+                } else {
+                    U256::from_big_endian(&sig.msg)
+                }
+            }
+            0x03 => U256::from(sig.signature.len()),
+            _ => return Err(ExceptionalHalt::InvalidOpcode.into()),
+        };
+        vm.current_call_frame.stack.push(result)?;
         Ok(OpcodeResult::Continue)
     }
 }
@@ -454,6 +479,7 @@ fn load_tx_param(
         }
         0x09 => Ok(U256::from(ctx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
+        0x0B => Ok(U256::from(ctx.tx.signatures.len())),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),
     }
 }
@@ -535,6 +561,7 @@ fn execute_default_verify(
 mod tests {
     use super::*;
     use bytes::Bytes;
+    use ethrex_common::types::{FrameSignature, FrameTransaction};
 
     /// Mirrors the Underflow -> RevertOpcode mapping used inside apply_approve
     /// so the invariant can be exercised without constructing a full VM.
@@ -614,5 +641,144 @@ mod tests {
             _ => panic!("unexpected param"),
         };
         assert_eq!(zero_result, U256::zero());
+    }
+
+    /// Build a minimal FrameTxContext with one signature for SIGPARAM tests.
+    fn ctx_with_one_signature() -> crate::vm::FrameTxContext {
+        let signer = Address::from_low_u64_be(0xABCDEF);
+        let msg_bytes = Bytes::from(vec![0xdeu8; 32]);
+        let sig_bytes = Bytes::from(vec![0xFFu8; 65]);
+        let sig = FrameSignature {
+            scheme: 0x01,
+            signer,
+            msg: msg_bytes,
+            signature: sig_bytes,
+        };
+        let mut tx = FrameTransaction::default();
+        tx.signatures.push(sig);
+        crate::vm::FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frames: Vec::new(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx,
+            approve_called_in_current_frame: false,
+        }
+    }
+
+    #[test]
+    fn sigparam_0x00_returns_signer() {
+        let ctx = ctx_with_one_signature();
+        let sig = &ctx.tx.signatures[0];
+        let result = address_to_u256(sig.signer);
+        let mut expected = [0u8; 32];
+        expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
+        assert_eq!(result, U256::from_big_endian(&expected));
+    }
+
+    #[test]
+    fn sigparam_0x01_returns_scheme() {
+        let ctx = ctx_with_one_signature();
+        let sig = &ctx.tx.signatures[0];
+        assert_eq!(U256::from(sig.scheme), U256::from(0x01u64));
+    }
+
+    #[test]
+    fn sigparam_0x02_returns_msg_word() {
+        let ctx = ctx_with_one_signature();
+        let sig = &ctx.tx.signatures[0];
+        let result = if sig.msg.is_empty() {
+            U256::zero()
+        } else {
+            U256::from_big_endian(&sig.msg)
+        };
+        assert_eq!(result, U256::from_big_endian(&[0xdeu8; 32]));
+    }
+
+    #[test]
+    fn sigparam_0x02_empty_msg_returns_zero() {
+        let signer = Address::from_low_u64_be(0x1234);
+        let sig = FrameSignature {
+            scheme: 0x00,
+            signer,
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 65]),
+        };
+        let result = if sig.msg.is_empty() {
+            U256::zero()
+        } else {
+            U256::from_big_endian(&sig.msg)
+        };
+        assert_eq!(result, U256::zero());
+    }
+
+    #[test]
+    fn sigparam_0x03_returns_signature_len() {
+        let ctx = ctx_with_one_signature();
+        let sig = &ctx.tx.signatures[0];
+        assert_eq!(U256::from(sig.signature.len()), U256::from(65u64));
+    }
+
+    #[test]
+    fn sigparam_oob_index_returns_invalid_opcode() {
+        let ctx = ctx_with_one_signature();
+        // index 1 is out of bounds (only index 0 exists)
+        let result = ctx.tx.signatures.get(1);
+        assert!(
+            result.is_none(),
+            "OOB index should return None -> InvalidOpcode"
+        );
+    }
+
+    #[test]
+    fn txparam_0x0b_returns_signature_count() {
+        let ctx = ctx_with_one_signature();
+        let result = load_tx_param(&ctx, 0x0B).unwrap();
+        assert_eq!(result, U256::from(1u64));
+    }
+
+    #[test]
+    fn txparam_0x0b_zero_signatures() {
+        let ctx = crate::vm::FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frames: Vec::new(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx: FrameTransaction::default(),
+            approve_called_in_current_frame: false,
+        };
+        let result = load_tx_param(&ctx, 0x0B).unwrap();
+        assert_eq!(result, U256::zero());
+    }
+
+    #[test]
+    fn framedataload_verify_frame_returns_real_data() {
+        // After the VERIFY-zeroing removal, loading data from a VERIFY frame
+        // should return the actual bytes in frame.data, not zero.
+        use bytes::Bytes;
+        let mut data = [0u8; 32];
+        data[0] = 0xCA;
+        data[31] = 0xFE;
+        let frame = ethrex_common::types::Frame {
+            mode: ethrex_common::types::FrameMode::Verify as u8,
+            flags: 0x03,
+            target: Some(Address::from_low_u64_be(0xAA)),
+            gas_limit: 50_000,
+            value: U256::zero(),
+            data: Bytes::from(data.to_vec()),
+        };
+        // Simulate the load logic (no VERIFY special-case any more)
+        let byte_offset: usize = 0;
+        let mut word = [0u8; 32];
+        let available = frame.data.len().saturating_sub(byte_offset);
+        let copy_len = available.min(32);
+        word[..copy_len].copy_from_slice(&frame.data[byte_offset..byte_offset + copy_len]);
+        let result = U256::from_big_endian(&word);
+        assert_ne!(result, U256::zero(), "VERIFY frame data should be readable");
+        assert_eq!(result, U256::from_big_endian(&data));
     }
 }

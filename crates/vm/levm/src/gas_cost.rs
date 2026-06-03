@@ -69,6 +69,7 @@ pub const FRAMEDATALOAD: u64 = 3;
 pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
+pub const SIGPARAM: u64 = 2;
 
 pub fn framedatacopy(
     new_memory_size: usize,
