@@ -5,7 +5,7 @@ use ethrex_common::{
     Address, H256, U256,
     types::{GenesisAccount},
 };
-use ethrex_l2_rpc::signer::{LocalSigner, Signer};
+use ethrex_l2_rpc::signer::LocalSigner;
 use ethrex_rpc::rpc::map_http_requests;
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::utils::RpcRequest;
