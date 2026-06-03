@@ -256,7 +256,6 @@ impl PeerHandler {
             if let Ok((headers, peer_id, _connection, startblock, previous_chunk_limit, elapsed)) =
                 task_receiver.try_recv()
             {
-
                 trace!("We received a download chunk from peer");
                 if headers.is_empty() {
                     self.peer_table.record_failure(peer_id)?;

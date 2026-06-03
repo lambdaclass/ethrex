@@ -512,12 +512,18 @@ pub async fn request_bytecodes(
                 }
                 Ok(RLPxMessage::ByteCodes(_)) => {
                     // Empty response; retry the full chunk.
-                    let stats = TransferStats { elapsed: req_elapsed, response_bytes: 0 };
+                    let stats = TransferStats {
+                        elapsed: req_elapsed,
+                        response_bytes: 0,
+                    };
                     (Vec::new(), chunk_start, stats)
                 }
                 _ => {
                     tracing::debug!("Failed to get bytecode");
-                    let stats = TransferStats { elapsed: req_elapsed, response_bytes: 0 };
+                    let stats = TransferStats {
+                        elapsed: req_elapsed,
+                        response_bytes: 0,
+                    };
                     (Vec::new(), chunk_start, stats)
                 }
             };
@@ -1276,7 +1282,9 @@ async fn request_account_range_worker(
         retry(stats)
     };
 
-    tx.send((accounts_out, peer_id, chunk_left, stats)).await.ok();
+    tx.send((accounts_out, peer_id, chunk_left, stats))
+        .await
+        .ok();
     Ok::<(), SnapError>(())
 }
 
@@ -1338,7 +1346,10 @@ async fn request_storage_ranges_worker(
             ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
             tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
             tracing::debug!("Failed to get storage range");
-            break 'outcome retry_outcome(TransferStats { elapsed: req_elapsed, response_bytes: 0 });
+            break 'outcome retry_outcome(TransferStats {
+                elapsed: req_elapsed,
+                response_bytes: 0,
+            });
         };
         let response_bytes = slots
             .iter()
