@@ -747,13 +747,24 @@ fn bal_for_block(
     context: &RpcApiContext,
     block: &Block,
 ) -> Result<Option<BlockAccessList>, RpcErr> {
-    if let Some(bal) = context.storage.get_block_access_list(block.hash())? {
+    let block_hash = block.hash();
+    if let Some(bal) = context.storage.get_block_access_list(block_hash)? {
         return Ok(Some(bal));
     }
-    context
+    let generated = context
         .blockchain
         .generate_bal_for_block(block)
-        .map_err(|e| RpcErr::Internal(e.to_string()))
+        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+    // Write back so subsequent requests for this block are served from the
+    // store instead of re-executing every time. Regeneration only succeeds
+    // while the parent state is still in the retained window; the block has
+    // long been accepted, so the regenerated BAL is authoritative for serving.
+    if let Some(bal) = &generated
+        && let Err(err) = context.storage.store_block_access_list(block_hash, bal)
+    {
+        warn!("Failed to persist regenerated block access list for {block_hash}: {err}");
+    }
+    Ok(generated)
 }
 
 // ==================== V2 Body Methods (EIP-7928) ====================

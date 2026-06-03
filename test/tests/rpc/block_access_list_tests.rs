@@ -193,3 +193,40 @@ async fn payload_bodies_by_range_v2_serves_stored_bal() {
         ]);
     assert_eq!(got, expected);
 }
+
+// Fallback path: when no BAL is stored, the handler must not re-execute a block
+// whose parent state is unavailable. For a pre-Amsterdam block, regeneration
+// short-circuits to None, so a None-carrying body proves the response was
+// produced without touching (absent) historical state. This locks in the
+// snap-sync / aged-out-state safety the PR targets.
+#[tokio::test]
+async fn payload_bodies_by_hash_v2_pre_amsterdam_returns_none_without_re_execution() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    // Pre-Amsterdam block (timestamp 0); no BAL stored and no state trie built.
+    let block = Block {
+        header: BlockHeader {
+            number: 1,
+            ..Default::default()
+        },
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    let context = default_context_with_storage(storage).await;
+    let request = GetPayloadBodiesByHashV2Request {
+        hashes: vec![block_hash],
+    };
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                None
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(got, expected);
+}
