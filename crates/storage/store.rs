@@ -855,10 +855,10 @@ impl Store {
     /// Checks cache first, falls back to database. If metadata is missing,
     /// falls back to loading full code and extracts length (auto-migration).
     pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
         // Empty code special case
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Some(CodeMetadata { length: 0 }));
         }
 
