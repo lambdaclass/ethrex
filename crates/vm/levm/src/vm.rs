@@ -522,6 +522,10 @@ pub struct VM<'a> {
 /// invalid. Verification gas is intrinsic (already in `total_gas_limit`), so a
 /// scratch budget is used for the crypto precompiles and their deduction is
 /// ignored.
+#[expect(
+    clippy::indexing_slicing,
+    reason = "signature length is checked before each fixed-offset slice"
+)]
 fn validate_frame_signatures(
     signatures: &[ethrex_common::types::FrameSignature],
     sig_hash: ethrex_common::H256,
