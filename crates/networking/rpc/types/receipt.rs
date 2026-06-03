@@ -264,6 +264,8 @@ mod tests {
                     topics: vec![],
                     data: Bytes::from_static(b"strawberry"),
                 }],
+                payer: None,
+                frame_receipts: None,
             },
             RpcReceiptTxInfo {
                 transaction_hash: H256::zero(),
