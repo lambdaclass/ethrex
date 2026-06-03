@@ -41,14 +41,15 @@ fn compute_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
     let gas_limit = U256::from(ctx.tx.total_gas_limit());
     let max_fee = U256::from(ctx.tx.max_fee_per_gas);
-    let tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err.clone())?;
+    let tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err)?;
     let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
     let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
+    let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
     let blob_fee = blob_count
         .checked_mul(gas_per_blob)
-        .ok_or(halt_err.clone())?
+        .ok_or(halt_err)?
         .checked_mul(ctx.tx.max_fee_per_blob_gas)
-        .ok_or(halt_err.clone())?;
+        .ok_or(ExceptionalHalt::InvalidOpcode)?;
     tx_cost
         .checked_add(blob_fee)
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
@@ -57,17 +58,15 @@ fn compute_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
 /// Apply APPROVE side effects for the given scope.
 /// This is shared between OpApproveHandler and (future) default code.
 pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::Address) -> Result<(), VMError> {
-    let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-
     match scope {
         0x1 => {
             // APPROVE_PAYMENT: increment nonce, deduct max cost, record payer.
             // Per spec, the single transaction-scoped variable `payer` is
             // set on success; `payer.is_some()` is the source of truth for
             // "payment has been approved".
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            let ctx = vm.frame_tx_context.as_ref().ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.payer_address.is_some() {
-                return Err(halt_err.clone());
+                return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if !ctx.sender_approved {
                 return Err(VMError::RevertOpcode);
@@ -90,9 +89,9 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
         }
         0x2 => {
             // APPROVE_EXECUTION: set sender_approved (requires frame_target == tx.sender)
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            let ctx = vm.frame_tx_context.as_ref().ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved {
-                return Err(halt_err);
+                return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
@@ -102,9 +101,9 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
         }
         0x3 => {
             // APPROVE_EXECUTION_AND_PAYMENT: both, in one atomic step.
-            let ctx = vm.frame_tx_context.as_ref().ok_or(halt_err.clone())?;
+            let ctx = vm.frame_tx_context.as_ref().ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved || ctx.payer_address.is_some() {
-                return Err(halt_err.clone());
+                return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
@@ -126,7 +125,7 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
         }
         _ => {
             // scope 0 and any other value are invalid
-            return Err(halt_err);
+            return Err(ExceptionalHalt::InvalidOpcode.into());
         }
     }
     Ok(())
@@ -172,7 +171,7 @@ impl OpcodeHandler for OpApproveHandler {
         // scope must be a non-zero subset of allowed_scope
         if scope_val == 0
             || scope_val > 3
-            || (allowed_scope != 0 && (scope_val & allowed_scope as u64) != scope_val)
+            || (allowed_scope != 0 && (scope_val & u64::from(allowed_scope)) != scope_val)
         {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
@@ -253,9 +252,12 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             let data = &frame.data;
             let available = data.len().saturating_sub(byte_offset);
             let copy_len = available.min(32);
-            if copy_len > 0 {
-                if let Some(src) = data.get(byte_offset..byte_offset + copy_len) {
-                    word[..copy_len].copy_from_slice(src);
+            if copy_len > 0
+                && let Some(src) = data.get(byte_offset..byte_offset.saturating_add(copy_len))
+            {
+                // copy_len <= 32 == word.len(), so this slice is in bounds.
+                if let Some(dst) = word.get_mut(..copy_len) {
+                    dst.copy_from_slice(src);
                 }
             }
         }
@@ -386,7 +388,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             }
             0x07 => {
                 // atomic_batch ((flags >> 2) & 1, returns 0 or 1)
-                U256::from(frame.is_atomic_batch() as u8)
+                U256::from(u8::from(frame.is_atomic_batch()))
             }
             0x08 => {
                 // value -- EIP-8141 FRAMEPARAM table (spec line 287)
@@ -522,7 +524,7 @@ fn execute_default_verify(
         .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
     // Read allowed scope from flags bits 0-1
-    let allowed_scope = frame.scope_restriction() as u64;
+    let allowed_scope = u64::from(frame.scope_restriction());
     if allowed_scope == 0 {
         return Ok((false, 0, Vec::new()));
     }
@@ -596,7 +598,9 @@ mod tests {
         assert_eq!(u256_to_offset(U256::zero()), Some(0));
         assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
         assert_eq!(
-            u256_to_offset(U256::from(usize::MAX as u64)),
+            u256_to_offset(U256::from(
+                u64::try_from(usize::MAX).unwrap_or(u64::MAX)
+            )),
             Some(usize::MAX)
         );
     }
@@ -614,7 +618,7 @@ mod tests {
         // Constructing a Frame mirrors what the handler reads so a refactor
         // that swaps the field access (e.g. to a wrapper) is caught here.
         let frame = ethrex_common::types::Frame {
-            mode: ethrex_common::types::FrameMode::Sender as u8,
+            mode: u8::from(ethrex_common::types::FrameMode::Sender),
             flags: 0x00,
             target: Some(Address::from_low_u64_be(0xCAFE)),
             gas_limit: 100_000,
@@ -627,7 +631,7 @@ mod tests {
         let param_id: u64 = 0x08;
         let result = match param_id {
             0x08 => frame.value,
-            _ => panic!("unexpected param"),
+            _ => unreachable!("param_id is 0x08"),
         };
         assert_eq!(result, U256::from(1_234_567u64));
 
@@ -638,7 +642,7 @@ mod tests {
         };
         let zero_result = match param_id {
             0x08 => zero_frame.value,
-            _ => panic!("unexpected param"),
+            _ => unreachable!("param_id is 0x08"),
         };
         assert_eq!(zero_result, U256::zero());
     }
@@ -671,7 +675,7 @@ mod tests {
     #[test]
     fn sigparam_0x00_returns_signer() {
         let ctx = ctx_with_one_signature();
-        let sig = &ctx.tx.signatures[0];
+        let sig = ctx.tx.signatures.first().unwrap();
         let result = address_to_u256(sig.signer);
         let mut expected = [0u8; 32];
         expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
@@ -681,14 +685,14 @@ mod tests {
     #[test]
     fn sigparam_0x01_returns_scheme() {
         let ctx = ctx_with_one_signature();
-        let sig = &ctx.tx.signatures[0];
+        let sig = ctx.tx.signatures.first().unwrap();
         assert_eq!(U256::from(sig.scheme), U256::from(0x01u64));
     }
 
     #[test]
     fn sigparam_0x02_returns_msg_word() {
         let ctx = ctx_with_one_signature();
-        let sig = &ctx.tx.signatures[0];
+        let sig = ctx.tx.signatures.first().unwrap();
         let result = if sig.msg.is_empty() {
             U256::zero()
         } else {
@@ -717,7 +721,7 @@ mod tests {
     #[test]
     fn sigparam_0x03_returns_signature_len() {
         let ctx = ctx_with_one_signature();
-        let sig = &ctx.tx.signatures[0];
+        let sig = ctx.tx.signatures.first().unwrap();
         assert_eq!(U256::from(sig.signature.len()), U256::from(65u64));
     }
 
@@ -764,7 +768,7 @@ mod tests {
         data[0] = 0xCA;
         data[31] = 0xFE;
         let frame = ethrex_common::types::Frame {
-            mode: ethrex_common::types::FrameMode::Verify as u8,
+            mode: u8::from(ethrex_common::types::FrameMode::Verify),
             flags: 0x03,
             target: Some(Address::from_low_u64_be(0xAA)),
             gas_limit: 50_000,
@@ -776,7 +780,12 @@ mod tests {
         let mut word = [0u8; 32];
         let available = frame.data.len().saturating_sub(byte_offset);
         let copy_len = available.min(32);
-        word[..copy_len].copy_from_slice(&frame.data[byte_offset..byte_offset + copy_len]);
+        if let (Some(dst), Some(src)) = (
+            word.get_mut(..copy_len),
+            frame.data.get(byte_offset..byte_offset.saturating_add(copy_len)),
+        ) {
+            dst.copy_from_slice(src);
+        }
         let result = U256::from_big_endian(&word);
         assert_ne!(result, U256::zero(), "VERIFY frame data should be readable");
         assert_eq!(result, U256::from_big_endian(&data));

@@ -1132,8 +1132,10 @@ impl<'a> VM<'a> {
                     InternalError::Custom("missing frame tx context".to_string()),
                 ))?;
                 for i in batch_start_idx..=frame_idx {
-                    if let Some(result) = ctx.frame_results.get_mut(i) {
-                        let charged_gas = frame_tx.frames[i].gas_limit;
+                    if let (Some(result), Some(batch_frame)) =
+                        (ctx.frame_results.get_mut(i), frame_tx.frames.get(i))
+                    {
+                        let charged_gas = batch_frame.gas_limit;
                         total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
                         *result = (
                             ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
@@ -1242,7 +1244,7 @@ impl<'a> VM<'a> {
             });
 
         let result = if any_sender_reverted {
-            TxResult::Revert(VMError::RevertOpcode.into())
+            TxResult::Revert(VMError::RevertOpcode)
         } else {
             TxResult::Success
         };
@@ -1533,9 +1535,9 @@ mod frame_tx_security_tests {
         }
 
         // Each frame's receipt should contain exactly its own log — no leaks.
-        assert_eq!(log_tags(&per_frame[0]), vec![0x11]);
-        assert_eq!(log_tags(&per_frame[1]), vec![0x22]);
-        assert_eq!(log_tags(&per_frame[2]), vec![0x33]);
+        assert_eq!(log_tags(per_frame.first().unwrap()), vec![0x11]);
+        assert_eq!(log_tags(per_frame.get(1).unwrap()), vec![0x22]);
+        assert_eq!(log_tags(per_frame.get(2).unwrap()), vec![0x33]);
     }
 }
 
@@ -2055,6 +2057,7 @@ mod frame_sig_validation_tests {
     }
 
     #[test]
+    #[expect(clippy::indexing_slicing, reason = "fixed-size buffers with well-known bounds in test code")]
     fn secp256k1_positive_and_tampered() {
         // Build a real secp256k1 signature vector using k256.
         use k256::ecdsa::SigningKey;
@@ -2066,13 +2069,13 @@ mod frame_sig_validation_tests {
             .collect();
         let private_key: [u8; 32] = pk_bytes.try_into().unwrap();
         let signing_key =
-            SigningKey::from_bytes(&private_key.into()).expect("valid private key");
+            SigningKey::from_bytes(&private_key.into()).unwrap();
 
         let msg_hash: H256 = H256::from_low_u64_be(0xDEADBEEF_CAFEBABE);
 
         let (raw_sig, recovery_id) = signing_key
             .sign_prehash_recoverable(msg_hash.as_bytes())
-            .expect("signing failed");
+            .unwrap();
 
         // Derive the expected signer address
         let uncompressed = signing_key.verifying_key().to_encoded_point(false);
@@ -2096,7 +2099,7 @@ mod frame_sig_validation_tests {
 
         // Positive: correct signer → valid
         assert!(
-            validate_frame_signatures(&[valid_sig.clone()], msg_hash, hegota()),
+            validate_frame_signatures(std::slice::from_ref(&valid_sig), msg_hash, hegota()),
             "valid secp256k1 signature should pass"
         );
 
