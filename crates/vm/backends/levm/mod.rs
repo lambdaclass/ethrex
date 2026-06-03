@@ -3,8 +3,9 @@ mod tracing;
 
 use super::BlockExecutionResult;
 use crate::system_contracts::{
-    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY,
+    EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS,
+    SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -1360,6 +1361,31 @@ impl LEVM {
         )?;
         Ok(())
     }
+
+    /// Install the canonical EIP-8141 expiry verifier runtime code at
+    /// EXPIRY_VERIFIER on Hegota activation (spec commit 0b197156: "At
+    /// activation, clients must install..."). Idempotent: writes only when
+    /// the existing code differs, so exactly one account update is produced
+    /// (at the first Hegota block) and none afterwards.
+    pub fn install_expiry_verifier_code(db: &mut GeneralizedDatabase) -> Result<(), EvmError> {
+        let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
+        if current.bytecode.as_ref() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
+            return Ok(());
+        }
+        let code = Code::from_bytecode(Bytes::from_static(&EXPIRY_VERIFIER_RUNTIME_BYTECODE));
+        let code_hash = code.hash;
+        // Record BAL code change if recording is active.
+        if let Some(recorder) = db.bal_recorder_mut() {
+            recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.bytecode.clone());
+        }
+        let acc = db
+            .get_account_mut(EXPIRY_VERIFIER_PREDEPLOY.address)
+            .map_err(EvmError::from)?;
+        acc.info.code_hash = code_hash;
+        db.codes.entry(code_hash).or_insert(code);
+        Ok(())
+    }
+
     pub(crate) fn read_withdrawal_requests(
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,

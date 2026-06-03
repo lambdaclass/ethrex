@@ -71,3 +71,42 @@ pub const PRAGUE_SYSTEM_CONTRACTS: [SystemContract; 2] = [
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
     CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
 ];
+
+pub const EXPIRY_VERIFIER_PREDEPLOY: SystemContract = SystemContract {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x81, 0x41,
+    ]),
+    name: "EXPIRY_VERIFIER_PREDEPLOY",
+    active_since_fork: Hegota,
+};
+
+/// Canonical runtime bytecode of the EIP-8141 expiry verifier (spec commit
+/// 0b197156): reverts unless calldata is exactly 8 bytes and the 8-byte BE
+/// deadline is >= block.timestamp.
+pub const EXPIRY_VERIFIER_RUNTIME_BYTECODE: [u8; 26] = [
+    0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60, 0xc0, 0x1c,
+    0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
+];
+
+#[cfg(test)]
+mod expiry_verifier_tests {
+    use super::*;
+
+    #[test]
+    fn expiry_verifier_constants_match_spec() {
+        let expected: [u8; 26] = [
+            0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f, 0x35, 0x60,
+            0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f, 0x5f, 0xfd,
+        ];
+        assert_eq!(
+            EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice(),
+            expected.as_slice()
+        );
+        assert_eq!(EXPIRY_VERIFIER_RUNTIME_BYTECODE.len(), 26);
+        assert_eq!(
+            EXPIRY_VERIFIER_PREDEPLOY.address,
+            H160::from_low_u64_be(0x8141)
+        );
+    }
+}
