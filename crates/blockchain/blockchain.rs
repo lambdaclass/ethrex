@@ -690,13 +690,14 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        // Amsterdam validation path uses the header BAL directly to drive
-                        // execution; it doesn't rebuild a BAL, so produced_bal is None.
+                        // The parallel Amsterdam validation path uses the header BAL directly
+                        // to drive execution; it doesn't rebuild a BAL, so produced_bal is None.
                         // BAL correctness on that path is enforced inside
                         // execute_block_pipeline (header-BAL index/size/withdrawal-index
                         // checks plus unread_storage_reads / unaccessed_pure_accounts).
-                        // Pre-Amsterdam / streaming paths return Some(produced_bal) and
-                        // the hash check below still runs.
+                        // The sequential Amsterdam path rebuilds a BAL and returns
+                        // Some(produced_bal), so the hash check below runs. Pre-Amsterdam
+                        // blocks never record a BAL, so produced_bal is None there too.
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -1982,7 +1983,11 @@ impl Blockchain {
     }
 
     /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
-    /// On Amsterdam+ blocks the returned value is `Some(bal)`, otherwise `None`.
+    /// A BAL only exists from Amsterdam onward. On the parallel validation path the BAL
+    /// comes from the header and drives execution rather than being rebuilt, so the
+    /// returned value is `None`; the sequential path (block production or
+    /// `--no-bal-parallel-exec`) rebuilds it and returns `Some(bal)`. Pre-Amsterdam blocks
+    /// never record a BAL, so the returned value is always `None`.
     pub fn add_block_pipeline_bal(
         &self,
         block: Block,
@@ -2074,8 +2079,11 @@ impl Blockchain {
                 .store_witness(block_hash, block_number, witness)?;
         };
 
-        // Store the produced BAL (present on Amsterdam+ blocks) so peers can request it
-        if let Some(bal) = &produced_bal {
+        // Store the block's BAL so peers can request it later without re-execution.
+        // On the parallel Amsterdam validation path the BAL is supplied via the header
+        // and `produced_bal` is None, so fall back to the validated incoming `bal`.
+        // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
+        if let Some(bal) = produced_bal.as_ref().or(bal) {
             let block_hash = block.hash();
             if let Err(err) = self.storage.store_block_access_list(block_hash, bal) {
                 warn!("Failed to store block access list for block {block_hash}: {err}");
