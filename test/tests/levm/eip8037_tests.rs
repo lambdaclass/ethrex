@@ -111,7 +111,8 @@ fn assert_parity(fork: Fork, block_gas_limit: u64, tx: &Transaction) {
         &NativeCrypto,
     )
     .expect("VM::new");
-    let from_vm = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
+    let intrinsic = vm.get_intrinsic_gas().expect("get_intrinsic_gas");
+    let from_vm = (intrinsic.regular, intrinsic.state);
 
     assert_eq!(
         standalone, from_vm,
