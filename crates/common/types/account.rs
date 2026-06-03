@@ -15,7 +15,7 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH};
+use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
@@ -140,7 +140,7 @@ pub struct AccountStateSlimCodec(pub AccountState);
 impl Default for AccountInfo {
     fn default() -> Self {
         Self {
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
             balance: Default::default(),
             nonce: Default::default(),
         }
@@ -153,7 +153,7 @@ impl Default for AccountState {
             nonce: Default::default(),
             balance: Default::default(),
             storage_root: *EMPTY_TRIE_HASH,
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
         }
     }
 }
@@ -162,7 +162,7 @@ impl Default for Code {
     fn default() -> Self {
         Self {
             bytecode: Bytes::new(),
-            hash: *EMPTY_KECCACK_HASH,
+            hash: *EMPTY_KECCAK_HASH,
             jump_targets: Vec::new(),
         }
     }
@@ -262,7 +262,7 @@ impl RLPEncode for AccountStateSlimCodec {
         struct CodeHashCodec<'a>(&'a H256);
         impl RLPEncode for CodeHashCodec<'_> {
             fn encode(&self, buf: &mut dyn BufMut) {
-                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                let data = if *self.0 != *EMPTY_KECCAK_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
@@ -306,7 +306,7 @@ impl RLPDecode for AccountStateSlimCodec {
         impl RLPDecode for CodeHashCodec {
             fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
                 let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_KECCACK_HASH,
+                    Some(0x80) => *EMPTY_KECCAK_HASH,
                     Some(0xA0) => {
                         let data;
                         (data, rlp) = rlp
@@ -376,7 +376,7 @@ impl Account {
 
 impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCAK_HASH
     }
 }
 
