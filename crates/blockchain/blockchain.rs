@@ -2225,6 +2225,9 @@ impl Blockchain {
             block.body.transactions.iter().map(|tx| tx.hash()).collect();
         let post_state_root = block.header.state_root;
         let gas_left = block.header.gas_limit.saturating_sub(block.header.gas_used);
+        // Snapshot the header for the satisfaction check (intrinsic-gas fork +
+        // base fee) before `block` is moved into the inner pipeline.
+        let header = block.header.clone();
 
         let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
@@ -2268,18 +2271,18 @@ impl Blockchain {
             .refresh_all_from(&post_state, &crypto)
             .map_err(|e| ChainError::Custom(format!("IL validator refresh failed: {e}")))?;
 
-        match validator.check(il, &block_tx_hashes, gas_left, &crypto) {
+        match validator.check(
+            il,
+            &block_tx_hashes,
+            gas_left,
+            &header,
+            &chain_config,
+            &crypto,
+        ) {
             Ok(()) => Ok(()),
-            Err(inclusion_list_validator::IlCheckError::Unsatisfied(unsat)) => {
-                Err(ChainError::IlUnsatisfied {
-                    tx_hash: unsat.tx_hash,
-                })
-            }
-            Err(inclusion_list_validator::IlCheckError::SenderRecovery(e)) => {
-                Err(ChainError::Custom(format!(
-                    "IL satisfaction check failed during sender recovery: {e}"
-                )))
-            }
+            Err(unsat) => Err(ChainError::IlUnsatisfied {
+                tx_hash: unsat.tx_hash,
+            }),
         }
     }
 

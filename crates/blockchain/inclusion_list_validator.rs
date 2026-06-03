@@ -1,9 +1,10 @@
 //! EIP-7805 (FOCIL) inclusion-list satisfaction validator. Tracks per-sender
 //! `(nonce, balance)` during block execution and, after execution, decides
-//! whether each IL transaction is `present | insufficient_gas | invalid_nonce |
+//! whether each IL transaction is `present | blob | unrecoverable |
+//! intrinsic_gas_too_low | insufficient_gas | below_base_fee | invalid_nonce |
 //! invalid_balance | unsatisfied`. Returns `Err(IlUnsatisfied)` if any IL
-//! transaction is missing AND its sender retains nonce/balance/gas to include
-//! it.
+//! transaction is missing AND could still have been validly appended to the
+//! block (mirrors EELS `check_inclusion_list_transactions`).
 //!
 //! Spec contract:
 //! `openspec/changes/eip-7805-focil-execution-layer/specs/inclusion-list-satisfaction/spec.md`.
@@ -31,12 +32,16 @@
 
 use std::collections::HashSet;
 
-use ethrex_common::{Address, H256, U256, types::Transaction};
-use ethrex_crypto::{Crypto, CryptoError};
+use ethrex_common::{
+    Address, H256, U256,
+    types::{BlockHeader, ChainConfig, Transaction, TxType},
+};
+use ethrex_crypto::Crypto;
 use ethrex_storage::Store;
 use rustc_hash::FxHashMap;
 
 use crate::inclusion_list_builder::{AccountStateView, IlStateProvider, IlStateProviderError};
+use crate::mempool::transaction_intrinsic_gas;
 
 /// Adapter from `Store` (keyed by state root) to the IL builder/validator's
 /// narrow `IlStateProvider` trait. Used by `add_block_pipeline_with_il` to
@@ -77,10 +82,13 @@ pub struct InclusionListSatisfactionValidator {
 
 /// Errors returned by the validator surface itself (separate from
 /// [`IlUnsatisfied`], which signals a satisfied/unsatisfied verdict).
+///
+/// Sender-recovery failures are NOT errors here: per EELS
+/// `check_inclusion_list_transactions`, an IL transaction whose sender cannot
+/// be recovered can never be validly appended, so it is silently skipped
+/// (counts as satisfied) rather than aborting the whole check.
 #[derive(Debug, thiserror::Error)]
 pub enum IlValidatorError {
-    #[error("could not recover IL transaction sender: {0}")]
-    SenderRecovery(#[from] CryptoError),
     #[error("state read error during IL validator construction: {0}")]
     State(#[from] IlStateProviderError),
 }
@@ -110,18 +118,23 @@ impl std::error::Error for IlUnsatisfied {}
 impl InclusionListSatisfactionValidator {
     /// Build the per-sender tracker from the unique senders in `il`. A read
     /// of `Ok(None)` is treated as an empty account (nonce 0, balance 0) per
-    /// the [`IlStateProvider`] contract. A read error or sender-recovery
-    /// error is propagated; the caller (engine handler) maps them to the
-    /// internal-error JSON-RPC code.
+    /// the [`IlStateProvider`] contract. A state read error is propagated; the
+    /// caller (engine handler) maps it to the internal-error JSON-RPC code.
+    /// Sender-recovery failures are silently skipped (see the type-level doc).
     pub fn new(
         il: &[Transaction],
         pre_state: &dyn IlStateProvider,
         crypto: &dyn Crypto,
     ) -> Result<Self, IlValidatorError> {
-        // Dedupe senders so we issue at most one state read per sender.
+        // Dedupe senders so we issue at most one state read per sender. An IL
+        // transaction whose signature does not recover a sender can never be
+        // validly appended (EELS `recover_sender` raises → skipped), so we do
+        // not register it and do not propagate the recovery failure.
         let mut unique_senders: HashSet<Address> = HashSet::with_capacity(il.len());
         for tx in il {
-            unique_senders.insert(tx.sender(crypto)?);
+            if let Ok(sender) = tx.sender(crypto) {
+                unique_senders.insert(sender);
+            }
         }
 
         let mut il_senders: FxHashMap<Address, (u64, U256)> =
@@ -143,7 +156,10 @@ impl InclusionListSatisfactionValidator {
         post_state: &dyn IlStateProvider,
         crypto: &dyn Crypto,
     ) -> Result<(), IlValidatorError> {
-        let sender = executed.sender(crypto)?;
+        let Ok(sender) = executed.sender(crypto) else {
+            // Unrecoverable sender cannot be an IL sender we track.
+            return Ok(());
+        };
         if !self.il_senders.contains_key(&sender) {
             return Ok(());
         }
@@ -175,27 +191,62 @@ impl InclusionListSatisfactionValidator {
     }
 
     /// Return `Ok(())` iff every inclusion-list transaction is classified as
-    /// `present | insufficient_gas | invalid_nonce | invalid_balance`. Return
-    /// `Err(IlUnsatisfied)` for the first IL transaction that is missing AND
-    /// whose sender retains nonce/balance and the block has gas room for it.
+    /// non-appendable (`present | blob | unrecoverable | intrinsic_gas_too_low
+    /// | insufficient_gas | below_base_fee | invalid_nonce | invalid_balance`).
+    /// Return `Err(IlUnsatisfied)` for the first IL transaction that is missing
+    /// AND could still have been validly appended to the end of the block.
+    ///
+    /// This mirrors EELS `check_inclusion_list_transactions` +
+    /// `check_transaction` (forks/amsterdam/fork.py): for each missing IL tx it
+    /// replays exactly the validity gates that block inclusion would apply, and
+    /// reports the block as unsatisfied only when every gate passes.
     ///
     /// `block_txs` is the set of transaction hashes included in the block;
     /// position within the block does not matter (per the EIP rationale).
     /// `gas_left` is `block.gas_limit - cumulative_gas_used` post-execution.
+    /// `header` and `config` describe the block under check; they supply the
+    /// fork (for the intrinsic-gas calculation) and the `base_fee_per_gas`.
     ///
     /// This method MUST NOT call into the EVM. It is a pure state-comparison
-    /// pass over the per-sender tracker.
+    /// pass over the per-sender tracker plus stateless transaction validity
+    /// gates (intrinsic gas, base fee, signature recoverability).
     pub fn check(
         &self,
         il: &[Transaction],
         block_txs: &HashSet<H256>,
         gas_left: u64,
+        header: &BlockHeader,
+        config: &ChainConfig,
         crypto: &dyn Crypto,
-    ) -> Result<(), IlCheckError> {
+    ) -> Result<(), IlUnsatisfied> {
+        let base_fee = U256::from(header.base_fee_per_gas.unwrap_or_default());
+
         for tx_il in il {
             // present in block (anywhere) → satisfied
             if block_txs.contains(&tx_il.hash()) {
                 continue;
+            }
+
+            // Blob (EIP-4844) txs are excluded from the IL satisfaction check
+            // (EELS skips `BlobTransaction`) → satisfied.
+            if tx_il.tx_type() == TxType::EIP4844 {
+                continue;
+            }
+
+            // Unrecoverable signature → cannot be appended (EELS
+            // `recover_sender` raises) → satisfied.
+            let Ok(sender) = tx_il.sender(crypto) else {
+                continue;
+            };
+
+            // intrinsic_gas_too_low → satisfied. A tx whose gas limit is below
+            // its intrinsic cost can never be validly included (EELS
+            // `validate_transaction`). A pricing/overflow error here likewise
+            // means the tx is not includable, so we treat it as satisfied.
+            match transaction_intrinsic_gas(tx_il, header, config) {
+                Ok(intrinsic) if tx_il.gas_limit() < intrinsic => continue,
+                Err(_) => continue,
+                Ok(_) => {}
             }
 
             // insufficient_gas → satisfied
@@ -203,8 +254,21 @@ impl InclusionListSatisfactionValidator {
                 continue;
             }
 
+            // below_base_fee → satisfied. Legacy/2930/privileged use
+            // `gas_price`; all other types use `max_fee_per_gas`. A typed tx
+            // with no recoverable max fee is unpriceable and not includable.
+            let max_price = match tx_il.tx_type() {
+                TxType::Legacy | TxType::EIP2930 | TxType::Privileged => tx_il.gas_price(),
+                _ => match tx_il.max_fee_per_gas() {
+                    Some(fee) => U256::from(fee),
+                    None => continue,
+                },
+            };
+            if max_price < base_fee {
+                continue;
+            }
+
             // From here on, classify by tracked sender state.
-            let sender = tx_il.sender(crypto).map_err(IlCheckError::SenderRecovery)?;
             let (tracker_nonce, tracker_balance) = match self.il_senders.get(&sender) {
                 Some(entry) => *entry,
                 // The sender was not registered at construction. This means
@@ -233,24 +297,12 @@ impl InclusionListSatisfactionValidator {
             }
 
             // unsatisfied
-            return Err(IlCheckError::Unsatisfied(IlUnsatisfied {
+            return Err(IlUnsatisfied {
                 tx_hash: tx_il.hash(),
-            }));
+            });
         }
         Ok(())
     }
-}
-
-/// Error returned by [`InclusionListSatisfactionValidator::check`]. Separates
-/// the verdict (`Unsatisfied`) from infrastructure failures (sender
-/// recovery), since the engine handler maps these to different JSON-RPC
-/// responses.
-#[derive(Debug, thiserror::Error)]
-pub enum IlCheckError {
-    #[error(transparent)]
-    Unsatisfied(IlUnsatisfied),
-    #[error("could not recover IL transaction sender during check: {0}")]
-    SenderRecovery(CryptoError),
 }
 
 #[cfg(test)]
@@ -349,6 +401,17 @@ mod tests {
         Address::repeat_byte(b)
     }
 
+    /// Default block header for `check`. `base_fee_per_gas = None` (→ 0) and a
+    /// non-Amsterdam default config keep the intrinsic-gas / base-fee gates
+    /// inert for the simple 21k transfers the tests use.
+    fn header() -> BlockHeader {
+        BlockHeader::default()
+    }
+
+    fn config() -> ChainConfig {
+        ChainConfig::default()
+    }
+
     fn account(nonce: u64, balance: U256) -> AccountStateView {
         AccountStateView { nonce, balance }
     }
@@ -378,7 +441,7 @@ mod tests {
             InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
 
         let block_txs: HashSet<H256> = il.iter().map(|t| t.hash()).collect();
-        let result = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         assert!(matches!(result, Ok(())));
     }
 
@@ -398,7 +461,7 @@ mod tests {
 
         let block_txs: HashSet<H256> = HashSet::new();
         // gas_left smaller than tx.gas_limit() → insufficient_gas
-        let result = validator.check(&il, &block_txs, 500_000, &crypto);
+        let result = validator.check(&il, &block_txs, 500_000, &header(), &config(), &crypto);
         assert!(matches!(result, Ok(())));
     }
 
@@ -427,7 +490,7 @@ mod tests {
             .expect("observe");
 
         let block_txs: HashSet<H256> = std::iter::once(bump_tx.hash()).collect();
-        let result = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         assert!(matches!(result, Ok(())));
     }
 
@@ -458,7 +521,7 @@ mod tests {
         // IL tx is omitted; tracker says alice has nonce 5 (matches IL) but
         // balance 0 (< cost). Should classify as invalid_balance → Ok.
         let block_txs: HashSet<H256> = HashSet::new();
-        let result = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         assert!(matches!(result, Ok(())));
     }
 
@@ -478,9 +541,9 @@ mod tests {
 
         // Empty block; alice retains nonce 5 and rich balance; gas plenty.
         let block_txs: HashSet<H256> = HashSet::new();
-        let result = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         match result {
-            Err(IlCheckError::Unsatisfied(IlUnsatisfied { tx_hash })) => {
+            Err(IlUnsatisfied { tx_hash }) => {
                 assert_eq!(tx_hash, il[0].hash());
             }
             other => panic!("expected Unsatisfied, got {other:?}"),
@@ -572,7 +635,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let result = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         assert!(matches!(result, Ok(())));
     }
 
@@ -592,15 +655,12 @@ mod tests {
 
         let block_txs: HashSet<H256> = HashSet::new();
 
-        let r1 = validator.check(&il, &block_txs, 30_000_000, &crypto);
-        let r2 = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let r1 = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+        let r2 = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
 
         // Both runs must return the same Unsatisfied verdict for the same hash.
         match (r1, r2) {
-            (
-                Err(IlCheckError::Unsatisfied(IlUnsatisfied { tx_hash: h1 })),
-                Err(IlCheckError::Unsatisfied(IlUnsatisfied { tx_hash: h2 })),
-            ) => {
+            (Err(IlUnsatisfied { tx_hash: h1 }), Err(IlUnsatisfied { tx_hash: h2 })) => {
                 assert_eq!(h1, h2);
                 assert_eq!(h1, il[0].hash());
             }
@@ -646,9 +706,9 @@ mod tests {
         // Empty block → IL tx omitted → returns Unsatisfied without ever
         // touching `_panic_state` or any execution surface.
         let block_txs: HashSet<H256> = HashSet::new();
-        let result = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         match result {
-            Err(IlCheckError::Unsatisfied(_)) => {}
+            Err(_) => {}
             other => panic!("expected Unsatisfied, got {other:?}"),
         }
     }
@@ -675,7 +735,159 @@ mod tests {
         // This test documents the design: `check`'s signature contains no
         // provider, so it cannot call out to one.
         let block_txs: HashSet<H256> = std::iter::once(il[0].hash()).collect();
-        let _ = validator.check(&il, &block_txs, 30_000_000, &crypto);
+        let _ = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
         // Reach the end without panicking.
+    }
+
+    /// Build an EIP-4844 (blob) tx with a precached sender.
+    fn make_blob_tx(sender: Address, nonce: u64, gas_limit: u64) -> Transaction {
+        use ethrex_common::types::EIP4844Transaction;
+        let inner = EIP4844Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            gas: gas_limit,
+            to: Address::repeat_byte(0xaa),
+            value: U256::zero(),
+            max_fee_per_blob_gas: U256::from(1),
+            blob_versioned_hashes: vec![H256::repeat_byte(0x01)],
+            signature_r: U256::from(1),
+            signature_s: U256::from(2),
+            ..Default::default()
+        };
+        let tx = Transaction::EIP4844Transaction(inner);
+        match &tx {
+            Transaction::EIP4844Transaction(inner) => {
+                let _ = inner.sender_cache.set(sender);
+            }
+            _ => unreachable!(),
+        }
+        tx
+    }
+
+    /// Build an EIP-1559 tx with a genuinely invalid signature (`r = s = 0`)
+    /// and NO precached sender, so `Transaction::sender` performs real ECDSA
+    /// recovery and fails.
+    fn make_unsigned_tx(nonce: u64, gas_limit: u64) -> Transaction {
+        let inner = EIP1559Transaction {
+            chain_id: 1,
+            nonce,
+            max_priority_fee_per_gas: 1,
+            max_fee_per_gas: 1,
+            gas_limit,
+            to: TxKind::Call(Address::repeat_byte(0xbb)),
+            value: U256::from(7u64),
+            signature_y_parity: false,
+            signature_r: U256::zero(),
+            signature_s: U256::zero(),
+            ..Default::default()
+        };
+        Transaction::EIP1559Transaction(inner)
+    }
+
+    /// Blob IL txs are excluded from the satisfaction check: an omitted blob
+    /// tx with a funded sender must classify as satisfied (EELS skips blobs).
+    #[test]
+    fn omitted_blob_il_tx_is_satisfied() {
+        let crypto = NativeCrypto;
+        let alice = addr(1);
+
+        let il = vec![make_blob_tx(alice, 0, 21_000)];
+        let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+        accounts.insert(alice, account(0, rich_balance()));
+        let state = MockState::with(accounts);
+
+        let validator =
+            InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+        // Empty block, ample gas, funded sender — only the blob-skip rule keeps
+        // this satisfied.
+        let block_txs: HashSet<H256> = HashSet::new();
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+        assert!(matches!(result, Ok(())), "blob IL tx must be skipped");
+    }
+
+    /// An IL tx whose gas limit is below intrinsic gas can never be validly
+    /// appended → satisfied (EELS `validate_transaction` raises).
+    #[test]
+    fn omitted_intrinsic_gas_too_low_il_tx_is_satisfied() {
+        let crypto = NativeCrypto;
+        let alice = addr(1);
+
+        // 20_999 < 21_000 intrinsic for a simple transfer (default/legacy fork).
+        let il = vec![make_tx(alice, 0, 20_999, U256::from(1))];
+        let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+        accounts.insert(alice, account(0, rich_balance()));
+        let state = MockState::with(accounts);
+
+        let validator =
+            InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+        let block_txs: HashSet<H256> = HashSet::new();
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+        assert!(
+            matches!(result, Ok(())),
+            "intrinsic-gas-too-low IL tx must be satisfied"
+        );
+    }
+
+    /// An IL tx with an unrecoverable signature is silently skipped by both
+    /// `new` (no error) and `check` (satisfied) — EELS `recover_sender` raises.
+    #[test]
+    fn omitted_invalid_signature_il_tx_is_satisfied() {
+        let crypto = NativeCrypto;
+
+        let il = vec![make_unsigned_tx(0, 21_000)];
+        // No accounts: `new` must not error despite the unrecoverable sender.
+        let state = MockState::with(Default::default());
+
+        let validator = InclusionListSatisfactionValidator::new(&il, &state, &crypto)
+            .expect("construct must not propagate sender-recovery failure");
+        assert!(
+            validator.il_senders.is_empty(),
+            "unrecoverable sender must not be registered"
+        );
+
+        let block_txs: HashSet<H256> = HashSet::new();
+        let result = validator.check(&il, &block_txs, 30_000_000, &header(), &config(), &crypto);
+        assert!(
+            matches!(result, Ok(())),
+            "invalid-signature IL tx must be satisfied"
+        );
+    }
+
+    /// An IL tx whose max fee is below the block base fee cannot be included
+    /// → satisfied (EELS `InsufficientMaxFeePerGasError`).
+    #[test]
+    fn omitted_below_base_fee_il_tx_is_satisfied() {
+        let crypto = NativeCrypto;
+        let alice = addr(1);
+
+        // make_tx sets max_fee_per_gas = 1; pick a header base fee above it.
+        let il = vec![make_tx(alice, 0, 21_000, U256::from(1))];
+        let mut accounts: FxHashMap<Address, AccountStateView> = Default::default();
+        accounts.insert(alice, account(0, rich_balance()));
+        let state = MockState::with(accounts);
+
+        let validator =
+            InclusionListSatisfactionValidator::new(&il, &state, &crypto).expect("construct");
+
+        let mut hdr = header();
+        hdr.base_fee_per_gas = Some(100);
+
+        let block_txs: HashSet<H256> = HashSet::new();
+        let result = validator.check(&il, &block_txs, 30_000_000, &hdr, &config(), &crypto);
+        assert!(
+            matches!(result, Ok(())),
+            "below-base-fee IL tx must be satisfied"
+        );
+
+        // Control: with a base fee at/below the tx max fee, the same omitted
+        // tx flips to Unsatisfied — proving the base-fee gate is what mattered.
+        let mut hdr_ok = header();
+        hdr_ok.base_fee_per_gas = Some(1);
+        let control = validator.check(&il, &block_txs, 30_000_000, &hdr_ok, &config(), &crypto);
+        assert!(matches!(control, Err(IlUnsatisfied { .. })));
     }
 }

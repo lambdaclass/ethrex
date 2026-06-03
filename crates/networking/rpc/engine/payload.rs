@@ -652,20 +652,20 @@ impl RpcHandler for NewPayloadV6Request {
                 .gas_limit
                 .saturating_sub(stored_header.gas_used);
 
-            match validator.check(&decoded_il, &block_tx_hashes, gas_left, &crypto) {
+            match validator.check(
+                &decoded_il,
+                &block_tx_hashes,
+                gas_left,
+                &stored_header,
+                &chain_config,
+                &crypto,
+            ) {
                 Ok(()) => {
                     // Satisfied → pass through the V4-equivalent status.
                 }
-                Err(ethrex_blockchain::inclusion_list_validator::IlCheckError::Unsatisfied(_)) => {
+                Err(_unsatisfied) => {
                     return serde_json::to_value(PayloadStatus::inclusion_list_unsatisfied())
                         .map_err(|e| RpcErr::Internal(e.to_string()));
-                }
-                Err(ethrex_blockchain::inclusion_list_validator::IlCheckError::SenderRecovery(
-                    e,
-                )) => {
-                    return Err(RpcErr::Internal(format!(
-                        "IL satisfaction check failed during sender recovery: {e}"
-                    )));
                 }
             }
         }
