@@ -2452,6 +2452,30 @@ mod serde_impl {
         pub data: Bytes,
     }
 
+    /// JSON shape of an EIP-8141 outer signature (spec commit fe0940cae2).
+    #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+    #[serde(rename_all = "camelCase")]
+    pub struct SignatureEntry {
+        #[serde(with = "crate::serde_utils::u64::hex_str")]
+        pub scheme: u64,
+        pub signer: Address,
+        #[serde(with = "crate::serde_utils::bytes")]
+        pub msg: Bytes,
+        #[serde(with = "crate::serde_utils::bytes")]
+        pub signature: Bytes,
+    }
+
+    impl From<&FrameSignature> for SignatureEntry {
+        fn from(value: &FrameSignature) -> SignatureEntry {
+            SignatureEntry {
+                scheme: value.scheme as u64,
+                signer: value.signer,
+                msg: value.msg.clone(),
+                signature: value.signature.clone(),
+            }
+        }
+    }
+
     fn serialize_u256_hex<S: serde::Serializer>(value: &U256, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&format!("{value:#x}"))
     }
@@ -2757,7 +2781,14 @@ mod serde_impl {
                 "frames",
                 &self.frames.iter().map(FrameEntry::from).collect::<Vec<_>>(),
             )?;
-            s.serialize_field("signatures", &self.signatures.len())?;
+            s.serialize_field(
+                "signatures",
+                &self
+                    .signatures
+                    .iter()
+                    .map(SignatureEntry::from)
+                    .collect::<Vec<_>>(),
+            )?;
             s.serialize_field(
                 "maxPriorityFeePerGas",
                 &format!("{:#x}", self.max_priority_fee_per_gas),
@@ -4605,6 +4636,23 @@ mod tests {
     fn frame_transaction_variant_is_exposed_on_transaction_enum() {
         let tx = Transaction::FrameTransaction(make_test_frame_tx());
         assert!(matches!(tx, Transaction::FrameTransaction(_)));
+    }
+
+    #[test]
+    fn frame_transaction_serializes_signatures_as_array() {
+        // RPC must expose the full signature objects, not just a count.
+        let tx = make_test_frame_tx();
+        let json = serde_json::to_value(&tx).unwrap();
+        let sigs = json
+            .get("signatures")
+            .expect("signatures field present")
+            .as_array()
+            .expect("signatures serialized as an array");
+        assert_eq!(sigs.len(), tx.signatures.len());
+        assert_eq!(sigs[0].get("scheme").unwrap(), "0x0");
+        assert!(sigs[0].get("signer").is_some());
+        assert!(sigs[0].get("signature").is_some());
+        assert!(sigs[0].get("msg").is_some());
     }
 
     fn make_frame_tx_with_gas_limits(limits: Vec<u64>) -> FrameTransaction {
