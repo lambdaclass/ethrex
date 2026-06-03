@@ -1,14 +1,16 @@
 use std::io::Write;
 use std::path::Path;
 
-use crate::api::StorageBackend;
-use crate::api::tables::{RECEIPTS, RECEIPTS_V2};
+use ethrex_common::H256;
+use ethrex_common::types::{BlockHash, BlockNumber, Index};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::encode::RLPEncode;
+
+use crate::api::tables::{RECEIPTS, RECEIPTS_V2, TRANSACTION_LOCATIONS};
+use crate::api::{StorageBackend, StorageWriteBatch};
 use crate::error::StoreError;
 use crate::store::receipt_key;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
-
-use ethrex_common::H256;
-use ethrex_rlp::decode::RLPDecode;
 
 use super::store::StoreMetadata;
 
@@ -27,7 +29,7 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2];
+pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -158,6 +160,121 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     Ok(())
 }
 
+type TxLocation = (BlockNumber, BlockHash, Index);
+
+/// Rewrites `TRANSACTION_LOCATIONS` from the v2 composite-key schema
+/// (`key = tx_hash || block_hash`, `value = (block_number, block_hash, index)`)
+/// to the v3 schema (`key = tx_hash`, `value = Vec<(block_number, block_hash, index)>`).
+///
+/// Streams the old table in lex order, grouping consecutive entries by tx_hash
+/// (composite keys with the same 32-byte prefix are adjacent — both backends
+/// iterate sorted). Flushes each group as an atomic write batch (merge the new
+/// key + delete the old composite keys), chunking commits to bound memory.
+/// Skips any already-migrated 32-byte keys it encounters.
+///
+/// Crash-resume is safe by construction: the new value is written with `merge`,
+/// not `put`, so if a tx_hash ever has both a v3 value and leftover v2 siblings
+/// (e.g. a non-atomic backend), the resumed run unions them (deduping by
+/// block_hash) instead of overwriting. The merge operator that already backs
+/// the live write path makes this free.
+fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    const GROUPS_PER_COMMIT: usize = 50_000;
+
+    let read = backend.begin_read()?;
+    // Empty prefix → full-table scan. Both backends yield keys in sorted order,
+    // which the same-prefix grouping below relies on.
+    let iter = read.prefix_iterator(TRANSACTION_LOCATIONS, &[])?;
+
+    let mut write_batch = backend.begin_write()?;
+    let mut groups_in_batch: usize = 0;
+    let mut current: Option<(H256, Vec<TxLocation>, Vec<Vec<u8>>)> = None;
+    let mut total_groups: u64 = 0;
+    let mut total_old_entries: u64 = 0;
+
+    for result in iter {
+        let (key, value) = result?;
+
+        // Already-migrated entries (32-byte tx_hash keys, from a prior partial run): skip.
+        if key.len() == 32 {
+            continue;
+        }
+        if key.len() != 64 {
+            return Err(StoreError::Custom(format!(
+                "unexpected TRANSACTION_LOCATIONS key length {} during migration",
+                key.len()
+            )));
+        }
+
+        total_old_entries += 1;
+
+        let tx_hash = H256::from_slice(&key[..32]);
+        let location = TxLocation::decode(&value)?;
+        let key_vec = key.into_vec();
+
+        match &mut current {
+            Some((h, locs, keys_to_delete)) if *h == tx_hash => {
+                locs.push(location);
+                keys_to_delete.push(key_vec);
+            }
+            _ => {
+                if let Some((h, locs, keys_to_delete)) = current.take() {
+                    flush_tx_location_group(&mut *write_batch, h, locs, keys_to_delete)?;
+                    total_groups += 1;
+                    groups_in_batch += 1;
+                    if groups_in_batch >= GROUPS_PER_COMMIT {
+                        write_batch.commit()?;
+                        // Re-acquire instead of relying on post-commit reuse
+                        // of the trait object (works today via mem::take in
+                        // RocksDB and a no-op InMemory commit, but it's not
+                        // a documented contract on `StorageWriteBatch`).
+                        write_batch = backend.begin_write()?;
+                        groups_in_batch = 0;
+                    }
+                }
+                current = Some((tx_hash, vec![location], vec![key_vec]));
+            }
+        }
+    }
+
+    if let Some((h, locs, keys_to_delete)) = current {
+        flush_tx_location_group(&mut *write_batch, h, locs, keys_to_delete)?;
+        total_groups += 1;
+    }
+
+    // Final commit. `groups_in_batch` is not bumped/reset here intentionally
+    // — the post-loop flush is followed immediately by a commit, after which
+    // the variable goes out of scope.
+    write_batch.commit()?;
+
+    tracing::info!(
+        "TRANSACTION_LOCATIONS migration: rewrote {} composite-key entries into {} tx-hash-keyed entries",
+        total_old_entries,
+        total_groups
+    );
+    Ok(())
+}
+
+fn flush_tx_location_group(
+    write_batch: &mut dyn StorageWriteBatch,
+    tx_hash: H256,
+    locations: Vec<TxLocation>,
+    composite_keys: Vec<Vec<u8>>,
+) -> Result<(), StoreError> {
+    // Use `merge`, not `put`: the operand is the same `Vec` type as the value,
+    // so a re-processed group unions with any existing v3 value (dedup by
+    // block_hash) instead of overwriting it. The composite-key deletes ride in
+    // the same batch, so the group is applied atomically.
+    write_batch.merge(
+        TRANSACTION_LOCATIONS,
+        tx_hash.as_bytes(),
+        &locations.encode_to_vec(),
+    )?;
+    for key in composite_keys {
+        write_batch.delete(TRANSACTION_LOCATIONS, &key)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,5 +371,193 @@ mod tests {
                 "old key should still exist in RECEIPTS (dropped after migration)"
             );
         }
+    }
+
+    /// Seeds the backend with one entry under the v2 composite-key schema:
+    /// `key = tx_hash || block_hash`, `value = (block_number, block_hash, index)`.
+    fn seed_old_entry(
+        backend: &dyn StorageBackend,
+        tx_hash: H256,
+        block_number: BlockNumber,
+        block_hash: BlockHash,
+        index: Index,
+    ) {
+        let mut composite_key = Vec::with_capacity(64);
+        composite_key.extend_from_slice(tx_hash.as_bytes());
+        composite_key.extend_from_slice(block_hash.as_bytes());
+        let value = (block_number, block_hash, index).encode_to_vec();
+
+        let mut batch = backend.begin_write().unwrap();
+        batch
+            .put(TRANSACTION_LOCATIONS, &composite_key, &value)
+            .unwrap();
+        batch.commit().unwrap();
+    }
+
+    fn read_new_entry(
+        backend: &dyn StorageBackend,
+        tx_hash: H256,
+    ) -> Option<Vec<(BlockNumber, BlockHash, Index)>> {
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()?;
+        Some(<Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap())
+    }
+
+    fn h256(byte: u8) -> H256 {
+        H256::from_low_u64_be(byte as u64)
+    }
+
+    #[test]
+    fn migrate_2_to_3_empty_table() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        migrate_2_to_3(&backend).unwrap();
+        // Nothing to assert other than no error and no spurious entries.
+        assert!(read_new_entry(&backend, h256(1)).is_none());
+    }
+
+    #[test]
+    fn migrate_2_to_3_single_entry_per_hash() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        seed_old_entry(&backend, h256(1), 100, h256(0x10), 0);
+        seed_old_entry(&backend, h256(2), 101, h256(0x11), 5);
+        seed_old_entry(&backend, h256(3), 102, h256(0x12), 7);
+
+        migrate_2_to_3(&backend).unwrap();
+
+        assert_eq!(
+            read_new_entry(&backend, h256(1)).unwrap(),
+            vec![(100u64, h256(0x10), 0u64)]
+        );
+        assert_eq!(
+            read_new_entry(&backend, h256(2)).unwrap(),
+            vec![(101u64, h256(0x11), 5u64)]
+        );
+        assert_eq!(
+            read_new_entry(&backend, h256(3)).unwrap(),
+            vec![(102u64, h256(0x12), 7u64)]
+        );
+
+        // Old composite-key entries are gone.
+        let read = backend.begin_read().unwrap();
+        let iter = read.prefix_iterator(TRANSACTION_LOCATIONS, &[]).unwrap();
+        for entry in iter {
+            let (key, _) = entry.unwrap();
+            assert_eq!(key.len(), 32, "leftover non-migrated key: {:?}", key);
+        }
+    }
+
+    #[test]
+    fn migrate_2_to_3_multi_block_per_hash() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        // Same tx hash appears in three different blocks (reorg scenario).
+        seed_old_entry(&backend, h256(0xAA), 100, h256(0x10), 3);
+        seed_old_entry(&backend, h256(0xAA), 100, h256(0x11), 4);
+        seed_old_entry(&backend, h256(0xAA), 101, h256(0x12), 5);
+
+        migrate_2_to_3(&backend).unwrap();
+
+        let mut got = read_new_entry(&backend, h256(0xAA)).unwrap();
+        got.sort();
+        let mut expected = vec![
+            (100u64, h256(0x10), 3u64),
+            (100u64, h256(0x11), 4u64),
+            (101u64, h256(0x12), 5u64),
+        ];
+        expected.sort();
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn migrate_2_to_3_is_idempotent_on_partial_state() {
+        // Simulate a crash-resume: the backend already has a v3 32-byte entry
+        // for one tx hash (from a previously-completed chunk), and v2 composite
+        // entries for another tx hash (still pending).
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        // Already-migrated v3 entry for h256(1).
+        {
+            let v3_value: Vec<(BlockNumber, BlockHash, Index)> =
+                vec![(100, h256(0x10), 0), (100, h256(0x11), 0)];
+            let mut batch = backend.begin_write().unwrap();
+            batch
+                .put(
+                    TRANSACTION_LOCATIONS,
+                    h256(1).as_bytes(),
+                    &v3_value.encode_to_vec(),
+                )
+                .unwrap();
+            batch.commit().unwrap();
+        }
+        // Pending v2 entries for h256(2).
+        seed_old_entry(&backend, h256(2), 200, h256(0x20), 0);
+        seed_old_entry(&backend, h256(2), 200, h256(0x21), 1);
+
+        migrate_2_to_3(&backend).unwrap();
+
+        // h256(1)'s already-migrated entry is unchanged.
+        assert_eq!(
+            read_new_entry(&backend, h256(1)).unwrap(),
+            vec![(100u64, h256(0x10), 0u64), (100u64, h256(0x11), 0u64)]
+        );
+
+        // h256(2) is now migrated.
+        let mut got = read_new_entry(&backend, h256(2)).unwrap();
+        got.sort();
+        let mut expected = vec![(200u64, h256(0x20), 0u64), (200u64, h256(0x21), 1u64)];
+        expected.sort();
+        assert_eq!(got, expected);
+
+        // No leftover 64-byte keys.
+        let read = backend.begin_read().unwrap();
+        let iter = read.prefix_iterator(TRANSACTION_LOCATIONS, &[]).unwrap();
+        for entry in iter {
+            let (key, _) = entry.unwrap();
+            assert_eq!(key.len(), 32);
+        }
+    }
+
+    /// The pathological case flagged in review: a single tx_hash has BOTH a v3
+    /// value (from a prior partial run) AND leftover v2 composite keys. Because
+    /// `flush_tx_location_group` uses `merge` (not `put`), the resumed migration
+    /// must UNION the leftover entries into the existing v3 value, not overwrite
+    /// it — no locations may be lost.
+    #[test]
+    fn migrate_2_to_3_unions_same_hash_mixed_state() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+        let tx = h256(0x42);
+
+        // Pre-existing v3 value for `tx` (one block already migrated).
+        {
+            let v3_value: Vec<(BlockNumber, BlockHash, Index)> = vec![(100, h256(0x10), 0)];
+            let mut batch = backend.begin_write().unwrap();
+            batch
+                .merge(
+                    TRANSACTION_LOCATIONS,
+                    tx.as_bytes(),
+                    &v3_value.encode_to_vec(),
+                )
+                .unwrap();
+            batch.commit().unwrap();
+        }
+        // Leftover v2 composite entries for the SAME tx (different blocks).
+        seed_old_entry(&backend, tx, 101, h256(0x11), 3);
+        seed_old_entry(&backend, tx, 102, h256(0x12), 7);
+
+        migrate_2_to_3(&backend).unwrap();
+
+        let mut got = read_new_entry(&backend, tx).unwrap();
+        got.sort();
+        let mut expected = vec![
+            (100u64, h256(0x10), 0u64), // pre-existing v3 entry survives
+            (101u64, h256(0x11), 3u64),
+            (102u64, h256(0x12), 7u64),
+        ];
+        expected.sort();
+        assert_eq!(
+            got, expected,
+            "merge must union, not overwrite, on mixed state"
+        );
     }
 }

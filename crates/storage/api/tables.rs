@@ -43,13 +43,12 @@ pub const RECEIPTS: &str = "receipts";
 pub const RECEIPTS_V2: &str = "receipts_v2";
 
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]
-/// - [`Vec<u8>`] = Composite key
-///    ```rust,no_run
-///     // let mut composite_key = Vec::with_capacity(64);
-///     // composite_key.extend_from_slice(transaction_hash.as_bytes());
-///     // composite_key.extend_from_slice(block_hash.as_bytes());
-///    ```
-/// - [`Vec<u8>`] = `(block_number, block_hash, index).encode_to_vec()`
+/// - Key: `transaction_hash.as_bytes()` (32 bytes)
+/// - Value: `Vec<(block_number, block_hash, index)>.encode_to_vec()`
+///
+/// The value is a list because, in the rare case of a reorg, the same
+/// transaction may appear in multiple blocks. Readers must filter by the
+/// canonical chain to pick the right `(block_number, block_hash, index)`.
 pub const TRANSACTION_LOCATIONS: &str = "transaction_locations";
 
 /// Chain data column family: [`Vec<u8>`] => [`Vec<u8>`]

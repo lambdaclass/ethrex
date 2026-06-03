@@ -11,13 +11,24 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MergeOperands, MultiThreaded, Options,
     SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+use crate::store::tx_locations_merge;
+
+/// Adapter wrapping `tx_locations_merge` to match RocksDB's expected signature.
+fn tx_locations_merge_op(
+    _new_key: &[u8],
+    existing: Option<&[u8]>,
+    operands: &MergeOperands,
+) -> Option<Vec<u8>> {
+    tx_locations_merge(existing, operands)
+}
 
 /// RocksDB backend
 #[derive(Debug)]
@@ -121,6 +132,34 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
+                    block_opts.set_block_cache(&block_cache);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                TRANSACTION_LOCATIONS => {
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    // The write path uses merge_cf instead of read-modify-write,
+                    // so the per-tx negative get is gone. The merge operator
+                    // folds (block_number, block_hash, index) operands into the
+                    // Vec value on read/compaction.
+                    cf_opts.set_merge_operator_associative(
+                        "tx_locations_merge",
+                        tx_locations_merge_op,
+                    );
+
+                    // No bloom filter, intentionally. Bloom only accelerates
+                    // negative point lookups, and with the merge operator the
+                    // hot write path no longer does per-tx gets. The only
+                    // remaining negative reads are user `eth_getTransactionByHash`
+                    // on missing hashes — rare and not worth the filter's memory
+                    // + the implicit "perf depends on this config" coupling.
+                    // (Benchmarked: bloom didn't help the RMW variant either,
+                    // since deep-level coverage lags and the memtable traversal
+                    // floor is unaffected — see PR #6737.)
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -376,6 +415,25 @@ impl StorageWriteBatch for RocksDBWriteTx {
         Ok(())
     }
 
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
+        // Only TRANSACTION_LOCATIONS has a merge operator registered. Merging on
+        // any other CF would enqueue an operand RocksDB can't resolve, deferring
+        // the failure to read/compaction time where it's hard to diagnose — so
+        // fail fast here instead.
+        if table != TRANSACTION_LOCATIONS {
+            return Err(StoreError::Custom(format!(
+                "merge not supported for table {table} (no merge operator registered)"
+            )));
+        }
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        self.batch.merge_cf(&cf, key, operand);
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         let batch = std::mem::take(&mut self.batch);
@@ -412,5 +470,99 @@ impl Drop for RocksDBLocked {
                     as *mut Arc<DBWithThreadMode<MultiThreaded>>,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::encode_tx_location_operand;
+    use ethrex_common::H256;
+    use ethrex_common::types::{BlockHash, BlockNumber, Index};
+    use ethrex_rlp::decode::RLPDecode;
+
+    /// End-to-end guard for the associative merge operator at the real RocksDB
+    /// layer: write many operands for the same key, each flushed into its own
+    /// SST file, then force a compaction (which exercises the merge operator,
+    /// including PartialMerge). Before the operand/value format fix this dropped
+    /// entries during compaction (observed as 1664 silent drops on mainnet).
+    #[test]
+    fn merge_operator_survives_flush_and_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
+
+        let tx_hash = H256::from_low_u64_be(0xabcd);
+        let entries: Vec<(BlockNumber, BlockHash, Index)> = (0..6u64)
+            .map(|i| (100 + i, H256::from_low_u64_be(0x10 + i), i))
+            .collect();
+
+        // Each operand in its own committed batch + flush → separate SST files.
+        for (bn, bh, idx) in &entries {
+            let mut tx = backend.begin_write().unwrap();
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &encode_tx_location_operand(*bn, *bh, *idx),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            backend.db.flush_cf(&cf).unwrap();
+        }
+
+        // Force compaction — consolidates operands across the SST files.
+        backend
+            .db
+            .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()
+            .expect("key must exist after merge + compaction");
+        let mut got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
+        got.sort();
+        let mut want = entries;
+        want.sort();
+        assert_eq!(got, want, "no entries may be dropped through compaction");
+    }
+
+    /// Same-block_hash operands must dedupe to the latest, even across a
+    /// flush+compaction boundary.
+    #[test]
+    fn merge_operator_dedupes_across_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
+
+        let tx_hash = H256::from_low_u64_be(0x1234);
+        let bh = H256::from_low_u64_be(0xaa);
+        // Same block_hash written twice (e.g. re-import); later index must win.
+        for idx in [3u64, 7u64] {
+            let mut tx = backend.begin_write().unwrap();
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &encode_tx_location_operand(200, bh, idx),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            backend.db.flush_cf(&cf).unwrap();
+        }
+        backend
+            .db
+            .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        let got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
+        assert_eq!(
+            got,
+            vec![(200, bh, 7)],
+            "later write for same block_hash wins"
+        );
     }
 }
