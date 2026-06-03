@@ -4583,7 +4583,7 @@ mod tests {
         assert_ne!(hash1, hash2);
 
         // Changing SENDER frame data also produces a different hash.
-        let mut tx3 = tx.clone();
+        let mut tx3 = tx;
         tx3.frames[1].data = Bytes::from_static(b"different_call_data");
         let hash3 = tx3.compute_sig_hash();
         assert_ne!(hash1, hash3);
@@ -4592,7 +4592,7 @@ mod tests {
     #[test]
     fn test_frame_transaction_accessor_methods() {
         let frame_tx = make_test_frame_tx();
-        let tx = Transaction::FrameTransaction(frame_tx.clone());
+        let tx = Transaction::FrameTransaction(frame_tx);
 
         assert_eq!(tx.tx_type(), TxType::Frame);
         assert_eq!(tx.nonce(), 42);
@@ -4739,7 +4739,7 @@ mod tests {
         );
 
         // VERIFY.data is now covered too (spec commit fe0940cae2 removed elision).
-        let mut with_verify_data = tx.clone();
+        let mut with_verify_data = tx;
         with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
         assert_ne!(
             baseline,
