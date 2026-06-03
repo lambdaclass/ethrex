@@ -271,6 +271,49 @@ pub fn blob_to_kzg_commitment_and_proof(blob: &Blob) -> Result<(Commitment, Proo
     Ok((commitment_bytes.into_inner(), proof_bytes.into_inner()))
 }
 
+/// Reconstruct a blob from its cells.
+///
+/// EIP-7594 lays the original blob data in the first `CELLS_PER_EXT_BLOB / 2`
+/// cells (columns 0..63); the second half is the Reed-Solomon extension.
+/// Concatenating the 64 data cells reproduces the blob's field elements 1:1,
+/// so a full data-column set needs no KZG recovery. Verified empirically:
+/// `compute_cells(blob)[0..64]` concatenated equals `blob` and yields the same
+/// commitment.
+///
+/// `all_cells[col]` must hold the cell bytes for column `col`; only columns
+/// 0..63 are read, so callers must ensure those are present.
+pub fn cells_to_blob(
+    all_cells: &[[u8; BYTES_PER_CELL]; CELLS_PER_EXT_BLOB],
+) -> [u8; BYTES_PER_BLOB] {
+    let mut blob = [0u8; BYTES_PER_BLOB];
+    for col in 0..CELLS_PER_EXT_BLOB / 2 {
+        let dst = &mut blob[col * BYTES_PER_CELL..(col + 1) * BYTES_PER_CELL];
+        dst.copy_from_slice(&all_cells[col]);
+    }
+    blob
+}
+
+/// Recover all 128 cells and their KZG proofs from a partial set of cells.
+/// `cell_indices` and `cells` must have equal length (≥ 64 for successful recovery).
+/// Returns `(all_cells, all_proofs)` each of length 128.
+#[cfg(feature = "c-kzg")]
+pub fn recover_cells_and_kzg_proofs(
+    cell_indices: &[u64],
+    cells: &[[u8; BYTES_PER_CELL]],
+) -> Result<(Vec<[u8; BYTES_PER_CELL]>, Vec<Proof>), KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+    let c_cells: Vec<c_kzg::Cell> = cells.iter().map(|c| c_kzg::Cell::new(*c)).collect();
+    let (recovered_cells, recovered_proofs) =
+        c_kzg_settings.recover_cells_and_kzg_proofs(cell_indices, &c_cells)?;
+    let out_cells: Vec<[u8; BYTES_PER_CELL]> =
+        recovered_cells.iter().map(|c| c.to_bytes()).collect();
+    let out_proofs: Vec<Proof> = recovered_proofs
+        .iter()
+        .map(|p| p.to_bytes().into_inner())
+        .collect();
+    Ok((out_cells, out_proofs))
+}
+
 /// Compute all `CELLS_PER_EXT_BLOB` cells for a blob.
 /// Returns one `[u8; BYTES_PER_CELL]` per cell.
 #[cfg(feature = "c-kzg")]

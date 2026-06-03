@@ -335,6 +335,8 @@ impl AddAssign for BlobsBundle {
         self.blobs.extend_from_slice(&rhs.blobs);
         self.commitments.extend_from_slice(&rhs.commitments);
         self.proofs.extend_from_slice(&rhs.proofs);
+        // Never downgrade: accumulator must track the highest version seen.
+        self.version = self.version.max(rhs.version);
     }
 }
 

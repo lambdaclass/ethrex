@@ -520,6 +520,115 @@ impl Mempool {
         Ok(self.read()?.blobs_bundle_pool.get(&tx_hash).cloned())
     }
 
+    /// Reconstruct a full BlobsBundle (with blobs) for an elided eth/72 tx.
+    ///
+    /// Returns `Ok(None)` when:
+    /// - the tx has no stored bundle, or
+    /// - fewer than 64 columns are held for any blob (insufficient data to recover).
+    ///
+    /// On success the returned bundle has `blobs` populated and carries the
+    /// original `commitments`, `proofs`, and `version` from the stored elided entry.
+    #[cfg(feature = "c-kzg")]
+    pub fn reconstruct_blobs_bundle(
+        &self,
+        tx_hash: H256,
+    ) -> Result<Option<BlobsBundle>, StoreError> {
+        use ethrex_crypto::kzg::{
+            BYTES_PER_CELL as KZG_BYTES_PER_CELL, cells_to_blob, recover_cells_and_kzg_proofs,
+        };
+
+        let inner = self.read()?;
+
+        let elided = match inner.blobs_bundle_pool.get(&tx_hash) {
+            Some(b) => b.clone(),
+            None => return Ok(None),
+        };
+
+        let blob_count = elided.commitments.len();
+        if blob_count == 0 {
+            return Ok(None);
+        }
+
+        let tx_cells = match inner.cells.get(&tx_hash) {
+            Some(tc) => tc,
+            None => return Ok(None),
+        };
+
+        let mask = tx_cells.mask();
+        // Need at least 64 columns (any 64 suffice for Reed-Solomon recovery).
+        if mask.count_ones() < 64 {
+            return Ok(None);
+        }
+
+        // Data columns 0..63 carry the blob verbatim (see `cells_to_blob`); when
+        // they are all held we concatenate directly, otherwise we Reed-Solomon
+        // recover from any >=64 columns.
+        let data_cols_mask = (1u128 << (CELLS_PER_EXT_BLOB / 2)) - 1;
+        let data_cols_present = mask & data_cols_mask == data_cols_mask;
+
+        let mut blobs = Vec::with_capacity(blob_count);
+
+        for blob_idx in 0..blob_count {
+            let blob = if data_cols_present {
+                // Fast path: data columns 0..63 are present; concatenate directly.
+                let mut all_cell_bytes = [[0u8; KZG_BYTES_PER_CELL]; CELLS_PER_EXT_BLOB];
+                for col in 0..CELLS_PER_EXT_BLOB / 2 {
+                    if let Some(cell) = tx_cells.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col)) {
+                        all_cell_bytes[col] = **cell;
+                    }
+                }
+                cells_to_blob(&all_cell_bytes)
+            } else {
+                // Recovery path: <128 columns but ≥64; call c-kzg recovery.
+                let mut indices: Vec<u64> = Vec::with_capacity(mask.count_ones() as usize);
+                let mut cell_bytes: Vec<[u8; KZG_BYTES_PER_CELL]> =
+                    Vec::with_capacity(mask.count_ones() as usize);
+                for col in 0..CELLS_PER_EXT_BLOB {
+                    if (mask >> col) & 1 == 1 {
+                        if let Some(cell) =
+                            tx_cells.cells.get(&(blob_idx * CELLS_PER_EXT_BLOB + col))
+                        {
+                            indices.push(col as u64);
+                            cell_bytes.push(**cell);
+                        }
+                    }
+                }
+                // If we can't get ≥64 cells for this specific blob, skip the tx.
+                if indices.len() < 64 {
+                    return Ok(None);
+                }
+                let (recovered, _proofs) = recover_cells_and_kzg_proofs(&indices, &cell_bytes)
+                    .map_err(|e| {
+                        warn!("cell recovery failed for blob tx {tx_hash}: {e}");
+                        StoreError::Custom(format!("cell recovery failed for tx {tx_hash}: {e}"))
+                    })?;
+                // recovered has 128 entries; data columns are 0..63.
+                let mut all_cell_bytes = [[0u8; KZG_BYTES_PER_CELL]; CELLS_PER_EXT_BLOB];
+                for (i, bytes) in recovered.iter().enumerate() {
+                    all_cell_bytes[i] = *bytes;
+                }
+                cells_to_blob(&all_cell_bytes)
+            };
+            blobs.push(blob);
+        }
+
+        Ok(Some(BlobsBundle {
+            blobs,
+            commitments: elided.commitments,
+            proofs: elided.proofs,
+            version: elided.version,
+        }))
+    }
+
+    /// Reconstruct a full BlobsBundle for an elided eth/72 tx (no-c-kzg stub).
+    #[cfg(not(feature = "c-kzg"))]
+    pub fn reconstruct_blobs_bundle(
+        &self,
+        _tx_hash: H256,
+    ) -> Result<Option<BlobsBundle>, StoreError> {
+        Ok(None)
+    }
+
     /// Remove a transaction from the pool
     pub fn remove_transaction(&self, hash: &H256) -> Result<(), StoreError> {
         let mut inner = self.write()?;
