@@ -456,6 +456,10 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
     // Determine discovery bind address.
     // --discovery.addr sets the UDP bind addr independently of RLPx.
     // Defaults to rlpx_bind_addr so the two channels co-locate by default.
+    // NOTE: we currently enforce that discovery and RLPx use the same address
+    // family. Mixed-family (e.g. IPv4 discv4 + IPv6 RLPx) is structurally
+    // supported by NetworkConfig but not yet tested end-to-end. A future
+    // dual-stack PR (feat/p2p-dual-stack-ipv6) will relax this constraint.
     let discovery_bind_addr: IpAddr = opts
         .discovery_addr
         .as_deref()
