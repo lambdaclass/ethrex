@@ -618,6 +618,20 @@ impl Blockchain {
                 continue;
             }
 
+            // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose
+            // expiry deadline is behind the block being built. Deterministic
+            // for this payload timestamp, so remove from the pool as well.
+            if let Transaction::FrameTransaction(frame_tx) = &*head_tx.tx
+                && frame_tx
+                    .expiry_deadline()
+                    .is_some_and(|deadline| deadline < context.payload.header.timestamp)
+            {
+                debug!("Skipping expired frame transaction: {}", tx_hash);
+                txs.pop();
+                self.remove_transaction_from_pool(&tx_hash)?;
+                continue;
+            }
+
             // Set BAL index for this transaction (1-indexed per EIP-7928)
             // Index is based on current transaction count + 1
             #[allow(clippy::cast_possible_truncation)]

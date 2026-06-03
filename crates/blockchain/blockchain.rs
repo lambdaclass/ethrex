@@ -2548,6 +2548,18 @@ impl Blockchain {
             return Err(MempoolError::FrameTxPreFork);
         }
 
+        // EIP-8141 expiry (spec commit 0b197156): drop frame txs whose expiry
+        // verifier deadline is already behind the current head timestamp.
+        // Boundary: deadline == timestamp is still valid (the verifier only
+        // reverts when block.timestamp > deadline).
+        if let Transaction::FrameTransaction(frame_tx) = tx
+            && frame_tx
+                .expiry_deadline()
+                .is_some_and(|deadline| deadline < header.timestamp)
+        {
+            return Err(MempoolError::FrameTxExpired);
+        }
+
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size

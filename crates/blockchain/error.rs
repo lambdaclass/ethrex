@@ -121,6 +121,8 @@ pub enum MempoolError {
     UnderpricedReplacement,
     #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
     FrameTxPreFork,
+    #[error("Frame transaction expiry deadline has passed")]
+    FrameTxExpired,
 }
 
 #[derive(Debug)]
