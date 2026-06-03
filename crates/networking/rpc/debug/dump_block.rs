@@ -7,11 +7,16 @@ use serde_json::Value;
 
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifier};
 
-/// Default cap on accounts emitted by `debug_dumpBlock` when the caller does
-/// not specify `maxResults`. Picked to bound response size on large states —
-/// geth's `debug_dumpBlock` is unbounded; ethrex diverges here to protect the
-/// RPC server. Callers wanting more can paginate via the config object.
+/// Default number of accounts emitted by `debug_dumpBlock` when the caller does
+/// not specify `maxResults`. Callers wanting more can paginate via the `start`
+/// cursor in the config object.
 const DEFAULT_MAX_RESULTS: usize = 100_000;
+
+/// Hard ceiling on `maxResults` — callers cannot exceed this even via an
+/// explicit parameter. Picked to bound response size on large states; geth's
+/// `debug_dumpBlock` is unbounded, ethrex diverges here to protect the RPC
+/// server from unbounded in-memory responses.
+const MAX_RESULTS_CEILING: usize = 100_000;
 
 /// `debug_dumpBlock` — geth-compatible state-trie dump at a given block.
 ///
@@ -30,7 +35,7 @@ const DEFAULT_MAX_RESULTS: usize = 100_000;
 ///   `eth_getStorageAt` for those.
 /// - `balance` is serialized as a hex string (`"0x..."`) whereas geth uses a
 ///   decimal string. Callers parsing the balance field should handle both.
-/// - `maxResults` is clamped to [`DEFAULT_MAX_RESULTS`] even if the caller
+/// - `maxResults` is clamped to [`MAX_RESULTS_CEILING`] even if the caller
 ///   provides a larger value, to protect the RPC server from unbounded
 ///   responses. Pass `{"start": ..., "maxResults": ...}` to page through
 ///   larger states.
@@ -112,7 +117,7 @@ impl RpcHandler for DumpBlockRequest {
             .config
             .max_results
             .unwrap_or(DEFAULT_MAX_RESULTS)
-            .min(DEFAULT_MAX_RESULTS);
+            .min(MAX_RESULTS_CEILING);
         let storage = context.storage.clone();
 
         // The trie iterator opens long-lived locked DB transactions and walks
