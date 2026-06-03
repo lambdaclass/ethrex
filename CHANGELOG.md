@@ -8,6 +8,10 @@
 
 ## Perf
 
+### 2026-06-03
+
+- Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
+
 ### 2026-05-27
 
 - Prefetch all BAL storage synchronously before execution [#6732](https://github.com/lambdaclass/ethrex/pull/6732)
