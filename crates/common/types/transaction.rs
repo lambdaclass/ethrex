@@ -1903,40 +1903,36 @@ pub fn frame_tx_expiry_verifier() -> Address {
 }
 
 impl FrameTransaction {
-    /// Compute the signature hash per EIP-8141:
-    /// VERIFY frame data is elided before hashing.
-    /// The full mode value (including bit flags) is preserved.
+    /// Canonical signature hash (EIP-8141, spec commit fe0940cae2): the raw
+    /// `signature` bytes of every signature with empty `msg` are elided (a
+    /// signature over this hash cannot commit to its own bytes). Frame data is
+    /// NO LONGER elided — it is fully covered. Signatures with an explicit
+    /// 32-byte `msg` keep their bytes (they sign that digest, not this hash).
     pub fn compute_sig_hash(&self) -> H256 {
         let mut buf = vec![TxType::Frame as u8];
-        // Build a copy with VERIFY frame data elided
-        let elided_frames: Vec<Frame> = self
-            .frames
+        let elided_signatures: Vec<FrameSignature> = self
+            .signatures
             .iter()
-            .map(|f| {
-                // Expiry verifier frames keep their data: it is the sender-
-                // authored deadline and is covered by the signature
-                // (spec commit 0b197156). All other VERIFY data is elided.
-                if f.execution_mode() == FrameMode::Verify && !f.is_expiry_verifier() {
-                    // Only `data` is elided; per spec line 770 everything else
-                    // on a VERIFY frame (including `value`) remains covered.
-                    Frame {
-                        mode: f.mode,
-                        flags: f.flags,
-                        target: f.target,
-                        gas_limit: f.gas_limit,
-                        value: f.value,
-                        data: Bytes::new(),
+            .map(|s| {
+                if s.msg.is_empty() {
+                    FrameSignature {
+                        scheme: s.scheme,
+                        signer: s.signer,
+                        msg: s.msg.clone(),
+                        signature: Bytes::new(),
                     }
                 } else {
-                    f.clone()
+                    s.clone()
                 }
             })
             .collect();
+        // RLP-encode the tx with elided signature bytes, frames verbatim.
         Encoder::new(&mut buf)
             .encode_field(&self.chain_id)
             .encode_field(&self.nonce)
             .encode_field(&self.sender)
-            .encode_field(&elided_frames)
+            .encode_field(&self.frames)
+            .encode_field(&elided_signatures)
             .encode_field(&self.max_priority_fee_per_gas)
             .encode_field(&self.max_fee_per_gas)
             .encode_field(&self.max_fee_per_blob_gas)
@@ -1945,18 +1941,40 @@ impl FrameTransaction {
         keccak(&buf)
     }
 
-    /// Compute total gas limit: intrinsic + calldata cost + sum of frame gas limits
+    /// Per EIP-8141 (spec commit fe0940cae2): 2800 gas per SECP256K1 signature,
+    /// 6700 per P256. Unknown schemes are rejected by static validation, so
+    /// they are treated as 0 here (validation runs first).
+    pub fn signature_verification_cost(&self) -> u64 {
+        self.signatures
+            .iter()
+            .map(|s| match s.scheme {
+                FRAME_SIG_SCHEME_SECP256K1 => 2800u64,
+                FRAME_SIG_SCHEME_P256 => 6700u64,
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Compute total gas limit: intrinsic + calldata cost (frames + signatures)
+    /// + signature verification cost + sum of frame gas limits.
     pub fn total_gas_limit(&self) -> u64 {
         let mut calldata_gas: u64 = 0;
         // RLP-encode frames to compute calldata cost
         let mut frames_buf = Vec::new();
         self.frames.encode(&mut frames_buf);
         for byte in &frames_buf {
-            calldata_gas += if *byte == 0 { 4 } else { 16 };
+            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
+        }
+        // RLP-encode signatures to compute their calldata cost
+        let mut sigs_buf = Vec::new();
+        self.signatures.encode(&mut sigs_buf);
+        for byte in &sigs_buf {
+            calldata_gas = calldata_gas.saturating_add(if *byte == 0 { 4 } else { 16 });
         }
         FRAME_TX_INTRINSIC_COST
             .saturating_add((self.frames.len() as u64).saturating_mul(FRAME_TX_PER_FRAME_COST))
             .saturating_add(calldata_gas)
+            .saturating_add(self.signature_verification_cost())
             .saturating_add(self.frames.iter().map(|f| f.gas_limit).sum::<u64>())
     }
 
@@ -4522,17 +4540,18 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_transaction_sig_hash_elides_verify_data() {
+    fn test_frame_transaction_sig_hash_covers_all_frame_data() {
+        // Updated for spec commit fe0940cae2: frame data is NO LONGER elided.
         let tx = make_test_frame_tx();
         let hash1 = tx.compute_sig_hash();
 
-        // Same tx but with different VERIFY frame data should produce the same sig_hash
+        // Changing VERIFY frame data now DOES change the sig_hash.
         let mut tx2 = tx.clone();
         tx2.frames[0].data = Bytes::from_static(b"completely_different_verify_data");
         let hash2 = tx2.compute_sig_hash();
-        assert_eq!(hash1, hash2);
+        assert_ne!(hash1, hash2);
 
-        // But changing SENDER frame data should produce a different hash
+        // Changing SENDER frame data also produces a different hash.
         let mut tx3 = tx.clone();
         tx3.frames[1].data = Bytes::from_static(b"different_call_data");
         let hash3 = tx3.compute_sig_hash();
@@ -4651,7 +4670,7 @@ mod tests {
     #[test]
     fn sig_hash_covers_frame_value() {
         // Changing `value` on any frame (SENDER or VERIFY) must change the
-        // canonical signature hash; only VERIFY.data is elided per spec.
+        // canonical signature hash (spec commit fe0940cae2: all frame data covered).
         let tx = make_test_frame_tx();
         let baseline = tx.compute_sig_hash();
 
@@ -4668,16 +4687,16 @@ mod tests {
         assert_ne!(
             baseline,
             with_verify_value.compute_sig_hash(),
-            "sig_hash must change when a VERIFY frame's value changes (only data is elided)"
+            "sig_hash must change when a VERIFY frame's value changes"
         );
 
-        // Sanity: changing VERIFY.data still does NOT change the hash.
+        // VERIFY.data is now covered too (spec commit fe0940cae2 removed elision).
         let mut with_verify_data = tx.clone();
         with_verify_data.frames[0].data = Bytes::from_static(b"different_verify_data");
-        assert_eq!(
+        assert_ne!(
             baseline,
             with_verify_data.compute_sig_hash(),
-            "VERIFY.data must remain elided from sig_hash"
+            "VERIFY.data is now covered by sig_hash (no longer elided)"
         );
     }
 
@@ -4858,7 +4877,8 @@ mod tests {
     }
 
     #[test]
-    fn sig_hash_covers_expiry_deadline_but_not_other_verify_data() {
+    fn sig_hash_covers_expiry_deadline_and_all_verify_data() {
+        // Updated for spec commit fe0940cae2: all frame data is now covered.
         let mut tx_a = make_test_frame_tx();
         tx_a.frames.insert(0, expiry_frame(100));
         let mut tx_b = make_test_frame_tx();
@@ -4866,11 +4886,11 @@ mod tests {
         // Different deadlines -> different sig hashes (expiry data covered).
         assert_ne!(tx_a.compute_sig_hash(), tx_b.compute_sig_hash());
 
-        // Different NON-expiry VERIFY data -> same sig hash (still elided).
+        // Different NON-expiry VERIFY data -> different sig hash (no longer elided).
         let tx_c = make_test_frame_tx();
         let mut tx_d = make_test_frame_tx();
         tx_d.frames[0].data = Bytes::from_static(b"different_verify_data");
-        assert_eq!(tx_c.compute_sig_hash(), tx_d.compute_sig_hash());
+        assert_ne!(tx_c.compute_sig_hash(), tx_d.compute_sig_hash());
     }
 
     #[test]
@@ -4940,5 +4960,53 @@ mod tests {
                 .unwrap_err()
                 .contains("zero digest"),
         );
+    }
+
+    #[test]
+    fn sig_hash_elides_empty_msg_signature_bytes() {
+        let mut a = make_test_frame_tx();
+        let mut b = make_test_frame_tx();
+        // empty-msg signature: changing raw bytes must NOT change the hash.
+        assert!(a.signatures[0].msg.is_empty());
+        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
+        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
+        assert_eq!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn sig_hash_covers_frame_data_now() {
+        let mut a = make_test_frame_tx();
+        let mut b = make_test_frame_tx();
+        // frame 0 is a VERIFY frame; its data is now COVERED (not elided).
+        a.frames[0].data = Bytes::from_static(b"aaaa");
+        b.frames[0].data = Bytes::from_static(b"bbbb");
+        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn sig_hash_covers_explicit_msg_signature_bytes() {
+        let mut a = make_test_frame_tx();
+        let mut b = make_test_frame_tx();
+        a.signatures[0].msg = Bytes::from(vec![9u8; 32]);
+        b.signatures[0].msg = Bytes::from(vec![9u8; 32]);
+        a.signatures[0].signature = Bytes::from(vec![1u8; 65]);
+        b.signatures[0].signature = Bytes::from(vec![2u8; 65]);
+        // explicit-msg signatures keep their bytes -> different hash.
+        assert_ne!(a.compute_sig_hash(), b.compute_sig_hash());
+    }
+
+    #[test]
+    fn total_gas_limit_includes_signature_costs() {
+        let mut tx = make_test_frame_tx();
+        let base = tx.total_gas_limit();
+        // Add a P256 signature; cost must rise by at least 6700 + its calldata.
+        tx.signatures.push(FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(1),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 128]),
+        });
+        assert!(tx.total_gas_limit() >= base + 6700);
+        assert_eq!(tx.signature_verification_cost(), 2800 + 6700);
     }
 }
