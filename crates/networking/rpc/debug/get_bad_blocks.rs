@@ -18,9 +18,11 @@ impl RpcHandler for GetBadBlocksRequest {
     }
 
     async fn handle(&self, _context: RpcApiContext) -> Result<Value, RpcErr> {
-        // Geth maintains a ring buffer of bad blocks encountered during chain
-        // insertion. ethrex does not currently track bad blocks, so we return
-        // an empty array which is valid (a healthy node has no bad blocks).
+        // ethrex records rejected-block hashes in INVALID_CHAINS (hash ->
+        // latest_valid_hash) but does not persist the full block RLP / body /
+        // error reason that geth's debug_getBadBlocks response requires, so we
+        // return the spec-valid empty array. A real implementation needs a
+        // bad-block metadata table with eviction policy.
         Ok(Value::Array(vec![]))
     }
 }
