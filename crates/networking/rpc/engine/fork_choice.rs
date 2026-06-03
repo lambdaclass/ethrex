@@ -499,14 +499,15 @@ fn parse_v4(
     let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
     let mut payload_attributes: Option<PayloadAttributesV4> = None;
     if params.len() == 2 {
-        payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV4>>(params[1].clone()) {
-                Ok(attributes) => attributes,
-                Err(error) => {
-                    warn!("Could not parse payload attributes {}", error);
-                    None
-                }
-            };
+        // execution-apis#796: V4 attributes are validated strictly. A present but
+        // malformed object (e.g. missing the required targetGasLimit) is rejected
+        // rather than silently ignored; an absent/null object yields no attributes.
+        payload_attributes = serde_json::from_value::<Option<PayloadAttributesV4>>(
+            params[1].clone(),
+        )
+        .map_err(|error| {
+            RpcErr::InvalidPayloadAttributes(format!("invalid V4 payload attributes: {error}"))
+        })?;
     }
     Ok((forkchoice_state, payload_attributes))
 }
@@ -533,13 +534,8 @@ fn validate_attributes_v4(
             "V4 payload attributes missing parent_beacon_block_root".to_string(),
         ));
     }
-    // execution-apis#796 makes target_gas_limit a required field on V4, but
-    // some Amsterdam devnets still run pre-#796 CLs that omit it. We keep it
-    // optional and fall back to --builder.gas-limit in build_payload_v4
-    // rather than rejecting, so EL rollout stays decoupled from CL rollout.
-    // TODO: once Amsterdam is finalized and all paired CLs ship #796, make an
-    // absent target_gas_limit a hard error here (reject with
-    // InvalidPayloadAttributes) instead of falling back.
+    // execution-apis#796: target_gas_limit is required on V4 and enforced at
+    // deserialization (see `parse_v4`), so no presence check is needed here.
     validate_timestamp_v4(attributes, head_block)
 }
 
@@ -560,19 +556,8 @@ async fn build_payload_v4(
     context: RpcApiContext,
     fork_choice_state: &ForkChoiceState,
 ) -> Result<u64, RpcErr> {
-    // execution-apis#796: prefer the CL-supplied target gas limit. Pre-#796
-    // CLs on Amsterdam devnets may omit it; fall back to --builder.gas-limit
-    // and warn so the config drift stays visible.
-    // TODO: drop this fallback once #796 is mandatory on all paired CLs;
-    // validate_attributes_v4 should reject an absent field before we get here.
-    let gas_ceil = attributes.target_gas_limit.unwrap_or_else(|| {
-        warn!(
-            slot = attributes.slot_number,
-            gas_ceil = context.gas_ceil,
-            "FCUv4 payload attributes omit target_gas_limit; falling back to --builder.gas-limit (pre-execution-apis#796 CL)"
-        );
-        context.gas_ceil
-    });
+    // execution-apis#796: use the CL-supplied target gas limit (required on V4).
+    let gas_ceil = attributes.target_gas_limit;
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
