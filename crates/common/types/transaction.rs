@@ -1714,10 +1714,9 @@ impl From<FrameMode> for u8 {
 
 /// EIP-8141 Frame: a single execution step within a frame transaction.
 ///
-/// The `mode` field is a u32 where:
-/// - Bits 0-7: execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved)
-/// - Bits 8-9: APPROVE scope restriction
-/// - Bit 10: atomic batch flag (only valid with SENDER mode)
+/// `mode` is the execution mode (0=DEFAULT, 1=VERIFY, 2=SENDER; 3-255 reserved).
+/// `flags` bits: 0-1 = APPROVE scope restriction, 2 = atomic batch flag
+/// (valid with any mode per spec commit 8b61fdc4), 3-7 reserved (must be zero).
 #[derive(Clone, Debug, PartialEq, Eq, Default, RSerialize, RDeserialize, Archive)]
 pub struct Frame {
     pub mode: u8,
@@ -1947,23 +1946,11 @@ impl FrameTransaction {
                     total_frame_gas
                 ));
             }
-            // Atomic batch flag (bit 2 of flags) is only valid with SENDER mode
-            if frame.is_atomic_batch() {
-                if frame.mode != 2 {
-                    return Err(format!(
-                        "Frame {i}: atomic batch flag only valid with SENDER mode"
-                    ));
-                }
-                // Must not be last frame
-                if i + 1 >= self.frames.len() {
-                    return Err(format!("Frame {i}: atomic batch flag on last frame"));
-                }
-                // Next frame must also be SENDER
-                if self.frames[i + 1].mode != 2 {
-                    return Err(format!(
-                        "Frame {i}: atomic batch requires next frame to be SENDER"
-                    ));
-                }
+            // Atomic batch flag (bit 2 of flags) requires a subsequent frame
+            // to batch with. Valid with any mode per EIP-8141 (spec commit
+            // 8b61fdc4, "Support atomic batching with any frames").
+            if frame.is_atomic_batch() && i + 1 >= self.frames.len() {
+                return Err(format!("Frame {i}: atomic batch flag on last frame"));
             }
         }
         Ok(())
@@ -4254,6 +4241,54 @@ mod tests {
             inner_hash: OnceCell::new(),
             cached_canonical: OnceCell::new(),
         }
+    }
+
+    #[test]
+    fn atomic_batch_flag_valid_on_default_and_verify_frames() {
+        // Spec commit 8b61fdc4: the atomic batch flag is valid with any mode.
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![
+            Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0x04, // atomic batch
+                target: Some(Address::from_low_u64_be(0xB0B)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x04 | 0x03, // atomic batch + scope (VERIFY needs non-zero scope)
+                target: None,
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            Frame {
+                mode: FrameMode::Sender as u8,
+                flags: 0x00, // terminator: no flag
+                target: Some(Address::from_low_u64_be(0xCAFE)),
+                gas_limit: 21_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ];
+        assert!(tx.validate_static_constraints().is_ok());
+    }
+
+    #[test]
+    fn atomic_batch_flag_on_last_frame_still_invalid() {
+        let mut tx = make_test_frame_tx();
+        tx.frames = vec![Frame {
+            mode: FrameMode::Sender as u8,
+            flags: 0x04,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 21_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }];
+        let err = tx.validate_static_constraints().unwrap_err();
+        assert!(err.contains("atomic batch flag on last frame"), "{err}");
     }
 
     #[test]
