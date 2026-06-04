@@ -1193,6 +1193,15 @@ impl<'a> VM<'a> {
                 // Remove only logs from the batch, preserving pre-batch logs
                 all_logs.truncate(batch_logs_start);
 
+                // Spec: a reverted VERIFY frame invalidates the transaction even
+                // inside an atomic batch. The batch unroll above already rolled
+                // back state/approvals; validity is a tx-level decision. (The
+                // failing `frame` here is the one that triggered the revert.)
+                if frame.execution_mode() == FrameMode::Verify {
+                    tx_invalid = true;
+                    break;
+                }
+
                 // Find the end of this batch (the first frame at or after the
                 // failing one without the flag — any mode, spec commit 8b61fdc4)
                 let batch_end = find_batch_end(&frame_tx.frames, frame_idx);
@@ -1215,8 +1224,9 @@ impl<'a> VM<'a> {
             // VERIFY frame enforcement (spec commit 0b197156): a reverted
             // VERIFY frame invalidates the transaction. A VERIFY frame that
             // succeeds WITHOUT calling APPROVE is valid (e.g. the expiry
-            // verifier frame). Batched VERIFY reverts take the batch-unroll
-            // path above instead (it `continue`s before reaching this check).
+            // verifier frame). A reverted VERIFY frame invalidates the tx;
+            // batched VERIFY reverts are handled in the atomic-batch-revert
+            // branch above (which also sets tx_invalid).
             if frame.execution_mode() == FrameMode::Verify && !frame_success {
                 tx_invalid = true;
                 break;

@@ -63,6 +63,14 @@ const APPROVE_EXECUTION_CODE: &[u8] = &[0x60, 0x02, 0x60, 0x00, 0x60, 0x00, 0xAA
 /// APPROVE(scope=1) -- payment approval. The frame's target becomes the payer.
 #[allow(dead_code)]
 const APPROVE_PAYMENT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xAA];
+/// APPROVE(scope=3) only (no SSTORE) -- sets sender_approved AND payer when the
+/// frame target is the tx sender. Safe to run in a static VERIFY frame.
+#[allow(dead_code)]
+const APPROVE_BOTH_CODE: &[u8] = &[0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA];
+/// PUSH1 0; PUSH1 0; REVERT -- a clean revert with no state op (so it reverts
+/// even inside a static VERIFY frame, rather than halting on a static violation).
+#[allow(dead_code)]
+const PURE_REVERT_CODE: &[u8] = &[0x60, 0x00, 0x60, 0x00, 0xFD];
 
 // ==================== Harness helpers ====================
 
@@ -539,8 +547,7 @@ fn approve_halts_when_frame_scope_is_none() {
     // APPROVE(scope=3). Pre-fix the scope-0 bypass lets it succeed (payer=sender,
     // tx valid); post-fix allowed_scope==0 must halt -> no payer -> invalid tx.
     //
-    // Bytecode: PUSH1 3; PUSH1 0; PUSH1 0; APPROVE (0xAA)
-    const APPROVE_BOTH_CODE: &[u8] = &[0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA];
+    // Bytecode: APPROVE_BOTH_CODE (PUSH1 3; PUSH1 0; PUSH1 0; APPROVE 0xAA)
     let tx = frame_tx_with_frames(vec![Frame {
         mode: u8::from(FrameMode::Default),
         flags: 0x00,
@@ -564,6 +571,62 @@ fn approve_halts_when_frame_scope_is_none() {
             ))
         ),
         "APPROVE with allowed_scope==0 must halt, leaving the tx invalid; got {result:?}"
+    );
+    assert_db_cache_unchanged(&db, &accounts);
+}
+
+// ==================== B8: batched VERIFY revert invalidates tx ====================
+
+#[test]
+fn batched_verify_revert_invalidates_tx() {
+    let reverter = Address::from_low_u64_be(0xF1);
+    let stop_ct = Address::from_low_u64_be(0xF2);
+    // frame0: VERIFY -> sender, runs APPROVE(3) -> sets payer=sender (tx would be valid).
+    // frame1: VERIFY with ATOMIC_BATCH_FLAG -> a contract that REVERTs.
+    // frame2: DEFAULT batch terminator (no flag) -> needed so the batch flag isn't on the last frame.
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER), // flags 0x03; FUNDED_SENDER seeded with APPROVE_BOTH_CODE
+        Frame {
+            mode: u8::from(FrameMode::Verify),
+            flags: 0x04,
+            target: Some(reverter),
+            gas_limit: 60_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0x00,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            reverter,
+            U256::zero(),
+            0,
+            Bytes::from(PURE_REVERT_CODE.to_vec()),
+        ),
+        (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+    ];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+            ))
+        ),
+        "a batched VERIFY revert must invalidate the tx; got {result:?}"
     );
     assert_db_cache_unchanged(&db, &accounts);
 }
