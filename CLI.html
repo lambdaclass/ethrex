@@ -34,7 +34,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-0642e5f1.js";
+            window.path_to_searchindex_js = "searchindex-8a08cadf.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7e7556e2.js"></script>
@@ -249,6 +249,11 @@ Node options:
           Do not migrate an existing database to the network-specific subdirectory.
 
           [env: ETHREX_NO_MIGRATE=]
+
+      --skip-genesis-validation
+          Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.
+
+          [env: ETHREX_SKIP_GENESIS_VALIDATION=]
 
       --no-precompile-cache
           Disable the per-block precompile result cache (benchmarking only).
