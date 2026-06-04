@@ -93,7 +93,7 @@ async fn blobs_v4_unknown_hash_returns_null_entry() {
 }
 
 #[tokio::test]
-async fn blobs_v4_sparse_mask_returns_only_requested_columns() {
+async fn blobs_v4_sparse_mask_returns_length_128_matrix() {
     let ctx = osaka_context().await;
 
     // Build a synthetic bundle with 1 blob (version=1 for Osaka).
@@ -132,15 +132,36 @@ async fn blobs_v4_sparse_mask_returns_only_requested_columns() {
     let entry = &arr[0];
     assert!(!entry.is_null(), "known hash must return non-null entry");
     let blob_cells = entry["blobCells"].as_array().unwrap();
-    // Only 1 column requested.
-    assert_eq!(blob_cells.len(), 1, "one column requested → one cell");
-    assert!(!blob_cells[0].is_null(), "stored cell must not be null");
-    let hex = blob_cells[0].as_str().unwrap();
+    let proofs = entry["proofs"].as_array().unwrap();
+    // Sparse length-128 matrices (EIP-8070 / execution-specs PR #2948): the value
+    // sits at requested+held column 2, with null at every other index, for both
+    // cells and proofs.
+    assert_eq!(blob_cells.len(), CELLS_PER_EXT_BLOB);
+    assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
+    assert!(
+        !blob_cells[2].is_null(),
+        "requested column 2 cell must not be null"
+    );
+    assert!(
+        !proofs[2].is_null(),
+        "requested column 2 proof must not be null"
+    );
+    let hex = blob_cells[2].as_str().unwrap();
     let decoded = hex::decode(&hex[2..]).unwrap();
     assert!(
         decoded.iter().all(|&b| b == 0xCC),
         "stored cell value preserved"
     );
+    for i in 0..CELLS_PER_EXT_BLOB {
+        if i == 2 {
+            continue;
+        }
+        assert!(
+            blob_cells[i].is_null(),
+            "non-requested cell {i} must be null"
+        );
+        assert!(proofs[i].is_null(), "non-requested proof {i} must be null");
+    }
 }
 
 #[tokio::test]
