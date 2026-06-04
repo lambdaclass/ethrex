@@ -2767,14 +2767,11 @@ pub(crate) fn env_from_generic(
     })
 }
 
-fn vm_from_generic<'a>(
-    tx: &GenericTransaction,
-    env: Environment,
-    db: &'a mut GeneralizedDatabase,
-    vm_type: VMType,
-    crypto: &'a dyn Crypto,
-) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
+/// Convert a `GenericTransaction` (eth_call / debug_traceCall shape) into the
+/// concrete `Transaction` enum consumed by the VM. Shared by both
+/// `vm_from_generic` and `vm_from_generic_with_tracer`.
+fn generic_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    let transaction = match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
@@ -2807,7 +2804,17 @@ fn vm_from_generic<'a>(
             ..Default::default()
         }),
     };
+    Ok(transaction)
+}
 
+fn vm_from_generic<'a>(
+    tx: &GenericTransaction,
+    env: Environment,
+    db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &'a dyn Crypto,
+) -> Result<VM<'a>, VMError> {
+    let tx = generic_to_transaction(tx)?;
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
 }
@@ -2821,40 +2828,7 @@ pub(crate) fn vm_from_generic_with_tracer<'a>(
     crypto: &'a dyn Crypto,
     tracer: LevmCallTracer,
 ) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
-        Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
-            to: match tx.to {
-                TxKind::Call(to) => to,
-                TxKind::Create => {
-                    return Err(InternalError::msg("Generic Tx cannot be create type").into());
-                }
-            },
-            value: tx.value,
-            data: tx.input.clone(),
-            access_list: tx
-                .access_list
-                .iter()
-                .map(|list| (list.address, list.storage_keys.clone()))
-                .collect(),
-            authorization_list: authorization_list
-                .iter()
-                .map(|auth| Into::<AuthorizationTuple>::into(auth.clone()))
-                .collect(),
-            ..Default::default()
-        }),
-        None => Transaction::EIP1559Transaction(EIP1559Transaction {
-            to: tx.to.clone(),
-            value: tx.value,
-            data: tx.input.clone(),
-            access_list: tx
-                .access_list
-                .iter()
-                .map(|list| (list.address, list.storage_keys.clone()))
-                .collect(),
-            ..Default::default()
-        }),
-    };
-
+    let tx = generic_to_transaction(tx)?;
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
     VM::new(env, db, &tx, tracer, vm_type, crypto)
 }

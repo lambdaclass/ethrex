@@ -171,6 +171,8 @@ impl LEVM {
         crypto: &dyn Crypto,
     ) -> Result<CallTrace, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        // Simulate outside the parent block's gas budget (same as eth_call);
+        // geth uses `evm.GasPool = MaxUint64` for the same reason.
         env.block_gas_limit = i64::MAX as u64;
         adjust_disabled_base_fee(&mut env);
         let mut vm = vm_from_generic_with_tracer(
@@ -199,6 +201,8 @@ impl LEVM {
         let pre_snapshot: CacheDB = db.current_accounts_state.clone();
 
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        // Simulate outside the parent block's gas budget (same as eth_call);
+        // geth uses `evm.GasPool = MaxUint64` for the same reason.
         env.block_gas_limit = i64::MAX as u64;
         adjust_disabled_base_fee(&mut env);
         let mut vm =
@@ -237,6 +241,8 @@ impl LEVM {
         crypto: &dyn Crypto,
     ) -> Result<OpcodeTraceResult, EvmError> {
         let mut env = env_from_generic(tx, block_header, db, vm_type)?;
+        // Simulate outside the parent block's gas budget (same as eth_call);
+        // geth uses `evm.GasPool = MaxUint64` for the same reason.
         env.block_gas_limit = i64::MAX as u64;
         adjust_disabled_base_fee(&mut env);
         let mut vm =

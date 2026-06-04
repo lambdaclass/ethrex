@@ -8,6 +8,7 @@ use ethrex_common::{
 use ethrex_vm::tracing::OpcodeTracerConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::warn;
 
 use ethrex_common::types::GenericTransaction;
 
@@ -406,7 +407,18 @@ impl RpcHandler for TraceCallRequest {
             .get(1)
             .map(|v| BlockIdentifierOrHash::parse(v.clone(), 1))
             .transpose()?;
-        let trace_config = if let Some(v) = params.get(2) {
+        let trace_config: TraceConfig = if let Some(v) = params.get(2) {
+            // Warn when callers pass overrides we don't yet honour, so the
+            // ignored fields surface in node logs rather than being silently
+            // swallowed.
+            if let Some(obj) = v.as_object() {
+                if obj.contains_key("stateOverrides") {
+                    warn!("debug_traceCall: stateOverrides present but not yet supported — ignored");
+                }
+                if obj.contains_key("blockOverrides") {
+                    warn!("debug_traceCall: blockOverrides present but not yet supported — ignored");
+                }
+            }
             serde_json::from_value(v.clone())?
         } else {
             TraceConfig::default()
@@ -448,6 +460,12 @@ impl RpcHandler for TraceCallRequest {
                     )
                     .await
                     .map_err(|err| RpcErr::Internal(err.to_string()))?;
+                // A single call always produces exactly one top-level frame.
+                debug_assert_eq!(
+                    call_trace.len(),
+                    1,
+                    "trace_call_calls should return exactly one frame"
+                );
                 let top_frame = call_trace
                     .into_iter()
                     .next()
