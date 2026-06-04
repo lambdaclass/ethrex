@@ -2722,7 +2722,9 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        if config.is_osaka_activated(header.timestamp)
+            && !config.is_amsterdam_activated(header.timestamp)
+            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
