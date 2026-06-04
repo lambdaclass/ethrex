@@ -84,11 +84,11 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        // Ticker/histogram statistics dumped to the LOG every 10 minutes so the
-        // block-cache filter/index/data hit rates (which govern the cache-size
-        // tradeoff this change introduces) can be measured on a live node.
-        opts.enable_statistics();
-        opts.set_stats_dump_period_sec(600);
+        // RocksDB statistics add per-operation overhead on the hot read path, so they
+        // stay off in production. Uncomment to measure block-cache filter/index/data
+        // hit rates and get latency on a live node (e.g. when tuning the cache size).
+        // opts.enable_statistics();
+        // opts.set_stats_dump_period_sec(600);
 
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
