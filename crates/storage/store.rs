@@ -72,16 +72,16 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
-/// Default size in bytes of the RocksDB shared block cache: 20 GiB.
+/// Default size in bytes of the RocksDB shared block cache: 12 GiB.
 ///
 /// This cache holds both data blocks AND the index/bloom-filter blocks for every
 /// open SST file (because we enable `cache_index_and_filter_blocks`), so its size
-/// is the effective upper bound on RocksDB's resident memory footprint. It is
-/// sized generously by default to comfortably hold the filter and index working
-/// set on a fully-synced mainnet node (~5 GiB) plus a useful amount of hot data
-/// for EVM execution — lowering it below that threshold degrades block-import
-/// throughput significantly (see `StoreConfig::rocksdb_block_cache_size`).
-pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 20 * 1024 * 1024 * 1024;
+/// is the effective upper bound on RocksDB's resident memory footprint. 12 GiB
+/// keeps the filter/index working set resident plus hot EVM state; a sweep on a
+/// synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following,
+/// with larger giving no gain (the OS page cache backstops the uncompressed state
+/// CFs) and ~8 GiB the floor where the filter set starts to thrash.
+pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
 
 /// Tunable configuration for [`Store::new_with_config`] and related constructors.
 ///

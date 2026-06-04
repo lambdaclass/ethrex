@@ -101,43 +101,20 @@ pub struct Options {
         long = "rocksdb.block-cache-size",
         value_name = "BYTES",
         default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
-        help = "RocksDB shared block cache size in bytes (default 20 GiB). \
-                Lowering this degrades block-import throughput; see --help for details.",
-        long_help = "RocksDB shared block cache size in bytes. This single bounded LRU cache \
-                     holds both data blocks AND the per-SST index and bloom-filter blocks \
-                     needed to look them up. Because ethrex enables cache_index_and_filter_blocks, \
-                     this value is the effective upper bound on RocksDB's resident memory footprint.\n\
+        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
+                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
+        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
+                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
+                     so it is the effective ceiling on RocksDB's resident memory.\n\
                      \n\
-                     Default: 21474836480 bytes (20 GiB). Sized generously on purpose, to comfortably \
-                     hold the filter and index working set on a fully-synced mainnet node (~5 GiB) \
-                     plus the EVM's hot data set during block execution. Total ethrex process \
-                     resident memory at this default is roughly 25-28 GiB on a fully-synced mainnet \
-                     node (cache + memtables + per-block working memory).\n\
+                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
+                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
+                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
+                     no gain because the OS page cache backstops the uncompressed state CFs, and \
+                     ~8 GiB is the floor where the filter set starts to thrash.\n\
                      \n\
-                     LOWERING THIS VALUE WILL DEGRADE BLOCK-IMPORT PERFORMANCE. The filter and \
-                     index working set is essentially fixed; when the cache cannot hold it plus a \
-                     useful amount of hot data, EVM state reads spill to disk on every miss and \
-                     block execution slows down sharply. Measured on a synced mainnet node:\n\
-                     - 4 GiB cache : ~76% slower than the unbounded baseline (filters monopolize \
-                     the cache, data is constantly evicted)\n\
-                     - 20 GiB cache: at parity with the unbounded baseline (filters + working \
-                     set both fit comfortably; this is the default)\n\
-                     \n\
-                     When to keep or raise the default:\n\
-                     - Production mainnet validators and any node where block-import throughput \
-                     matters should keep the default. Spare RAM is otherwise unused; the cache \
-                     fills lazily up to this ceiling.\n\
-                     - Future-proofing for databases beyond ~1 TB: raising this above 20 GiB \
-                     leaves headroom as the on-disk state grows.\n\
-                     \n\
-                     When to lower it:\n\
-                     - Resource-constrained hosts (testnet nodes, dev VMs, small validators) where \
-                     the lower memory ceiling is worth the throughput cost. The lower bound for \
-                     keeping up with mainnet under head-following load is workload-dependent and \
-                     not currently characterized below 4 GiB.\n\
-                     \n\
-                     Value is in bytes. Example: 21474836480 = 20 * 1024^3 = 20 GiB. The \
-                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE environment variable has the same effect.",
+                     Lower only on memory-constrained hosts, accepting reduced throughput. \
+                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
         help_heading = "Storage options",
         env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
     )]
