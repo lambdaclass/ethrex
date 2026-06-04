@@ -1044,8 +1044,16 @@ impl<'a> VM<'a> {
                 match execute_default_code(self, frame, target) {
                     Ok((success, gas_used, logs)) => {
                         if success {
+                            // Capture this frame's substate logs (incl. the
+                            // EIP-7708 transfer log added by
+                            // do_frame_value_transfer!) BEFORE commit_backup
+                            // merges them into the parent — mirrors the
+                            // CallFrame branch. execute_default_code returns its
+                            // own logs separately, so include both.
+                            let mut this_frame_logs = self.substate.current_logs();
+                            this_frame_logs.extend(logs);
                             self.substate.commit_backup();
-                            (true, gas_used, logs)
+                            (true, gas_used, this_frame_logs)
                         } else {
                             self.substate.revert_backup();
                             self.restore_cache_state()?;

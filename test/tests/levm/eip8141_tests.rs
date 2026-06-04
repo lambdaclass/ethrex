@@ -732,6 +732,56 @@ fn sender_frame_transfers_value_to_eoa() {
     assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
 }
 
+#[test]
+fn sender_frame_to_eoa_emits_transfer_log() {
+    // EIP-7708 (active at Amsterdam, and Hegota >= Amsterdam): an ETH transfer
+    // to an EOA via a SENDER frame must emit the Transfer log in the frame
+    // receipt. The default-code branch must capture the substate log rather than
+    // drop it — otherwise frame_receipts[i].logs (which is committed to the
+    // receipts-trie root) omits a log a spec-compliant client includes, forking
+    // the chain on the most basic frame-tx operation.
+    use ethrex_common::constants::SYSTEM_ADDRESS;
+    use ethrex_levm::constants::TRANSFER_EVENT_TOPIC;
+
+    let eoa = Address::from_low_u64_be(0xE0B); // code-less recipient
+    let value = U256::from(7_000_000u64);
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER), // APPROVE(3): payer=sender, sender_approved
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(eoa),
+            gas_limit: 50_000,
+            value,
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("EOA transfer must be a valid, successful tx");
+    let is_transfer_log = |l: &ethrex_common::types::Log| {
+        l.address == SYSTEM_ADDRESS && l.topics.first() == Some(&TRANSFER_EVENT_TOPIC)
+    };
+    // The EIP-7708 Transfer log must be in the SENDER frame's per-frame receipt
+    // (frame index 1) — that's what the consensus receipts-root commits to.
+    let frame_results = report.frame_results.as_ref().expect("frame results present");
+    assert!(
+        frame_results[1].2.iter().any(is_transfer_log),
+        "EIP-7708 transfer log missing from frame_receipts[1].logs: {:?}",
+        frame_results[1].2
+    );
+    // ...and in the aggregated report logs (eth_getLogs / RPC).
+    assert!(
+        report.logs.iter().any(is_transfer_log),
+        "EIP-7708 transfer log missing from report.logs"
+    );
+}
+
 // ==================== Happy-path E2E: SSTORE + LOG0 ====================
 
 /// Bytecode: PUSH1 0x2a, PUSH1 0x00, SSTORE, PUSH1 0x00 (size), PUSH1 0x00 (offset), LOG0, STOP.
