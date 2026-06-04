@@ -526,3 +526,40 @@ fn frameparam_reads_frame_index_from_stack_top() {
         "FRAMEPARAM read the wrong operand order (stored {stored:#x}, expected 77_777)"
     );
 }
+
+// ==================== B7: APPROVE scope-0 bypass ====================
+
+#[test]
+fn approve_halts_when_frame_scope_is_none() {
+    // flags=0 (APPROVE_SCOPE_NONE). The frame targets the sender and runs
+    // APPROVE(scope=3). Pre-fix the scope-0 bypass lets it succeed (payer=sender,
+    // tx valid); post-fix allowed_scope==0 must halt -> no payer -> invalid tx.
+    //
+    // Bytecode: PUSH1 3; PUSH1 0; PUSH1 0; APPROVE (0xAA)
+    const APPROVE_BOTH_CODE: &[u8] = &[0x60, 0x03, 0x60, 0x00, 0x60, 0x00, 0xAA];
+    let tx = frame_tx_with_frames(vec![Frame {
+        mode: u8::from(FrameMode::Default),
+        flags: 0x00,
+        target: Some(FUNDED_SENDER),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }]);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    assert!(
+        matches!(
+            result,
+            Err(VMError::TxValidation(
+                ethrex_levm::errors::TxValidationError::InvalidFrameTransaction
+            ))
+        ),
+        "APPROVE with allowed_scope==0 must halt, leaving the tx invalid; got {result:?}"
+    );
+    assert_db_cache_unchanged(&db, &accounts);
+}

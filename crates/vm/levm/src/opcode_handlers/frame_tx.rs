@@ -178,13 +178,15 @@ impl OpcodeHandler for OpApproveHandler {
             return Err(VMError::RevertOpcode);
         }
 
-        // Enforce scope restriction from flags bits 0-1
+        // Enforce scope restriction from flags bits 0-1.
+        // allowed_scope == 0 is APPROVE_SCOPE_NONE: no approval may be granted
+        // in this frame at all (consistent with execute_default_verify).
         let allowed_scope = current_frame.scope_restriction();
         let scope_val = scope.as_u64();
-        // scope must be a non-zero subset of allowed_scope
+        // requested scope must be a non-zero subset of a (necessarily non-zero) allowed_scope
         if scope_val == 0
             || scope_val > 3
-            || (allowed_scope != 0 && (scope_val & u64::from(allowed_scope)) != scope_val)
+            || (scope_val & u64::from(allowed_scope)) != scope_val
         {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
