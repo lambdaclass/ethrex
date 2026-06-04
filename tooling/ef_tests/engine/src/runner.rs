@@ -237,15 +237,19 @@ pub async fn run_fixture(
 
     // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
     for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
+        // `engine_call()` resolves the version and params, appending the
+        // FOCIL inclusion list (and remapping to V6) when present.
+        let (np_version, np_params) = payload.engine_call();
         // zkevm fixtures carry an expected witness per payload: route those
         // through `engine_newPayloadWithWitnessV5` (same params, same status
         // semantics) so the engine-side witness generation is exercised and
-        // its output verified against the fixture.
-        let with_witness = payload.new_payload_version == 5 && payload.execution_witness.is_some();
+        // its output verified against the fixture. FOCIL fixtures (np_version
+        // == 6) never carry a witness, so the two paths don't overlap.
+        let with_witness = np_version == 5 && payload.execution_witness.is_some();
         let resp = if with_witness {
-            Box::pin(harness.new_payload_with_witness(&payload.params)).await
+            Box::pin(harness.new_payload_with_witness(&np_params)).await
         } else {
-            Box::pin(harness.new_payload(payload.new_payload_version, &payload.params)).await
+            Box::pin(harness.new_payload(np_version, &np_params)).await
         }
         .map_err(|e| FixtureFailure::PayloadRpc {
             index: i,
@@ -457,7 +461,9 @@ fn check_payload_response(
         })?
         .to_string();
 
-    let expected = if payload.valid() { "VALID" } else { "INVALID" };
+    // Expected status: VALID / INVALID, or a FOCIL `INCLUSION_LIST_UNSATISFIED`
+    // when the fixture sets an explicit `status`.
+    let expected = payload.expected_status();
     if status != expected {
         let validation_error = result
             .get("validationError")
