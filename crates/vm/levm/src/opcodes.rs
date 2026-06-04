@@ -662,6 +662,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::indexing_slicing, reason = "fixed 256-entry table indexed by u8")]
     fn frame_opcodes_not_installed_before_hegota() {
         fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
             // Compare handler identity by fn-pointer address without an `as`

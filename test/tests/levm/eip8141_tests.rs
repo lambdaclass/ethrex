@@ -13,13 +13,13 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, Fork, Frame, FrameMode, FrameTransaction,
-    FRAME_RECEIPT_STATUS_SUCCESS, Transaction,
+    Account, BlockHeader, Code, FRAME_RECEIPT_STATUS_SUCCESS, Fork, Frame, FrameMode,
+    FrameTransaction, Transaction,
 };
-use ethrex_levm::errors::TxResult;
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
+use ethrex_levm::errors::TxResult;
 use ethrex_levm::errors::{ExecutionReport, VMError};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::vm::{VM, VMType};
@@ -810,8 +810,7 @@ fn frame_tx_happy_path_sstore_and_log() {
         .expect("frame tx report must carry per-frame results");
 
     assert_eq!(
-        frame_results[1].0,
-        FRAME_RECEIPT_STATUS_SUCCESS,
+        frame_results[1].0, FRAME_RECEIPT_STATUS_SUCCESS,
         "SENDER frame (index 1) must be reported as success"
     );
     assert!(

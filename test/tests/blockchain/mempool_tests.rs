@@ -12,8 +12,7 @@ use std::collections::HashMap;
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
     FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH, Frame, FrameMode, FrameSignature,
-    FrameTransaction, Genesis, MempoolTransaction, Transaction, TxKind,
-    frame_tx_expiry_verifier,
+    FrameTransaction, Genesis, MempoolTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
 };
 use ethrex_common::{Address, Bytes, H256, U256};
 use ethrex_storage::error::StoreError;
