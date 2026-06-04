@@ -217,13 +217,17 @@ fn balance_of(db: &GeneralizedDatabase, addr: Address) -> U256 {
         .unwrap_or_default()
 }
 
-/// A VERIFY frame targeting `target` (gas_limit 100_000, no value, no data,
-/// no scope restriction). The target's code runs and may call APPROVE.
+/// A VERIFY frame targeting `target` (gas_limit 100_000, no value, no data).
+/// The target's code runs and may call APPROVE.
+///
+/// flags 0x03 permits scopes 1/2/3 so the frame's APPROVE code can grant
+/// execution and/or payment; flags 0 (APPROVE_SCOPE_NONE) would correctly halt
+/// every APPROVE (see `approve_halts_when_frame_scope_is_none`).
 #[allow(dead_code)]
 fn verify_frame(target: Address) -> Frame {
     Frame {
         mode: u8::from(FrameMode::Verify),
-        flags: 0,
+        flags: 0x03,
         target: Some(target),
         gas_limit: 100_000,
         value: U256::zero(),
