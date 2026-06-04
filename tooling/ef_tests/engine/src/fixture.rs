@@ -178,10 +178,31 @@ impl EngineFixture {
     ///
     /// Mirrors what `hive/clients/ethrex/mapper.jq` does: assembles a Geth-style genesis
     /// JSON (alloc, config with fork activations, header fields) and deserializes it.
+    /// Whether this is an EIP-7805 (FOCIL) fixture, i.e. any payload carries an
+    /// inclusion list. ethrex gates FOCIL behind its Hegotá fork while EEST
+    /// folds it into Amsterdam, so FOCIL fixtures need Hegotá activated too.
+    pub fn is_focil(&self) -> bool {
+        self.engine_new_payloads
+            .iter()
+            .any(|p| p.inclusion_list_transactions.is_some())
+    }
+
     pub fn build_genesis(&self) -> anyhow::Result<Genesis> {
         let chain_id = parse_chain_id(&self.config)?;
         let (genesis_fork, transition) = self.schedule()?;
         let mut config_json = build_chain_config_json(genesis_fork, transition, chain_id);
+        // FOCIL bridge: EEST activates FOCIL under Amsterdam, but ethrex gates
+        // it behind Hegotá. Activate Hegotá at the same time as Amsterdam so
+        // engine_newPayloadV6's IL satisfaction check runs. Hegotá adds no
+        // genesis-header fields, so this does not change the genesis hash.
+        if self.is_focil()
+            && let Some(amsterdam_time) = config_json.get("amsterdamTime").cloned()
+        {
+            config_json
+                .as_object_mut()
+                .expect("config_json is an object")
+                .insert("hegotaTime".into(), amsterdam_time);
+        }
         // EEST fixtures carry their own per-fork blobSchedule (Cancun/Prague/Osaka/BPO*/Amsterdam)
         // with fork-name keys and hex-string values. Convert and inject; otherwise post-Cancun
         // payloads that rely on non-default blob params get rejected.
