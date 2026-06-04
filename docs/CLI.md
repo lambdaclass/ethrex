@@ -75,6 +75,11 @@ Node options:
 
           [env: ETHREX_NO_MIGRATE=]
 
+      --skip-genesis-validation
+          Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.
+
+          [env: ETHREX_SKIP_GENESIS_VALIDATION=]
+
       --no-precompile-cache
           Disable the per-block precompile result cache (benchmarking only).
           
