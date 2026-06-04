@@ -392,13 +392,19 @@ mod tests {
         }
 
         let reconstructed = cells_to_blob(&all_cells);
-        assert_eq!(reconstructed, blob, "cells_to_blob must reproduce the original blob");
+        assert_eq!(
+            reconstructed, blob,
+            "cells_to_blob must reproduce the original blob"
+        );
 
         let (orig_commit, _) = blob_to_kzg_commitment_and_proof(&blob)
             .expect("blob_to_kzg_commitment_and_proof failed");
         let (recon_commit, _) = blob_to_kzg_commitment_and_proof(&reconstructed)
             .expect("blob_to_kzg_commitment_and_proof on reconstructed failed");
-        assert_eq!(orig_commit, recon_commit, "commitment must match after reconstruction");
+        assert_eq!(
+            orig_commit, recon_commit,
+            "commitment must match after reconstruction"
+        );
     }
 
     /// T2: recovering from exactly 64 non-contiguous columns (even indices) and
@@ -416,12 +422,13 @@ mod tests {
         let even_indices: Vec<u64> = (0..CELLS_PER_EXT_BLOB as u64).step_by(2).collect();
         assert_eq!(even_indices.len(), 64);
 
-        let partial_cells: Vec<[u8; BYTES_PER_CELL]> =
-            even_indices.iter().map(|&i| all_cells[i as usize]).collect();
+        let partial_cells: Vec<[u8; BYTES_PER_CELL]> = even_indices
+            .iter()
+            .map(|&i| all_cells[i as usize])
+            .collect();
 
-        let (recovered, _proofs) =
-            recover_cells_and_kzg_proofs(&even_indices, &partial_cells)
-                .expect("recover_cells_and_kzg_proofs failed with 64 columns");
+        let (recovered, _proofs) = recover_cells_and_kzg_proofs(&even_indices, &partial_cells)
+            .expect("recover_cells_and_kzg_proofs failed with 64 columns");
         assert_eq!(recovered.len(), CELLS_PER_EXT_BLOB);
 
         let mut all_cell_arr = [[0u8; BYTES_PER_CELL]; CELLS_PER_EXT_BLOB];
@@ -430,12 +437,17 @@ mod tests {
         }
 
         let reconstructed = cells_to_blob(&all_cell_arr);
-        assert_eq!(reconstructed, blob, "recovered blob must match the original");
+        assert_eq!(
+            reconstructed, blob,
+            "recovered blob must match the original"
+        );
 
         // 63 columns must fail.
         let short_indices: Vec<u64> = even_indices[..63].to_vec();
-        let short_cells: Vec<[u8; BYTES_PER_CELL]> =
-            short_indices.iter().map(|&i| all_cells[i as usize]).collect();
+        let short_cells: Vec<[u8; BYTES_PER_CELL]> = short_indices
+            .iter()
+            .map(|&i| all_cells[i as usize])
+            .collect();
         let result = recover_cells_and_kzg_proofs(&short_indices, &short_cells);
         assert!(result.is_err(), "recovery from 63 columns must return Err");
     }
