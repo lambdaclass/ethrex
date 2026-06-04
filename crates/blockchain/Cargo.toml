@@ -29,6 +29,7 @@ tokio-util.workspace = true
 serde_json.workspace = true
 hex = "0.4.3"
 tokio = { workspace = true, features = ["full"] }
+ethrex-levm.workspace = true
 
 [lib]
 path = "./blockchain.rs"

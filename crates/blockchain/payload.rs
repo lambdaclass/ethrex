@@ -951,21 +951,31 @@ mod tests {
 
     #[test]
     fn nonce_mismatch_detected_from_chain_error() {
-        // Build the ChainError exactly as the VM path produces it and verify
-        // is_nonce_mismatch matches it but not an unrelated error. This proves
-        // the "Nonce mismatch" substring survives the
-        // EvmError::Transaction -> ChainError::InvalidBlock Display nesting.
+        // Build the ChainError through the REAL production conversion path so a
+        // change to the TxValidationError/VMError Display strings breaks this
+        // test instead of silently breaking `is_nonce_mismatch` (which keys off
+        // the "Nonce mismatch" substring). Path:
+        // TxValidationError::NonceMismatch -> VMError -> EvmError::Transaction
+        // (via From, which stringifies) -> ChainError::InvalidBlock.
+        use ethrex_levm::errors::{TxValidationError, VMError};
         let nonce_err: ChainError =
-            EvmError::Transaction("Nonce mismatch: expected 5, got 7".to_string()).into();
+            EvmError::from(VMError::TxValidation(TxValidationError::NonceMismatch {
+                expected: 5,
+                actual: 7,
+            }))
+            .into();
         assert!(
             is_nonce_mismatch(&nonce_err),
-            "expected is_nonce_mismatch=true, got false; error string: {nonce_err}"
+            "is_nonce_mismatch must match the real NonceMismatch Display; got: {nonce_err}"
         );
-        let other: ChainError =
-            EvmError::Transaction("Insufficient account funds".to_string()).into();
+        // A different validation error must NOT match, also via the real path.
+        let other: ChainError = EvmError::from(VMError::TxValidation(
+            TxValidationError::InsufficientAccountFunds,
+        ))
+        .into();
         assert!(
             !is_nonce_mismatch(&other),
-            "expected is_nonce_mismatch=false, got true; error string: {other}"
+            "is_nonce_mismatch must not match unrelated errors; got: {other}"
         );
     }
 }

@@ -3898,6 +3898,7 @@ dependencies = [
  "bytes",
  "ethrex-common",
  "ethrex-crypto",
+ "ethrex-levm",
  "ethrex-metrics",
  "ethrex-rlp",
  "ethrex-storage",
