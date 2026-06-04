@@ -50,7 +50,7 @@ fn compute_tx_cost(
     blob_gas_cost: U256,
 ) -> Result<U256, VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-    let gas_limit = U256::from(ctx.tx.total_gas_limit());
+    let gas_limit = U256::from(ctx.total_gas_limit);
     let tx_cost = effective_gas_price.checked_mul(gas_limit).ok_or(halt_err)?;
     tx_cost
         .checked_add(blob_gas_cost)
@@ -487,7 +487,7 @@ fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256,
         0x06 => {
             // max_cost = max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas
             let gas_cost = U256::from(ctx.tx.max_fee_per_gas)
-                .checked_mul(U256::from(ctx.tx.total_gas_limit()))
+                .checked_mul(U256::from(ctx.total_gas_limit))
                 .ok_or(ExceptionalHalt::InvalidOpcode)?;
             let blob_cost = U256::from(ctx.tx.blob_versioned_hashes.len())
                 .checked_mul(U256::from(131072u64))
@@ -698,6 +698,7 @@ mod tests {
             sig_hash: ethrex_common::H256::zero(),
             tx,
             approve_called_in_current_frame: false,
+            total_gas_limit: 0,
         }
     }
 
@@ -783,6 +784,7 @@ mod tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: FrameTransaction::default(),
             approve_called_in_current_frame: false,
+            total_gas_limit: 0,
         };
         let result = load_tx_param(&ctx, 0x0B).unwrap();
         assert_eq!(result, U256::zero());

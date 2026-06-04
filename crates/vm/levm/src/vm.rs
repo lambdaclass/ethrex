@@ -462,6 +462,10 @@ pub struct FrameTxContext {
     pub tx: ethrex_common::types::FrameTransaction,
     /// Whether APPROVE was called in the current frame
     pub approve_called_in_current_frame: bool,
+    /// Cached `FrameTransaction::total_gas_limit()`. Computing it re-encodes
+    /// every frame and signature, so it must not run per-opcode (TXPARAM 0x06,
+    /// compute_tx_cost). Computed once at tx entry.
+    pub total_gas_limit: u64,
 }
 
 impl FrameTxContext {
@@ -803,6 +807,7 @@ impl<'a> VM<'a> {
 
         // Initialize FrameTxContext
         let sig_hash = frame_tx.compute_sig_hash();
+        let total_gas_limit = frame_tx.total_gas_limit();
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
@@ -812,6 +817,7 @@ impl<'a> VM<'a> {
             sig_hash,
             tx: frame_tx.clone(),
             approve_called_in_current_frame: false,
+            total_gas_limit,
         });
 
         // EIP-8141 (spec commit fe0940cae2): every outer signature must validate
@@ -840,9 +846,7 @@ impl<'a> VM<'a> {
 
         let mut all_logs: Vec<Log> = Vec::new();
         let sum_frame_gas_limits: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
-        let intrinsic_gas = frame_tx
-            .total_gas_limit()
-            .saturating_sub(sum_frame_gas_limits);
+        let intrinsic_gas = total_gas_limit.saturating_sub(sum_frame_gas_limits);
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
@@ -2014,6 +2018,7 @@ mod atomic_batch_approval_rollback_tests {
             sig_hash: ethrex_common::H256::zero(),
             tx: ethrex_common::types::FrameTransaction::default(),
             approve_called_in_current_frame: false,
+            total_gas_limit: 0,
         }
     }
 
