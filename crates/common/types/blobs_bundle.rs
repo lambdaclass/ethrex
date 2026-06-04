@@ -191,11 +191,20 @@ impl BlobsBundle {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
+        // EIP-7594: a single transaction may carry at most MAX_BLOB_COUNT (6) blobs,
+        // independent of the higher per-block limit.
+        if fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT {
+            return Err(BlobsBundleError::MaxBlobsExceeded);
+        }
+
         if blob_count == 0 {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        if (self.version == 0 && fork >= Fork::Osaka) || (self.version != 0 && fork < Fork::Osaka) {
+        // The wrapper version is fork-specific: 0 (blob proofs) before Osaka, 1 (cell
+        // proofs, EIP-7594) on Osaka+. Any other value is invalid.
+        let expected_version = if fork >= Fork::Osaka { 1 } else { 0 };
+        if self.version != expected_version {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
 

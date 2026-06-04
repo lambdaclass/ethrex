@@ -403,6 +403,26 @@ impl Blockchain {
         }
     }
 
+    /// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
+    /// `Privileged` 0x7e). Both are L2-only types unknown to other L1 clients, so
+    /// accepting one on L1 diverges consensus. `Privileged` additionally takes its
+    /// sender from an unsigned, caller-chosen `from` (no signature recovery), so it
+    /// would also let a block forge a sender. On L2 these types are valid, so this
+    /// check only applies to L1.
+    fn validate_l1_transaction_types(&self, block: &Block) -> Result<(), ChainError> {
+        if !matches!(self.options.r#type, BlockchainType::L1) {
+            return Ok(());
+        }
+        for tx in &block.body.transactions {
+            if tx.tx_type().is_l2_only() {
+                return Err(ChainError::InvalidBlock(
+                    InvalidBlockError::UnsupportedTransactionType(tx.tx_type() as u8),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Executes a block withing a new vm instance and state
     fn execute_block(
         &self,
@@ -419,6 +439,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
@@ -500,6 +521,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
         validate_block_body(&block.header, &block.body, &NativeCrypto)
             .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
@@ -1316,6 +1338,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
