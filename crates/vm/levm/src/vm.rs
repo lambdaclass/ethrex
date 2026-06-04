@@ -822,6 +822,19 @@ impl<'a> VM<'a> {
             ));
         }
 
+        // Tx-level rollback accumulator: if the tx is later declared invalid
+        // after frames committed, restore `db.current_accounts_state` so the
+        // payload builder (which reuses the shared db across txs) sees no
+        // residue — same Err contract as non-frame `execute()`. The per-frame
+        // backup is cleared between independent frames (and at batch entry), so
+        // each frame's original values are absorbed here (first-seen-wins)
+        // before that clear destroys them. Substate is per-VM and discarded on
+        // Err, so it needs no snapshot.
+        let mut tx_level_backup = crate::call_frame::CallFrameBackup {
+            bal_checkpoint: self.db.bal_recorder.as_ref().map(|r| r.checkpoint()),
+            ..Default::default()
+        };
+
         // ENTRY_POINT address used as caller for DEFAULT/VERIFY frames
         let entry_point = ethrex_common::types::frame_tx_entry_point();
 
@@ -888,6 +901,10 @@ impl<'a> VM<'a> {
             // atomic batch we keep accumulating, since a batch revert needs to
             // undo every in-batch frame's effects together.
             if !in_atomic_batch {
+                // Absorb this frame's originals into the tx-level accumulator
+                // before clearing, so an invalid-tx exit can still roll back
+                // every committed frame's state (see `tx_level_backup`).
+                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
                 self.current_call_frame.call_frame_backup.clear();
             }
 
@@ -897,7 +914,10 @@ impl<'a> VM<'a> {
                 self.substate.push_backup(); // batch-level snapshot
                 // Clear the outer backup at batch entry so the batch accumulates
                 // a clean, self-contained set of state changes that batch-revert
-                // can undo wholesale.
+                // can undo wholesale. Absorb into the tx-level accumulator first
+                // so an invalid-tx exit can still roll back any pre-batch frame
+                // effects captured here (see `tx_level_backup`).
+                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
                 self.current_call_frame.call_frame_backup.clear();
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
@@ -1089,10 +1109,19 @@ impl<'a> VM<'a> {
                 // changes must remain revertable at batch-revert time. Merge
                 // the finished frame's backup into the outer call-frame backup
                 // so that `restore_cache_state()` invoked by batch-revert can
-                // undo them. Outside a batch, a successful frame's changes are
-                // final at the tx level, so no merge is needed.
-                if result.0 && in_atomic_batch {
-                    self.merge_call_frame_backup_with_parent(&finished_frame.call_frame_backup)?;
+                // undo them — and so the next clear-and-absorb folds them into
+                // `tx_level_backup` too. Outside a batch, the finished frame's
+                // backup never reaches the outer call frame, so absorb it
+                // directly into `tx_level_backup` here; otherwise an invalid-tx
+                // exit could not roll back this committed frame's state (B3).
+                if result.0 {
+                    if in_atomic_batch {
+                        self.merge_call_frame_backup_with_parent(
+                            &finished_frame.call_frame_backup,
+                        )?;
+                    } else {
+                        tx_level_backup.absorb(&finished_frame.call_frame_backup);
+                    }
                 }
 
                 self.stack_pool.push(finished_frame.stack);
@@ -1196,7 +1225,14 @@ impl<'a> VM<'a> {
         }
 
         if tx_invalid {
-            // TX is invalid — revert everything, return error
+            // TX is invalid — Err must leave `db.current_accounts_state`
+            // unchanged from before the tx (same contract as non-frame
+            // `execute()`). Absorb the last live frame's backup (it has not
+            // been cleared yet), then restore every absorbed frame's effects.
+            // Substate is per-VM and discarded when this VM drops, so no
+            // substate revert is needed.
+            tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
+            crate::utils::restore_cache_state(self.db, tx_level_backup)?;
             return Err(VMError::TxValidation(
                 crate::errors::TxValidationError::InvalidFrameTransaction,
             ));
@@ -1463,10 +1499,9 @@ mod frame_tx_security_tests {
     //!   (3) Atomic-batch atomicity bypass: successful in-batch frame state
     //!       persisted across a batch revert.
     //!
-    //! Tests 2 and 3 depend on full VM execution of signed FrameTransactions
-    //! and are exercised end-to-end by `demos/eip8141/backend/test-findings.mjs`
-    //! against a dev node — see the PR that introduced this module. The unit
-    //! tests below cover the Substate API invariant that underpins Fix 1.
+    //! Tests 2 and 3 depend on full VM execution of FrameTransactions and are
+    //! exercised end-to-end by the harness in `test/tests/levm/eip8141_tests.rs`.
+    //! The unit tests below cover the Substate API invariant that underpins Fix 1.
     use super::*;
     use bytes::Bytes;
     use ethrex_common::{Address, H256};
