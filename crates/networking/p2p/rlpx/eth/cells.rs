@@ -26,11 +26,12 @@ pub const MAX_CELLS_PER_TX: usize = 6 * 128;
 
 // https://eips.ethereum.org/EIPS/eip-8070#getcells-0x14
 //
-// Note: the EIP schema text shows `[[hashes], cell_mask]` without a request id,
-// but eth/66+ wraps every request/response pair with a request id, and the
-// EIP-8070 rationale explicitly relies on "request_id correlation" for
-// concurrent/unordered responses. The leading `id` field is therefore correct;
-// confirm the exact framing against geth/reth before cross-client devnet.
+// Note: the EIP schema lines show `[[hashes], cell_mask]` without a request id,
+// but that is the usual eth/66+ shorthand (the schemas omit the request_id
+// wrapper). EIP-8070's rationale confirms the wrapper is intended: the
+// "devp2p message schema choices" section accounts for "one uint64 request_id
+// and one uint8 message_type" of per-message overhead. The leading `id` field
+// is therefore correct and matches the eth/66+ request/response framing.
 #[derive(Debug, Clone)]
 pub struct GetCells {
     pub id: u64,

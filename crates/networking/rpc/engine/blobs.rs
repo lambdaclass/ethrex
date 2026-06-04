@@ -207,24 +207,28 @@ async fn get_blobs_and_proof(
 
 /// Per-blob response for `engine_getBlobsV4`.
 ///
-/// `blob_cells`: one entry per requested column (matching the bit-order of
-/// `indices_bitarray`); each entry is the 2048-byte cell as a 0x-prefixed hex
-/// string, or `null` when the cell is not available locally.
+/// Both `blob_cells` and `proofs` are **sparse, fixed-length** matrices of
+/// length `CELLS_PER_EXT_BLOB` (128), indexed by absolute column index. The
+/// entry at index `i` is non-null only when bit `i` of `indices_bitarray` is
+/// set **and** the cell is available locally; every other index is `null`.
+/// Cell and proof are always both-null or both-present at a given index, so a
+/// caller can verify each cell against its positionally-aligned proof.
 ///
-/// `proofs`: per-cell KZG proof taken from the sidecar bundle at position
-/// `blob_idx * CELLS_PER_EXT_BLOB + column`.
+/// This matches the EIP-8070 "partial matrix ... with nil entries for missing
+/// cells" wording and the execution-spec-tests `getBlobsV4` validator
+/// (execution-specs PR #2948), which requires length-128 matrices with `null`
+/// at every non-requested index.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlobCellsAndProofsV1 {
-    /// One hex-encoded cell (2048 bytes) or `null` per requested column.
+    /// Sparse length-128 column matrix: hex-encoded cell (2048 bytes) at
+    /// requested+held indices, `null` everywhere else.
     #[serde(with = "opt_bytes_vec")]
     pub blob_cells: Vec<Option<Bytes>>,
-    /// KZG cell proofs (48 bytes each), positionally aligned with `blob_cells`.
-    /// A proof is the valid sidecar proof for that column; the proof entry for a
-    /// `null` cell (one we don't hold) is present but should be ignored by the
-    /// caller, since there is no cell to verify against it.
-    #[serde(with = "serde_utils::bytes48::vec")]
-    pub proofs: Vec<Proof>,
+    /// Sparse length-128 KZG cell proofs (48 bytes each), positionally aligned
+    /// with `blob_cells`: `null` at every index where `blob_cells` is `null`.
+    #[serde(with = "opt_proofs_vec")]
+    pub proofs: Vec<Option<Proof>>,
 }
 
 /// Serde helper: serialize `Vec<Option<Bytes>>` as an array of hex strings or null.
@@ -241,6 +245,27 @@ mod opt_bytes_vec {
         for item in value {
             match item {
                 Some(b) => seq.serialize_element(&format!("0x{b:x}"))?,
+                None => seq.serialize_element(&serde_json::Value::Null)?,
+            }
+        }
+        seq.end()
+    }
+}
+
+/// Serde helper: serialize `Vec<Option<Proof>>` as an array of hex strings or null.
+mod opt_proofs_vec {
+    use ethrex_common::types::Proof;
+    use serde::Serializer;
+
+    pub fn serialize<S>(value: &Vec<Option<Proof>>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(value.len()))?;
+        for item in value {
+            match item {
+                Some(p) => seq.serialize_element(&format!("0x{}", hex::encode(p)))?,
                 None => seq.serialize_element(&serde_json::Value::Null)?,
             }
         }
@@ -335,9 +360,12 @@ impl RpcHandler for BlobsV4Request {
                     continue;
                 }
 
-                // Columns requested for this blob.
-                let mut cells: Vec<Option<Bytes>> = Vec::new();
-                let mut proofs: Vec<Proof> = Vec::new();
+                // Sparse length-128 matrices indexed by absolute column index:
+                // null at every non-requested or unheld column. Cell and proof
+                // are kept in lock-step (both Some or both None) so the caller can
+                // verify each cell against its positionally-aligned proof.
+                let mut cells: Vec<Option<Bytes>> = Vec::with_capacity(CELLS_PER_EXT_BLOB);
+                let mut proofs: Vec<Option<Proof>> = Vec::with_capacity(CELLS_PER_EXT_BLOB);
 
                 // Optionally compute all cells from the bundle blob (when the blob is present).
                 #[cfg(feature = "c-kzg")]
@@ -349,20 +377,12 @@ impl RpcHandler for BlobsV4Request {
                 let computed_cells: Option<Vec<[u8; BYTES_PER_CELL]>> = None;
 
                 for col in 0..CELLS_PER_EXT_BLOB {
+                    // Non-requested column: null cell + null proof.
                     if (mask >> col) & 1 == 0 {
+                        cells.push(None);
+                        proofs.push(None);
                         continue;
                     }
-                    // Proof for this column from the sidecar. If it's missing
-                    // (malformed bundle: fewer proofs than blob_count*128), we
-                    // cannot serve a trustworthy cell — emit a null cell rather
-                    // than pairing a real cell with a fabricated zero proof.
-                    let proof_idx = blob_idx * CELLS_PER_EXT_BLOB + col;
-                    let Some(&proof) = bundle.proofs.get(proof_idx) else {
-                        cells.push(None);
-                        proofs.push([0u8; 48]); // positional placeholder for the null cell
-                        continue;
-                    };
-
                     // Cell: prefer stored (verified), then computed from full blob, else null.
                     let cell_opt = if let Some(cell) = mempool.get_cell(tx_hash, blob_idx, col) {
                         Some(Bytes::copy_from_slice(cell.as_ref()))
@@ -371,8 +391,21 @@ impl RpcHandler for BlobsV4Request {
                     } else {
                         None
                     };
-                    cells.push(cell_opt);
-                    proofs.push(proof);
+                    // Only emit a cell when we also have its sidecar proof; a cell
+                    // without a verifiable proof is useless to the caller, so emit
+                    // null for both rather than pairing a cell with no proof (or a
+                    // proof with no cell).
+                    let proof_idx = blob_idx * CELLS_PER_EXT_BLOB + col;
+                    match (cell_opt, bundle.proofs.get(proof_idx)) {
+                        (Some(cell), Some(&proof)) => {
+                            cells.push(Some(cell));
+                            proofs.push(Some(proof));
+                        }
+                        _ => {
+                            cells.push(None);
+                            proofs.push(None);
+                        }
+                    }
                 }
 
                 responses.push(Some(BlobCellsAndProofsV1 {
@@ -699,16 +732,65 @@ mod tests {
         assert_eq!(arr.len(), 1);
         let entry = &arr[0];
         assert!(!entry.is_null());
-        // blob_cells[0] should be the stored 0xAB... cell.
+        // Sparse length-128 matrix: column 0 holds the stored 0xAB... cell, the
+        // rest are null. Proofs are aligned: Some at column 0, null elsewhere.
         let blob_cells = entry["blobCells"].as_array().unwrap();
-        assert_eq!(blob_cells.len(), 1);
+        let proofs = entry["proofs"].as_array().unwrap();
+        assert_eq!(blob_cells.len(), CELLS_PER_EXT_BLOB);
+        assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
         assert!(!blob_cells[0].is_null());
+        assert!(!proofs[0].is_null());
         let hex_cell = blob_cells[0].as_str().unwrap();
         // 2048 bytes = 4096 hex chars + "0x" prefix.
         assert_eq!(hex_cell.len(), 4096 + 2);
         // All bytes should be 0xAB.
         let decoded = hex::decode(&hex_cell[2..]).unwrap();
         assert!(decoded.iter().all(|&b| b == 0xAB));
+        // Every non-requested column is null for both cell and proof.
+        for i in 1..CELLS_PER_EXT_BLOB {
+            assert!(blob_cells[i].is_null(), "cell {i} should be null");
+            assert!(proofs[i].is_null(), "proof {i} should be null");
+        }
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_response_is_sparse_length_128() {
+        // EIP-8070 / execution-specs PR #2948: getBlobsV4 returns length-128
+        // matrices with the value at requested indices and null elsewhere.
+        let context = context_with_chain_config(true).await;
+        let (bundle, hashes) = sample_bundle(1);
+        let tx_hash = H256::from_low_u64_be(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(tx_hash, bundle)
+            .unwrap();
+
+        // Request columns 0 and 5 only; store cells for both.
+        for col in [0usize, 5] {
+            let cell_bytes = Box::new([0xCDu8; BYTES_PER_CELL]);
+            context
+                .blockchain
+                .mempool
+                .store_cells(tx_hash, 1, vec![(0, col, cell_bytes)])
+                .unwrap();
+        }
+        let mask: u128 = (1 << 0) | (1 << 5);
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![hashes[0]],
+            indices_bitarray: mask,
+        };
+        let result = request.handle(context).await.unwrap();
+        let entry = &result.as_array().unwrap()[0];
+        let blob_cells = entry["blobCells"].as_array().unwrap();
+        let proofs = entry["proofs"].as_array().unwrap();
+        assert_eq!(blob_cells.len(), CELLS_PER_EXT_BLOB);
+        assert_eq!(proofs.len(), CELLS_PER_EXT_BLOB);
+        for i in 0..CELLS_PER_EXT_BLOB {
+            let requested = (mask >> i) & 1 == 1;
+            assert_eq!(!blob_cells[i].is_null(), requested, "cell {i}");
+            assert_eq!(!proofs[i].is_null(), requested, "proof {i}");
+        }
     }
 
     #[tokio::test]
