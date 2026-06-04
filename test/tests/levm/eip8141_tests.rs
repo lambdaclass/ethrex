@@ -456,3 +456,73 @@ fn payer_pays_effective_price_no_burn() {
         "value silently burned"
     );
 }
+
+// ==================== B6: FRAMEPARAM stack operand order ====================
+
+/// FRAMEPARAM(param=0x01, frameIndex=0) → gas_limit of frame[0], then SSTORE at slot 0.
+/// Bytecode: PUSH1 0x01 (param), PUSH1 0x00 (frameIndex — top), FRAMEPARAM (0xB3),
+///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
+const FRAMEPARAM_READ_FRAME0_GASLIMIT: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0xB3, 0x60, 0x00, 0x55, 0x00];
+
+/// Read storage `key` of `addr` from the post-execution cache.
+fn storage_slot(db: &GeneralizedDatabase, addr: Address, key: ethrex_common::H256) -> U256 {
+    db.current_accounts_state
+        .get(&addr)
+        .and_then(|acc| acc.storage.get(&key).copied())
+        .unwrap_or_default()
+}
+
+#[test]
+fn frameparam_reads_frame_index_from_stack_top() {
+    let wallet = Address::from_low_u64_be(0xE2);
+    let reader = Address::from_low_u64_be(0xE3);
+    let mut frames = vec![
+        verify_frame(FUNDED_SENDER), // frame[0]: VERIFY, runs APPROVE_EXECUTION_CODE
+        verify_frame(wallet),        // frame[1]: VERIFY, runs APPROVE_PAYMENT_CODE
+        Frame {
+            mode: u8::from(FrameMode::Default),
+            flags: 0,
+            target: Some(reader),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ];
+    // Set a distinctive gas_limit on frame[0] that FRAMEPARAM(param=1, frameIndex=0) must read.
+    frames[0].gas_limit = 77_777;
+    let tx = frame_tx_with_frames(frames);
+    let (result, db) = run_frame_tx(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
+            ),
+            (
+                wallet,
+                U256::from(10u64).pow(U256::from(18u64)),
+                0,
+                Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+            ),
+            (
+                reader,
+                U256::zero(),
+                0,
+                Bytes::from(FRAMEPARAM_READ_FRAME0_GASLIMIT.to_vec()),
+            ),
+        ],
+        tx,
+    );
+    result.expect("valid tx (sender approved, payer set)");
+    // After the fix: FRAMEPARAM pops frameIndex=0 (top) and param=1 (second),
+    // reads frame[0].gas_limit = 77_777, SSTOREs it at slot 0 of `reader`.
+    // With the bug: pops param=0 (top) and frameIndex=1, reads frame[1].target
+    // (the wallet address) — so the assertion below catches the swap.
+    let stored = storage_slot(&db, reader, ethrex_common::H256::zero());
+    assert_eq!(
+        stored,
+        U256::from(77_777u64),
+        "FRAMEPARAM read the wrong operand order (stored {stored:#x}, expected 77_777)"
+    );
+}

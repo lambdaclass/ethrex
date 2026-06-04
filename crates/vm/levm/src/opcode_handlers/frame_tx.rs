@@ -343,12 +343,12 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
 }
 
 /// FRAMEPARAM (0xB3) -- Load a frame parameter as a 32-byte word.
-/// Takes [param, frameIndex] from the stack. Gas cost: 2.
+/// Stack: [param, frameIndex] with frameIndex on top (matches SIGPARAM). Gas cost: 2.
 pub struct OpFrameParamHandler;
 impl OpcodeHandler for OpFrameParamHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [param_id, frame_index] = *vm.current_call_frame.stack.pop()?;
+        let [frame_index, param_id] = *vm.current_call_frame.stack.pop()?;
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::FRAMEPARAM)?;
