@@ -70,7 +70,6 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
             P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
-            P2PTransaction::FeeTokenTransaction(itx) => Ok(Transaction::FeeTokenTransaction(itx)),
             P2PTransaction::FrameTransaction(itx) => Ok(Transaction::FrameTransaction(itx)),
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
         }
