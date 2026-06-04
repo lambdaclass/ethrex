@@ -403,6 +403,26 @@ impl Blockchain {
         }
     }
 
+    /// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
+    /// `Privileged` 0x7e). Both are L2-only types unknown to other L1 clients, so
+    /// accepting one on L1 diverges consensus. `Privileged` additionally takes its
+    /// sender from an unsigned, caller-chosen `from` (no signature recovery), so it
+    /// would also let a block forge a sender. On L2 these types are valid, so this
+    /// check only applies to L1.
+    fn validate_l1_transaction_types(&self, block: &Block) -> Result<(), ChainError> {
+        if !matches!(self.options.r#type, BlockchainType::L1) {
+            return Ok(());
+        }
+        for tx in &block.body.transactions {
+            if tx.tx_type().is_l2_only() {
+                return Err(ChainError::InvalidBlock(
+                    InvalidBlockError::UnsupportedTransactionType(tx.tx_type() as u8),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Executes a block withing a new vm instance and state
     fn execute_block(
         &self,
@@ -419,6 +439,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
@@ -496,6 +517,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
         validate_block_body(&block.header, &block.body, &NativeCrypto)
             .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
@@ -1312,6 +1334,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
@@ -2064,11 +2087,11 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
+        let block_hash = block.hash();
 
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
-            let block_hash = block.hash();
             let witness = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
@@ -2083,11 +2106,10 @@ impl Blockchain {
         // On the parallel Amsterdam validation path the BAL is supplied via the header
         // and `produced_bal` is None, so fall back to the validated incoming `bal`.
         // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
-        if let Some(bal) = produced_bal.as_ref().or(bal) {
-            let block_hash = block.hash();
-            if let Err(err) = self.storage.store_block_access_list(block_hash, bal) {
-                warn!("Failed to store block access list for block {block_hash}: {err}");
-            }
+        if let Some(bal) = produced_bal.as_ref().or(bal)
+            && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
+        {
+            warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
         let result = self.store_block(block, account_updates_list, res);
@@ -2107,6 +2129,7 @@ impl Blockchain {
                 gas_used,
                 gas_limit,
                 block_number,
+                block_hash,
                 transactions_count,
                 merkle_queue_length,
                 warmer_duration,
@@ -2187,6 +2210,7 @@ impl Blockchain {
         gas_used: u64,
         gas_limit: u64,
         block_number: u64,
+        block_hash: H256,
         transactions_count: usize,
         merkle_queue_length: usize,
         warmer_duration: Duration,
@@ -2275,8 +2299,9 @@ impl Blockchain {
 
         // Format output
         let header = format!(
-            "[METRIC] BLOCK {} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%)",
+            "[METRIC] BLOCK {} {:#x} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%)",
             block_number,
+            block_hash,
             throughput,
             total_ms,
             transactions_count,
@@ -2720,7 +2745,9 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        if config.is_osaka_activated(header.timestamp)
+            && !config.is_amsterdam_activated(header.timestamp)
+            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
