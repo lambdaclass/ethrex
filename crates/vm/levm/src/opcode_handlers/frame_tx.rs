@@ -77,9 +77,8 @@ pub fn apply_approve(
             if ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
-            if !ctx.sender_approved {
-                return Err(VMError::RevertOpcode);
-            }
+            // No sender_approved precondition: the spec allows APPROVE_PAYMENT
+            // in any order relative to APPROVE_EXECUTION.
             let effective_gas_price = vm.env.gas_price;
             let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
                 &ctx.tx.blob_versioned_hashes,

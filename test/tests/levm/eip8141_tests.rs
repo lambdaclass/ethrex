@@ -632,6 +632,57 @@ fn batched_verify_revert_invalidates_tx() {
     assert_db_cache_unchanged(&db, &accounts);
 }
 
+// ==================== I10: APPROVE_PAYMENT may precede APPROVE_EXECUTION ====================
+
+#[test]
+fn payment_approval_may_precede_execution_approval() {
+    // Frame 0: a paymaster VERIFY frame that calls APPROVE(APPROVE_PAYMENT) — scope 1.
+    // This happens BEFORE the sender has called APPROVE(APPROVE_EXECUTION).
+    // Pre-fix: the sender_approved precondition causes frame 0 to revert ->
+    //          VERIFY revert -> tx invalid (Err).
+    // Post-fix: no such precondition; frame 0 sets payer=paymaster, frame 1 sets
+    //           sender_approved, tx is valid with payer=paymaster.
+    let paymaster = Address::from_low_u64_be(0x9A);
+    let stop_ct = Address::from_low_u64_be(0x9B);
+    let tx = frame_tx_with_frames(vec![
+        // frame0: paymaster approves PAYMENT first (scope 1).
+        verify_frame(paymaster),
+        // frame1: sender approves EXECUTION (scope 2).
+        verify_frame(FUNDED_SENDER),
+        // frame2: a SENDER frame that just STOPs.
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(stop_ct),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [
+        (
+            paymaster,
+            U256::from(10u64).pow(U256::from(18u64)),
+            0,
+            Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+        ),
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
+        ),
+        (stop_ct, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+    ];
+    let (result, _db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("pay-before-verify ordering must be valid");
+    assert_eq!(
+        report.payer_address,
+        Some(paymaster),
+        "paymaster should be the payer"
+    );
+}
+
 // ==================== B9: SENDER/DEFAULT default code returns success ====================
 
 #[test]
