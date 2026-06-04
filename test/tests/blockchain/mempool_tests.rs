@@ -11,8 +11,9 @@ use std::collections::HashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
-    MempoolTransaction, Transaction, TxKind,
+    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH, Frame, FrameMode, FrameSignature,
+    FrameTransaction, Genesis, MempoolTransaction, Transaction, TxKind,
+    frame_tx_expiry_verifier,
 };
 use ethrex_common::{Address, Bytes, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -540,4 +541,132 @@ async fn mempool_rejects_frame_tx_with_blobs() {
         validation.await,
         Err(MempoolError::FrameTxBlobsUnsupported)
     ));
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 fork gate and expiry gate tests
+// ---------------------------------------------------------------------------
+
+/// Store where Hegota is NOT active: hegota_time is None, so frame txs must be
+/// rejected with FrameTxPreFork regardless of their content.
+async fn setup_pre_hegota_store() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: None, // Hegota never activates
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        ..Default::default()
+    };
+    let mut store = Store::new("pre-hegota-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// Store where Hegota IS active (hegota_time == 0) and the head block has a
+/// non-zero timestamp (1000), so expiry tests can use deadlines below that.
+async fn setup_hegota_store_ts1000() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        timestamp: 1000, // head.timestamp == 1000
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-ts1000-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// Build a minimal frame tx carrying a single expiry verifier frame with the
+/// given `deadline`. The frame is a VERIFY frame targeting the expiry verifier
+/// address with exactly 8 bytes of big-endian deadline data and flags == 0.
+fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
+    let mut data = [0u8; FRAME_TX_EXPIRY_DATA_LENGTH];
+    data.copy_from_slice(&deadline.to_be_bytes());
+    FrameTransaction {
+        chain_id: 0,
+        nonce: 0,
+        sender: Address::from_low_u64_be(0xABCD),
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0x00,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::from(data.to_vec()),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_before_hegota() {
+    // With hegota_time == None the fork gate must fire before any other check.
+    let store = setup_pre_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = minimal_valid_frame_tx();
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender().unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxPreFork)),
+        "expected FrameTxPreFork, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_expired_frame_tx() {
+    // Head timestamp == 1000. A deadline of 999 is strictly less than 1000,
+    // so the expiry gate must fire.
+    let store = setup_hegota_store_ts1000().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = frame_tx_with_expiry(999);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender().unwrap())
+        .await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxExpired)),
+        "expected FrameTxExpired for deadline 999 < head.timestamp 1000, got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_accepts_frame_tx_with_deadline_at_head_timestamp() {
+    // Head timestamp == 1000. A deadline of exactly 1000 is the boundary:
+    // the on-chain verifier only reverts when block.timestamp > deadline, so
+    // deadline == timestamp is still valid at mempool admission time.
+    let store = setup_hegota_store_ts1000().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let frame_tx = frame_tx_with_expiry(1000);
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let result = blockchain
+        .validate_transaction(&tx, tx.sender().unwrap())
+        .await;
+    assert!(
+        result.is_ok(),
+        "frame tx with deadline == head.timestamp must be admitted; got {result:?}"
+    );
 }

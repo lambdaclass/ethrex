@@ -13,9 +13,11 @@
 use bytes::Bytes;
 use ethrex_blockchain::vm::StoreVmDatabase;
 use ethrex_common::types::{
-    Account, BlockHeader, Code, Fork, Frame, FrameMode, FrameTransaction, Transaction,
+    Account, BlockHeader, Code, Fork, Frame, FrameMode, FrameTransaction,
+    FRAME_RECEIPT_STATUS_SUCCESS, Transaction,
 };
-use ethrex_common::{Address, U256, constants::EMPTY_TRIE_HASH};
+use ethrex_levm::errors::TxResult;
+use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
 use ethrex_levm::errors::{ExecutionReport, VMError};
@@ -222,6 +224,15 @@ fn balance_of(db: &GeneralizedDatabase, addr: Address) -> U256 {
     db.current_accounts_state
         .get(&addr)
         .map(|account| account.info.balance)
+        .unwrap_or_default()
+}
+
+/// Read the current nonce of `addr` from the post-execution cache.
+#[allow(dead_code)]
+fn nonce_of(db: &GeneralizedDatabase, addr: Address) -> u64 {
+    db.current_accounts_state
+        .get(&addr)
+        .map(|account| account.info.nonce)
         .unwrap_or_default()
 }
 
@@ -719,4 +730,103 @@ fn sender_frame_transfers_value_to_eoa() {
     );
     // The EOA actually received the value:
     assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
+}
+
+// ==================== Happy-path E2E: SSTORE + LOG0 ====================
+
+/// Bytecode: PUSH1 0x2a, PUSH1 0x00, SSTORE, PUSH1 0x00 (size), PUSH1 0x00 (offset), LOG0, STOP.
+/// Writes 0x2a to slot 0, then emits an empty-data LOG0, then halts successfully.
+const SSTORE_AND_LOG_CODE: &[u8] = &[
+    0x60, 0x2a, // PUSH1 0x2a
+    0x60, 0x00, // PUSH1 0x00  (slot key)
+    0x55, // SSTORE
+    0x60, 0x00, // PUSH1 0x00  (size = 0)
+    0x60, 0x00, // PUSH1 0x00  (offset = 0)
+    0xA0, // LOG0
+    0x00, // STOP
+];
+
+#[test]
+fn frame_tx_happy_path_sstore_and_log() {
+    let worker = Address::from_low_u64_be(0xC0FFEE);
+
+    // Frame 0: VERIFY targeting the funded sender — runs APPROVE_BOTH_CODE (scope 3),
+    //          setting payer = sender and sender_approved in one shot.
+    // Frame 1: SENDER to the worker contract — executes SSTORE + LOG0.
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(worker),
+            gas_limit: 100_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+
+    let accounts = [
+        (
+            FUNDED_SENDER,
+            AUTO_SEED_SENDER_BALANCE,
+            0,
+            Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+        ),
+        (
+            worker,
+            U256::zero(),
+            0,
+            Bytes::from(SSTORE_AND_LOG_CODE.to_vec()),
+        ),
+    ];
+
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("happy-path frame tx must succeed");
+
+    // 1. Overall transaction result is Success.
+    assert!(
+        matches!(report.result, TxResult::Success),
+        "expected TxResult::Success, got {:?}",
+        report.result
+    );
+
+    // 2. Storage written by the SENDER frame: slot 0 of worker == 0x2a.
+    assert_eq!(
+        storage_slot(&db, worker, H256::zero()),
+        U256::from(0x2au64),
+        "SSTORE did not write 0x2a to slot 0 of worker"
+    );
+
+    // 3. The LOG0 appears in the aggregated report.logs (B5: logs collected).
+    assert!(
+        report.logs.iter().any(|l| l.address == worker),
+        "log from worker missing from aggregated report.logs"
+    );
+
+    // 4. Per-frame isolation (B5): frame_results[1] is success and carries the log;
+    //    frame_results[0] (the VERIFY/approve frame) has no logs.
+    let frame_results = report
+        .frame_results
+        .expect("frame tx report must carry per-frame results");
+
+    assert_eq!(
+        frame_results[1].0,
+        FRAME_RECEIPT_STATUS_SUCCESS,
+        "SENDER frame (index 1) must be reported as success"
+    );
+    assert!(
+        frame_results[1].2.iter().any(|l| l.address == worker),
+        "log from worker missing from frame_results[1].logs"
+    );
+    assert!(
+        frame_results[0].2.is_empty(),
+        "approve VERIFY frame (index 0) must have no logs; isolation violated"
+    );
+
+    // 5. Sender nonce incremented exactly once by APPROVE (scope 3 bumps nonce once).
+    assert_eq!(
+        nonce_of(&db, FUNDED_SENDER),
+        1,
+        "sender nonce must be 1 after APPROVE (scope 3 increments nonce once)"
+    );
 }
