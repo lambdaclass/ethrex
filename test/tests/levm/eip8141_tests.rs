@@ -39,6 +39,10 @@ const FUNDED_SENDER: Address = Address::repeat_byte(0xAA);
 const AUTO_SEED_SENDER_BALANCE: U256 = U256::MAX;
 /// Harness base fee. `frame_tx_with_frames` sets `max_fee_per_gas` well above it.
 const HARNESS_BASE_FEE: u64 = 1;
+/// Coinbase used by the harness env (the `..Default::default()` zero address).
+/// Fee tests read its post-execution balance to assert value conservation.
+#[allow(dead_code)]
+const COINBASE_ADDR: Address = Address::zero();
 
 // Bytecodes used by frame-tx tests (shared with later tasks).
 /// SSTORE 1@0; APPROVE(scope=3).
@@ -143,6 +147,46 @@ fn run_frame_tx(
 
     let mut db = seeded_db(&seeded);
     let env = frame_tx_env(&tx);
+    let transaction = Transaction::FrameTransaction(tx);
+
+    let result = {
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &transaction,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+        )
+        .expect("VM::new should succeed for a frame tx");
+        vm.execute()
+    };
+
+    (result, db)
+}
+
+/// Like `run_frame_tx`, but builds the env with the given block `base_fee`
+/// instead of `HARNESS_BASE_FEE`. The env's effective `gas_price` is derived
+/// from the tx the same way production does (`calculate_gas_price_for_tx`):
+/// `min(base_fee + max_priority_fee_per_gas, max_fee_per_gas)`. Used by fee
+/// tests that need a real base-fee/effective-price spread.
+fn run_frame_tx_with_fees(
+    accounts: &[SeededAccount],
+    tx: FrameTransaction,
+    base_fee: u64,
+) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
+    let mut seeded: Vec<SeededAccount> = accounts.to_vec();
+    if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
+        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
+    }
+
+    let mut db = seeded_db(&seeded);
+    let mut env = frame_tx_env(&tx);
+    env.base_fee_per_gas = U256::from(base_fee);
+    // Effective gas price, matching production `calculate_gas_price_for_tx`.
+    let effective = base_fee
+        .saturating_add(tx.max_priority_fee_per_gas)
+        .min(tx.max_fee_per_gas);
+    env.gas_price = U256::from(effective);
     let transaction = Transaction::FrameTransaction(tx);
 
     let result = {
@@ -344,5 +388,67 @@ fn reverting_sender_frame_returns_value() {
         frame_results[2].0,
         ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
         "SENDER frame should be reported as failure"
+    );
+}
+
+// ==================== B2: payer charged at effective price (no burn) ====================
+
+#[test]
+fn payer_pays_effective_price_no_burn() {
+    // base_fee = 10 gwei, priority = 2, max_fee = 100 gwei (huge headroom).
+    // effective = base + priority = 12 gwei. The (100-12) spread must NOT burn.
+    let wallet = Address::from_low_u64_be(0xD2);
+    let stop_contract = Address::from_low_u64_be(0xD3);
+    let wallet_initial = U256::from(10u64).pow(U256::from(18u64)); // 1 ETH
+    let mut tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER), // runs APPROVE_EXECUTION_CODE -> seed below
+        verify_frame(wallet),        // runs APPROVE_PAYMENT_CODE   -> seed below
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(stop_contract),
+            gas_limit: 30_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        },
+    ]);
+    tx.max_fee_per_gas = 100_000_000_000; // 100 gwei
+    tx.max_priority_fee_per_gas = 2_000_000_000; // 2 gwei
+    let (result, db) = run_frame_tx_with_fees(
+        &[
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
+            ),
+            (
+                wallet,
+                wallet_initial,
+                0,
+                Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+            ),
+            (stop_contract, U256::zero(), 0, Bytes::from(vec![0x00u8])), // STOP
+        ],
+        tx,
+        10_000_000_000, // base fee 10 gwei
+    );
+    let report = result.expect("valid: sender approved, payer set");
+    let effective = U256::from(12_000_000_000u64);
+    let total_gas_used = U256::from(report.gas_used);
+    // Net payer cost == effective * total_gas_used (no max-vs-effective burn).
+    let payer_delta = wallet_initial - balance_of(&db, wallet);
+    assert_eq!(
+        payer_delta,
+        effective * total_gas_used,
+        "payer overcharged/undercharged"
+    );
+    // Conservation: payer's loss == coinbase gain + base-fee burn (nothing vanishes).
+    let coinbase_gain = balance_of(&db, COINBASE_ADDR);
+    let base_burn = U256::from(10_000_000_000u64) * total_gas_used;
+    assert_eq!(
+        payer_delta,
+        coinbase_gain + base_burn,
+        "value silently burned"
     );
 }

@@ -35,23 +35,24 @@ fn u256_to_offset(value: U256) -> Option<usize> {
     usize::try_from(value.0[0]).ok()
 }
 
-/// Compute the transaction's maximum cost for APPROVE payment deduction.
-/// Per spec, this is TXPARAM(0x06): max_fee_per_gas * total_gas_limit + blob cost.
-fn compute_tx_cost(ctx: &crate::vm::FrameTxContext) -> Result<U256, VMError> {
+/// Compute the fee APPROVE deducts from the payer (spec line 387):
+/// tx_fee = total_gas_limit * effective_gas_price + blob_fees (at the block's
+/// actual base blob gas price). The end-of-tx unused-gas refund credits the
+/// payer at the same effective rate, so no gas is silently destroyed; the blob
+/// fee is non-refundable (matching EIP-4844 blob-fee burn semantics).
+/// NOTE: TXPARAM(0x06) / load_tx_param 0x06 intentionally still reports the
+/// MAXIMUM cost (max_fee-based, spec line 455) — that is a different quantity;
+/// do not change it.
+fn compute_tx_cost(
+    ctx: &crate::vm::FrameTxContext,
+    effective_gas_price: U256,
+    blob_gas_cost: U256,
+) -> Result<U256, VMError> {
     let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
     let gas_limit = U256::from(ctx.tx.total_gas_limit());
-    let max_fee = U256::from(ctx.tx.max_fee_per_gas);
-    let tx_cost = max_fee.checked_mul(gas_limit).ok_or(halt_err)?;
-    let blob_count = U256::from(ctx.tx.blob_versioned_hashes.len());
-    let gas_per_blob = U256::from(131072u64); // GAS_PER_BLOB from EIP-4844
-    let halt_err: VMError = ExceptionalHalt::InvalidOpcode.into();
-    let blob_fee = blob_count
-        .checked_mul(gas_per_blob)
-        .ok_or(halt_err)?
-        .checked_mul(ctx.tx.max_fee_per_blob_gas)
-        .ok_or(ExceptionalHalt::InvalidOpcode)?;
+    let tx_cost = effective_gas_price.checked_mul(gas_limit).ok_or(halt_err)?;
     tx_cost
-        .checked_add(blob_fee)
+        .checked_add(blob_gas_cost)
         .ok_or(ExceptionalHalt::InvalidOpcode.into())
 }
 
@@ -71,7 +72,13 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             if !ctx.sender_approved {
                 return Err(VMError::RevertOpcode);
             }
-            let tx_cost = compute_tx_cost(ctx)?;
+            let effective_gas_price = vm.env.gas_price;
+            let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
+                &ctx.tx.blob_versioned_hashes,
+                vm.env.block_excess_blob_gas,
+                &vm.env.config,
+            )?;
+            let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
@@ -108,7 +115,13 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let tx_cost = compute_tx_cost(ctx)?;
+            let effective_gas_price = vm.env.gas_price;
+            let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
+                &ctx.tx.blob_versioned_hashes,
+                vm.env.block_excess_blob_gas,
+                &vm.env.config,
+            )?;
+            let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
             let sender = ctx.tx.sender;
 
             vm.increment_account_nonce(sender)?;
