@@ -21,16 +21,17 @@ participants:
 
 network_params:
   seconds_per_slot: 6
-  # Activate Osaka from genesis — enables the EIP-8141 frame-tx opcodes
-  # (APPROVE 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1, FRAMEDATACOPY 0xB2).
+  # Activate Osaka from genesis.
   fulu_fork_epoch: 0
-  # Schedule the post-Glamsterdam fork so the EIP-8141 Hegota gate is satisfied.
-  # The ethereum-genesis-generator emits `bogotaTime`/`hezeTime` into the EL
-  # genesis JSON, which ethrex parses into `ChainConfig.hegota_time` via its
-  # serde aliases. Without this, the Hegota fork gate rejects every frame tx
-  # with FrameTxPreFork — this was the gap that forced the earlier Amsterdam
-  # fork-gate revert. Ordering mirrors the proven focil.yaml (gloas at 0,
-  # heze at 1): frame transactions become valid from epoch 1 onward.
+  # Schedule Hegota (heze) so the EIP-8141 frame-tx opcodes are enabled.
+  # The EIP-8141 opcodes (APPROVE 0xAA, TXPARAM 0xB0, FRAMEDATALOAD 0xB1,
+  # FRAMEDATACOPY 0xB2, FRAMEPARAM 0xB3, SIGPARAM 0xB4) are gated on Hegota,
+  # not Osaka. The ethereum-genesis-generator emits `bogotaTime`/`hezeTime`
+  # into the EL genesis JSON, which ethrex parses into
+  # `ChainConfig.hegota_time` via its serde aliases. Without this, every
+  # frame tx is rejected with FrameTxPreFork. Ordering mirrors the proven
+  # focil.yaml (gloas at 0, heze at 1): frame transactions become valid from
+  # epoch 1 onward.
   gloas_fork_epoch: 0
   heze_fork_epoch: 1
 

@@ -292,14 +292,17 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
                 length,
             )?)?;
 
-        if length == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
-
+        // Frame-context check must precede the zero-length early return so
+        // that FRAMEDATACOPY outside a frame tx halts exactly like INVALID
+        // regardless of operands (consensus parity with other clients).
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        if length == 0 {
+            return Ok(OpcodeResult::Continue);
+        }
 
         let idx = index_to_usize(frame_index.as_u64())?;
         let frame = ctx

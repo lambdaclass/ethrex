@@ -419,7 +419,9 @@ impl<'a> VM<'a> {
     /// This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
     pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn; 256] {
-        if fork >= Fork::Amsterdam {
+        if fork >= Fork::Hegota {
+            Self::build_opcode_table_hegota()
+        } else if fork >= Fork::Amsterdam {
             Self::build_opcode_table_amsterdam()
         } else if fork >= Fork::Osaka {
             Self::build_opcode_table_osaka()
@@ -623,14 +625,6 @@ impl<'a> VM<'a> {
 
         opcode_table[Opcode::CLZ as usize] = OpCodeFn::new::<OpClzHandler>();
 
-        // EIP-8141 Frame Transaction opcodes (dev-mode, always-on from Osaka)
-        opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
-        opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
-        opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
-        opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
-        opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
-        opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
-
         opcode_table
     }
 
@@ -645,5 +639,44 @@ impl<'a> VM<'a> {
         // EIP-7843 opcode
         opcode_table[Opcode::SLOTNUM as usize] = OpCodeFn::new::<OpSlotNumHandler>();
         opcode_table
+    }
+
+    #[expect(clippy::as_conversions, clippy::indexing_slicing)]
+    const fn build_opcode_table_hegota() -> [OpCodeFn; 256] {
+        let mut opcode_table: [OpCodeFn; 256] = Self::build_opcode_table_amsterdam();
+
+        // EIP-8141 Frame Transaction opcodes (Hegota)
+        opcode_table[Opcode::APPROVE as usize] = OpCodeFn::new::<OpApproveHandler>();
+        opcode_table[Opcode::TXPARAM as usize] = OpCodeFn::new::<OpTxParamHandler>();
+        opcode_table[Opcode::FRAMEDATALOAD as usize] = OpCodeFn::new::<OpFrameDataLoadHandler>();
+        opcode_table[Opcode::FRAMEDATACOPY as usize] = OpCodeFn::new::<OpFrameDataCopyHandler>();
+        opcode_table[Opcode::FRAMEPARAM as usize] = OpCodeFn::new::<OpFrameParamHandler>();
+        opcode_table[Opcode::SIGPARAM as usize] = OpCodeFn::new::<OpSigParamHandler>();
+
+        opcode_table
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_opcodes_not_installed_before_hegota() {
+        fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
+            a.0 as usize == b.0 as usize
+        }
+        // 0xEF is never assigned in any table -> it holds the invalid handler.
+        for fork in [Fork::Osaka, Fork::Amsterdam] {
+            let table = VM::build_opcode_table(fork);
+            for byte in [0xAAusize, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4] {
+                assert!(
+                    same_handler(table[byte], table[0xEF]),
+                    "frame opcode {byte:#x} must be invalid at {fork:?}"
+                );
+            }
+        }
+        let hegota = VM::build_opcode_table(Fork::Hegota);
+        assert!(!same_handler(hegota[0xAA], hegota[0xEF]));
     }
 }
