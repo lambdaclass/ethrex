@@ -1125,14 +1125,22 @@ async fn exchange_hello_messages<S>(
 where
     S: Unpin + Stream<Item = Result<Message, PeerConnectionError>>,
 {
+    // eth/72 (EIP-8070) is only safe to negotiate when blob sampling is enabled:
+    // it always elides blob payloads in PooledTransactions, and a node that does
+    // not run the sampler/provider cell-fetch loop would receive blob txs it can
+    // never reconstruct. With sampling off we cap at eth/71 so default nodes keep
+    // full-blob propagation unchanged. The EIP's Backwards Compatibility section
+    // explicitly supports this gradual, version-gated rollout.
+    let offer_eth72 = state.blockchain.mempool.blob_sampling_enabled;
     // This allow is because in l2 we mut the capabilities
     // to include the l2 cap
     #[allow(unused_mut)]
-    let mut supported_capabilities: Vec<Capability> = [
-        &SUPPORTED_ETH_CAPABILITIES[..],
-        &SUPPORTED_SNAP_CAPABILITIES[..],
-    ]
-    .concat();
+    let mut supported_capabilities: Vec<Capability> = SUPPORTED_ETH_CAPABILITIES
+        .iter()
+        .filter(|cap| offer_eth72 || cap.version < 72)
+        .chain(SUPPORTED_SNAP_CAPABILITIES.iter())
+        .cloned()
+        .collect();
     #[cfg(feature = "l2")]
     if state.l2_state.is_supported() {
         supported_capabilities.push(crate::rlpx::l2::SUPPORTED_BASED_CAPABILITIES[0].clone());
@@ -1166,7 +1174,10 @@ where
             for cap in &hello_message.capabilities {
                 match cap.protocol() {
                     "eth" => {
+                        // Don't negotiate a version we didn't advertise: eth/72 is
+                        // only offered when blob sampling is enabled (see above).
                         if SUPPORTED_ETH_CAPABILITIES.contains(cap)
+                            && (offer_eth72 || cap.version < 72)
                             && cap.version > negotiated_eth_version
                         {
                             negotiated_eth_version = cap.version;
