@@ -159,6 +159,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "skip-genesis-validation",
+        action = ArgAction::SetTrue,
+        help = "Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.",
+        help_heading = "Node options",
+        env = "ETHREX_SKIP_GENESIS_VALIDATION"
+    )]
+    pub skip_genesis_validation: bool,
+    #[arg(
         long = "no-precompile-cache",
         action = ArgAction::SetTrue,
         help = "Disable the per-block precompile result cache (benchmarking only).",
@@ -496,6 +504,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            skip_genesis_validation: false,
             no_precompile_cache: false,
             no_bal_parallel_exec: false,
             no_bal_prefetch: false,

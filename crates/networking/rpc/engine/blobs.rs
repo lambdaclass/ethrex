@@ -64,6 +64,21 @@ impl RpcHandler for BlobsV1Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs");
 
+        // Intentional fall-through: before a canonical tip exists, there is no
+        // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
+        if let Some(current_block_header) = context
+            .storage
+            .get_block_header(context.storage.get_latest_block_number().await?)?
+            && context
+                .storage
+                .get_chain_config()
+                .is_osaka_activated(current_block_header.timestamp)
+        {
+            return Err(RpcErr::UnsupportedFork(
+                "getBlobsV1 engine only supported before Osaka".to_string(),
+            ));
+        }
+
         if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
@@ -144,6 +159,8 @@ async fn get_blobs_and_proof(
         return Err(RpcErr::TooLargeRequest);
     }
 
+    // Intentional fall-through: before a canonical tip exists, there is no
+    // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
     if let Some(current_block_header) = context
         .storage
         .get_block_header(context.storage.get_latest_block_number().await?)?
@@ -300,6 +317,40 @@ mod tests {
         let result = request.handle(context).await.unwrap();
         let expected = serde_json::to_value(vec![Some(blob_and_proof(&bundle, 0)), None]).unwrap();
         assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_returns_full_before_osaka() {
+        let context = context_with_chain_config(false).await;
+        let (bundle, hashes) = sample_bundle(1);
+        context
+            .blockchain
+            .mempool
+            .add_blobs_bundle(H256::from_low_u64_be(1), bundle.clone())
+            .unwrap();
+
+        let request = BlobsV1Request {
+            blob_versioned_hashes: hashes,
+        };
+
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![Some(BlobAndProofV1 {
+            blob: bundle.blobs[0],
+            proof: bundle.proofs[0],
+        })])
+        .unwrap();
+        assert_eq!(result, expected);
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_rejects_after_osaka() {
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV1Request {
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+        };
+
+        let err = request.handle(context).await.unwrap_err();
+        assert!(matches!(err, RpcErr::UnsupportedFork(_)));
     }
 
     #[tokio::test]

@@ -269,6 +269,104 @@ pub struct AccountUpdatesList {
     pub code_updates: Vec<(H256, Code)>,
 }
 
+/// Encodes a tx-location entry as the operand passed to `merge_cf`.
+///
+/// The operand uses the **same encoding as the stored value** — a
+/// `Vec<(BlockNumber, BlockHash, Index)>` with a single element. This is
+/// required for an *associative* merge operator: RocksDB folds operands
+/// together with PartialMerge (during compaction, without a base value), and
+/// the result becomes an operand for a later merge. If the operand format
+/// differed from the merge output (e.g. operand = bare tuple, output = Vec),
+/// the re-fed result would fail to decode and entries would be silently
+/// dropped. Keeping both as `Vec` makes the merge truly associative.
+pub(crate) fn encode_tx_location_operand(
+    block_number: BlockNumber,
+    block_hash: BlockHash,
+    index: Index,
+) -> Vec<u8> {
+    vec![(block_number, block_hash, index)].encode_to_vec()
+}
+
+/// Merge function for the `TRANSACTION_LOCATIONS` column family.
+///
+/// The CF is keyed by tx hash and stores `Vec<(BlockNumber, BlockHash, Index)>` —
+/// one entry per block the tx appears in (multiple only on reorgs). Both the
+/// stored value and every merge operand are encoded as this same `Vec` type.
+/// Writers call `merge_cf` with a single-element `Vec` operand per tx; RocksDB
+/// invokes this function on `get_cf` and during compaction to fold the base
+/// value plus pending operands into one `Vec`. Within the fold, a later entry
+/// replaces any earlier entry with the same `block_hash`, preserving the dedupe
+/// semantics of the previous composite-key schema.
+///
+/// Associativity: because input operands and the output are the same `Vec`
+/// format, PartialMerge (operand-only folding) produces a valid operand that
+/// can be re-merged later. This is essential for correctness — see
+/// `encode_tx_location_operand`.
+///
+/// Used by:
+/// - The RocksDB backend, via `set_merge_operator_associative`.
+/// - The InMemory backend, which dispatches by table name and applies this
+///   inline at `merge()` call time.
+///
+/// Why merge instead of read-modify-write: a per-tx `get_cf` on the write path
+/// is expensive (~5–20 ms/block on mainnet, dominated by the per-tx point
+/// lookup, not fully fixable by a bloom filter). With merge, the write path is
+/// a pure `merge_cf` append (no read), and consolidation is deferred to
+/// compaction or the next read. As a bonus the merge is atomic at the RocksDB
+/// level — no serialized-writer assumption is needed at the application layer.
+///
+/// Failure mode: any RLP decode error (base value or operand) returns `None`,
+/// which makes RocksDB treat the merge as failed and surface a corruption error
+/// on the affected key rather than silently dropping locations. We prefer
+/// failing loud — a corrupt operand signals real DB damage, and a silently
+/// half-populated `Vec` committed at the next compaction would be undetectable.
+pub fn tx_locations_merge(
+    existing: Option<&[u8]>,
+    operands: impl IntoIterator<Item = impl AsRef<[u8]>>,
+) -> Option<Vec<u8>> {
+    // Fold one RLP-encoded `Vec` chunk into `list`, deduping by block_hash
+    // (later entry wins). Returns false on decode failure so the caller can
+    // abort the whole merge.
+    fn fold_chunk(
+        list: &mut Vec<(BlockNumber, BlockHash, Index)>,
+        bytes: &[u8],
+        what: &str,
+    ) -> bool {
+        match <Vec<(BlockNumber, BlockHash, Index)>>::decode(bytes) {
+            Ok(entries) => {
+                for (bn, bh, idx) in entries {
+                    list.retain(|(_, existing_bh, _)| *existing_bh != bh);
+                    list.push((bn, bh, idx));
+                }
+                true
+            }
+            Err(e) => {
+                error!(
+                    "tx_locations_merge: failed to decode {what} ({} bytes): {e}; \
+                     aborting merge to avoid silent data loss",
+                    bytes.len()
+                );
+                false
+            }
+        }
+    }
+
+    let mut list: Vec<(BlockNumber, BlockHash, Index)> = Vec::new();
+
+    // Order matters: RocksDB delivers operands oldest-first.
+    if let Some(bytes) = existing
+        && !fold_chunk(&mut list, bytes, "existing value")
+    {
+        return None;
+    }
+    for op in operands {
+        if !fold_chunk(&mut list, op.as_ref(), "operand") {
+            return None;
+        }
+    }
+    Some(list.encode_to_vec())
+}
+
 impl Store {
     /// Block until the trie-update background worker has drained every prior
     /// message and is waiting for new work — i.e. Phase 2 (disk write of the
@@ -321,15 +419,14 @@ impl Store {
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = transaction.hash();
-                    // Key: tx_hash + block_hash
-                    let mut composite_key = Vec::with_capacity(64);
-                    composite_key.extend_from_slice(tx_hash.as_bytes());
-                    composite_key.extend_from_slice(block_hash.as_bytes());
-                    let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                    tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                    tx.merge(
+                        TRANSACTION_LOCATIONS,
+                        transaction.hash().as_bytes(),
+                        &encode_tx_location_operand(block_number, block_hash, index as u64),
+                    )?;
                 }
             }
+
             tx.commit()
         })
         .await
@@ -572,13 +669,7 @@ impl Store {
         block_hash: BlockHash,
         index: Index,
     ) -> Result<(), StoreError> {
-        // FIXME: Use dupsort table
-        let mut composite_key = Vec::with_capacity(64);
-        composite_key.extend_from_slice(transaction_hash.as_bytes());
-        composite_key.extend_from_slice(block_hash.as_bytes());
-        let location_value = (block_number, block_hash, index).encode_to_vec();
-
-        self.write_async(TRANSACTION_LOCATIONS, composite_key, location_value)
+        self.add_transaction_locations(vec![(transaction_hash, block_number, block_hash, index)])
             .await
     }
 
@@ -587,19 +678,20 @@ impl Store {
         &self,
         locations: Vec<(H256, BlockNumber, BlockHash, Index)>,
     ) -> Result<(), StoreError> {
-        let batch_items: Vec<_> = locations
-            .iter()
-            .map(|(tx_hash, block_number, block_hash, index)| {
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (*block_number, *block_hash, *index).encode_to_vec();
-                (composite_key, location_value)
-            })
-            .collect();
-
-        self.write_batch_async(TRANSACTION_LOCATIONS, batch_items)
-            .await
+        let db = self.backend.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut tx = db.begin_write()?;
+            for (tx_hash, block_number, block_hash, index) in locations {
+                tx.merge(
+                    TRANSACTION_LOCATIONS,
+                    tx_hash.as_bytes(),
+                    &encode_tx_location_operand(block_number, block_hash, index),
+                )?;
+            }
+            tx.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
     }
 
     /// Obtain transaction location (block hash and index)
@@ -609,37 +701,22 @@ impl Store {
     ) -> Result<Option<(BlockNumber, BlockHash, Index)>, StoreError> {
         let db = self.backend.clone();
         tokio::task::spawn_blocking(move || {
-            let tx_hash_bytes = transaction_hash.as_bytes();
             let tx = db.begin_read()?;
-
-            // rust-rocksdb's prefix_iterator_cf seeks but does not bound iteration —
-            // caller must stop on the first prefix mismatch.
-            let mut iter = tx.prefix_iterator(TRANSACTION_LOCATIONS, tx_hash_bytes)?;
-            let mut transaction_locations = Vec::new();
-
-            while let Some(Ok((key, value))) = iter.next() {
-                // Key is tx_hash (32) + block_hash (32) = 64 bytes.
-                if key.len() == 64 && &key[0..32] == tx_hash_bytes {
-                    transaction_locations.push(<(BlockNumber, BlockHash, Index)>::decode(&value)?);
-                } else {
-                    break;
-                }
-            }
-
-            if transaction_locations.is_empty() {
+            let Some(bytes) = tx.get(TRANSACTION_LOCATIONS, transaction_hash.as_bytes())? else {
                 return Ok(None);
-            }
+            };
+            let locations = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes)?;
 
-            // If there are multiple locations, filter by the canonical chain
-            for (block_number, block_hash, index) in transaction_locations {
-                let canonical_hash = {
-                    tx.get(
+            // In the absence of reorgs, locations has exactly one entry.
+            // If multiple, filter by the canonical chain.
+            for (block_number, block_hash, index) in locations {
+                let canonical_hash = tx
+                    .get(
                         CANONICAL_BLOCK_HASHES,
                         block_number.to_le_bytes().as_slice(),
                     )?
                     .map(|bytes| H256::decode(bytes.as_slice()))
-                    .transpose()?
-                };
+                    .transpose()?;
 
                 if canonical_hash == Some(block_hash) {
                     return Ok(Some((block_number, block_hash, index)));
@@ -778,10 +855,10 @@ impl Store {
     /// Checks cache first, falls back to database. If metadata is missing,
     /// falls back to loading full code and extracts length (auto-migration).
     pub fn get_code_metadata(&self, code_hash: H256) -> Result<Option<CodeMetadata>, StoreError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
         // Empty code special case
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Some(CodeMetadata { length: 0 }));
         }
 
@@ -1481,13 +1558,11 @@ impl Store {
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
-                // Key: tx_hash + block_hash
-                let mut composite_key = Vec::with_capacity(64);
-                composite_key.extend_from_slice(tx_hash.as_bytes());
-                composite_key.extend_from_slice(block_hash.as_bytes());
-                let location_value = (block_number, block_hash, index as u64).encode_to_vec();
-                tx.put(TRANSACTION_LOCATIONS, &composite_key, &location_value)?;
+                tx.merge(
+                    TRANSACTION_LOCATIONS,
+                    transaction.hash().as_bytes(),
+                    &encode_tx_location_operand(block_number, block_hash, index as u64),
+                )?;
             }
         }
 
@@ -2195,6 +2270,31 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, false).await
+    }
+
+    /// Like [`Store::add_initial_state`], but trusts a pre-existing datadir's
+    /// state instead of validating it against the provided genesis. If a genesis
+    /// header is already stored, it is kept as-is rather than recomputing the
+    /// genesis state root from `genesis.alloc` and rejecting on mismatch. The
+    /// chain config from the genesis file is still applied either way.
+    ///
+    /// Intended for booting a datadir produced out-of-band (e.g. by a state
+    /// generator that writes the state trie directly and emits a genesis file
+    /// with an empty `alloc`), where the operator vouches for the stored state
+    /// root. Has no effect on a fresh datadir: the genesis is built normally.
+    pub async fn add_initial_state_skip_validation(
+        &mut self,
+        genesis: Genesis,
+    ) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, true).await
+    }
+
+    async fn add_initial_state_inner(
+        &mut self,
+        genesis: Genesis,
+        skip_genesis_validation: bool,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -2203,7 +2303,14 @@ impl Store {
 
         let genesis_hash = genesis_block.hash();
 
-        // Set chain config
+        let stored_genesis_header = self.load_block_header(genesis_block_number)?;
+
+        // Always set the chain config from the genesis file. The in-memory
+        // `chain_config` starts at `Default::default()` on every boot and is
+        // not reloaded from the datadir, so skipping this would leave the store
+        // with the wrong chainId and an empty fork schedule. Skip-validation
+        // only waives the genesis state-root/header check; the `config` section
+        // of the genesis file is still authoritative and must be applied.
         self.set_chain_config(&genesis.config).await?;
 
         // The cache can't be empty
@@ -2214,7 +2321,14 @@ impl Store {
             self.latest_block_header.update(latest_block_header);
         }
 
-        match self.load_block_header(genesis_block_number)? {
+        match stored_genesis_header {
+            Some(header) if skip_genesis_validation => {
+                info!(
+                    stored_genesis = %header.hash(),
+                    "Skipping genesis state validation; trusting the genesis header and state already stored in the datadir"
+                );
+                return Ok(());
+            }
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
@@ -3489,5 +3603,126 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    fn h256(b: u8) -> H256 {
+        H256::from_low_u64_be(b as u64)
+    }
+
+    fn op(bn: BlockNumber, bh: H256, idx: Index) -> Vec<u8> {
+        encode_tx_location_operand(bn, bh, idx)
+    }
+
+    fn decode(v: &[u8]) -> Vec<(BlockNumber, BlockHash, Index)> {
+        <Vec<(BlockNumber, BlockHash, Index)>>::decode(v).unwrap()
+    }
+
+    #[test]
+    fn single_operand_on_empty_base() {
+        let out = tx_locations_merge(None, vec![op(100, h256(0x10), 0)]).unwrap();
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 0)]);
+    }
+
+    #[test]
+    fn operand_appended_to_existing_base() {
+        let base = vec![(100u64, h256(0x10), 0u64)].encode_to_vec();
+        let out = tx_locations_merge(Some(&base), vec![op(101, h256(0x11), 5)]).unwrap();
+        let mut got = decode(&out);
+        got.sort();
+        let mut want = vec![(100, h256(0x10), 0), (101, h256(0x11), 5)];
+        want.sort();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn multiple_operands_combined() {
+        let out = tx_locations_merge(
+            None,
+            vec![
+                op(100, h256(0x10), 0),
+                op(100, h256(0x11), 1),
+                op(101, h256(0x12), 2),
+            ],
+        )
+        .unwrap();
+        assert_eq!(decode(&out).len(), 3);
+    }
+
+    #[test]
+    fn same_block_hash_is_deduped() {
+        // Two operands with the same block_hash: the later one replaces the earlier.
+        let out =
+            tx_locations_merge(None, vec![op(100, h256(0x10), 0), op(100, h256(0x10), 7)]).unwrap();
+        assert_eq!(decode(&out), vec![(100, h256(0x10), 7)]);
+    }
+
+    #[test]
+    fn malformed_operand_aborts_merge() {
+        // Fail loud: a malformed operand must abort the merge (return None), not
+        // silently drop it and commit a partial result.
+        let out = tx_locations_merge(None, vec![vec![0xff, 0xff], op(100, h256(0x10), 0)]);
+        assert!(out.is_none(), "merge must abort on a malformed operand");
+    }
+
+    #[test]
+    fn malformed_base_value_aborts_merge() {
+        let out = tx_locations_merge(Some(&[0xff, 0xff]), vec![op(100, h256(0x10), 0)]);
+        assert!(out.is_none(), "merge must abort on a corrupt base value");
+    }
+
+    /// Regression for the associative-merge format bug: a PartialMerge result
+    /// must be re-mergeable as an operand. RocksDB folds operands together
+    /// without a base value during compaction, then feeds that result back into
+    /// a later merge. If the operand format differed from the output format,
+    /// the re-fed result would fail to decode and entries would be dropped
+    /// (observed as 1664 silent drops during a compaction pass on mainnet).
+    #[test]
+    fn partial_merge_result_is_a_valid_operand() {
+        // Step 1: PartialMerge — combine operands with NO base value.
+        let partial =
+            tx_locations_merge(None, vec![op(100, h256(0x10), 0), op(101, h256(0x11), 1)]).unwrap();
+
+        // Step 2: the partial result is now itself an operand in a later merge,
+        // on top of an existing base value. This is the path that used to drop
+        // entries.
+        let base = vec![(99u64, h256(0x09), 9u64)].encode_to_vec();
+        let out = tx_locations_merge(Some(&base), vec![partial]).unwrap();
+
+        let mut got = decode(&out);
+        got.sort();
+        let mut want = vec![
+            (99, h256(0x09), 9),
+            (100, h256(0x10), 0),
+            (101, h256(0x11), 1),
+        ];
+        want.sort();
+        assert_eq!(
+            got, want,
+            "no entries may be lost when re-merging a partial result"
+        );
+    }
+
+    /// Operand and stored-value encodings must be byte-identical types, so a
+    /// freshly-encoded operand round-trips through the value decoder.
+    #[test]
+    fn operand_encoding_matches_value_encoding() {
+        let operand = op(100, h256(0x10), 3);
+        // Decoding the operand as the stored Vec type must succeed.
+        assert_eq!(decode(&operand), vec![(100, h256(0x10), 3)]);
+    }
+
+    /// Chained PartialMerges (operand-only folds applied repeatedly) stay valid.
+    #[test]
+    fn chained_partial_merges() {
+        let p1 = tx_locations_merge(None, vec![op(1, h256(0x01), 0)]).unwrap();
+        let p2 = tx_locations_merge(None, vec![p1, op(2, h256(0x02), 0)]).unwrap();
+        let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
+        let out = tx_locations_merge(None, vec![p3]).unwrap();
+        assert_eq!(decode(&out).len(), 3);
     }
 }

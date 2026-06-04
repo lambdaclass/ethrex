@@ -785,6 +785,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn terminal_total_difficulty_accepts_number_or_hex_string() {
+        // geth/reth-style genesis files encode terminalTotalDifficulty as a
+        // bare decimal number that exceeds u64::MAX; ethrex must accept it as
+        // well as the 0x-hex-string form.
+        let dca = r#""depositContractAddress":"0x00000000219ab540356cbb839cbe05303d7705fa""#;
+
+        let from_number: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":58750000000000000000000,{dca}}}"#
+        ))
+        .expect("number-encoded TTD should parse");
+        // f64 cast is lossy above u64::MAX; assert the known, stable
+        // approximation so a regression to Some(0) can't silently pass.
+        assert_eq!(
+            from_number.terminal_total_difficulty,
+            Some(58749999999999996329984u128)
+        );
+
+        let from_hex: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":"0xc70d808a128d7380000",{dca}}}"#
+        ))
+        .expect("hex-string TTD should parse");
+        assert_eq!(
+            from_hex.terminal_total_difficulty,
+            Some(58750000000000000000000u128)
+        );
+
+        let small: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":17000000000000000,{dca}}}"#
+        ))
+        .expect("small number TTD should parse");
+        assert_eq!(small.terminal_total_difficulty, Some(17000000000000000u128));
+
+        // A negative bare number must error, not silently saturate to Some(0).
+        let negative = serde_json::from_str::<ChainConfig>(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":-1,{dca}}}"#
+        ));
+        let err = negative.expect_err("negative TTD must be rejected");
+        assert!(
+            err.to_string().contains("finite, non-negative"),
+            "error should name the sign/finiteness cause, got: {err}"
+        );
+    }
+
+    #[test]
     fn deserialize_genesis_file() {
         // Deserialize genesis file
         let file = File::open("../../fixtures/genesis/kurtosis.json")
