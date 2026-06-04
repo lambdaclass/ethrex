@@ -565,6 +565,15 @@ fn flatten_recursive(
         })
     };
 
+    // SELFDESTRUCT frames are always leaves in the call tree — the EVM cannot
+    // execute further code after self-destructing. Assert this invariant so
+    // that a future tracer bug doesn't silently produce malformed output.
+    debug_assert!(
+        !matches!(frame.call_type, CallType::SELFDESTRUCT) || frame.calls.is_empty(),
+        "SELFDESTRUCT frame must be a leaf (no children), got {} subcalls",
+        frame.calls.len(),
+    );
+
     result.push(FlatCallFrame {
         action,
         error: frame.error.clone(),
