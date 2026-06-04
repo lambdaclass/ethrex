@@ -664,7 +664,9 @@ mod tests {
     #[test]
     fn frame_opcodes_not_installed_before_hegota() {
         fn same_handler(a: OpCodeFn, b: OpCodeFn) -> bool {
-            a.0 as usize == b.0 as usize
+            // Compare handler identity by fn-pointer address without an `as`
+            // cast (the workspace denies clippy::as_conversions).
+            std::ptr::fn_addr_eq(a.0, b.0)
         }
         // 0xEF is never assigned in any table -> it holds the invalid handler.
         for fork in [Fork::Osaka, Fork::Amsterdam] {
