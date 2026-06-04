@@ -1,5 +1,4 @@
-//! `engine_getInclusionListV1` handler. Per
-//! `openspec/changes/eip-7805-focil-execution-layer/specs/engine-api-inclusion-list/spec.md`:
+//! `engine_getInclusionListV1` handler. Per EIP-7805 (FOCIL) and execution-apis:
 //!
 //! - Single param: `parentHash` (32-byte hex).
 //! - Returns: array of EIP-2718 RLP-encoded transactions, hex-encoded.
