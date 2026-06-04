@@ -362,12 +362,20 @@ impl GeneralizedDatabase {
         // it barely reads. The touched slots are faulted back in lazily by `get_storage_value`,
         // which resolves a `current` miss against `initial` (the committed baseline) before the
         // store — so this stays correct and the diff invariant holds. See `clone_without_storage`.
+        //
+        // Exception: destroyed-and-recreated accounts must be full-cloned. `get_storage_value`
+        // early-returns 0 for `DestroyedModified` *before* the `initial` fallback (an unwritten
+        // slot of a destroyed account must read 0, never the stale value in `initial`). With an
+        // info-only clone, a committed slot written after recreation — folded into `initial`
+        // wholesale by the per-flush drain-back — would also read 0, since the lazy fallback is
+        // never reached. Carrying the storage on the clone keeps those committed slots in
+        // `current`, where the `account.storage` hit precedes the early-return.
         if let Some(account) = self.initial_accounts_state.get(&address) {
-            let shallow = account.clone_without_storage();
-            return Ok(self
-                .current_accounts_state
-                .entry(address)
-                .or_insert(shallow));
+            let clone = match account.status {
+                AccountStatus::Destroyed | AccountStatus::DestroyedModified => account.clone(),
+                _ => account.clone_without_storage(),
+            };
+            return Ok(self.current_accounts_state.entry(address).or_insert(clone));
         }
 
         // Lazy-BAL hook: if the cursor finds this address, materialize info from the BAL
