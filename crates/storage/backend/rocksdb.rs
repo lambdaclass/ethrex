@@ -132,6 +132,8 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
+                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash); 
+                    block_opts.set_data_block_hash_ratio(0.75); 
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -173,6 +175,8 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash); 
+                    block_opts.set_data_block_hash_ratio(0.75); 
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -186,6 +190,8 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
+                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash); 
+                    block_opts.set_data_block_hash_ratio(0.75); 
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -201,6 +207,8 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash); 
+                    block_opts.set_data_block_hash_ratio(0.75);
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -211,6 +219,8 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
+                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash); 
+                    block_opts.set_data_block_hash_ratio(0.75); 
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
@@ -222,6 +232,8 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
+                    block_opts.set_data_block_index_type(rocksdb::DataBlockIndexType::BinaryAndHash);
+                    block_opts.set_data_block_hash_ratio(0.75); 
                     block_opts.set_block_cache(&block_cache);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
