@@ -1547,6 +1547,20 @@ impl TxType {
             _ => None,
         }
     }
+
+    /// Transaction types that only exist on the L2 rollup and must never appear in
+    /// an L1 block (`FeeToken` 0x7d, `Privileged` 0x7e). Privileged transactions in
+    /// particular take their sender from an unsigned, caller-chosen `from` field.
+    ///
+    /// This match is intentionally exhaustive (no wildcard arm): adding a new
+    /// `TxType` variant will not compile until it is explicitly classified here,
+    /// so an L2-only type can never be silently accepted on L1 by omission.
+    pub fn is_l2_only(self) -> bool {
+        match self {
+            Self::Legacy | Self::EIP2930 | Self::EIP1559 | Self::EIP4844 | Self::EIP7702 => false,
+            Self::FeeToken | Self::Privileged => true,
+        }
+    }
 }
 
 impl PrivilegedL2Transaction {
