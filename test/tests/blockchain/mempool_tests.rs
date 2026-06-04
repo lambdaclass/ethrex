@@ -523,3 +523,21 @@ async fn mempool_rejects_oversized_frame_data() {
         Err(MempoolError::TxMaxDataSizeError)
     ));
 }
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_blobs() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // Add a blob versioned hash; no sidecar transport exists for frame-tx
+    // blobs yet, so admission must reject such txs as unsupported.
+    frame_tx.blob_versioned_hashes = vec![H256::random()];
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::FrameTxBlobsUnsupported)
+    ));
+}

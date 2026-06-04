@@ -2567,6 +2567,14 @@ impl Blockchain {
                 .validate_static_constraints()
                 .map_err(MempoolError::InvalidFrameTransaction)?;
 
+            // Interim policy: no sidecar transport exists for frame-tx blobs
+            // yet, so a blob-carrying frame tx could never be included with data
+            // availability. Reject at admission (local policy; consensus still
+            // fully accounts for frame blobs if another builder includes one).
+            if !frame_tx.blob_versioned_hashes.is_empty() {
+                return Err(MempoolError::FrameTxBlobsUnsupported);
+            }
+
             // Frame `data` bypasses the generic tx.data() cap (data() is empty
             // for frame txs) — enforce the size limit over the frames' payloads.
             let total_frame_data: usize = frame_tx.frames.iter().map(|f| f.data.len()).sum();

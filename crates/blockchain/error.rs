@@ -127,6 +127,8 @@ pub enum MempoolError {
     InvalidFrameTransaction(String),
     #[error("Invalid frame transaction signature")]
     InvalidFrameSignature,
+    #[error("Frame transaction blobs are not yet supported")]
+    FrameTxBlobsUnsupported,
 }
 
 #[derive(Debug)]

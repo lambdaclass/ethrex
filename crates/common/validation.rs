@@ -200,9 +200,16 @@ fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), Inva
     let max_blob_gas_per_block = max_blob_number_per_block * GAS_PER_BLOB;
 
     for transaction in block.body.transactions.iter() {
-        if let crate::types::Transaction::EIP4844Transaction(tx) = transaction {
-            blob_gas_used += get_total_blob_gas(tx);
-            blobs_in_block += tx.blob_versioned_hashes.len() as u32;
+        match transaction {
+            crate::types::Transaction::EIP4844Transaction(tx) => {
+                blob_gas_used += get_total_blob_gas(tx);
+                blobs_in_block += tx.blob_versioned_hashes.len() as u32;
+            }
+            crate::types::Transaction::FrameTransaction(tx) => {
+                blob_gas_used += GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32;
+                blobs_in_block += tx.blob_versioned_hashes.len() as u32;
+            }
+            _ => {}
         }
     }
     if blob_gas_used > max_blob_gas_per_block {
@@ -240,4 +247,128 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), InvalidBlockErr
 /// Calculates the blob gas required by a transaction.
 pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
     GAS_PER_BLOB * tx.blob_versioned_hashes.len() as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::H256;
+    use crate::types::{
+        Block, BlockBody, BlockHeader, ChainConfig, Frame, FrameMode, FrameTransaction, Transaction,
+    };
+    use bytes::Bytes;
+
+    /// Minimal cancun-active ChainConfig: only cancun_time set (= 0), default
+    /// blob schedule (max = 6 blobs per block).
+    fn cancun_config() -> ChainConfig {
+        ChainConfig {
+            cancun_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    /// A minimal FrameTransaction with the given number of blob versioned hashes.
+    fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
+        FrameTransaction {
+            chain_id: 0,
+            nonce: 0,
+            sender: Default::default(),
+            frames: vec![Frame {
+                mode: FrameMode::Default as u8,
+                flags: 0x00,
+                target: None,
+                gas_limit: 0,
+                value: Default::default(),
+                data: Bytes::new(),
+            }],
+            signatures: vec![],
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: Default::default(),
+            blob_versioned_hashes: (0..n_blobs).map(|_| H256::zero()).collect(),
+            ..Default::default()
+        }
+    }
+
+    /// Build a minimal Block with the given transactions and blob_gas_used header
+    /// value. timestamp = 1 so cancun_time = 0 is active.
+    fn make_block(transactions: Vec<Transaction>, blob_gas_used: u64) -> Block {
+        Block {
+            header: BlockHeader {
+                timestamp: 1,
+                gas_limit: 30_000_000,
+                blob_gas_used: Some(blob_gas_used),
+                excess_blob_gas: Some(0),
+                ..Default::default()
+            },
+            body: BlockBody {
+                transactions,
+                ommers: vec![],
+                withdrawals: Some(vec![]),
+            },
+        }
+    }
+
+    // --- EIP-4844 blob gas accounting (regression guard) ---
+
+    #[test]
+    fn eip4844_blob_gas_counts_correctly() {
+        let config = cancun_config();
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::zero(), H256::zero()],
+            ..Default::default()
+        });
+        let block = make_block(vec![tx], 2 * GAS_PER_BLOB as u64);
+        assert!(verify_blob_gas_usage(&block, &config).is_ok());
+    }
+
+    #[test]
+    fn eip4844_blob_gas_mismatch_fails() {
+        let config = cancun_config();
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::zero(), H256::zero()],
+            ..Default::default()
+        });
+        // Header claims 0 but actual is 2 * GAS_PER_BLOB
+        let block = make_block(vec![tx], 0);
+        assert!(matches!(
+            verify_blob_gas_usage(&block, &config),
+            Err(InvalidBlockError::BlobGasUsedMismatch)
+        ));
+    }
+
+    // --- EIP-8141 frame tx blob gas accounting ---
+
+    #[test]
+    fn frame_tx_blob_gas_counts_correctly() {
+        let config = cancun_config();
+        let tx = Transaction::FrameTransaction(frame_tx_with_blobs(2));
+        let block = make_block(vec![tx], 2 * GAS_PER_BLOB as u64);
+        assert!(verify_blob_gas_usage(&block, &config).is_ok());
+    }
+
+    #[test]
+    fn frame_tx_blob_gas_mismatch_fails() {
+        let config = cancun_config();
+        let tx = Transaction::FrameTransaction(frame_tx_with_blobs(2));
+        // Header claims 0 but actual is 2 * GAS_PER_BLOB
+        let block = make_block(vec![tx], 0);
+        assert!(matches!(
+            verify_blob_gas_usage(&block, &config),
+            Err(InvalidBlockError::BlobGasUsedMismatch)
+        ));
+    }
+
+    #[test]
+    fn mixed_eip4844_and_frame_tx_blobs_counted_together() {
+        let config = cancun_config();
+        let eip4844_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            blob_versioned_hashes: vec![H256::zero()],
+            ..Default::default()
+        });
+        let frame_tx = Transaction::FrameTransaction(frame_tx_with_blobs(2));
+        let expected_gas = 3 * GAS_PER_BLOB as u64; // 1 EIP-4844 + 2 frame
+        let block = make_block(vec![eip4844_tx, frame_tx], expected_gas);
+        assert!(verify_blob_gas_usage(&block, &config).is_ok());
+    }
 }
