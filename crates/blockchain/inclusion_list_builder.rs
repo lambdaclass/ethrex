@@ -2,9 +2,6 @@
 //! mempool and produces a `Vec<Transaction>` (≤ 8 KiB total RLP) that the
 //! `engine_getInclusionListV1` handler returns to the consensus layer.
 //!
-//! Spec contract:
-//! `openspec/changes/eip-7805-focil-execution-layer/specs/inclusion-list-construction/spec.md`.
-//!
 //! ## State abstraction
 //!
 //! Builder needs to read `(nonce, balance)` for each candidate sender against

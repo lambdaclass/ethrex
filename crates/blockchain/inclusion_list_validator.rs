@@ -6,9 +6,6 @@
 //! transaction is missing AND could still have been validly appended to the
 //! block (mirrors EELS `check_inclusion_list_transactions`).
 //!
-//! Spec contract:
-//! `openspec/changes/eip-7805-focil-execution-layer/specs/inclusion-list-satisfaction/spec.md`.
-//!
 //! ## State abstraction
 //!
 //! The validator reuses [`IlStateProvider`] / [`AccountStateView`] from
