@@ -715,6 +715,13 @@ fn validate_attributes_v5(
             "V5 payload attributes missing parent_beacon_block_root".to_string(),
         ));
     }
+    // execution-apis#796: required field, same as V4. FOCIL (V5) runs on
+    // Amsterdam/Hegotá where the gas target is mandatory.
+    if attributes.target_gas_limit.is_none() {
+        return Err(RpcErr::InvalidPayloadAttributes(
+            "V5 payload attributes missing target_gas_limit".to_string(),
+        ));
+    }
     if attributes.timestamp <= head_block.timestamp {
         return Err(RpcErr::InvalidPayloadAttributes(
             "invalid timestamp".to_string(),
@@ -760,6 +767,12 @@ async fn build_payload_v5(
         }
     }
 
+    // validate_attributes_v5 guarantees target_gas_limit.is_some() before we
+    // reach this point (execution-apis#796), mirroring build_payload_v4.
+    let gas_ceil = attributes.target_gas_limit.ok_or_else(|| {
+        RpcErr::Internal("build_payload_v5 reached with no target_gas_limit".to_string())
+    })?;
+
     let args = BuildPayloadArgs {
         parent: fork_choice_state.head_block_hash,
         timestamp: attributes.timestamp,
@@ -770,7 +783,7 @@ async fn build_payload_v5(
         slot_number: Some(attributes.slot_number),
         version: 5,
         elasticity_multiplier: ELASTICITY_MULTIPLIER,
-        gas_ceil: context.gas_ceil,
+        gas_ceil,
         inclusion_list_transactions: if decoded_il.is_empty() {
             None
         } else {
@@ -785,6 +798,7 @@ async fn build_payload_v5(
         id = payload_id,
         slot = attributes.slot_number,
         il_count,
+        gas_ceil,
         "Fork choice updated V5 includes Hegotá payload attributes. Creating a new payload"
     );
     let payload = match create_payload(&args, &context.storage, context.node_data.extra_data) {
@@ -968,6 +982,7 @@ mod tests {
             parent_beacon_block_root: Some(Default::default()),
             slot_number: 1,
             inclusion_list_transactions: vec![],
+            target_gas_limit: Some(50_000_000),
             ..Default::default()
         };
         let head_block = BlockHeader {
