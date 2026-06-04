@@ -5,6 +5,8 @@
 //!   - `TXPARAM` (0xB0)
 //!   - `FRAMEDATALOAD` (0xB1)
 //!   - `FRAMEDATACOPY` (0xB2)
+//!   - `FRAMEPARAM` (0xB3)
+//!   - `SIGPARAM` (0xB4)
 //!   - Default code for EOAs: `VERIFY` has the signature-check behavior;
 //!     `SENDER` and `DEFAULT` return successfully as if calling empty code
 //!     (pinned EIP-8141 spec §"Default code" lines 412-413).
@@ -169,12 +171,15 @@ pub fn apply_approve(
 /// APPROVE (0xAA) -- Frame transaction approval opcode.
 ///
 /// Pops [offset, length, scope] from the stack.
-/// - scope 0x1: sender approval (validate sender identity)
-/// - scope 0x2: payer approval (deduct gas cost from payer)
-/// - scope 0x3: combined sender + payer approval
-/// - scope 0x0 and others: invalid (exceptional halt)
+/// - scope 0x1 (APPROVE_PAYMENT): increment nonce, deduct tx cost, record payer
+/// - scope 0x2 (APPROVE_EXECUTION): set sender_approved (requires resolved_target == tx.sender)
+/// - scope 0x3 (APPROVE_EXECUTION_AND_PAYMENT): both, in one atomic step
+/// - scope 0x0 (APPROVE_NONE) and any value > 3: invalid (exceptional halt)
 ///
-/// Scope restriction from mode bits 8-9: if nonzero, only that scope is allowed.
+/// The requested scope must also be a subset of the frame's allowed scope, taken
+/// from flags bits 0-1 (`frame.scope_restriction()`). When the allowed scope is 0
+/// (APPROVE_SCOPE_NONE) no approval may be granted in the frame at all, so APPROVE
+/// halts (consistent with `execute_default_verify`).
 ///
 /// On success, copies memory[offset..offset+length] to output and halts the frame.
 pub struct OpApproveHandler;
