@@ -769,7 +769,10 @@ fn sender_frame_to_eoa_emits_transfer_log() {
     };
     // The EIP-7708 Transfer log must be in the SENDER frame's per-frame receipt
     // (frame index 1) — that's what the consensus receipts-root commits to.
-    let frame_results = report.frame_results.as_ref().expect("frame results present");
+    let frame_results = report
+        .frame_results
+        .as_ref()
+        .expect("frame results present");
     assert!(
         frame_results[1].2.iter().any(is_transfer_log),
         "EIP-7708 transfer log missing from frame_receipts[1].logs: {:?}",
