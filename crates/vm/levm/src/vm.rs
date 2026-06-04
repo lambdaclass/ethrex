@@ -1058,7 +1058,9 @@ impl<'a> VM<'a> {
                 // Normal code execution via CallFrame. msg_value carries
                 // `frame.value` so the contract sees the correct CALLVALUE
                 // (EIP-8141 spec line 346), but `should_transfer_value` stays
-                // false because the outer loop above already moved the funds.
+                // false because the deferred `do_frame_value_transfer!()` below
+                // (invoked after the frame swap) owns the transfer — the inner
+                // CALL machinery must not move the funds a second time.
                 let call_frame = CallFrame::new(
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
@@ -1069,7 +1071,7 @@ impl<'a> VM<'a> {
                     is_static,          // is_static
                     frame.gas_limit,    // gas_limit
                     0,                  // depth
-                    false,              // should_transfer_value (outer already transferred)
+                    false,              // should_transfer_value (do_frame_value_transfer! handles it)
                     false,              // is_create
                     0,                  // ret_offset
                     0,                  // ret_size
