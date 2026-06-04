@@ -474,7 +474,8 @@ fn payer_pays_effective_price_no_burn() {
 /// FRAMEPARAM(param=0x01, frameIndex=0) → gas_limit of frame[0], then SSTORE at slot 0.
 /// Bytecode: PUSH1 0x01 (param), PUSH1 0x00 (frameIndex — top), FRAMEPARAM (0xB3),
 ///           PUSH1 0x00 (slot key), SSTORE (0x55), STOP (0x00).
-const FRAMEPARAM_READ_FRAME0_GASLIMIT: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0xB3, 0x60, 0x00, 0x55, 0x00];
+const FRAMEPARAM_READ_FRAME0_GASLIMIT: &[u8] =
+    &[0x60, 0x01, 0x60, 0x00, 0xB3, 0x60, 0x00, 0x55, 0x00];
 
 /// Read storage `key` of `addr` from the post-execution cache.
 fn storage_slot(db: &GeneralizedDatabase, addr: Address, key: ethrex_common::H256) -> U256 {
@@ -629,4 +630,42 @@ fn batched_verify_revert_invalidates_tx() {
         "a batched VERIFY revert must invalidate the tx; got {result:?}"
     );
     assert_db_cache_unchanged(&db, &accounts);
+}
+
+// ==================== B9: SENDER/DEFAULT default code returns success ====================
+
+#[test]
+fn sender_frame_transfers_value_to_eoa() {
+    let eoa = Address::from_low_u64_be(0xE0A); // code-less; NOT seeded with code
+    let value = U256::from(5_000_000u64);
+    let tx = frame_tx_with_frames(vec![
+        // frame0: VERIFY on the sender -> APPROVE(3) -> payer=sender, sender_approved.
+        verify_frame(FUNDED_SENDER),
+        // frame1: SENDER frame delivering value to a code-less EOA.
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(eoa),
+            gas_limit: 50_000,
+            value,
+            data: Bytes::new(),
+        },
+    ]);
+    let accounts = [(
+        FUNDED_SENDER,
+        AUTO_SEED_SENDER_BALANCE,
+        0,
+        Bytes::from(APPROVE_BOTH_CODE.to_vec()),
+    )];
+    let (result, db) = run_frame_tx(&accounts, tx);
+    let report = result.expect("plain EOA transfer must be a VALID, SUCCESSFUL tx");
+    // frame[1] (the SENDER frame) succeeded:
+    let frame_results = report.frame_results.expect("frame results present");
+    assert_eq!(
+        frame_results[1].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS,
+        "SENDER frame to a code-less EOA must succeed (default code = success)"
+    );
+    // The EOA actually received the value:
+    assert_eq!(balance_of(&db, eoa), value, "value not delivered to EOA");
 }

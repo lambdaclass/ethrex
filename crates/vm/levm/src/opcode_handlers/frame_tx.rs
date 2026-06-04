@@ -5,8 +5,9 @@
 //!   - `TXPARAM` (0xB0)
 //!   - `FRAMEDATALOAD` (0xB1)
 //!   - `FRAMEDATACOPY` (0xB2)
-//!   - Default code for EOAs (only `VERIFY` has executable behavior; `SENDER`
-//!     and `DEFAULT` revert unconditionally per the latest EIP-8141 spec).
+//!   - Default code for EOAs: `VERIFY` has the signature-check behavior;
+//!     `SENDER` and `DEFAULT` return successfully as if calling empty code
+//!     (pinned EIP-8141 spec §"Default code" lines 412-413).
 
 use crate::{
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
@@ -58,14 +59,21 @@ fn compute_tx_cost(
 
 /// Apply APPROVE side effects for the given scope.
 /// This is shared between OpApproveHandler and (future) default code.
-pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::Address) -> Result<(), VMError> {
+pub fn apply_approve(
+    vm: &mut VM<'_>,
+    scope: u64,
+    frame_target: ethrex_common::Address,
+) -> Result<(), VMError> {
     match scope {
         0x1 => {
             // APPROVE_PAYMENT: increment nonce, deduct max cost, record payer.
             // Per spec, the single transaction-scoped variable `payer` is
             // set on success; `payer.is_some()` is the source of truth for
             // "payment has been approved".
-            let ctx = vm.frame_tx_context.as_ref().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
@@ -91,24 +99,36 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_mut()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.payer_address = Some(frame_target);
         }
         0x2 => {
             // APPROVE_EXECUTION: set sender_approved (requires frame_target == tx.sender)
-            let ctx = vm.frame_tx_context.as_ref().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
             if frame_target != ctx.tx.sender {
                 return Err(VMError::RevertOpcode);
             }
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_mut()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
         }
         0x3 => {
             // APPROVE_EXECUTION_AND_PAYMENT: both, in one atomic step.
-            let ctx = vm.frame_tx_context.as_ref().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_ref()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             if ctx.sender_approved || ctx.payer_address.is_some() {
                 return Err(ExceptionalHalt::InvalidOpcode.into());
             }
@@ -132,7 +152,10 @@ pub fn apply_approve(vm: &mut VM<'_>, scope: u64, frame_target: ethrex_common::A
                 Err(e) => return Err(VMError::Internal(e)),
             }
 
-            let ctx = vm.frame_tx_context.as_mut().ok_or(ExceptionalHalt::InvalidOpcode)?;
+            let ctx = vm
+                .frame_tx_context
+                .as_mut()
+                .ok_or(ExceptionalHalt::InvalidOpcode)?;
             ctx.sender_approved = true;
             ctx.payer_address = Some(frame_target);
         }
@@ -184,10 +207,7 @@ impl OpcodeHandler for OpApproveHandler {
         let allowed_scope = current_frame.scope_restriction();
         let scope_val = scope.as_u64();
         // requested scope must be a non-zero subset of a (necessarily non-zero) allowed_scope
-        if scope_val == 0
-            || scope_val > 3
-            || (scope_val & u64::from(allowed_scope)) != scope_val
-        {
+        if scope_val == 0 || scope_val > 3 || (scope_val & u64::from(allowed_scope)) != scope_val {
             return Err(ExceptionalHalt::InvalidOpcode.into());
         }
 
@@ -256,10 +276,7 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let idx = index_to_usize(frame_index.as_u64())?;
-        let frame = ctx
-            .frames
-            .get(idx)
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         // Out-of-usize offsets are past-the-end: the word stays zero-filled.
         let mut word = [0u8; 32];
@@ -292,8 +309,7 @@ pub struct OpFrameDataCopyHandler;
 impl OpcodeHandler for OpFrameDataCopyHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let [mem_offset, data_offset, length, frame_index] =
-            *vm.current_call_frame.stack.pop()?;
+        let [mem_offset, data_offset, length, frame_index] = *vm.current_call_frame.stack.pop()?;
         let (length, mem_offset) = size_offset_to_usize(length, mem_offset)?;
         // Out-of-usize data_offset is past-the-end: destination stays zero-filled.
         let data_offset_opt = u256_to_offset(data_offset);
@@ -320,10 +336,7 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
         }
 
         let idx = index_to_usize(frame_index.as_u64())?;
-        let frame = ctx
-            .frames
-            .get(idx)
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let data = &frame.data;
         let mut buf = vec![0u8; length];
@@ -361,10 +374,7 @@ impl OpcodeHandler for OpFrameParamHandler {
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let idx = index_to_usize(frame_index.as_u64())?;
-        let frame = ctx
-            .frames
-            .get(idx)
-            .ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let result: U256 = match param_id.as_u64() {
             0x00 => {
@@ -466,10 +476,7 @@ impl OpcodeHandler for OpSigParamHandler {
 
 // -- Helper functions --
 
-fn load_tx_param(
-    ctx: &crate::vm::FrameTxContext,
-    param_id: u64,
-) -> Result<U256, VMError> {
+fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
     match param_id {
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce)),
@@ -515,9 +522,9 @@ fn address_to_u256(addr: ethrex_common::Address) -> U256 {
 /// Execute default code for an EOA target in a frame transaction.
 ///
 /// When a frame targets an address with no deployed code (an EOA), the protocol
-/// runs built-in "default code" instead of executing a normal CALL. Only the
-/// `VERIFY` mode has executable default-code behavior; per the latest spec,
-/// `SENDER` and `DEFAULT` modes revert the frame unconditionally.
+/// runs built-in "default code" instead of executing a normal CALL. `VERIFY`
+/// runs the signature-check logic; `SENDER` and `DEFAULT` return successfully
+/// as if calling empty code (pinned EIP-8141 spec §"Default code" lines 412-413).
 ///
 /// Returns `(success, gas_used, logs)`.
 pub fn execute_default_code(
@@ -527,7 +534,13 @@ pub fn execute_default_code(
 ) -> Result<(bool, u64, Vec<Log>), VMError> {
     match frame.execution_mode() {
         FrameMode::Verify => execute_default_verify(vm, frame, target),
-        FrameMode::Sender | FrameMode::Default => Ok((false, 0, Vec::new())),
+        // Pinned EIP-8141 spec (fe0940cae2) §"Default code" lines 412-413:
+        // a SENDER or DEFAULT frame whose target has no code "returns
+        // successfully as if calling empty code" — this is what makes a plain
+        // ETH transfer to an EOA work (spec §EOA support / Example 1).
+        // Consumes no execution gas (the frame's value transfer is handled by
+        // the caller's deferred transfer).
+        FrameMode::Sender | FrameMode::Default => Ok((true, 0, Vec::new())),
     }
 }
 
@@ -616,9 +629,7 @@ mod tests {
         assert_eq!(u256_to_offset(U256::zero()), Some(0));
         assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
         assert_eq!(
-            u256_to_offset(U256::from(
-                u64::try_from(usize::MAX).unwrap_or(u64::MAX)
-            )),
+            u256_to_offset(U256::from(u64::try_from(usize::MAX).unwrap_or(u64::MAX))),
             Some(usize::MAX)
         );
     }
@@ -800,7 +811,9 @@ mod tests {
         let copy_len = available.min(32);
         if let (Some(dst), Some(src)) = (
             word.get_mut(..copy_len),
-            frame.data.get(byte_offset..byte_offset.saturating_add(copy_len)),
+            frame
+                .data
+                .get(byte_offset..byte_offset.saturating_add(copy_len)),
         ) {
             dst.copy_from_slice(src);
         }
