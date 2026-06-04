@@ -35,6 +35,17 @@ use tracing::warn;
 /// might want to raise it. FIFO eviction keeps the cap safe regardless.
 pub const MAX_ALTERNATES_PER_HASH: usize = 8;
 
+/// Maximum number of blob (EIP-4844) transactions retained in the mempool,
+/// independent of `max_mempool_size`. Blob txs live in a dedicated sub-pool with
+/// its own FIFO so a flood of regular transactions cannot evict them: under load
+/// a node would otherwise drop the (scarce, high-value) blob txs it needs to
+/// build full blocks. Worst-case memory is bounded by this count times the
+/// per-tx blob sidecar size (`MAX_BLOB_TX_SIZE`, ~1 MiB).
+///
+/// TODO(#6691-fu): expose this through `BlockchainOptions` / CLI like
+/// `max_mempool_size`.
+pub const MAX_BLOB_MEMPOOL_SIZE: usize = 1024;
+
 /// An alternate announcer for a known-in-flight transaction hash. Carries the
 /// announcer's own announced type and size so the eventual retry can validate
 /// the response against the alternate's metadata (which may differ from the
@@ -70,21 +81,30 @@ struct MempoolInner {
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
+    /// Insertion order of blob (EIP-4844) txs only, kept separate from
+    /// `txs_order` so blob txs are evicted against their own cap rather than by
+    /// the regular-tx FIFO.
+    blob_txs_order: VecDeque<H256>,
     max_mempool_size: usize,
+    max_blob_mempool_size: usize,
     // Max number of transactions to let the mempool order queue grow before pruning it
     mempool_prune_threshold: usize,
+    blob_mempool_prune_threshold: usize,
 }
 
 impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
             txs_order: VecDeque::with_capacity(max_mempool_size * 2),
+            blob_txs_order: VecDeque::with_capacity(MAX_BLOB_MEMPOOL_SIZE * 2),
             transaction_pool: FxHashMap::with_capacity_and_hasher(
                 max_mempool_size,
                 Default::default(),
             ),
             max_mempool_size,
+            max_blob_mempool_size: MAX_BLOB_MEMPOOL_SIZE,
             mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
+            blob_mempool_prune_threshold: MAX_BLOB_MEMPOOL_SIZE + MAX_BLOB_MEMPOOL_SIZE / 2,
             ..Default::default()
         }
     }
@@ -124,15 +144,44 @@ impl MempoolInner {
         }
     }
 
-    /// Remove the oldest transaction in the pool
-    fn remove_oldest_transaction(&mut self) -> Result<(), StoreError> {
-        // Remove elements from the order queue until one is present in the pool
-        while self.transaction_pool.len() >= self.max_mempool_size {
+    /// Number of blob (EIP-4844) txs currently in the pool. Each blob tx has
+    /// exactly one bundle entry, so the bundle pool size is the blob tx count.
+    fn blob_tx_count(&self) -> usize {
+        self.blobs_bundle_pool.len()
+    }
+
+    /// Number of non-blob txs currently in the pool.
+    fn regular_tx_count(&self) -> usize {
+        self.transaction_pool.len() - self.blob_tx_count()
+    }
+
+    /// Evict the oldest regular (non-blob) transactions until the regular pool is
+    /// back under its cap. Only drains `txs_order`, so blob txs are never evicted
+    /// by regular-tx pressure.
+    fn remove_oldest_regular_transaction(&mut self) -> Result<(), StoreError> {
+        while self.regular_tx_count() >= self.max_mempool_size {
             if let Some(oldest_hash) = self.txs_order.pop_front() {
                 self.remove_transaction_with_lock(&oldest_hash)?;
             } else {
                 warn!(
-                    "Mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
+                    "Regular mempool is full but there are no transactions to remove, this should not happen and will make the mempool grow indefinitely"
+                );
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Evict the oldest blob transactions until the blob sub-pool is back under
+    /// its cap. Only drains `blob_txs_order`.
+    fn remove_oldest_blob_transaction(&mut self) -> Result<(), StoreError> {
+        while self.blob_tx_count() > self.max_blob_mempool_size {
+            if let Some(oldest_hash) = self.blob_txs_order.pop_front() {
+                self.remove_transaction_with_lock(&oldest_hash)?;
+            } else {
+                warn!(
+                    "Blob mempool is full but there are no blob transactions to remove, this should not happen and will make the mempool grow indefinitely"
                 );
                 break;
             }
@@ -192,17 +241,32 @@ impl Mempool {
         transaction: MempoolTransaction,
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
-        // Prune the order queue if it has grown too much
-        if inner.txs_order.len() > inner.mempool_prune_threshold {
+        let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
+        // Prune the order queues if they have grown too much
+        if inner.txs_order.len() > inner.mempool_prune_threshold
+            || inner.blob_txs_order.len() > inner.blob_mempool_prune_threshold
+        {
             // NOTE: we do this to avoid borrow checker errors
             let txpool = core::mem::take(&mut inner.transaction_pool);
             inner.txs_order.retain(|tx| txpool.contains_key(tx));
+            inner.blob_txs_order.retain(|tx| txpool.contains_key(tx));
             inner.transaction_pool = txpool;
         }
-        if inner.transaction_pool.len() >= inner.max_mempool_size {
-            inner.remove_oldest_transaction()?;
+        // Blob txs are evicted against their own cap so a flood of regular txs
+        // can't push them out (and vice versa).
+        if is_blob {
+            // The bundle is inserted before the tx (see add_blob_transaction_to_pool),
+            // so the incoming blob is already counted by `blob_tx_count`.
+            if inner.blob_tx_count() > inner.max_blob_mempool_size {
+                inner.remove_oldest_blob_transaction()?;
+            }
+            inner.blob_txs_order.push_back(hash);
+        } else {
+            if inner.regular_tx_count() >= inner.max_mempool_size {
+                inner.remove_oldest_regular_transaction()?;
+            }
+            inner.txs_order.push_back(hash);
         }
-        inner.txs_order.push_back(hash);
         inner
             .txs_by_sender_nonce
             .insert((sender, transaction.nonce()), hash);

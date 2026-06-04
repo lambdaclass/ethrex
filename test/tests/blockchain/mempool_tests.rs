@@ -549,6 +549,85 @@ fn blobs_bundle_insert_and_remove() {
     );
 }
 
+#[test]
+fn blob_txs_are_not_evicted_by_regular_tx_flood() {
+    // Regression: blob txs live in a dedicated sub-pool, so a flood of regular
+    // txs that fills (and evicts from) the regular pool must not reduce the set
+    // of retained blob txs. Pre-fix, blob txs shared the regular FIFO and were
+    // flushed out by regular-tx pressure, starving block building of blobs.
+    let regular_cap = 4;
+    let mempool = Mempool::new(regular_cap);
+
+    // Insert more blob txs than the regular cap, so the blob set can only be
+    // fully retained if blobs are NOT bound by the regular cap (bundle inserted
+    // first, mirroring add_blob_transaction_to_pool).
+    let blob_count = regular_cap + 2;
+    let mut blob_hashes = Vec::new();
+    for i in 0..blob_count {
+        let bundle = BlobsBundle {
+            blobs: vec![[i as u8; BYTES_PER_BLOB]],
+            commitments: vec![[i as u8; 48]],
+            proofs: vec![[i as u8; 48]],
+            version: 0,
+        };
+        let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            gas: 21_000,
+            to: Address::from_low_u64_be(1),
+            ..Default::default()
+        });
+        let blob_hash = H256::random();
+        let blob_sender = H160::random();
+        mempool.add_blobs_bundle(blob_hash, bundle).unwrap();
+        mempool
+            .add_transaction(
+                blob_hash,
+                blob_sender,
+                MempoolTransaction::new(blob_tx, blob_sender),
+            )
+            .expect("Failed to add blob transaction");
+        blob_hashes.push(blob_hash);
+    }
+
+    // Flood with regular txs far beyond the regular cap, tracking the first one
+    // so we can confirm the flood actually triggered regular-tx eviction.
+    let first_regular_hash = H256::random();
+    for i in 0..(regular_cap * 10) {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: TxKind::Call(Address::from_low_u64_be(2)),
+            ..Default::default()
+        });
+        let sender = H160::random();
+        let hash = if i == 0 {
+            first_regular_hash
+        } else {
+            H256::random()
+        };
+        mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .expect("Failed to add regular transaction");
+    }
+
+    // The flood must have evicted regular txs (proving it exceeded the cap that
+    // pre-fix would also have flushed blobs).
+    assert!(
+        !mempool
+            .contains_tx(first_regular_hash)
+            .expect("contains_tx should succeed"),
+        "regular-tx flood did not evict regular txs; test is not exercising eviction"
+    );
+
+    // Despite the eviction, every blob tx must still be retained (100% blob
+    // retention vs a capped regular pool).
+    for blob_hash in blob_hashes {
+        assert!(
+            mempool
+                .contains_tx(blob_hash)
+                .expect("contains_tx should succeed"),
+            "blob tx {blob_hash:?} was evicted by a regular-tx flood"
+        );
+    }
+}
+
 mod alternates {
     use super::*;
     use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;
