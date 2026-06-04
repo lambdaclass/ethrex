@@ -1,19 +1,24 @@
 use crate::{
     backend,
+    discovery::lookup::{IterativeLookup, LOOKUP_ALPHA, LOOKUP_BUCKET_SIZE},
     discv4::{
         messages::{
-            ENRRequestMessage, ENRResponseMessage, Message, NeighborsMessage, PingMessage,
-            PongMessage,
+            ENRRequestMessage, ENRResponseMessage, FindNodeMessage, Message, NeighborsMessage,
+            PingMessage, PongMessage,
         },
         server::{Discv4Message, EXPIRATION_SECONDS},
     },
     metrics::METRICS,
     peer_table::{Contact, ContactValidation, DiscoveryProtocol, PeerTableServerProtocol as _},
     types::{Endpoint, Node, NodeRecord},
-    utils::{get_msg_expiration_from_seconds, is_msg_expired, node_id},
+    utils::{
+        get_msg_expiration_from_seconds, is_msg_expired, node_id, public_key_from_signing_key,
+    },
 };
 use bytes::{Bytes, BytesMut};
 use ethrex_common::{H256, H512, types::ForkId};
+use rand::rngs::OsRng;
+use secp256k1::SecretKey;
 use std::time::Duration;
 use tracing::{debug, error, trace};
 
@@ -120,35 +125,117 @@ impl DiscoveryServer {
     }
 
     pub(crate) async fn discv4_lookup(&mut self) -> Result<(), DiscoveryServerError> {
+        if self.discv4.is_none() {
+            return Ok(());
+        }
+
+        // Remove finished lookups
+        self.discv4
+            .as_mut()
+            .expect("discv4 state must exist")
+            .active_lookups
+            .retain(|(l, _)| !l.is_finished());
+
+        // If a lookup is already active, advance it instead of starting a new
+        // one. Lookups are timer-driven: each tick sends the next alpha queries.
+        // Responses feed results into the lookup but don't trigger new queries,
+        // which naturally throttles traffic.
+        if !self
+            .discv4
+            .as_ref()
+            .expect("discv4 state must exist")
+            .active_lookups
+            .is_empty()
+        {
+            return self.advance_v4_lookup().await;
+        }
+
+        // Generate random target
+        let random_priv_key = SecretKey::new(&mut OsRng);
+        let random_pub_key = public_key_from_signing_key(&random_priv_key);
+        let target_id = node_id(&random_pub_key);
+
+        // Seed with closest known nodes from the connection pool
+        let seed = self
+            .peer_table
+            .get_closest_from_pool(target_id, LOOKUP_BUCKET_SIZE)
+            .await?;
+        if seed.is_empty() {
+            trace!(
+                protocol = "discv4",
+                "No seeds for lookup, connection pool empty"
+            );
+            return Ok(());
+        }
+
+        trace!(
+            protocol = "discv4",
+            seeds = seed.len(),
+            "Starting new iterative lookup"
+        );
+        let lookup = IterativeLookup::new(target_id, seed);
+
+        // Sign one FindNode message for this target
+        let expiration = get_msg_expiration_from_seconds(EXPIRATION_SECONDS);
+        let msg = Message::FindNode(FindNodeMessage::new(random_pub_key, expiration));
+        let mut buf = BytesMut::new();
+        msg.encode_with_header(&mut buf, &self.signer);
+
+        let discv4 = self.discv4.as_mut().expect("discv4 state must exist");
+        discv4.active_lookups.push((lookup, buf));
+
+        // Fire the initial queries for the new lookup
+        self.advance_v4_lookup().await
+    }
+
+    async fn advance_v4_lookup(&mut self) -> Result<(), DiscoveryServerError> {
         let discv4 = match &mut self.discv4 {
             Some(s) => s,
             None => return Ok(()),
         };
-        if let Some(contact) = self
-            .peer_table
-            .get_contact_for_lookup(DiscoveryProtocol::Discv4)
-            .await?
-        {
-            if let Err(e) = self
-                .udp_socket
-                .send_to(&discv4.find_node_message, &contact.node.udp_addr())
-                .await
-            {
-                error!(protocol = "discv4", sending = "FindNode", addr = ?&contact.node.udp_addr(), err=?e, "Error sending message");
-                self.peer_table.set_disposable(contact.node.node_id())?;
+
+        if discv4.active_lookups.is_empty() {
+            return Ok(());
+        }
+
+        // Collect queries from all active lookups
+        let mut queries: Vec<(usize, H256, Node, BytesMut)> = Vec::new();
+        for (idx, (lookup, message)) in discv4.active_lookups.iter_mut().enumerate() {
+            for (node_id, node) in lookup.next_to_query(LOOKUP_ALPHA) {
+                queries.push((idx, node_id, node, message.clone()));
+            }
+        }
+
+        if !queries.is_empty() {
+            trace!(
+                protocol = "discv4",
+                count = queries.len(),
+                "Advancing lookups, querying nodes"
+            );
+        }
+
+        for (idx, node_id, node, message) in queries {
+            if let Err(e) = self.udp_socket.send_to(&message, &node.udp_addr()).await {
+                error!(protocol = "discv4", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
+                self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
+                if let Some(discv4) = &mut self.discv4
+                    && let Some((lookup, _)) = discv4.active_lookups.get_mut(idx)
+                {
+                    lookup.record_timeout();
+                }
             } else {
                 #[cfg(feature = "metrics")]
                 {
                     use ethrex_metrics::p2p::METRICS_P2P;
                     METRICS_P2P.inc_discv4_outgoing("FindNode");
                 }
-                discv4
+                self.discv4
+                    .as_mut()
+                    .expect("discv4 state must exist")
                     .pending_find_node
-                    .insert(contact.node.node_id(), std::time::Instant::now());
+                    .insert(node_id, std::time::Instant::now());
             }
-            self.peer_table
-                .increment_find_node_sent(contact.node.node_id())?;
         }
         Ok(())
     }
@@ -343,11 +430,22 @@ impl DiscoveryServer {
         }
 
         let nodes = neighbors_message.nodes;
-        self.peer_table.new_contacts(
-            nodes,
-            self.local_node.node_id(),
-            DiscoveryProtocol::Discv4,
-        )?;
+        self.peer_table
+            .new_contacts(nodes.clone(), DiscoveryProtocol::Discv4)?;
+
+        // Feed results into ALL active lookups (but don't advance — the timer
+        // drives lookup progress so that traffic stays controlled).
+        if let Some(discv4) = &mut self.discv4 {
+            let entries: Vec<(H256, Node)> =
+                nodes.iter().map(|n| (n.node_id(), n.clone())).collect();
+            for (lookup, _) in &mut discv4.active_lookups {
+                lookup.feed_results(entries.clone());
+            }
+            if let Some((lookup, _)) = discv4.active_lookups.first_mut() {
+                lookup.record_response();
+            }
+        }
+
         Ok(())
     }
 

@@ -739,6 +739,36 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
+/// Returns the block's BAL for V2 payload-body responses.
+///
+/// Reads the persisted BAL first; only when it is absent (pre-Amsterdam blocks,
+/// or Amsterdam blocks processed before BAL persistence was added) does it fall
+/// back to regenerating via re-execution, which requires the parent state trie
+/// and fails on snap-synced nodes that don't hold that historical state.
+fn bal_for_block(
+    context: &RpcApiContext,
+    block: &Block,
+) -> Result<Option<BlockAccessList>, RpcErr> {
+    let block_hash = block.hash();
+    if let Some(bal) = context.storage.get_block_access_list(block_hash)? {
+        return Ok(Some(bal));
+    }
+    let generated = context
+        .blockchain
+        .generate_bal_for_block(block)
+        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+    // Write back so subsequent requests for this block are served from the
+    // store instead of re-executing every time. Regeneration only succeeds
+    // while the parent state is still in the retained window; the block has
+    // long been accepted, so the regenerated BAL is authoritative for serving.
+    if let Some(bal) = &generated
+        && let Err(err) = context.storage.store_block_access_list(block_hash, bal)
+    {
+        warn!("Failed to persist regenerated block access list for {block_hash}: {err}");
+    }
+    Ok(generated)
+}
+
 // ==================== V2 Body Methods (EIP-7928) ====================
 
 pub struct GetPayloadBodiesByHashV2Request {
@@ -769,10 +799,7 @@ impl RpcHandler for GetPayloadBodiesByHashV2Request {
             let block = context.storage.get_block_by_hash(*hash).await?;
             let result = match block {
                 Some(block) => {
-                    let bal = context
-                        .blockchain
-                        .generate_bal_for_block(&block)
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let bal = bal_for_block(&context, &block)?;
                     Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
                 }
                 None => None,
@@ -837,10 +864,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
                             })?;
                     let block = Block { header, body };
 
-                    let bal = context
-                        .blockchain
-                        .generate_bal_for_block(&block)
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let bal = bal_for_block(&context, &block)?;
                     Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
                 }
                 None => None,

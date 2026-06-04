@@ -119,17 +119,11 @@ jobs:
 
       - name: Run unit tests
         run: |
-          # The per-Blockchain merkle thread pool (crates/blockchain/blockchain.rs)
-          # spawns 17 threads per instance; the parallel test suite builds many at
-          # once and exhausts macOS's per-task thread cap (pthread_create EAGAIN,
-          # code 35). Cap test parallelism on macOS so few pools are live at once.
-          if [ "$RUNNER_OS" = "macOS" ]; then export RUST_TEST_THREADS=2; fi
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
         run: |
-          if [ "$RUNNER_OS" = "macOS" ]; then export RUST_TEST_THREADS=2; fi
           make -C tooling/ef_tests/blockchain test
 
       - name: Append Known Issues to job summary

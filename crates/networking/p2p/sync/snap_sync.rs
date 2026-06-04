@@ -15,7 +15,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::{AccountState, BlockHeader, Code};
 use ethrex_common::{
     H256,
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
+    constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
 };
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::Store;
@@ -138,6 +138,9 @@ pub async fn sync_cycle_snap(
     let mut attempts = 0;
 
     loop {
+        // Prune dead/unresponsive peers periodically to allow replacements to be promoted
+        let _ = peers.peer_table.prune_table();
+
         debug!("Requesting Block Headers from {current_head}");
 
         let Some(mut block_headers) = peers
@@ -925,7 +928,7 @@ pub fn validate_bytecodes(store: Store, state_root: H256) -> bool {
         .iter_accounts(state_root)
         .expect("we couldn't iterate over accounts")
     {
-        if account_state.code_hash != *EMPTY_KECCACK_HASH
+        if account_state.code_hash != *EMPTY_KECCAK_HASH
             && !store
                 .get_account_code(account_state.code_hash)
                 .is_ok_and(|code| code.is_some())
@@ -1009,7 +1012,7 @@ async fn insert_accounts(
         let code_hashes_from_snapshot: Vec<H256> = account_states_snapshot
             .iter()
             .filter_map(|(_, state)| {
-                (state.code_hash != *EMPTY_KECCACK_HASH).then_some(state.code_hash)
+                (state.code_hash != *EMPTY_KECCAK_HASH).then_some(state.code_hash)
             })
             .collect();
 
@@ -1129,7 +1132,7 @@ async fn insert_accounts(
     for account in iter {
         let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
         let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCACK_HASH {
+        if account_state.code_hash != *EMPTY_KECCAK_HASH {
             code_hash_collector.add(account_state.code_hash);
             code_hash_collector.flush_if_needed().await?;
         }
