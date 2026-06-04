@@ -6,6 +6,8 @@ use ethrex_storage::error::StoreError;
 use serde::Serialize;
 use serde_json::Value;
 
+use tracing::warn;
+
 use crate::{RpcApiContext, RpcErr, RpcHandler, types::block_identifier::BlockIdentifierOrHash};
 
 /// `debug_accountRange` — paginated iteration over the state trie at a block,
@@ -59,6 +61,7 @@ struct AccountEntry {
     root: H256,
     code_hash: H256,
     /// Original (unhashed) address. Always `null` — ethrex has no preimage store.
+    #[serde(skip_serializing_if = "Option::is_none")]
     key: Option<H256>,
 }
 
@@ -100,12 +103,16 @@ impl RpcHandler for AccountRangeRequest {
             .await?
             .ok_or_else(|| RpcErr::WrongParam("Block not found".to_string()))?;
 
-        // `tx_index` is parsed and validated but not honoured yet. Negative
-        // values (geth's `-1` "end of block" sentinel) and any value >= the
-        // block's tx count are equivalent to "end of block" — which is what
-        // we always return, so no error needed. Other values would require
-        // mid-block state reconstruction; documented on the type.
-        let _ = self.tx_index;
+        // `tx_index` is parsed but not honoured yet — we always return end-of-block
+        // state. Negative values (geth's `-1` sentinel) and values >= the block's tx
+        // count are equivalent, so no error. For non-negative values that would
+        // require mid-block state reconstruction we emit a warning.
+        if self.tx_index >= 0 {
+            warn!(
+                tx_index = self.tx_index,
+                "debug_accountRange: txIndex is not yet supported, returning end-of-block state"
+            );
+        }
 
         let state_root = header.state_root;
         let start = self.start;
