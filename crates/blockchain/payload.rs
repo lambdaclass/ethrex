@@ -657,10 +657,11 @@ impl Blockchain {
                 Err(e) => {
                     warn!("Failed to execute transaction: {tx_hash:x}, {e}");
                     metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
-                    // Frame transactions that fail are deterministic failures
-                    // (VERIFY frame signature is bound to the tx), so remove
-                    // them from the mempool to avoid retrying every block.
-                    if head_tx.tx_type() == TxType::Frame {
+                    // Frame-tx failures are deterministic (signatures bind the
+                    // whole tx) EXCEPT nonce mismatches, which are transient
+                    // queue-ordering artifacts — keep those pooled for a later
+                    // block, mirroring how regular txs are treated.
+                    if head_tx.tx_type() == TxType::Frame && !is_nonce_mismatch(&e) {
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
                     txs.pop();
@@ -774,6 +775,20 @@ impl Blockchain {
         context.payload.header.logs_bloom = bloom_from_logs(&logs);
         Ok(())
     }
+}
+
+/// Returns true if `e` represents a transaction nonce mismatch.
+///
+/// The VM surfaces this as `TxValidationError::NonceMismatch` which gets
+/// stringified through `EvmError::Transaction(String)` →
+/// `ChainError::InvalidBlock(InvalidBlockError::InvalidTransaction(String))`.
+/// There is no typed variant to match at the `ChainError` level, so we detect
+/// it by the stable Display substring. Used to keep gapped-nonce frame txs
+/// pooled instead of evicting them: a nonce gap is transient because the
+/// `TransactionQueue` feeds the lowest pooled nonce without comparing to the
+/// account nonce, so the tx becomes valid once earlier nonces are included.
+fn is_nonce_mismatch(e: &ChainError) -> bool {
+    e.to_string().contains("Nonce mismatch")
 }
 
 /// Runs a plain (non blob) transaction, updates the gas count and returns the receipt
@@ -927,5 +942,30 @@ impl Ord for HeadTransaction {
 impl PartialOrd for HeadTransaction {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nonce_mismatch_detected_from_chain_error() {
+        // Build the ChainError exactly as the VM path produces it and verify
+        // is_nonce_mismatch matches it but not an unrelated error. This proves
+        // the "Nonce mismatch" substring survives the
+        // EvmError::Transaction -> ChainError::InvalidBlock Display nesting.
+        let nonce_err: ChainError =
+            EvmError::Transaction("Nonce mismatch: expected 5, got 7".to_string()).into();
+        assert!(
+            is_nonce_mismatch(&nonce_err),
+            "expected is_nonce_mismatch=true, got false; error string: {nonce_err}"
+        );
+        let other: ChainError =
+            EvmError::Transaction("Insufficient account funds".to_string()).into();
+        assert!(
+            !is_nonce_mismatch(&other),
+            "expected is_nonce_mismatch=false, got true; error string: {other}"
+        );
     }
 }
