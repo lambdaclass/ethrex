@@ -2582,6 +2582,18 @@ impl Blockchain {
                 return Err(MempoolError::TxMaxDataSizeError);
             }
 
+            // EIP-8141 §Mempool (rule #6): signature validation counts against
+            // MAX_VERIFY_GAS. Reject before any per-signature crypto runs when the
+            // signature-verification cost alone exceeds the budget — such a tx can
+            // never satisfy the validation-prefix gas limit, and this bounds the
+            // crypto work done by validate_frame_signatures below. (The full
+            // validation-prefix simulation policy is not yet implemented.)
+            if frame_tx.signature_verification_cost()
+                > ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS
+            {
+                return Err(MempoolError::FrameTxVerifyGasExceeded);
+            }
+
             // Authenticate the signature list BEFORE admission: without this the
             // unauthenticated `sender` field lets fabricated senders flood the
             // pool for free (no balance is charged at admission).
@@ -2661,6 +2673,18 @@ impl Blockchain {
         } else if !is_frame_tx {
             // An account that is not in the database cannot possibly have enough balance to cover the transaction cost
             return Err(MempoolError::NotEnoughBalance);
+        } else {
+            // Frame tx from a not-yet-existent sender. This is legitimate for
+            // sponsored transactions, where a separate funded payer covers gas,
+            // so we cannot reject on balance. The account's implied nonce is 0
+            // (EIP-8141: `tx.nonce == state[tx.sender].nonce`), so apply the same
+            // nonce sanity guard as the existing-account path instead of skipping
+            // nonce validation entirely. `nonce < 0` is impossible for a u64, so
+            // only the u64::MAX sentinel is rejectable here; a fresh sender's
+            // nonce-0 tx still passes.
+            if nonce == u64::MAX {
+                return Err(MempoolError::NonceTooLow);
+            }
         }
 
         // Check the nonce of pendings TXs in the mempool from the same sender

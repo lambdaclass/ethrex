@@ -1890,6 +1890,12 @@ pub const FRAME_TX_MAX_FRAMES: usize = 64;
 /// EIP-8141 signature schemes (spec commit fe0940cae2).
 pub const FRAME_SIG_SCHEME_SECP256K1: u8 = 0;
 pub const FRAME_SIG_SCHEME_P256: u8 = 1;
+/// EIP-8141 §Mempool `MAX_VERIFY_GAS` (spec commit fe0940cae2): the maximum gas
+/// a public-mempool node should expend validating signatures and simulating the
+/// validation prefix. Signature validation counts against this budget (rule #6),
+/// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
+/// satisfy the prefix budget and must be rejected at admission.
+pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
 /// DEFAULT/VERIFY frames per EIP-8141.

@@ -11,8 +11,9 @@ use std::collections::HashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH, Frame, FrameMode, FrameSignature,
-    FrameTransaction, Genesis, MempoolTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
+    FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH,
+    FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
+    MempoolTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
 };
 use ethrex_common::{Address, Bytes, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -540,6 +541,71 @@ async fn mempool_rejects_frame_tx_with_blobs() {
         validation.await,
         Err(MempoolError::FrameTxBlobsUnsupported)
     ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_exceeding_max_verify_gas() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // EIP-8141 §Mempool rule #6: signature validation counts against
+    // MAX_VERIFY_GAS (100_000). P256 sigs cost 6700 each, so 15 sigs cost
+    // 100_500 > MAX_VERIFY_GAS and the tx must be rejected at admission BEFORE
+    // any per-signature crypto runs. The signature bytes need not be valid:
+    // the cap rejects first. Static constraints only require a known scheme and
+    // an empty-or-32-byte msg, which these satisfy.
+    let n_sigs = (FRAME_TX_MAX_VERIFY_GAS / 6700) as usize + 1; // 15
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.signatures = (0..n_sigs)
+        .map(|_| FrameSignature {
+            scheme: FRAME_SIG_SCHEME_P256,
+            signer: Address::from_low_u64_be(0xABCD),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 128]),
+        })
+        .collect();
+    assert!(frame_tx.signature_verification_cost() > FRAME_TX_MAX_VERIFY_GAS);
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::FrameTxVerifyGasExceeded)
+    ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_from_unknown_sender_with_sentinel_nonce() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Sender 0xABCD does not exist in the genesis state. A frame tx from a
+    // not-yet-existent sender is legitimate (sponsored txs fund gas via a
+    // separate payer), but its implied nonce is 0, so the u64::MAX sentinel can
+    // never match and must be rejected — not skipped as it was before.
+    let mut frame_tx = minimal_valid_frame_tx();
+    frame_tx.nonce = u64::MAX;
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(matches!(validation.await, Err(MempoolError::NonceTooLow)));
+}
+
+#[tokio::test]
+async fn mempool_accepts_frame_tx_from_unknown_sender_with_zero_nonce() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Regression guard for the sponsored-tx use case: a fresh (non-existent)
+    // sender with nonce 0 must still be admitted after the nonce hardening —
+    // the new guard only rejects sub-current / sentinel nonces.
+    let frame_tx = minimal_valid_frame_tx(); // sender 0xABCD (absent), nonce 0
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(
+        validation.await.is_ok(),
+        "fresh sponsored sender with nonce 0 should still be admitted"
+    );
 }
 
 // ---------------------------------------------------------------------------
