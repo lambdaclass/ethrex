@@ -52,6 +52,13 @@ const SSTORE_THEN_REVERT_CODE: &[u8] =
     &[0x60, 0x01, 0x60, 0x00, 0x55, 0x60, 0x00, 0x60, 0x00, 0xFD];
 /// SSTORE 1@0; STOP.
 const SSTORE_THEN_STOP_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x55, 0x00];
+/// APPROVE(scope=2) -- sender (execution) approval. Must run in a frame whose
+/// target IS the tx sender, otherwise scope 2 reverts (frame_target != sender).
+#[allow(dead_code)]
+const APPROVE_EXECUTION_CODE: &[u8] = &[0x60, 0x02, 0x60, 0x00, 0x60, 0x00, 0xAA];
+/// APPROVE(scope=1) -- payment approval. The frame's target becomes the payer.
+#[allow(dead_code)]
+const APPROVE_PAYMENT_CODE: &[u8] = &[0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xAA];
 
 // ==================== Harness helpers ====================
 
@@ -153,6 +160,29 @@ fn run_frame_tx(
     (result, db)
 }
 
+/// Read the current balance of `addr` from the post-execution cache.
+#[allow(dead_code)]
+fn balance_of(db: &GeneralizedDatabase, addr: Address) -> U256 {
+    db.current_accounts_state
+        .get(&addr)
+        .map(|account| account.info.balance)
+        .unwrap_or_default()
+}
+
+/// A VERIFY frame targeting `target` (gas_limit 100_000, no value, no data,
+/// no scope restriction). The target's code runs and may call APPROVE.
+#[allow(dead_code)]
+fn verify_frame(target: Address) -> Frame {
+    Frame {
+        mode: u8::from(FrameMode::Verify),
+        flags: 0,
+        target: Some(target),
+        gas_limit: 100_000,
+        value: U256::zero(),
+        data: Bytes::new(),
+    }
+}
+
 /// Assert that no seeded account's info (balance/nonce/code) or storage in
 /// `db.current_accounts_state` differs from its seeded value. This is THE B3
 /// invariant: after an invalid tx the shared cache must show no residue.
@@ -240,4 +270,79 @@ fn invalid_frame_tx_leaves_db_cache_clean() {
     );
     // Slot 0 of target must NOT be 1 — the frame's SSTORE must have been rolled back.
     assert_db_cache_unchanged(&db, &accounts);
+}
+
+// ==================== B4: reverting SENDER frame must not leak value ====================
+
+#[test]
+fn reverting_sender_frame_returns_value() {
+    let target = Address::from_low_u64_be(0xC1); // contract that SSTOREs then REVERTs
+    let wallet = Address::from_low_u64_be(0xC2); // separate payer
+    let value = U256::from(1_000_000u64);
+    // Frame 0: VERIFY to the sender -> APPROVE scope 2 (sender_approved).
+    //          Scope 2 requires frame_target == tx.sender, so it must target
+    //          FUNDED_SENDER and run from FUNDED_SENDER's code.
+    // Frame 1: VERIFY to the wallet -> APPROVE scope 1 (payer = wallet), so the
+    //          sender pays no gas and its balance is untouched except for the
+    //          (to-be-reverted) value transfer.
+    // Frame 2: SENDER to a reverting contract carrying `value`.
+    let tx = frame_tx_with_frames(vec![
+        verify_frame(FUNDED_SENDER),
+        verify_frame(wallet),
+        Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0,
+            target: Some(target),
+            gas_limit: 100_000,
+            value,
+            data: Bytes::new(),
+        },
+    ]);
+    let (result, db) = run_frame_tx(
+        &[
+            // Sender carries the execution-approval code; pass it explicitly so
+            // its balance equals AUTO_SEED_SENDER_BALANCE for the assertion.
+            (
+                FUNDED_SENDER,
+                AUTO_SEED_SENDER_BALANCE,
+                0,
+                Bytes::from(APPROVE_EXECUTION_CODE.to_vec()),
+            ),
+            (
+                wallet,
+                U256::from(10u64).pow(U256::from(18u64)),
+                0,
+                Bytes::from(APPROVE_PAYMENT_CODE.to_vec()),
+            ),
+            (
+                target,
+                U256::zero(),
+                0,
+                Bytes::from(SSTORE_THEN_REVERT_CODE.to_vec()),
+            ),
+        ],
+        tx,
+    );
+    let report = result.expect("tx is valid (payer approved); only the SENDER frame failed");
+    // The reverting frame must NOT have delivered value: target keeps nothing,
+    // and the value is returned to the sender (sender pays no gas — wallet is payer).
+    assert_eq!(
+        balance_of(&db, target),
+        U256::zero(),
+        "reverted frame leaked value to target"
+    );
+    assert_eq!(
+        balance_of(&db, FUNDED_SENDER),
+        AUTO_SEED_SENDER_BALANCE,
+        "sender did not get value back"
+    );
+    // The SENDER frame (index 2) must be reported as a failure.
+    let frame_results = report
+        .frame_results
+        .expect("frame tx report must carry per-frame results");
+    assert_eq!(
+        frame_results[2].0,
+        ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
+        "SENDER frame should be reported as failure"
+    );
 }

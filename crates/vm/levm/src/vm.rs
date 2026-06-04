@@ -990,32 +990,37 @@ impl<'a> VM<'a> {
             // Push substate backup for per-frame state isolation
             self.substate.push_backup();
 
-            // EIP-8141 top-level value transfer: per spec lines 346-347 the
-            // outer frame call owns CALLVALUE delivery and must revert the
-            // frame if the sender cannot cover `frame.value`. Static
-            // validation already guarantees only SENDER frames reach here
-            // with a non-zero value. Running the transfer inside the
-            // per-frame backup means an atomic-batch revert (or a later
-            // run_execution revert) unwinds it the same way it unwinds any
-            // inner state change.
+            // EIP-8141 top-level value transfer (spec lines 346-347): the outer
+            // frame call owns CALLVALUE delivery. We only CHECK affordability
+            // here; the actual transfer runs inside whichever branch executes
+            // the frame, so it is recorded in the backup that branch restores on
+            // failure (fixes the value-leak where a reverting contract-target
+            // SENDER frame kept the funds). Static validation guarantees only
+            // SENDER frames reach here with a non-zero value.
             let value_transfer_reverted = if !frame.value.is_zero() {
                 let sender_balance = self.db.get_account(sender)?.info.balance;
-                if frame_value_exceeds_balance(sender_balance, frame.value) {
-                    true
-                } else {
-                    self.transfer(sender, target, frame.value)?;
-                    // EIP-7708 log parity with the top-level transfer_value
-                    // hook (see `hooks::default_hook::transfer_value`): only
-                    // Amsterdam+ and only when sender != target.
-                    if self.env.config.fork >= Fork::Amsterdam && sender != target {
-                        let log = crate::utils::create_eth_transfer_log(sender, target, frame.value);
-                        self.substate.add_log(log);
-                    }
-                    false
-                }
+                frame_value_exceeds_balance(sender_balance, frame.value)
             } else {
                 false
             };
+
+            // Performs the deferred SENDER-frame value transfer + EIP-7708 log.
+            // Invoked in BOTH execution branches so the transfer is recorded in
+            // the call_frame_backup that branch's failure path restores.
+            macro_rules! do_frame_value_transfer {
+                () => {
+                    if !frame.value.is_zero() && !value_transfer_reverted {
+                        self.transfer(sender, target, frame.value)?;
+                        // EIP-7708 log parity with default_hook::transfer_value:
+                        // only Amsterdam+ and only when sender != target.
+                        if self.env.config.fork >= Fork::Amsterdam && sender != target {
+                            let log =
+                                crate::utils::create_eth_transfer_log(sender, target, frame.value);
+                            self.substate.add_log(log);
+                        }
+                    }
+                };
+            }
 
             let (frame_success, frame_gas_used, frame_logs) = if value_transfer_reverted {
                 self.substate.revert_backup();
@@ -1027,6 +1032,10 @@ impl<'a> VM<'a> {
                 // bytecode is the delegatee's code when delegated, so a delegation to an
                 // empty delegatee still falls into the CallFrame branch below and returns
                 // success without executing anything — NOT into the default-code path.
+                // current_call_frame is the OUTER frame here; its backup is the
+                // one this branch's failure path restores, so the deferred
+                // transfer is correctly undone on a default-code revert.
+                do_frame_value_transfer!();
                 use crate::opcode_handlers::frame_tx::execute_default_code;
                 match execute_default_code(self, frame, target) {
                     Ok((success, gas_used, logs)) => {
@@ -1070,6 +1079,12 @@ impl<'a> VM<'a> {
 
                 let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
                 let saved_call_frames = mem::take(&mut self.call_frames);
+
+                // current_call_frame is now the INNER frame, so the deferred
+                // transfer records into the inner backup that the revert failure
+                // path (self.substate.revert_backup + restore_cache_state)
+                // restores — fixing the value-leak on a reverting SENDER frame.
+                do_frame_value_transfer!();
 
                 let frame_result = self.run_execution();
 
