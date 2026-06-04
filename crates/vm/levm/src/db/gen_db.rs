@@ -94,7 +94,7 @@ pub fn seed_one_address_info_from_bal(
     // path — iterate-all-keys / bulk-read patterns will see an empty map.
     let has_all_info = balance_pos > 0 && nonce_pos > 0 && code_pos > 0;
     if has_all_info {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
         let balance = acct_changes
             .balance_changes
             .get(balance_pos.saturating_sub(1))
@@ -108,7 +108,7 @@ pub fn seed_one_address_info_from_bal(
         let code_hash = code_update
             .as_ref()
             .map(|(h, _)| *h)
-            .unwrap_or(*EMPTY_KECCACK_HASH);
+            .unwrap_or(*EMPTY_KECCAK_HASH);
         let acc = db
             .current_accounts_state
             .entry(addr)
@@ -192,9 +192,9 @@ pub fn seed_one_storage_slot_from_bal(
 /// Compute code hash and optional `Code` object from raw bytecode in a BAL entry.
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 pub fn code_from_bal(new_code: &bytes::Bytes) -> (H256, Option<Code>) {
-    use ethrex_common::constants::EMPTY_KECCACK_HASH;
+    use ethrex_common::constants::EMPTY_KECCAK_HASH;
     if new_code.is_empty() {
-        (*EMPTY_KECCACK_HASH, None)
+        (*EMPTY_KECCAK_HASH, None)
     } else {
         let code_obj = Code::from_bytecode(new_code.clone(), &ethrex_crypto::NativeCrypto);
         let hash = code_obj.hash;
@@ -503,10 +503,10 @@ impl GeneralizedDatabase {
 
     /// Convenience method to get code length by address (optimized for EXTCODESIZE).
     pub fn get_code_length(&mut self, address: Address) -> Result<usize, InternalError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
         let code_hash = self.get_account(address)?.info.code_hash;
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(0);
         }
         let metadata = self.get_code_metadata(code_hash)?;

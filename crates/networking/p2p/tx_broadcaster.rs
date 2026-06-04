@@ -210,6 +210,9 @@ impl TxBroadcaster {
             after = self.known_txs.len(),
             "Pruned old broadcasted transactions"
         );
+
+        // Piggyback the alternates-map sweep on this same tick.
+        let _ = self.blockchain.mempool.prune_alternates(prune_window);
     }
 
     // Get or assign a unique index to the peer_id

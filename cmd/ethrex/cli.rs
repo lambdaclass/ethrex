@@ -204,6 +204,14 @@ pub struct Options {
     )]
     pub no_migrate: bool,
     #[arg(
+        long = "skip-genesis-validation",
+        action = ArgAction::SetTrue,
+        help = "Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.",
+        help_heading = "Node options",
+        env = "ETHREX_SKIP_GENESIS_VALIDATION"
+    )]
+    pub skip_genesis_validation: bool,
+    #[arg(
         long = "no-precompile-cache",
         action = ArgAction::SetTrue,
         help = "Disable the per-block precompile result cache (benchmarking only).",
@@ -211,6 +219,30 @@ pub struct Options {
         env = "ETHREX_NO_PRECOMPILE_CACHE"
     )]
     pub no_precompile_cache: bool,
+    #[arg(
+        long = "no-bal-parallel-exec",
+        action = ArgAction::SetTrue,
+        help = "Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PARALLEL_EXEC"
+    )]
+    pub no_bal_parallel_exec: bool,
+    #[arg(
+        long = "no-bal-prefetch",
+        action = ArgAction::SetTrue,
+        help = "Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PREFETCH"
+    )]
+    pub no_bal_prefetch: bool,
+    #[arg(
+        long = "no-bal-parallel-trie",
+        action = ArgAction::SetTrue,
+        help = "Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).",
+        help_heading = "Node options",
+        env = "ETHREX_NO_BAL_PARALLEL_TRIE"
+    )]
+    pub no_bal_parallel_trie: bool,
     #[arg(
         long = "log.dir",
         value_name = "LOG_DIR",
@@ -518,7 +550,11 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            skip_genesis_validation: false,
             no_precompile_cache: false,
+            no_bal_parallel_exec: false,
+            no_bal_prefetch: false,
+            no_bal_parallel_trie: false,
         }
     }
 }
@@ -730,6 +766,9 @@ impl Subcommand {
                         r#type: blockchain_type,
                         perf_logs_enabled: true,
                         precompile_cache_enabled: !opts.no_precompile_cache,
+                        bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
+                        bal_prefetch_enabled: !opts.no_bal_prefetch,
+                        bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
                         ..Default::default()
                     },
                     export_bal.as_deref(),

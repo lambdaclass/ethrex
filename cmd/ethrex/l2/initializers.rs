@@ -232,6 +232,9 @@ pub async fn init_l2(
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
         precompile_cache_enabled: true,
+        bal_parallel_exec_enabled: true,
+        bal_prefetch_enabled: true,
+        bal_parallel_trie_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -254,7 +257,11 @@ pub async fn init_l2(
         if !opts.sequencer_opts.based {
             blockchain.set_synced();
         }
-        let peer_table = PeerTableServer::spawn(opts.node_opts.target_peers, store.clone());
+        let peer_table = PeerTableServer::spawn(
+            local_p2p_node.node_id(),
+            opts.node_opts.target_peers,
+            store.clone(),
+        );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
             network_config,
