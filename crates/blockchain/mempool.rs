@@ -432,6 +432,15 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
+    // EIP-8141 frame txs: gas_limit() IS the computed total_gas_limit(), which
+    // already includes the frame-tx intrinsic overhead. The legacy 21000-based
+    // formula below misprices them (their data() is empty and the base differs),
+    // so report exactly the non-frame-gas overhead the VM charges as intrinsic.
+    if let Transaction::FrameTransaction(frame_tx) = tx {
+        let frame_gas: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
+        return Ok(frame_tx.total_gas_limit().saturating_sub(frame_gas));
+    }
+
     let is_contract_creation = tx.is_contract_creation();
 
     let mut gas = if is_contract_creation {

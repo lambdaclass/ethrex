@@ -123,6 +123,10 @@ pub enum MempoolError {
     FrameTxPreFork,
     #[error("Frame transaction expiry deadline has passed")]
     FrameTxExpired,
+    #[error("Invalid frame transaction: {0}")]
+    InvalidFrameTransaction(String),
+    #[error("Invalid frame transaction signature")]
+    InvalidFrameSignature,
 }
 
 #[derive(Debug)]

@@ -2560,6 +2560,33 @@ impl Blockchain {
             return Err(MempoolError::FrameTxExpired);
         }
 
+        if let Transaction::FrameTransaction(frame_tx) = tx {
+            // EIP-8141 static constraints at admission (mirrors the VM check)
+            // so malformed frame txs never occupy pool slots.
+            frame_tx
+                .validate_static_constraints()
+                .map_err(MempoolError::InvalidFrameTransaction)?;
+
+            // Frame `data` bypasses the generic tx.data() cap (data() is empty
+            // for frame txs) — enforce the size limit over the frames' payloads.
+            let total_frame_data: usize = frame_tx.frames.iter().map(|f| f.data.len()).sum();
+            if total_frame_data >= MAX_TRANSACTION_DATA_SIZE as usize {
+                return Err(MempoolError::TxMaxDataSizeError);
+            }
+
+            // Authenticate the signature list BEFORE admission: without this the
+            // unauthenticated `sender` field lets fabricated senders flood the
+            // pool for free (no balance is charged at admission).
+            let sig_hash = frame_tx.compute_sig_hash();
+            if !ethrex_vm::validate_frame_signatures(
+                &frame_tx.signatures,
+                sig_hash,
+                config.fork(header.timestamp),
+            ) {
+                return Err(MempoolError::InvalidFrameSignature);
+            }
+        }
+
         // NOTE: We could add a tx size limit here, but it's not in the actual spec
 
         // Check init code size

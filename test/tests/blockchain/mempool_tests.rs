@@ -1,9 +1,9 @@
 use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::constants::MAX_INITCODE_SIZE;
 use ethrex_blockchain::constants::{
-    TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS, TX_CREATE_GAS_COST,
-    TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST, TX_GAS_COST,
-    TX_INIT_CODE_WORD_GAS_COST,
+    MAX_TRANSACTION_DATA_SIZE, TX_ACCESS_LIST_ADDRESS_GAS, TX_ACCESS_LIST_STORAGE_KEY_GAS,
+    TX_CREATE_GAS_COST, TX_DATA_NON_ZERO_GAS, TX_DATA_NON_ZERO_GAS_EIP2028, TX_DATA_ZERO_GAS_COST,
+    TX_GAS_COST, TX_INIT_CODE_WORD_GAS_COST,
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
@@ -11,6 +11,7 @@ use std::collections::HashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
+    FRAME_SIG_SCHEME_SECP256K1, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
     MempoolTransaction, Transaction, TxKind,
 };
 use ethrex_common::{Address, Bytes, H256, U256};
@@ -395,4 +396,130 @@ fn blobs_bundle_loadtest() {
         };
         mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
     }
+}
+
+// ---------------------------------------------------------------------------
+// EIP-8141 frame transaction mempool admission tests
+// ---------------------------------------------------------------------------
+
+/// In-memory store whose genesis head has the Hegota fork active (so frame txs
+/// pass the FrameTxPreFork gate) and a real state trie root (so account lookups
+/// during admission succeed instead of erroring on a missing trie root).
+async fn setup_hegota_store() -> Store {
+    let genesis = Genesis {
+        config: ChainConfig {
+            chain_id: 0,
+            shanghai_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        },
+        gas_limit: 100_000_000,
+        ..Default::default()
+    };
+    let mut store = Store::new("hegota-test", EngineType::InMemory).expect("Storage setup");
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+    store
+}
+
+/// A minimal, statically-valid 1-frame transaction with an empty signature list.
+fn minimal_valid_frame_tx() -> FrameTransaction {
+    FrameTransaction {
+        chain_id: 0, // matches ChainConfig::default().chain_id
+        nonce: 0,
+        sender: Address::from_low_u64_be(0xABCD),
+        frames: vec![Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0x1234)),
+            // Small per-frame gas so total_gas_limit() stays below the legacy
+            // 21000 intrinsic floor: this tx is only admitted once the frame-tx
+            // intrinsic-gas fix prices it correctly.
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::from_static(b"call_data"),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    }
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_with_invalid_signature() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // One secp256k1 signature with the right length (65 bytes) but garbage bytes:
+    // ecrecover will not recover the claimed signer, so admission must reject it.
+    frame_tx.signatures = vec![FrameSignature {
+        scheme: FRAME_SIG_SCHEME_SECP256K1,
+        signer: Address::from_low_u64_be(0xABCD),
+        msg: Bytes::new(),
+        signature: Bytes::from(vec![0xAB; 65]),
+    }];
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::InvalidFrameSignature)
+    ));
+}
+
+#[tokio::test]
+async fn mempool_rejects_frame_tx_violating_static_constraints() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // mode 5 is reserved (modes 3-255 are invalid) -> static-constraint failure.
+    frame_tx.frames[0].mode = 5;
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::InvalidFrameTransaction(_))
+    ));
+}
+
+#[tokio::test]
+async fn mempool_accepts_small_frame_tx() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Empty signature list passes signature validation (nothing to reject), and
+    // the tx otherwise satisfies static constraints + nonce/fee checks.
+    let frame_tx = minimal_valid_frame_tx();
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(
+        validation.await.is_ok(),
+        "minimal valid frame tx should be admitted"
+    );
+}
+
+#[tokio::test]
+async fn mempool_rejects_oversized_frame_data() {
+    let store = setup_hegota_store().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let mut frame_tx = minimal_valid_frame_tx();
+    // Frame data whose length reaches the 128KB cap; tx.data() is empty for frame
+    // txs, so only the per-frame data check can catch this.
+    frame_tx.frames[0].data = Bytes::from(vec![0u8; MAX_TRANSACTION_DATA_SIZE as usize]);
+
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let validation = blockchain.validate_transaction(&tx, tx.sender().unwrap());
+    assert!(matches!(
+        validation.await,
+        Err(MempoolError::TxMaxDataSizeError)
+    ));
 }

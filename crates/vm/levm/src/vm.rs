@@ -526,7 +526,7 @@ pub struct VM<'a> {
     clippy::indexing_slicing,
     reason = "signature length is checked before each fixed-offset slice"
 )]
-fn validate_frame_signatures(
+pub fn validate_frame_signatures(
     signatures: &[ethrex_common::types::FrameSignature],
     sig_hash: ethrex_common::H256,
     fork: Fork,
@@ -840,7 +840,9 @@ impl<'a> VM<'a> {
 
         let mut all_logs: Vec<Log> = Vec::new();
         let sum_frame_gas_limits: u64 = frame_tx.frames.iter().map(|f| f.gas_limit).sum();
-        let intrinsic_gas = frame_tx.total_gas_limit().saturating_sub(sum_frame_gas_limits);
+        let intrinsic_gas = frame_tx
+            .total_gas_limit()
+            .saturating_sub(sum_frame_gas_limits);
         let mut total_gas_used: u64 = intrinsic_gas;
         let mut tx_invalid = false;
 
@@ -981,9 +983,7 @@ impl<'a> VM<'a> {
             // Mirror default_hook::set_bytecode_and_code_address: when delegation was
             // followed, record the delegatee (code_address) as touched in BAL so EIP-7928
             // reconstructors see the cross-address read.
-            if is_delegation_7702
-                && let Some(recorder) = self.db.bal_recorder.as_mut()
-            {
+            if is_delegation_7702 && let Some(recorder) = self.db.bal_recorder.as_mut() {
                 recorder.record_touched_address(code_address);
             }
 
@@ -1065,18 +1065,18 @@ impl<'a> VM<'a> {
                     caller,                                    // msg_sender
                     target,                                    // to (delegator; ADDRESS/storage)
                     code_address,                              // code_address (delegatee when 7702)
-                    bytecode,                                  // bytecode (delegatee's code when 7702)
+                    bytecode,           // bytecode (delegatee's code when 7702)
                     frame.value,        // msg_value -- CALLVALUE
                     frame.data.clone(), // calldata
                     is_static,          // is_static
                     frame.gas_limit,    // gas_limit
                     0,                  // depth
-                    false,              // should_transfer_value (do_frame_value_transfer! handles it)
-                    false,              // is_create
-                    0,                  // ret_offset
-                    0,                  // ret_size
+                    false, // should_transfer_value (do_frame_value_transfer! handles it)
+                    false, // is_create
+                    0,     // ret_offset
+                    0,     // ret_size
                     self.stack_pool.pop().unwrap_or_default(), // stack
-                    Memory::default(),  // memory
+                    Memory::default(), // memory
                 );
 
                 let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
@@ -1180,7 +1180,9 @@ impl<'a> VM<'a> {
                         (ctx.frame_results.get_mut(i), frame_tx.frames.get(i))
                     {
                         let charged_gas = batch_frame.gas_limit;
-                        total_gas_used = total_gas_used.saturating_sub(result.1).saturating_add(charged_gas);
+                        total_gas_used = total_gas_used
+                            .saturating_sub(result.1)
+                            .saturating_add(charged_gas);
                         *result = (
                             ethrex_common::types::FRAME_RECEIPT_STATUS_FAILURE,
                             charged_gas,
@@ -1295,14 +1297,15 @@ impl<'a> VM<'a> {
         // execution failed (analogous to status 0 in standard transactions).
         // VERIFY frames are authentication, not execution — their failure
         // makes the TX invalid (handled above).
-        let any_sender_reverted = frame_tx
-            .frames
-            .iter()
-            .zip(ctx.frame_results.iter())
-            .any(|(frame, (status, _, _))| {
-                frame.execution_mode() == FrameMode::Sender
-                    && *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
-            });
+        let any_sender_reverted =
+            frame_tx
+                .frames
+                .iter()
+                .zip(ctx.frame_results.iter())
+                .any(|(frame, (status, _, _))| {
+                    frame.execution_mode() == FrameMode::Sender
+                        && *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
+                });
 
         let result = if any_sender_reverted {
             TxResult::Revert(VMError::RevertOpcode)
@@ -1540,7 +1543,9 @@ mod frame_tx_security_tests {
     }
 
     fn log_tags(logs: &[Log]) -> Vec<u8> {
-        logs.iter().filter_map(|l| l.data.first().copied()).collect()
+        logs.iter()
+            .filter_map(|l| l.data.first().copied())
+            .collect()
     }
 
     /// `current_logs()` must return only the sub-substate's own logs, not
@@ -1617,7 +1622,7 @@ mod frame_value_transfer_tests {
     fn frame_value_transfers_from_sender_to_resolved_target_on_success() {
         // A sufficiently funded sender must not revert — the transfer proceeds.
         let sender_balance = U256::from(10u64).saturating_mul(U256::exp10(18)); // 10 ETH
-        let value = U256::from(1u64).saturating_mul(U256::exp10(17));           // 0.1 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17)); // 0.1 ETH
         assert!(!frame_value_exceeds_balance(sender_balance, value));
 
         // Exact-balance transfer: sender has exactly `value` — still succeeds.
@@ -1628,7 +1633,7 @@ mod frame_value_transfer_tests {
     fn frame_value_transfer_reverts_on_insufficient_sender_balance() {
         // Under-funded sender → revert path taken.
         let balance = U256::from(5u64).saturating_mul(U256::exp10(16)); // 0.05 ETH
-        let value = U256::from(1u64).saturating_mul(U256::exp10(17));    // 0.10 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17)); // 0.10 ETH
         assert!(frame_value_exceeds_balance(balance, value));
 
         // Zero-balance / non-zero value → revert.
@@ -1826,7 +1831,10 @@ mod frame_tx_7702_delegation_tests {
         let (is_delegation, _access_cost, code_address, code) =
             eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
 
-        assert!(is_delegation, "delegator must be detected as 7702-delegated");
+        assert!(
+            is_delegation,
+            "delegator must be detected as 7702-delegated"
+        );
         assert_eq!(
             code_address, delegatee,
             "code_address must point at the delegatee, not the delegator"
@@ -2050,13 +2058,11 @@ mod atomic_batch_approval_rollback_tests {
 mod frame_sig_validation_tests {
     use super::validate_frame_signatures;
     use bytes::Bytes;
+    use ethrex_common::types::Fork;
     use ethrex_common::{
         Address, H256,
-        types::{
-            FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FrameSignature,
-        },
+        types::{FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FrameSignature},
     };
-    use ethrex_common::types::Fork;
 
     fn hegota() -> Fork {
         Fork::Hegota
@@ -2117,7 +2123,10 @@ mod frame_sig_validation_tests {
     }
 
     #[test]
-    #[expect(clippy::indexing_slicing, reason = "fixed-size buffers with well-known bounds in test code")]
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "fixed-size buffers with well-known bounds in test code"
+    )]
     fn secp256k1_positive_and_tampered() {
         // Build a real secp256k1 signature vector using k256.
         use k256::ecdsa::SigningKey;
@@ -2128,8 +2137,7 @@ mod frame_sig_validation_tests {
             .map(|i| u8::from_str_radix(&pk_hex[i..i + 2], 16).unwrap())
             .collect();
         let private_key: [u8; 32] = pk_bytes.try_into().unwrap();
-        let signing_key =
-            SigningKey::from_bytes(&private_key.into()).unwrap();
+        let signing_key = SigningKey::from_bytes(&private_key.into()).unwrap();
 
         let msg_hash: H256 = H256::from_low_u64_be(0xDEADBEEF_CAFEBABE);
 
@@ -2139,8 +2147,7 @@ mod frame_sig_validation_tests {
 
         // Derive the expected signer address
         let uncompressed = signing_key.verifying_key().to_encoded_point(false);
-        let pub_hash =
-            ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
+        let pub_hash = ethrex_crypto::keccak::keccak_hash(&uncompressed.as_bytes()[1..]);
         let expected_signer = Address::from_slice(&pub_hash[12..]);
 
         // Build the outer signature: v || r || s  (65 bytes).
@@ -2217,10 +2224,9 @@ mod frame_sig_validation_tests {
 
         // Fixed private key — deterministic, no randomness.
         let pk_bytes: [u8; 32] = [
-            0xc9, 0x11, 0x0e, 0xa2, 0xf8, 0x7f, 0x3c, 0x06,
-            0x74, 0x1a, 0x4d, 0x35, 0x62, 0xb2, 0x11, 0x7d,
-            0x3e, 0x6a, 0x5c, 0x0b, 0x28, 0x0c, 0x3a, 0x0f,
-            0x56, 0x2e, 0x38, 0xa7, 0x21, 0xb0, 0x98, 0xc4,
+            0xc9, 0x11, 0x0e, 0xa2, 0xf8, 0x7f, 0x3c, 0x06, 0x74, 0x1a, 0x4d, 0x35, 0x62, 0xb2,
+            0x11, 0x7d, 0x3e, 0x6a, 0x5c, 0x0b, 0x28, 0x0c, 0x3a, 0x0f, 0x56, 0x2e, 0x38, 0xa7,
+            0x21, 0xb0, 0x98, 0xc4,
         ];
         let signing_key = SigningKey::from_bytes(&pk_bytes.into()).unwrap();
         let verifying_key = signing_key.verifying_key();
@@ -2232,10 +2238,9 @@ mod frame_sig_validation_tests {
 
         // Fixed 32-byte non-zero digest (explicit msg path — sig_hash arg unused).
         let digest: [u8; 32] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c,
+            0x1d, 0x1e, 0x1f, 0x20,
         ];
 
         // sign_prehash is deterministic for p256 with RFC-6979 nonce.
@@ -2269,11 +2274,7 @@ mod frame_sig_validation_tests {
 
         // Positive: real P256 signature → passes.
         assert!(
-            validate_frame_signatures(
-                std::slice::from_ref(&valid_sig),
-                H256::zero(),
-                hegota()
-            ),
+            validate_frame_signatures(std::slice::from_ref(&valid_sig), H256::zero(), hegota()),
             "valid P256 signature must pass",
         );
 
