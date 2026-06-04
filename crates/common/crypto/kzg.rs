@@ -358,6 +358,27 @@ pub fn verify_cell_kzg_proof_batch_partial(
     }
 }
 
+#[cfg(feature = "c-kzg")]
+pub fn blob_to_commitment_and_cell_proofs(
+    blob: &Blob,
+) -> Result<(Commitment, Vec<Proof>), KzgError> {
+    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
+
+    let blob: c_kzg::Blob = (*blob).into();
+
+    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, &blob)?;
+
+    let commitment_bytes = commitment.to_bytes();
+
+    let (_cells, cell_proofs) = c_kzg_settings
+        .compute_cells_and_kzg_proofs(&blob)
+        .map_err(KzgError::CKzg)?;
+
+    let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
+
+    Ok((commitment_bytes.into_inner(), cell_proofs.to_vec()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -451,25 +472,4 @@ mod tests {
         let result = recover_cells_and_kzg_proofs(&short_indices, &short_cells);
         assert!(result.is_err(), "recovery from 63 columns must return Err");
     }
-}
-
-#[cfg(feature = "c-kzg")]
-pub fn blob_to_commitment_and_cell_proofs(
-    blob: &Blob,
-) -> Result<(Commitment, Vec<Proof>), KzgError> {
-    let c_kzg_settings = c_kzg::ethereum_kzg_settings(KZG_PRECOMPUTE);
-
-    let blob: c_kzg::Blob = (*blob).into();
-
-    let commitment = c_kzg::KzgSettings::blob_to_kzg_commitment(c_kzg_settings, &blob)?;
-
-    let commitment_bytes = commitment.to_bytes();
-
-    let (_cells, cell_proofs) = c_kzg_settings
-        .compute_cells_and_kzg_proofs(&blob)
-        .map_err(KzgError::CKzg)?;
-
-    let cell_proofs = cell_proofs.map(|p| p.to_bytes().into_inner());
-
-    Ok((commitment_bytes.into_inner(), cell_proofs.to_vec()))
 }
