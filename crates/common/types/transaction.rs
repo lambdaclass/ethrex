@@ -1527,11 +1527,11 @@ impl Transaction {
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
     let v = u64::try_from(v).ok()?;
-    if v == 27 || v == 28 {
-        None
-    } else {
-        Some((v - 35) / 2)
-    }
+    // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
+    // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
+    // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
+    // carry a chain id. Guard the subtraction to avoid an underflow panic.
+    if v < 35 { None } else { Some((v - 35) / 2) }
 }
 
 impl TxType {
