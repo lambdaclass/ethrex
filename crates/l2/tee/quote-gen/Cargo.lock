@@ -1245,6 +1245,7 @@ dependencies = [
  "hex-literal",
  "jsonwebtoken",
  "rand 0.8.5",
+ "rayon",
  "reqwest",
  "secp256k1",
  "serde 1.0.228",
