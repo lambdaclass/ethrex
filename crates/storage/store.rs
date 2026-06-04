@@ -1640,7 +1640,8 @@ impl Store {
     pub fn new_with_config(
         path: impl AsRef<Path>,
         engine_type: EngineType,
-        config: StoreConfig,
+        // `config` only feeds the RocksDB backend; without that feature it is unused.
+        #[cfg_attr(not(feature = "rocksdb"), allow(unused_variables))] config: StoreConfig,
     ) -> Result<Self, StoreError> {
         let db_path = path.as_ref().to_path_buf();
 

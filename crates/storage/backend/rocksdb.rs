@@ -508,7 +508,11 @@ mod tests {
     #[test]
     fn merge_operator_survives_flush_and_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0xabcd);
@@ -551,7 +555,11 @@ mod tests {
     #[test]
     fn merge_operator_dedupes_across_compaction() {
         let dir = tempfile::tempdir().unwrap();
-        let backend = RocksDBBackend::open(dir.path()).unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
         let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
 
         let tx_hash = H256::from_low_u64_be(0x1234);
