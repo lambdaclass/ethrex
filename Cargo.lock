@@ -4463,6 +4463,7 @@ dependencies = [
  "ethrex-storage",
  "ethrex-storage-rollup",
  "ethrex-trie",
+ "ethrex-vm",
  "hasher",
  "hex",
  "hex-literal 0.4.1",

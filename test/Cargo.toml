@@ -21,6 +21,7 @@ ethrex-p2p.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
 ethrex-levm.workspace = true
+ethrex-vm.workspace = true
 ethrex-rpc.workspace = true
 
 [dev-dependencies]
