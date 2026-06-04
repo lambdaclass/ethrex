@@ -912,13 +912,11 @@ impl<'a> VM<'a> {
             // and we're not already in one.
             if !in_atomic_batch && frame.is_atomic_batch() {
                 self.substate.push_backup(); // batch-level snapshot
-                // Clear the outer backup at batch entry so the batch accumulates
-                // a clean, self-contained set of state changes that batch-revert
-                // can undo wholesale. Absorb into the tx-level accumulator first
-                // so an invalid-tx exit can still roll back any pre-batch frame
-                // effects captured here (see `tx_level_backup`).
-                tx_level_backup.absorb(&self.current_call_frame.call_frame_backup);
-                self.current_call_frame.call_frame_backup.clear();
+                // The outer call-frame backup is already empty here: the
+                // `!in_atomic_batch` block above absorbed it into
+                // `tx_level_backup` and cleared it on entry to this frame, so
+                // the batch starts accumulating a clean, self-contained set of
+                // state changes that batch-revert can undo wholesale.
                 in_atomic_batch = true;
                 batch_start_idx = frame_idx;
                 batch_logs_start = all_logs.len();

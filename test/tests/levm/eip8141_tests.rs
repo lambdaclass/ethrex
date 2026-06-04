@@ -33,6 +33,10 @@ const HARNESS_CHAIN_ID: u64 = 1;
 /// Fixed, funded sender for frame txs built via `frame_tx_with_frames`.
 /// Must be non-zero to pass `validate_static_constraints`.
 const FUNDED_SENDER: Address = Address::repeat_byte(0xAA);
+/// Balance used when `run_frame_tx` auto-seeds the sender (i.e. when the caller
+/// did not pass the sender in `accounts`). Kept as a constant so the rollback
+/// assertion can verify the sender against the exact value it was seeded with.
+const AUTO_SEED_SENDER_BALANCE: U256 = U256::MAX;
 /// Harness base fee. `frame_tx_with_frames` sets `max_fee_per_gas` well above it.
 const HARNESS_BASE_FEE: u64 = 1;
 
@@ -127,7 +131,7 @@ fn run_frame_tx(
 ) -> (Result<ExecutionReport, VMError>, GeneralizedDatabase) {
     let mut seeded: Vec<SeededAccount> = accounts.to_vec();
     if !seeded.iter().any(|(addr, ..)| *addr == tx.sender) {
-        seeded.push((tx.sender, U256::MAX, tx.nonce, Bytes::new()));
+        seeded.push((tx.sender, AUTO_SEED_SENDER_BALANCE, tx.nonce, Bytes::new()));
     }
 
     let mut db = seeded_db(&seeded);
@@ -153,10 +157,24 @@ fn run_frame_tx(
 /// `db.current_accounts_state` differs from its seeded value. This is THE B3
 /// invariant: after an invalid tx the shared cache must show no residue.
 ///
+/// The sender (`FUNDED_SENDER`) is ALWAYS verified, even when the caller does
+/// not list it in `accounts`: `run_frame_tx` auto-seeds it, and a leaked sender
+/// nonce/balance on the invalid-tx path (e.g. an APPROVE nonce bump that was not
+/// rolled back) is exactly the kind of residue B3 must prevent. When the caller
+/// passes the sender explicitly, those values are used; otherwise the auto-seed
+/// defaults (`AUTO_SEED_SENDER_BALANCE`, nonce 0) are checked.
+///
 /// Slot 0 of each seeded account is checked explicitly because the harness
 /// bytecodes write slot 0; a leftover `1` there is the B3 regression signature.
 fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount]) {
-    for (address, balance, nonce, code) in accounts {
+    // Always include the auto-seeded sender so a leaked sender balance/nonce is
+    // caught, mirroring `run_frame_tx`'s auto-seed.
+    let mut checked: Vec<SeededAccount> = accounts.to_vec();
+    if !checked.iter().any(|(addr, ..)| *addr == FUNDED_SENDER) {
+        checked.push((FUNDED_SENDER, AUTO_SEED_SENDER_BALANCE, 0, Bytes::new()));
+    }
+
+    for (address, balance, nonce, code) in &checked {
         let current = db
             .current_accounts_state
             .get(address)
