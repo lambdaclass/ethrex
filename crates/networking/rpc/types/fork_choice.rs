@@ -57,6 +57,15 @@ pub struct PayloadAttributesV5 {
     pub slot_number: u64,
     #[serde(with = "serde_utils::bytes::vec")]
     pub inclusion_list_transactions: Vec<Bytes>,
+    // execution-apis#796: CL-supplied target gas limit, carried forward from
+    // V4. V5 attributes are a superset of V4 (FOCIL only adds the IL), so the
+    // gas target stays available on the FOCIL local-build path. Required when
+    // Amsterdam/Hegotá is active — presence is enforced in
+    // `validate_attributes_v5`, matching `validate_attributes_v4`. Kept Option
+    // so an absent/null value yields a clean InvalidPayloadAttributes error
+    // rather than a serde parse failure (same pattern as V4).
+    #[serde(default, with = "serde_utils::u64::hex_str_opt")]
+    pub target_gas_limit: Option<u64>,
 }
 
 impl From<&PayloadAttributesV5> for PayloadAttributesV4 {
@@ -68,11 +77,7 @@ impl From<&PayloadAttributesV5> for PayloadAttributesV4 {
             withdrawals: value.withdrawals.clone(),
             parent_beacon_block_root: value.parent_beacon_block_root,
             slot_number: value.slot_number,
-            // V5 does not currently propagate the Amsterdam target_gas_limit
-            // (execution-apis#796). The V5 build path falls back to
-            // `context.gas_ceil`, matching the pre-glamsterdam-devnet-4
-            // behavior.
-            target_gas_limit: None,
+            target_gas_limit: value.target_gas_limit,
         }
     }
 }
@@ -177,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn payload_attributes_v5_to_v4_drops_inclusion_list() {
+    fn payload_attributes_v5_to_v4_propagates_gas_limit_and_drops_il() {
         let attrs_v5 = PayloadAttributesV5 {
             timestamp: 0x6846fb2,
             prev_randao: H256::zero(),
@@ -186,6 +191,7 @@ mod tests {
             parent_beacon_block_root: Some(H256::zero()),
             slot_number: 0x10,
             inclusion_list_transactions: vec![Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef])],
+            target_gas_limit: Some(50_000_000),
         };
 
         let attrs_v4: PayloadAttributesV4 = (&attrs_v5).into();
@@ -201,6 +207,39 @@ mod tests {
             attrs_v4.parent_beacon_block_root,
             attrs_v5.parent_beacon_block_root
         );
+        // execution-apis#796: the gas target must survive the V5->V4 downgrade.
+        assert_eq!(attrs_v4.target_gas_limit, attrs_v5.target_gas_limit);
+    }
+
+    #[test]
+    fn payload_attributes_v5_parses_target_gas_limit() {
+        let base = |extra: &str| {
+            format!(
+                r#"{{
+                    "timestamp": "0x65",
+                    "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    "suggestedFeeRecipient": "0x0000000000000000000000000000000000000002",
+                    "withdrawals": [],
+                    "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000003",
+                    "slotNumber": "0x10",
+                    "inclusionListTransactions": []{extra}
+                }}"#
+            )
+        };
+
+        // present -> Some
+        let attrs: PayloadAttributesV5 =
+            serde_json::from_str(&base(r#", "targetGasLimit": "0x2faf080""#)).unwrap();
+        assert_eq!(attrs.target_gas_limit, Some(50_000_000));
+
+        // absent -> None (enforcement happens in validate_attributes_v5)
+        let attrs: PayloadAttributesV5 = serde_json::from_str(&base("")).unwrap();
+        assert!(attrs.target_gas_limit.is_none());
+
+        // explicit null -> None
+        let attrs: PayloadAttributesV5 =
+            serde_json::from_str(&base(r#", "targetGasLimit": null"#)).unwrap();
+        assert!(attrs.target_gas_limit.is_none());
     }
 
     #[test]
