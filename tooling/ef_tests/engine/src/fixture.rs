@@ -72,6 +72,18 @@ pub struct FixturePayload {
     /// and compares the returned witness against it.
     #[serde(default, rename = "executionWitness")]
     pub execution_witness: Option<Value>,
+    /// EIP-7805 (FOCIL): the inclusion-list transactions for this payload,
+    /// carried by the fixture as a field SEPARATE from `params`. Present (and
+    /// possibly empty) only on FOCIL engine fixtures. When present it is
+    /// appended as the final `engine_newPayload` argument.
+    #[serde(default, rename = "inclusionListTransactions")]
+    pub inclusion_list_transactions: Option<Vec<Value>>,
+    /// Explicit expected payload status (e.g. `"INCLUSION_LIST_UNSATISFIED"`).
+    /// FOCIL fixtures use this third status value instead of the
+    /// `validationError`/`errorCode` VALID/INVALID model. `null` for ordinary
+    /// fixtures.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,9 +94,49 @@ pub enum ValidationError {
 }
 
 impl FixturePayload {
-    /// Returns `true` when neither `validationError` nor `errorCode` is set.
+    /// The expected engine payload `status` string. An explicit fixture
+    /// `status` (FOCIL's `INCLUSION_LIST_UNSATISFIED`, or a literal `VALID`)
+    /// wins; otherwise it derives from the VALID/INVALID model: `INVALID` when
+    /// a `validationError` is set, else `VALID`. `errorCode` (a JSON-RPC error)
+    /// is handled separately by the response checker.
+    pub fn expected_status(&self) -> &str {
+        if let Some(s) = &self.status {
+            return s;
+        }
+        if self.validation_error.is_some() {
+            "INVALID"
+        } else {
+            "VALID"
+        }
+    }
+
+    /// Returns `true` when the payload is expected to be accepted as the new
+    /// canonical head (status `VALID`, no JSON-RPC error). A FOCIL
+    /// `INCLUSION_LIST_UNSATISFIED` payload is NOT valid for head advancement:
+    /// the block executes but must not be attested, so the follow-up FCU is
+    /// skipped.
     pub fn valid(&self) -> bool {
-        self.validation_error.is_none() && self.error_code.is_none()
+        self.error_code.is_none() && self.expected_status() == "VALID"
+    }
+
+    /// The `engine_newPayload` version to call and the positional args for it.
+    ///
+    /// For FOCIL fixtures (`inclusionListTransactions` present) the IL is
+    /// appended as the final argument and the call is routed to ethrex's
+    /// IL-aware handler. NOTE: EEST emits `newPayloadVersion: 5` for FOCIL, but
+    /// ethrex exposes the IL-bearing method as `engine_newPayloadV6` (V5 is the
+    /// non-IL Amsterdam method); we remap here. This bridges a version-number
+    /// divergence that should be reconciled against the final execution-apis
+    /// FOCIL spec.
+    pub fn engine_call(&self) -> (u8, Vec<Value>) {
+        match &self.inclusion_list_transactions {
+            Some(il) => {
+                let mut params = self.params.clone();
+                params.push(Value::Array(il.clone()));
+                (6, params)
+            }
+            None => (self.new_payload_version, self.params.clone()),
+        }
     }
 
     /// Extract `blockHash` from `params[0]` (the ExecutionPayload object).
