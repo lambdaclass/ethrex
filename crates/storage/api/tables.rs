@@ -32,7 +32,7 @@ pub const ACCOUNT_CODE_METADATA: &str = "account_code_metadata";
 
 /// Receipts column family: [`Vec<u8>`] => [`Vec<u8>`]
 /// - [`Vec<u8>`] = `(block_hash, index).encode_to_vec()`
-/// - [`Vec<u8>`] = `receipt.encode_to_vec()`
+/// - [`Vec<u8>`] = `receipt.encode_storage()` (internal storage codec; NOT the wire/consensus format)
 pub const RECEIPTS: &str = "receipts";
 
 /// Transaction locations column family: [`Vec<u8>`] => [`Vec<u8>`]

@@ -111,6 +111,67 @@ impl Receipt {
         encoded_data
     }
 
+    /// Full-fidelity INTERNAL storage encoding. NOT a wire/consensus format:
+    /// the receipts trie uses `encode_inner_with_bloom` and P2P uses the
+    /// `RLPEncode` impl (`encode_inner`). For frame receipts this additionally
+    /// persists `succeeded` and the aggregated top-level `logs` (needed by
+    /// eth_getLogs / eth_getTransactionReceipt), which the consensus layout
+    /// intentionally omits. Non-frame receipts reuse the existing layout so
+    /// databases written before this change stay readable.
+    pub fn encode_storage(&self) -> Vec<u8> {
+        if self.tx_type == TxType::Frame {
+            let mut buf = vec![];
+            let empty_frame_receipts = Vec::new();
+            Encoder::new(&mut buf)
+                .encode_field(&(self.tx_type as u8))
+                .encode_field(&self.succeeded)
+                .encode_field(&self.cumulative_gas_used)
+                .encode_field(&self.logs)
+                .encode_field(&self.payer.unwrap_or_default())
+                .encode_field(
+                    self.frame_receipts
+                        .as_ref()
+                        .unwrap_or(&empty_frame_receipts),
+                )
+                .finish();
+            buf
+        } else {
+            self.encode_inner()
+        }
+    }
+
+    /// Inverse of `encode_storage`.
+    pub fn decode_storage(rlp: &[u8]) -> Result<Receipt, RLPDecodeError> {
+        // Peek the tx-type (first field) to choose the layout.
+        let (tx_type_byte, _): (u8, _) = Decoder::new(rlp)?.decode_field("tx-type")?;
+        if TxType::from_u8(tx_type_byte) != Some(TxType::Frame) {
+            // Non-frame receipts use the standard consensus decode (unchanged
+            // layout) — old databases remain readable.
+            return Receipt::decode(rlp);
+        }
+        let decoder = Decoder::new(rlp)?;
+        let (_, decoder): (u8, _) = decoder.decode_field("tx-type")?;
+        let (succeeded, decoder) = decoder.decode_field("succeeded")?;
+        let (cumulative_gas_used, decoder) = decoder.decode_field("cumulative_gas_used")?;
+        let (logs, decoder) = decoder.decode_field("logs")?;
+        let (payer, decoder): (Address, _) = decoder.decode_field("payer")?;
+        let (frame_receipts, decoder): (Vec<FrameReceipt>, _) =
+            decoder.decode_field("frame_receipts")?;
+        decoder.finish()?;
+        Ok(Receipt {
+            tx_type: TxType::Frame,
+            succeeded,
+            cumulative_gas_used,
+            logs,
+            payer: if payer == Address::zero() {
+                None
+            } else {
+                Some(payer)
+            },
+            frame_receipts: Some(frame_receipts),
+        })
+    }
+
     pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
         // Bloom is already 256 bytes, so we preallocate at least that much plus some,
         // to avoid multiple small allocations.
@@ -685,6 +746,46 @@ mod test {
         let encoded = receipt.encode_to_vec();
         let decoded = Receipt::decode(&encoded).unwrap();
         assert!(!decoded.succeeded);
+    }
+
+    #[test]
+    fn frame_receipt_storage_roundtrip_preserves_logs_and_status() {
+        let log = Log {
+            address: Address::from_low_u64_be(1),
+            topics: vec![],
+            data: Bytes::from(vec![1u8]),
+        };
+        let receipt = Receipt {
+            tx_type: TxType::Frame,
+            succeeded: true, // VM rule: no SENDER frame reverted
+            cumulative_gas_used: 50_000,
+            logs: vec![log.clone()], // aggregated frame logs
+            payer: Some(Address::from_low_u64_be(2)),
+            frame_receipts: Some(vec![
+                FrameReceipt {
+                    status: FRAME_RECEIPT_STATUS_FAILURE,
+                    gas_used: 1000,
+                    logs: vec![],
+                }, // a DEFAULT frame failed
+                FrameReceipt {
+                    status: FRAME_RECEIPT_STATUS_SUCCESS,
+                    gas_used: 2000,
+                    logs: vec![log.clone()],
+                },
+            ]),
+        };
+        // succeeded=true coexists with a FAILURE frame -> the old derive-rule would
+        // have flipped it to false; storage must keep it verbatim.
+        let decoded = Receipt::decode_storage(&receipt.encode_storage()).unwrap();
+        assert_eq!(decoded, receipt);
+    }
+
+    #[test]
+    fn nonframe_receipt_storage_roundtrip_unchanged() {
+        let r = Receipt::new(TxType::EIP1559, true, 21000, vec![]);
+        assert_eq!(Receipt::decode_storage(&r.encode_storage()).unwrap(), r);
+        // and that encode_storage matches the legacy encode_inner for non-frame:
+        assert_eq!(r.encode_storage(), r.encode_inner());
     }
 
     #[test]

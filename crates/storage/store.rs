@@ -620,7 +620,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         // FIXME: Use dupsort table
         let key = (block_hash, index).encode_to_vec();
-        let value = receipt.encode_to_vec();
+        let value = receipt.encode_storage();
         self.write_async(RECEIPTS, key, value).await
     }
 
@@ -635,7 +635,7 @@ impl Store {
             .enumerate()
             .map(|(index, receipt)| {
                 let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
+                let value = receipt.encode_storage();
                 (key, value)
             })
             .collect();
@@ -664,7 +664,7 @@ impl Store {
         let key = (block_hash, index).encode_to_vec();
         self.read_async(RECEIPTS, key)
             .await?
-            .map(|bytes| Receipt::decode(bytes.as_slice()))
+            .map(|bytes| Receipt::decode_storage(bytes.as_slice()))
             .transpose()
             .map_err(StoreError::from)
     }
@@ -1057,7 +1057,7 @@ impl Store {
             let key = (*block_hash, index).encode_to_vec();
             match txn.get(RECEIPTS, key.as_slice())? {
                 Some(receipt_bytes) => {
-                    let receipt = Receipt::decode(receipt_bytes.as_slice())?;
+                    let receipt = Receipt::decode_storage(receipt_bytes.as_slice())?;
                     receipts.push(receipt);
                     index += 1;
                 }
@@ -1406,7 +1406,7 @@ impl Store {
         for (block_hash, receipts) in update_batch.receipts {
             for (index, receipt) in receipts.into_iter().enumerate() {
                 let key = (block_hash, index as u64).encode_to_vec();
-                let value = receipt.encode_to_vec();
+                let value = receipt.encode_storage();
                 tx.put(RECEIPTS, &key, &value)?;
             }
         }
