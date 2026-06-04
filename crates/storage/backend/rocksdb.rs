@@ -84,12 +84,6 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        // RocksDB statistics add per-operation overhead on the hot read path, so they
-        // stay off in production. Uncomment to measure block-cache filter/index/data
-        // hit rates and get latency on a live node (e.g. when tuning the cache size).
-        // opts.enable_statistics();
-        // opts.set_stats_dump_period_sec(600);
-
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
