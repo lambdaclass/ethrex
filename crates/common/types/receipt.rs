@@ -118,13 +118,29 @@ impl Receipt {
         if self.tx_type != TxType::Legacy {
             encode_buf.push(self.tx_type as u8);
         }
-        let bloom = bloom_from_logs(&self.logs);
-        Encoder::new(&mut encode_buf)
-            .encode_field(&self.succeeded)
-            .encode_field(&self.cumulative_gas_used)
-            .encode_field(&bloom)
-            .encode_field(&self.logs)
-            .finish();
+        if self.tx_type == TxType::Frame {
+            // EIP-8141 ReceiptPayload (spec lines 178-185):
+            // [cumulative_gas_used, payer, [frame_receipt, ...]]
+            // No succeeded, no bloom, no top-level logs.
+            let empty_frame_receipts = Vec::new();
+            Encoder::new(&mut encode_buf)
+                .encode_field(&self.cumulative_gas_used)
+                .encode_field(&self.payer.unwrap_or_default())
+                .encode_field(
+                    self.frame_receipts
+                        .as_ref()
+                        .unwrap_or(&empty_frame_receipts),
+                )
+                .finish();
+        } else {
+            let bloom = bloom_from_logs(&self.logs);
+            Encoder::new(&mut encode_buf)
+                .encode_field(&self.succeeded)
+                .encode_field(&self.cumulative_gas_used)
+                .encode_field(&bloom)
+                .encode_field(&self.logs)
+                .finish();
+        }
         encode_buf
     }
 }
@@ -669,5 +685,32 @@ mod test {
         let encoded = receipt.encode_to_vec();
         let decoded = Receipt::decode(&encoded).unwrap();
         assert!(!decoded.succeeded);
+    }
+
+    #[test]
+    fn frame_receipt_trie_encoding_is_eip8141_payload() {
+        let receipt = Receipt {
+            tx_type: TxType::Frame,
+            succeeded: true,
+            cumulative_gas_used: 100_000,
+            logs: Vec::new(),
+            payer: Some(Address::from_low_u64_be(0xBEEF)),
+            frame_receipts: Some(vec![FrameReceipt {
+                status: FRAME_RECEIPT_STATUS_SUCCESS,
+                gas_used: 21_000,
+                logs: Vec::new(),
+            }]),
+        };
+        let encoded = receipt.encode_inner_with_bloom();
+        // EIP-2718 type prefix
+        assert_eq!(encoded[0], 0x06);
+        // Spec ReceiptPayload: [cumulative_gas_used, payer, [frame_receipt, ...]]
+        let mut expected_payload = Vec::new();
+        Encoder::new(&mut expected_payload)
+            .encode_field(&100_000u64)
+            .encode_field(&Address::from_low_u64_be(0xBEEF))
+            .encode_field(receipt.frame_receipts.as_ref().unwrap())
+            .finish();
+        assert_eq!(&encoded[1..], &expected_payload[..]);
     }
 }
