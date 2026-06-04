@@ -58,6 +58,7 @@ pub enum P2PTransaction {
     EIP4844TransactionWithBlobs(WrappedEIP4844Transaction),
     EIP7702Transaction(EIP7702Transaction),
     FeeTokenTransaction(FeeTokenTransaction),
+    FrameTransaction(FrameTransaction),
 }
 
 impl TryInto<Transaction> for P2PTransaction {
@@ -69,6 +70,8 @@ impl TryInto<Transaction> for P2PTransaction {
             P2PTransaction::EIP2930Transaction(itx) => Ok(Transaction::EIP2930Transaction(itx)),
             P2PTransaction::EIP1559Transaction(itx) => Ok(Transaction::EIP1559Transaction(itx)),
             P2PTransaction::EIP7702Transaction(itx) => Ok(Transaction::EIP7702Transaction(itx)),
+            P2PTransaction::FeeTokenTransaction(itx) => Ok(Transaction::FeeTokenTransaction(itx)),
+            P2PTransaction::FrameTransaction(itx) => Ok(Transaction::FrameTransaction(itx)),
             _ => Err("Can't convert blob p2p transaction into regular transaction. Blob bundle would be lost.".to_string()),
         }
     }
@@ -109,6 +112,9 @@ impl RLPDecode for P2PTransaction {
                 // FeeToken
                 0x7d => FeeTokenTransaction::decode(tx_encoding)
                     .map(|tx| (P2PTransaction::FeeTokenTransaction(tx), remainder)),
+                // Frame (EIP-8141)
+                0x06 => FrameTransaction::decode(tx_encoding)
+                    .map(|tx| (P2PTransaction::FrameTransaction(tx), remainder)),
                 ty => Err(RLPDecodeError::Custom(format!(
                     "Invalid transaction type: {ty}"
                 ))),
@@ -2259,6 +2265,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(_) => TxType::EIP4844,
                 P2PTransaction::EIP7702Transaction(_) => TxType::EIP7702,
                 P2PTransaction::FeeTokenTransaction(_) => TxType::FeeToken,
+                P2PTransaction::FrameTransaction(_) => TxType::Frame,
             }
         }
 
@@ -2275,6 +2282,7 @@ mod canonic_encoding {
                 P2PTransaction::EIP4844TransactionWithBlobs(t) => t.encode(buf),
                 P2PTransaction::EIP7702Transaction(t) => t.encode(buf),
                 P2PTransaction::FeeTokenTransaction(t) => t.encode(buf),
+                P2PTransaction::FrameTransaction(t) => t.encode(buf),
             };
         }
 
@@ -2303,6 +2311,9 @@ mod canonic_encoding {
                 }
                 P2PTransaction::FeeTokenTransaction(t) => {
                     Transaction::FeeTokenTransaction(t.clone()).compute_hash()
+                }
+                P2PTransaction::FrameTransaction(t) => {
+                    Transaction::FrameTransaction(t.clone()).compute_hash()
                 }
             }
         }
@@ -4975,6 +4986,27 @@ mod tests {
         assert_eq!(decoded.signatures, tx.signatures);
         assert_eq!(decoded.frames, tx.frames);
         assert_eq!(decoded.nonce, tx.nonce);
+    }
+
+    #[test]
+    fn p2p_frame_transaction_rlp_roundtrip() {
+        // A frame tx (EIP-8141) must survive a full P2PTransaction RLP
+        // encode/decode round-trip so it can be served over the wire on request.
+        let ft = make_test_frame_tx();
+        assert!(!ft.signatures.is_empty());
+        assert!(!ft.frames.is_empty());
+        let original = P2PTransaction::FrameTransaction(ft);
+
+        let encoded = original.encode_to_vec();
+        let (decoded, rest) = P2PTransaction::decode_unfinished(&encoded).unwrap();
+        assert!(rest.is_empty());
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.tx_type(), TxType::Frame);
+
+        // The decoded variant converts cleanly into a regular Transaction
+        // (frame txs carry no blobs bundle).
+        let as_tx: Transaction = decoded.try_into().unwrap();
+        assert!(matches!(as_tx, Transaction::FrameTransaction(_)));
     }
 
     #[test]
