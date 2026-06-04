@@ -1,100 +1,145 @@
-FROM rust:1.91 AS chef
+# syntax=docker/dockerfile:1.10
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    libclang-dev \
-    libc6 \
-    libssl-dev \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-RUN cargo install cargo-chef
+# --- Chef base ---
+# Slim rust image + apt deps needed to compile native crates (rocksdb, openssl-sys, bindgen).
+FROM rust:1.91-slim-bookworm AS chef
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        libclang-dev \
+        libssl-dev \
+        pkg-config \
+        ca-certificates \
+        curl \
+        git
+
+# Force cargo to fetch git deps via the git CLI instead of libgit2. The bundled
+# libgit2 hangs on some hosts/networks inside containers; the CLI also supports
+# single-commit fetches for rev-pinned deps.
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+
+# Install cargo-chef via prebuilt binary (cargo-binstall) — avoids ~2 min source build.
+# cargo-binstall pinned for reproducibility; bump deliberately.
+ARG CARGO_BINSTALL_VERSION=v1.19.1
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    # uname -m (NOT $TARGETARCH): cargo-chef is a build-platform tool, must match
+    # the stage's execution arch, not the target image arch.
+    curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/download/${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz \
+      | tar -xz -C /usr/local/cargo/bin \
+    && cargo binstall --no-confirm cargo-chef
 
 WORKDIR /ethrex
 
 
-# --- Planner Stage ---
-# Copy all source code to calculate the dependency recipe.
-# This layer is fast and will be invalidated on any source change.
+# --- Planner ---
+# Compute the dependency recipe. Fast, invalidated on any source change.
 FROM chef AS planner
 
-COPY benches ./benches
-COPY crates ./crates
-COPY metrics ./metrics
-COPY cmd ./cmd
-COPY test ./test
-COPY tooling ./tooling
-COPY Cargo.* .
-COPY .cargo/ ./.cargo
+COPY --link benches ./benches
+COPY --link crates ./crates
+COPY --link metrics ./metrics
+COPY --link cmd ./cmd
+COPY --link test ./test
+COPY --link tooling/repl ./tooling/repl
+COPY --link tooling/monitor ./tooling/monitor
+COPY --link Cargo.toml Cargo.lock ./
+COPY --link .cargo ./.cargo
 
 RUN cargo chef prepare --recipe-path recipe.json
 
 
-# --- Builder Stage ---
-# Build the dependencies. This is the most time-consuming step.
-# This layer will be cached and only re-run if the recipe.json from the
-# previous stage has changed, which only happens when dependencies change.
+# --- Builder ---
+# Cook deps first (cached unless recipe.json changes), then build the app.
 FROM chef AS builder
 
-# Build configuration
-# PROFILE: Cargo profile to use (release, release-with-debug-assertions, etc.)
-# BUILD_FLAGS: Additional cargo flags (features, etc.)
-ARG PROFILE="release"
+ARG PROFILE=release
 ARG BUILD_FLAGS=""
+ARG TARGETARCH
 
-COPY --from=planner /ethrex/recipe.json recipe.json
-RUN cargo chef cook --release --recipe-path recipe.json $BUILD_FLAGS
+# vergen-git2 reads .git unless these env vars are set. Pass via build args
+# so we don't ship the 1 GB .git directory into the build context.
+ARG GIT_BRANCH=unknown
+ARG GIT_SHA=unknown
+ENV VERGEN_GIT_BRANCH=$GIT_BRANCH \
+    VERGEN_GIT_SHA=$GIT_SHA \
+    VERGEN_IDEMPOTENT=1
 
-RUN  if [ "$(uname -m)" = aarch64 ]; \
-    then \
-    SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux-arm;\
-    else \
-    SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux; \
-    fi \
-    && curl -L -o /usr/bin/solc $SOLC_URL \
+COPY --from=planner --link /ethrex/recipe.json recipe.json
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH} \
+    cargo chef cook --profile $PROFILE --recipe-path recipe.json $BUILD_FLAGS
+
+# Fetch solc using buildx's TARGETARCH (no shell uname).
+RUN case "$TARGETARCH" in \
+        arm64) SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux-arm ;; \
+        amd64) SOLC_URL=https://github.com/ethereum/solidity/releases/download/v0.8.31/solc-static-linux ;; \
+        *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL -o /usr/bin/solc "$SOLC_URL" \
     && chmod +x /usr/bin/solc
 
-COPY benches ./benches
-COPY crates ./crates
-COPY cmd ./cmd
-COPY metrics ./metrics
-COPY tooling ./tooling
-COPY fixtures/genesis ./fixtures/genesis
-COPY .git ./.git
-COPY Cargo.* ./
-COPY fixtures ./fixtures
-COPY .cargo/ ./.cargo
+COPY --link benches ./benches
+COPY --link crates ./crates
+COPY --link cmd ./cmd
+COPY --link metrics ./metrics
+COPY --link test ./test
+COPY --link tooling/repl ./tooling/repl
+COPY --link tooling/monitor ./tooling/monitor
+COPY --link Cargo.toml Cargo.lock ./
+COPY --link .cargo ./.cargo
+# Only these subdirs are referenced by include_str!/include_bytes! in workspace
+# crates; the rest of fixtures/ is test data not needed at build time.
+COPY --link fixtures/genesis ./fixtures/genesis
+COPY --link fixtures/keys ./fixtures/keys
 
 ENV COMPILE_CONTRACTS=true
 
-RUN cargo build --profile $PROFILE $BUILD_FLAGS
+# Combine build + extract in one RUN so the target cache mount is still mounted.
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH} \
+    cargo build --profile $PROFILE $BUILD_FLAGS \
+    && mkdir -p /ethrex/bin \
+    && cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex
 
-RUN mkdir -p /ethrex/bin && \
-    cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex
 
-# --- Final Image ---
-# Copy the ethrex binary into a minimalist image to reduce bloat size.
-# This image must have glibc and libssl
+# --- Runtime ---
+# ubuntu:24.04 keeps glibc + libssl3 available. Network genesis/bootnodes are
+# embedded into the binary via include_str!, so no extra files are needed.
 FROM ubuntu:24.04
+
+ARG GIT_SHA=unknown
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.title="ethrex" \
+      org.opencontainers.image.description="Rust Ethereum execution client" \
+      org.opencontainers.image.source="https://github.com/lambdaclass/ethrex" \
+      org.opencontainers.image.licenses="MIT OR Apache-2.0" \
+      org.opencontainers.image.revision="${GIT_SHA}" \
+      org.opencontainers.image.version="${VERSION}"
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        libssl3 \
+        ca-certificates
+
 WORKDIR /usr/local/bin
 
-RUN apt-get update && apt-get install -y --no-install-recommends libssl3
-
-COPY cmd/ethrex/networks ./cmd/ethrex/networks
-COPY --from=builder /ethrex/bin/ethrex .
+COPY --from=builder --link /ethrex/bin/ethrex /usr/local/bin/ethrex
 
 # Common ports:
 # -  8545: RPC
 # -  8551: EngineAPI
-# - 30303: Discovery
+# - 30303: Discovery (tcp+udp)
 # -  9090: Metrics
 # -  1729: L2 RPC
 # -  3900: L2 Proof Coordinator
-EXPOSE 8545
-EXPOSE 8551
-EXPOSE 30303/tcp
-EXPOSE 30303/udp
-EXPOSE 9090
-EXPOSE 1729
-EXPOSE 3900
+EXPOSE 8545 8551 9090 1729 3900 30303/tcp 30303/udp
 
-ENTRYPOINT [ "./ethrex" ]
+ENTRYPOINT ["ethrex"]
