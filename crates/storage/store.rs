@@ -3494,11 +3494,21 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
 /// instead look for RocksDB's marker files, so a datadir that only contains such
 /// unrelated files is correctly treated as fresh.
 fn dir_contains_existing_db(path: &Path) -> Result<bool, StoreError> {
+    // `CURRENT` has a fixed name and is written by every RocksDB instance, so
+    // check for it directly instead of scanning a datadir that may hold many
+    // unrelated files.
+    if path.join("CURRENT").is_file() {
+        return Ok(true);
+    }
+    // The manifest has a numeric suffix (`MANIFEST-<n>`), so it can only be
+    // found by scanning. Restrict to plain files: a directory that happens to
+    // share the name is not a database marker.
     for entry in std::fs::read_dir(path)? {
-        let file_name = entry?.file_name();
-        let name = file_name.to_string_lossy();
-        // Marker files present in every initialized RocksDB database directory.
-        if name == "CURRENT" || name == "IDENTITY" || name.starts_with("MANIFEST-") {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy().starts_with("MANIFEST-") {
             return Ok(true);
         }
     }
@@ -3738,5 +3748,15 @@ mod datadir_tests {
         let dir2 = tempfile::tempdir().unwrap();
         fs::write(dir2.path().join("MANIFEST-000007"), "x").unwrap();
         assert!(dir_contains_existing_db(dir2.path()).unwrap());
+    }
+
+    #[test]
+    fn dir_with_marker_named_subdirectories_has_no_existing_db() {
+        // A *directory* named like a marker file must not be mistaken for a DB;
+        // RocksDB only ever writes these as plain files.
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("CURRENT")).unwrap();
+        fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
+        assert!(!dir_contains_existing_db(dir.path()).unwrap());
     }
 }
