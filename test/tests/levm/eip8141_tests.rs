@@ -104,6 +104,10 @@ fn frame_tx_env(tx: &FrameTransaction) -> Environment {
         config: EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota)),
         chain_id: U256::from(HARNESS_CHAIN_ID),
         base_fee_per_gas: U256::from(HARNESS_BASE_FEE),
+        // NOTE: gas_price here is max_fee_per_gas, NOT the effective price.
+        // Fine for tests that don't assert on fee amounts. Tests that check
+        // payer balances MUST use `run_frame_tx_with_fees`, which derives the
+        // effective price min(base+priority, max_fee) like production.
         gas_price: U256::from(tx.max_fee_per_gas),
         tx_nonce: tx.nonce,
         ..Default::default()
