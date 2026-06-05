@@ -170,6 +170,98 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         Ok(Address::from_slice(&hash[12..]))
     }
 
+    /// Verify `sig` (r||s||v) against `public_key`, bound to recovery id `v`.
+    /// Used by EIP-8025 sender hints.
+    #[cfg(feature = "secp256k1")]
+    fn verify_signature(&self, sig: &[u8; 65], msg: &[u8; 32], public_key: &[u8; 65]) -> bool {
+        // EIP-2: reject high-s.
+        const SECP256K1_N_HALF: [u8; 32] =
+            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+        if sig[32..64] > SECP256K1_N_HALF[..] {
+            return false;
+        }
+        if sig[64] > 1 {
+            return false;
+        }
+        let Ok(recovery_id) = secp256k1::ecdsa::RecoveryId::try_from(sig[64] as i32) else {
+            return false;
+        };
+        let Ok(recoverable_sig) =
+            secp256k1::ecdsa::RecoverableSignature::from_compact(&sig[0..64], recovery_id)
+        else {
+            return false;
+        };
+        let message = secp256k1::Message::from_digest(*msg);
+        let Ok(expected_pk) = secp256k1::PublicKey::from_slice(public_key.as_slice()) else {
+            return false;
+        };
+        // Recover with `v` and compare; plain verify accepts either candidate.
+        match recoverable_sig.recover(&message) {
+            Ok(recovered_pk) => recovered_pk == expected_pk,
+            Err(_) => false,
+        }
+    }
+
+    /// Verify `sig` (r||s||v) against `public_key`, bound to recovery id `v`.
+    /// Used by EIP-8025 sender hints.
+    #[cfg(not(feature = "secp256k1"))]
+    fn verify_signature(&self, sig: &[u8; 65], msg: &[u8; 32], public_key: &[u8; 65]) -> bool {
+        use k256::{
+            ProjectivePoint, Scalar,
+            ecdsa::VerifyingKey,
+            elliptic_curve::{
+                PrimeField,
+                group::prime::PrimeCurveAffine,
+                ops::{Invert, LinearCombination, Reduce},
+                point::AffineCoordinates,
+            },
+        };
+
+        // EIP-2: reject high-s.
+        const SECP256K1_N_HALF: [u8; 32] =
+            hex_literal::hex!("7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0");
+        if sig[32..64] > SECP256K1_N_HALF[..] {
+            return false;
+        }
+        if sig[64] > 1 {
+            return false;
+        }
+
+        let r_bytes = k256::FieldBytes::from_slice(&sig[..32]);
+        let s_bytes = k256::FieldBytes::from_slice(&sig[32..64]);
+        let r: Option<Scalar> = Scalar::from_repr(*r_bytes).into();
+        let s: Option<Scalar> = Scalar::from_repr(*s_bytes).into();
+        let (Some(r), Some(s)) = (r, s) else {
+            return false;
+        };
+        if r.is_zero().into() || s.is_zero().into() {
+            return false;
+        }
+
+        let Ok(vk) = VerifyingKey::from_sec1_bytes(public_key) else {
+            return false;
+        };
+        let q = ProjectivePoint::from(*vk.as_affine());
+
+        // R' = s⁻¹·(z·G + r·Q); accept iff R'.x == r and R'.y parity matches `v`.
+        let z = <Scalar as Reduce<k256::U256>>::reduce_bytes(k256::FieldBytes::from_slice(msg));
+        let s_inv: Option<Scalar> = s.invert_vartime().into();
+        let Some(s_inv) = s_inv else {
+            return false;
+        };
+        let u1 = z * s_inv;
+        let u2 = r * s_inv;
+        let big_r = ProjectivePoint::lincomb(&ProjectivePoint::GENERATOR, &u1, &q, &u2).to_affine();
+        if bool::from(big_r.is_identity()) {
+            return false;
+        }
+        let rx = <Scalar as Reduce<k256::U256>>::reduce_bytes(&big_r.x());
+        if rx != r {
+            return false;
+        }
+        bool::from(big_r.y_is_odd()) == (sig[64] == 1)
+    }
+
     // ── Hashing ────────────────────────────────────────────────────────
 
     /// Keccak-256 hash. Used by the KECCAK256 opcode (0x20) and address derivation.

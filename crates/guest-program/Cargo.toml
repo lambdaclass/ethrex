@@ -42,7 +42,7 @@ sp1-sdk = { version = "=5.0.8", optional = true }
 methods = ["bin/risc0"]
 
 [features]
-default = ["secp256k1"]
+default = ["secp256k1", "eip-8025"]
 
 # Base features: enable the zkVM crypto modules and feature propagation.
 # Guest binaries use these to get their Crypto implementation.

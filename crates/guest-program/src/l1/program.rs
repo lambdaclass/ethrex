@@ -1,9 +1,5 @@
 use std::sync::Arc;
 
-#[cfg(feature = "eip-8025")]
-use ethrex_common::Address;
-#[cfg(feature = "eip-8025")]
-use ethrex_common::utils::keccak;
 use ethrex_crypto::Crypto;
 
 use crate::common::ExecutionError;
@@ -586,24 +582,18 @@ fn validate_eip8025_amsterdam_execution(
         )));
     }
     for (public_key, tx) in public_keys.iter().zip(block.body.transactions.iter()) {
-        // SSZ decode fixes the length at 65; uncompressed secp256k1 is 0x04 || X || Y.
-        let pk_bytes: &[u8] = public_key;
-        if pk_bytes[0] != 0x04 {
+        // SSZ fixes the length at 65; the 0x04 prefix and curve checks happen in
+        // compute_sender_with_hint.
+        let pk_slice: &[u8] = public_key;
+        let Ok(pk_bytes) = <[u8; 65]>::try_from(pk_slice) else {
             return Err(ExecutionError::Internal(
-                "Stateless input public key is not a 65-byte uncompressed secp256k1 key"
-                    .to_string(),
+                "Stateless input public key is not 65 bytes".to_string(),
             ));
-        }
-        let derived = Address::from_slice(&keccak(&pk_bytes[1..])[12..]);
-        let recovered = tx.sender(crypto.as_ref()).map_err(|e| {
-            ExecutionError::Internal(format!("failed to recover transaction sender: {e}"))
-        })?;
-        if recovered != derived {
-            return Err(ExecutionError::Internal(
-                "Stateless input public key does not match recovered transaction sender"
-                    .to_string(),
-            ));
-        }
+        };
+        tx.compute_sender_with_hint(&pk_bytes, crypto.as_ref())
+            .map_err(|e| {
+                ExecutionError::Internal(format!("failed to validate transaction sender: {e}"))
+            })?;
     }
 
     let _result = execute_blocks(
