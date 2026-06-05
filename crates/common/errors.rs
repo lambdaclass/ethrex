@@ -17,6 +17,8 @@ pub enum InvalidBlockError {
     StateRootMismatch,
     #[error("Receipts Root does not match the one in the header after executing")]
     ReceiptsRootMismatch,
+    #[error("Logs bloom does not match the one in the header after executing")]
+    LogsBloomMismatch,
     #[error("Invalid Header, validation failed pre-execution: {0}")]
     InvalidHeader(#[from] InvalidBlockHeaderError),
     #[error("Invalid Body, validation failed pre-execution: {0}")]

@@ -1147,6 +1147,23 @@ async fn try_execute_payload(
         return Ok(PayloadStatus::valid_with_hash(block_hash));
     }
 
+    // A payload whose parent *state* we don't have yet must be answered with
+    // SYNCING, never INVALID: without the parent state we cannot validate it,
+    // so we must not declare it invalid. This happens after a restart, when
+    // state regeneration hasn't caught up to the CL head, or when the CL sends a
+    // newPayload for a block beyond our current state. Without this guard,
+    // execution fails with `EvmError::DB("state root missing")` and gets mapped
+    // to INVALID below, wrongly poisoning the CL's view of a valid block (and
+    // persisting it via `set_latest_valid_ancestor`). The parent block being
+    // entirely absent is handled as `ParentNotFound` by `add_block` below.
+    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)?
+        && !storage.has_state_root(parent_header.state_root)?
+    {
+        debug!(%block_hash, %block_number, "Parent state missing, returning SYNCING and triggering sync");
+        syncer.sync_to_head(block_hash);
+        return Ok(PayloadStatus::syncing());
+    }
+
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
@@ -1156,14 +1173,14 @@ async fn try_execute_payload(
             syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
-        // Under the current implementation this is not possible: we always calculate the state
-        // transition of any new payload as long as the parent is present. If we received the
-        // parent payload but it was stashed, then new payload would stash this one too, with a
-        // ParentNotFoundError.
+        // Parent block is present but its state isn't available yet (e.g. state
+        // regeneration after a restart hasn't reached the CL head). This is a
+        // SYNCING condition, not an error and not INVALID: trigger a sync and
+        // report SYNCING so the CL keeps the (valid) block.
         Err(ChainError::ParentStateNotFound) => {
-            let e = "Failed to obtain parent state";
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
+            debug!(%block_hash, "Parent state not found, returning SYNCING and triggering sync");
+            syncer.sync_to_head(block_hash);
+            Ok(PayloadStatus::syncing())
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!("Error executing block: {error}");
