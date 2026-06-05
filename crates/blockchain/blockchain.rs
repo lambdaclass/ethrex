@@ -75,7 +75,7 @@ use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root, validate_requests_hash,
+    validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
@@ -457,7 +457,11 @@ impl Blockchain {
             );
             return Err(e.into());
         }
-        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+        validate_receipts_root_and_logs_bloom(
+            &block.header,
+            &execution_result.receipts,
+            &NativeCrypto,
+        )?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -702,7 +706,7 @@ impl Blockchain {
                             );
                             return Err(e.into());
                         }
-                        validate_receipts_root(
+                        validate_receipts_root_and_logs_bloom(
                             &block.header,
                             &execution_result.receipts,
                             &NativeCrypto,
@@ -1346,7 +1350,11 @@ impl Blockchain {
             );
             return Err(e.into());
         }
-        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+        validate_receipts_root_and_logs_bloom(
+            &block.header,
+            &execution_result.receipts,
+            &NativeCrypto,
+        )?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
