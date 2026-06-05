@@ -491,9 +491,12 @@ pub struct VM<'a> {
     pub vm_type: VMType,
     /// Whether the top-level call-frame backup must be PRESERVED (deep-cloned) on the
     /// revert / invalid-tx paths because a `BackupHook` will read it in `finalize_execution`
-    /// to build the tx-level undo snapshot. False for normal L1 block execution (no
-    /// `BackupHook`), where the backup is dead once the cache is restored and can be moved
-    /// out instead of cloned. Set true for L2 and for `stateless_execute`.
+    /// to build the tx-level undo snapshot. Derived from the installed `hooks` (via
+    /// [`Hook::reads_top_level_backup`]) rather than from `vm_type`, so it stays correct if
+    /// hook wiring changes; `add_hook` keeps it in sync for the `BackupHook` that
+    /// `stateless_execute` installs after construction. False for normal L1 block execution
+    /// (no `BackupHook`), where the backup is dead once the cache is restored and can be moved
+    /// out instead of cloned.
     pub(crate) preserve_top_level_backup: bool,
     /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
     /// Signed: goes negative when inline refunds exceed gross charges in the local frame
@@ -628,11 +631,22 @@ impl<'a> VM<'a> {
         root_stack.clear();
         stack_pool.push(root_stack);
         // Reclaim the root memory buffer with its grown capacity. `reset_for_reuse` truncates it
-        // to length 0 (capacity kept) so the next tx's `resize` zero-fills correctly. At this
-        // point only the root frame holds the buffer (sub-frames are dropped), so the `Rc` is
-        // unique on the success path; on the error path the about-to-drop frames are never read
-        // again, so clearing the shared buffer is harmless.
+        // to length 0 (capacity kept) so the next tx's `resize` zero-fills correctly.
+        //
+        // Every call frame shares the same `Rc<RefCell<Vec<u8>>>` buffer, so on the error path the
+        // ancestor frames left in `call_frames` (error propagation unwinds out of `execute` without
+        // popping them) still hold clones. Drop them first so the buffer is `Rc`-unique on BOTH
+        // paths before we clear it — otherwise the clear would propagate to a frame still holding a
+        // reference. `CallFrame` has no `Drop` and these frames are never read again, so dropping
+        // them early is free.
+        self.call_frames.clear();
         let mut root_memory = self.current_call_frame.memory;
+        debug_assert_eq!(
+            Rc::strong_count(&root_memory.buffer),
+            1,
+            "root memory buffer must be Rc-unique at reclaim; a frame is still holding it and \
+             would observe the reset_for_reuse clear",
+        );
         root_memory.reset_for_reuse();
         memory_pool.push(root_memory);
     }
@@ -679,16 +693,24 @@ impl<'a> VM<'a> {
             (0, 0, 0, 0, 0)
         };
 
-        // L1 block execution installs no `BackupHook` (see `l1_hooks`), so the top-level backup
-        // is unread after restore and can be consumed; L2 / stateless keep it for the hook.
-        let preserve_top_level_backup = matches!(vm_type, VMType::L2(_));
+        // Derive whether the top-level backup must be preserved from the installed hooks rather
+        // than from `vm_type`. The flag's real meaning is "a hook reads the top-level backup in
+        // `finalize_execution`," which today is the `BackupHook` on L2 / stateless. Deriving it
+        // keeps the flag correct if hook wiring ever changes (e.g. a future `vm_type` that adds
+        // `BackupHook`, or L2 dropping it), and `add_hook` keeps it in sync for the `BackupHook`
+        // that `stateless_execute` installs after construction. L1 block execution installs no
+        // `BackupHook` (see `l1_hooks`), so the backup is dead once the cache is restored.
+        let hooks = get_hooks(&vm_type);
+        let preserve_top_level_backup = hooks
+            .iter()
+            .any(|hook| hook.borrow().reads_top_level_backup());
 
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
             db,
             tx,
-            hooks: get_hooks(&vm_type),
+            hooks,
             storage_original_values: FxHashMap::default(),
             tracer,
             opcode_tracer: LevmOpcodeTracer::disabled(),
@@ -753,6 +775,9 @@ impl<'a> VM<'a> {
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
+        // Keep `preserve_top_level_backup` in sync: a hook added after construction (e.g. the
+        // `BackupHook` in `stateless_execute`) may read the top-level backup in `finalize_execution`.
+        self.preserve_top_level_backup |= hook.reads_top_level_backup();
         self.hooks.push(Rc::new(RefCell::new(hook)));
     }
 
@@ -1135,11 +1160,10 @@ impl<'a> VM<'a> {
 
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
-        // Add backup hook to restore state after execution.
+        // Add backup hook to restore state after execution. `add_hook` flips
+        // `preserve_top_level_backup` on via `Hook::reads_top_level_backup`, so the backup is
+        // cloned (not moved out) on the revert paths even though this VM was built with L1 `vm_type`.
         self.add_hook(BackupHook::default());
-        // The hook reads the top-level backup in `finalize_execution`, so it must be preserved
-        // (cloned) on the revert paths even though this VM was built with the L1 `vm_type`.
-        self.preserve_top_level_backup = true;
         let report = self.execute()?;
         // Restore cache to the state before execution.
         self.db.undo_last_transaction()?;
