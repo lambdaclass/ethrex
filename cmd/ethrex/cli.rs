@@ -97,6 +97,28 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
+    #[arg(
+        long = "rocksdb.block-cache-size",
+        value_name = "BYTES",
+        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
+                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
+        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
+                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
+                     so it is the effective ceiling on RocksDB's resident memory.\n\
+                     \n\
+                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
+                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
+                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
+                     no gain because the OS page cache backstops the uncompressed state CFs, and \
+                     ~8 GiB is the floor where the filter set starts to thrash.\n\
+                     \n\
+                     Lower only on memory-constrained hosts, accepting reduced throughput. \
+                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+    )]
+    pub rocksdb_block_cache_size: usize,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -489,6 +511,7 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
+            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
