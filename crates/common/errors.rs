@@ -35,4 +35,6 @@ pub enum InvalidBlockError {
     MaximumRlpSizeExceeded(u64, u64),
     #[error("Invalid block fork")]
     InvalidBlockFork,
+    #[error("Transaction type {0:#x} is not allowed in an L1 block")]
+    UnsupportedTransactionType(u8),
 }
