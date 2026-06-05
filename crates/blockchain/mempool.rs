@@ -151,7 +151,13 @@ impl MempoolInner {
 
     /// Number of non-blob txs currently in the pool.
     fn regular_tx_count(&self) -> usize {
-        self.transaction_pool.len() - self.blob_tx_count()
+        // `saturating_sub`: a blob bundle is inserted before its tx (see
+        // `add_blob_transaction_to_pool`), so in that window the bundle count can
+        // briefly exceed the tx entries. Treat the undercount as 0 regular txs
+        // rather than underflowing (which would wrongly trigger eviction).
+        self.transaction_pool
+            .len()
+            .saturating_sub(self.blob_tx_count())
     }
 
     /// Evict the oldest regular (non-blob) transactions until the regular pool is
