@@ -9,6 +9,25 @@ use ethrex_blockchain::{
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(not(feature = "stateless"))]
+use ethrex_common::types::block_access_list::BlockAccessList;
+#[cfg(feature = "stateless")]
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+use ethrex_common::{
+    constants::EMPTY_KECCAK_HASH,
+    types::{
+        Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
+        InvalidBlockHeaderError,
+    },
+};
+use ethrex_guest_program::input::ProgramInput;
+#[cfg(feature = "sp1")]
+use ethrex_prover::Sp1Backend;
+use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
+use ethrex_rlp::decode::RLPDecode;
+use ethrex_storage::{EngineType, Store};
+use ethrex_vm::EvmError;
+use regex::Regex;
 
 thread_local! {
     /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
@@ -25,23 +44,6 @@ thread_local! {
 fn merkle_pool() -> Arc<rayon::ThreadPool> {
     MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
 }
-#[cfg(feature = "stateless")]
-use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
-use ethrex_common::{
-    constants::EMPTY_KECCACK_HASH,
-    types::{
-        Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError, block_access_list::BlockAccessList,
-    },
-};
-use ethrex_guest_program::input::ProgramInput;
-#[cfg(feature = "sp1")]
-use ethrex_prover::Sp1Backend;
-use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
-use ethrex_rlp::decode::RLPDecode;
-use ethrex_storage::{EngineType, Store};
-use ethrex_vm::EvmError;
-use regex::Regex;
 
 pub fn parse_and_execute(
     path: &Path,
@@ -116,6 +118,11 @@ pub async fn run_ef_test(
     // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
     // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
     // same final state is reached.
+    // Not exercised under `stateless`: the stateless harness runs the guest program directly
+    // and doesn't drive `add_block_pipeline`, and BAL-warmed parallel execution gives no
+    // benefit in single-threaded zkVM guest builds. The non-stateless runs are the right
+    // home for this check.
+    #[cfg(not(feature = "stateless"))]
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
@@ -123,14 +130,14 @@ pub async fn run_ef_test(
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
-        // If the fixture provides an executionWitness (zkevm format), use it directly
-        // instead of regenerating the witness from blockchain execution.
+        // Use the fixture's witness when present (either `executionWitness` or
+        // `statelessInputBytes`); otherwise regenerate by re-running execution.
         #[cfg(feature = "stateless")]
         {
             let has_fixture_witness = test.blocks.iter().any(|bf| {
-                bf.block()
-                    .and_then(|b| b.execution_witness.as_ref())
-                    .is_some()
+                bf.block().is_some_and(|b| {
+                    b.execution_witness.is_some() || b.stateless_input_bytes.is_some()
+                })
             });
             if has_fixture_witness {
                 run_stateless_from_fixture(test, test_key, backend).await?;
@@ -205,6 +212,7 @@ async fn run(
 /// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
 /// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
 /// post-state of pass 2 must match the expected post-state.
+#[cfg(not(feature = "stateless"))]
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
@@ -453,7 +461,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             );
             // Check code
             let code_hash = expected_account.info.code_hash;
-            if code_hash != *EMPTY_KECCACK_HASH {
+            if code_hash != *EMPTY_KECCAK_HASH {
                 // We don't want to get account code if there's no code.
                 let db_account_code = db
                     .get_account_code(code_hash)
@@ -567,10 +575,6 @@ async fn run_stateless_from_fixture(
             continue;
         };
 
-        let Some(witness_json) = block_data.execution_witness.as_ref() else {
-            continue;
-        };
-
         let block: CoreBlock = block_data.clone().into();
         let block_number = block.header.number;
 
@@ -582,6 +586,24 @@ async fn run_stateless_from_fixture(
             })?,
         };
 
+        // Prefer the canonical EIP-8025 wire path (production guest binary entry
+        // point) which exercises the public_keys / hash_tree_root checks the
+        // legacy `ProgramInput` route bypasses.
+        if let Some(input_hex) = block_data.stateless_input_bytes.as_deref() {
+            run_stateless_from_input_bytes(
+                test_key,
+                &test.network,
+                block_number,
+                input_hex,
+                expected_valid,
+            )?;
+            continue;
+        }
+
+        let Some(witness_json) = block_data.execution_witness.as_ref() else {
+            continue;
+        };
+
         // Parse and conversion errors must always fail; only the execution outcome is
         // matched against `expected_valid` so the (false, Err(_)) arm below cannot
         // absorb regressions in deserialization or witness conversion.
@@ -589,8 +611,15 @@ async fn run_stateless_from_fixture(
             .map_err(|e| {
                 format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
             })?;
+        let decoded_headers =
+            ethrex_common::types::block_execution_witness::decode_witness_headers(
+                &rpc_witness.headers,
+            )
+            .map_err(|e| {
+                format!("witness header decode failed for {test_key} block {block_number}: {e}")
+            })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number)
+            .into_execution_witness(*chain_config, block_number, &decoded_headers)
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;
@@ -619,6 +648,50 @@ async fn run_stateless_from_fixture(
     }
 
     Ok(())
+}
+
+/// Run a fixture's `statelessInputBytes` (2-byte BE schema-id followed by
+/// SSZ-encoded `SszStatelessInput`) through the canonical-input path the
+/// production guest binary uses.
+#[cfg(feature = "stateless")]
+fn run_stateless_from_input_bytes(
+    test_key: &str,
+    test_network: &Fork,
+    block_number: u64,
+    input_hex: &str,
+    expected_valid: bool,
+) -> Result<(), String> {
+    use ethrex_guest_program::l1::{DecodedEip8025, decode_canonical_stateless_input_bytes};
+
+    let trimmed = input_hex.strip_prefix("0x").unwrap_or(input_hex);
+    let bytes = hex::decode(trimmed).map_err(|e| {
+        format!("statelessInputBytes hex decode failed for {test_key} block {block_number}: {e}")
+    })?;
+
+    // Decode failures count as the canonical-input rejection path: a negative
+    // fixture with malformed top-level SSZ should still match `expected_valid=false`.
+    let exec_result = match decode_canonical_stateless_input_bytes(&bytes) {
+        Ok(stateless_input) => {
+            let chain_config = *test_network.chain_config();
+            let program_input = ProgramInput::wire(DecodedEip8025::Canonical {
+                stateless_input,
+                chain_config,
+            });
+            ExecBackend::new().execute(program_input)
+        }
+        Err(e) => Err(ethrex_prover::BackendError::execution(format!(
+            "statelessInputBytes decode failed: {e}"
+        ))),
+    };
+    match (expected_valid, exec_result) {
+        (true, Ok(_)) | (false, Err(_)) => Ok(()),
+        (true, Err(e)) => Err(format!(
+            "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed: {e}"
+        )),
+        (false, Ok(_)) => Err(format!(
+            "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid statelessInputBytes)"
+        )),
+    }
 }
 
 /// Decode the `valid` byte (index 32) from a zkevm-fixture `statelessOutputBytes` hex

@@ -42,15 +42,28 @@ clean: clean-vectors ## 🧹 Remove build artifacts
 	cargo clean
 	rm -rf hive
 
-STAMP_FILE := .docker_build_stamp
-$(STAMP_FILE): $(shell find crates cmd -type f -name '*.rs') Cargo.toml Dockerfile
-	docker build -t ethrex:local .
-	touch $(STAMP_FILE)
+# Docker image tag (override with `make build-image TAG=foo`).
+TAG ?= local
+IMAGE := ethrex:$(TAG)
 
-build-image: $(STAMP_FILE) ## 🐳 Build the Docker image
+# Git metadata baked into the image via Dockerfile ARGs. Falls back to "unknown"
+# / "dev" if not in a git checkout.
+GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
+# Always invoke docker build; BuildKit's layer cache makes a no-op rebuild
+# sub-second, and GIT_SHA/VERSION are late-stage ARGs, so this keeps the baked
+# git metadata accurate without a stamp file that can't see commit/branch changes.
+build-image: ## 🐳 Build the Docker image (override tag with TAG=foo)
+	docker build \
+		--build-arg GIT_SHA=$(GIT_SHA) \
+		--build-arg GIT_BRANCH=$(GIT_BRANCH) \
+		--build-arg VERSION=$(VERSION) \
+		-t $(IMAGE) .
 
 run-image: build-image ## 🏃 Run the Docker image
-	docker run --rm -p 127.0.0.1:8545:8545 ethrex:main --http.addr 0.0.0.0
+	docker run --rm -p 127.0.0.1:8545:8545 $(IMAGE) --http.addr 0.0.0.0
 
 dev: ## 🏃 Run the ethrex client in DEV_MODE with the InMemory Engine
 	cargo run $(PROFILING_CFG) --release -- \
@@ -84,7 +97,7 @@ localnet: build-image checkout-ethereum-package ## 🌐 Start kurtosis network
 	trap 'printf "\nStopping localnet...\n"; $(MAKE) stop-localnet || true; exit 0' INT TERM HUP QUIT; \
 	cp metrics/provisioning/grafana/dashboards/common_dashboards/ethrex_l1_perf.json ethereum-package/src/grafana/ethrex_l1_perf.json; \
 	kurtosis run --enclave $(ENCLAVE) ethereum-package --args-file $(KURTOSIS_CONFIG_FILE); \
-	CID=$$(docker ps -q --filter ancestor=ethrex:local | head -n1); \
+	CID=$$(docker ps -q --filter ancestor=$(IMAGE) | head -n1); \
 	if [ -n "$$CID" ]; then docker logs -f $$CID || true; else echo "No ethrex container found; skipping logs."; fi
 
 stop-localnet: ## 🛑 Stop local network
