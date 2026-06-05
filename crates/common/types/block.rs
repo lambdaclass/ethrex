@@ -20,6 +20,7 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 use ethrex_trie::Trie;
+#[cfg(all(not(feature = "eip-8025"), feature = "rayon"))]
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Deserialize, Serialize};
@@ -329,8 +330,17 @@ impl BlockBody {
     ) -> Result<Vec<(&Transaction, Address)>, CryptoError> {
         // Recovering addresses is computationally expensive.
         // Computing them in parallel greatly reduces execution time.
-        self.transactions
+        // In eip-8025 builds, use sequential iteration
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        return self
+            .transactions
             .par_iter()
+            .map(|tx| Ok((tx, tx.sender(crypto)?)))
+            .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>();
+
+        #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+        self.transactions
+            .iter()
             .map(|tx| Ok((tx, tx.sender(crypto)?)))
             .collect::<Result<Vec<(&Transaction, Address)>, CryptoError>>()
     }
@@ -629,6 +639,10 @@ pub enum InvalidBlockHeaderError {
     ParentBeaconBlockRootPresent,
     #[error("Requests hash is present")]
     RequestsHashPresent,
+    #[error("Block access list hash is not present")]
+    BlockAccessListHashNotPresent,
+    #[error("Block access list hash is present")]
+    BlockAccessListHashPresent,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -757,6 +771,13 @@ pub fn validate_prague_header_fields(
     if header.requests_hash.is_none() {
         return Err(InvalidBlockHeaderError::RequestsHashNotPresent);
     }
+    if chain_config.is_amsterdam_activated(header.timestamp) {
+        if header.block_access_list_hash.is_none() {
+            return Err(InvalidBlockHeaderError::BlockAccessListHashNotPresent);
+        }
+    } else if header.block_access_list_hash.is_some() {
+        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+    }
     Ok(())
 }
 
@@ -780,6 +801,9 @@ pub fn validate_cancun_header_fields(
     if header.requests_hash.is_some() {
         return Err(InvalidBlockHeaderError::RequestsHashPresent);
     }
+    if header.block_access_list_hash.is_some() {
+        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
+    }
     Ok(())
 }
 
@@ -799,6 +823,9 @@ pub fn validate_pre_cancun_header_fields(
     }
     if header.requests_hash.is_some() {
         return Err(InvalidBlockHeaderError::RequestsHashPresent);
+    }
+    if header.block_access_list_hash.is_some() {
+        return Err(InvalidBlockHeaderError::BlockAccessListHashPresent);
     }
     Ok(())
 }
@@ -853,7 +880,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::constants::EMPTY_KECCACK_HASH;
+    use crate::constants::EMPTY_KECCAK_HASH;
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
     use ethereum_types::H160;
     use hex_literal::hex;
@@ -927,7 +954,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
         let block = BlockHeader {
@@ -971,7 +998,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());

@@ -27,7 +27,7 @@ hex.workspace = true
 hex-literal.workspace = true
 lazy_static.workspace = true
 lru.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 rkyv.workspace = true
 rustc-hash.workspace = true
 indexmap.workspace = true
@@ -42,9 +42,10 @@ libssz-merkle = { workspace = true, optional = true }
 libssz-derive = { workspace = true, optional = true }
 
 [features]
-default = ["secp256k1"]
-c-kzg = ["ethrex-crypto/c-kzg"]
-secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1"]
+default = ["secp256k1", "rayon"]            
+c-kzg = ["ethrex-crypto/c-kzg"]         
+rayon = ["dep:rayon"]                                                                                                                                                                       
+secp256k1 = ["dep:secp256k1", "ethrex-crypto/secp256k1", "rayon"]                                                                                                                           
 eip-8025 = ["dep:libssz", "dep:libssz-types", "dep:libssz-merkle", "dep:libssz-derive", "ethrex-trie/eip-8025"]
 
 risc0 = ["ethrex-crypto/risc0"]

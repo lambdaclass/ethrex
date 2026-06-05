@@ -442,6 +442,8 @@ jobs:
           fromTag: ${{ github.ref_name }}
           toTag: ${{ env.PREVIOUS_TAG }}
           writeToFile: false
+          restrictToTypes: feat,fix,perf,refactor,revert
+          excludeTypes: build,docs,other,style,chore
 
       - name: Finalize Release
         uses: softprops/action-gh-release@v3

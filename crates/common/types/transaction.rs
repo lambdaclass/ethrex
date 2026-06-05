@@ -455,10 +455,22 @@ impl Transaction {
             TxType::Privileged => self.gas_price(),
         };
 
-        Some(U256::saturating_add(
+        let base = U256::saturating_add(
             U256::saturating_mul(price, self.gas_limit().into()),
             self.value(),
-        ))
+        );
+
+        // EIP-4844 blob txs pay an additional `blob_gas * max_fee_per_blob_gas`
+        // upfront. Every peer client (geth, reth, nethermind, erigon, besu)
+        // includes this in the balance-sufficiency check.
+        if let Transaction::EIP4844Transaction(tx) = self {
+            let blob_gas = U256::from(crate::constants::GAS_PER_BLOB)
+                .saturating_mul(U256::from(tx.blob_versioned_hashes.len() as u64));
+            let blob_cost = blob_gas.saturating_mul(tx.max_fee_per_blob_gas);
+            return Some(base.saturating_add(blob_cost));
+        }
+
+        Some(base)
     }
 
     pub fn fee_token(&self) -> Option<Address> {
@@ -1538,6 +1550,20 @@ impl TxType {
             _ => None,
         }
     }
+
+    /// Transaction types that only exist on the L2 rollup and must never appear in
+    /// an L1 block (`FeeToken` 0x7d, `Privileged` 0x7e). Privileged transactions in
+    /// particular take their sender from an unsigned, caller-chosen `from` field.
+    ///
+    /// This match is intentionally exhaustive (no wildcard arm): adding a new
+    /// `TxType` variant will not compile until it is explicitly classified here,
+    /// so an L2-only type can never be silently accepted on L1 by omission.
+    pub fn is_l2_only(self) -> bool {
+        match self {
+            Self::Legacy | Self::EIP2930 | Self::EIP1559 | Self::EIP4844 | Self::EIP7702 => false,
+            Self::FeeToken | Self::Privileged => true,
+        }
+    }
 }
 
 impl PrivilegedL2Transaction {
@@ -1696,6 +1722,27 @@ mod canonic_encoding {
             let mut buf = Vec::new();
             self.encode_canonical(&mut buf);
             buf
+        }
+
+        /// Canonical-encoded length without allocating a buffer. Counts the
+        /// 1-byte type prefix for typed txs (EIP-2718) plus the inner RLP
+        /// payload length. Use this when only the size is needed (e.g.
+        /// admission-time size caps) to avoid `encode_canonical_to_vec().len()`.
+        pub fn encode_canonical_len(&self) -> usize {
+            let prefix_len = match self {
+                Transaction::LegacyTransaction(_) => 0,
+                _ => 1,
+            };
+            let inner_len = match self {
+                Transaction::LegacyTransaction(t) => t.length(),
+                Transaction::EIP2930Transaction(t) => t.length(),
+                Transaction::EIP1559Transaction(t) => t.length(),
+                Transaction::EIP4844Transaction(t) => t.length(),
+                Transaction::EIP7702Transaction(t) => t.length(),
+                Transaction::FeeTokenTransaction(t) => t.length(),
+                Transaction::PrivilegedL2Transaction(t) => t.length(),
+            };
+            prefix_len + inner_len
         }
     }
 
@@ -3719,5 +3766,40 @@ mod tests {
     fn test_eip1559_simple_transfer_size() {
         let tx = Transaction::EIP1559Transaction(EIP1559Transaction::default());
         assert_eq!(tx.encode_to_vec().len(), EIP1559_DEFAULT_SERIALIZED_LENGTH);
+    }
+
+    #[test]
+    fn test_cost_without_base_fee_eip4844_includes_blob_gas() {
+        // Regression test for mempool balance check: for EIP-4844 txs,
+        // cost_without_base_fee() MUST include blob_gas_used * max_fee_per_blob_gas.
+        // Every peer client (geth, reth, nethermind, erigon, besu) does this.
+        use crate::constants::GAS_PER_BLOB;
+
+        let max_fee_per_gas: u64 = 100;
+        let gas: u64 = 21_000;
+        let value = U256::from(7u64);
+        let max_fee_per_blob_gas = U256::from(50u64);
+        let blob_count: usize = 1;
+
+        let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            max_fee_per_gas,
+            gas,
+            value,
+            max_fee_per_blob_gas,
+            blob_versioned_hashes: vec![H256::zero(); blob_count],
+            ..Default::default()
+        });
+
+        let got = tx.cost_without_base_fee().expect("cost is computable");
+
+        let gas_cost = U256::from(max_fee_per_gas) * U256::from(gas);
+        let blob_gas = U256::from(GAS_PER_BLOB) * U256::from(blob_count as u64);
+        let blob_cost = blob_gas * max_fee_per_blob_gas;
+        let expected = gas_cost + blob_cost + value;
+
+        assert_eq!(
+            got, expected,
+            "blob-gas term missing from cost_without_base_fee() for EIP-4844"
+        );
     }
 }

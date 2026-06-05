@@ -23,6 +23,7 @@ pub use account::*;
 pub use account_update::*;
 pub use blobs_bundle::*;
 pub use block::*;
+pub use block_access_list::{BalSynthesisItem, synthesize_bal_updates};
 pub use constants::*;
 pub use fork_id::*;
 pub use genesis::*;

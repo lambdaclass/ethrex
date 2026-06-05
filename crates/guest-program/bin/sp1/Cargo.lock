@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -827,7 +827,9 @@ dependencies = [
  "hex",
  "k256",
  "libssz",
+ "libssz-derive",
  "libssz-merkle",
+ "libssz-types",
  "rkyv",
  "serde",
  "serde_with",
@@ -837,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-sp1"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "ethrex-guest-program",
  "ethrex-vm",
@@ -847,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -865,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -882,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -891,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -909,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "10.0.0"
+version = "15.0.0"
 dependencies = [
  "bytes",
  "derive_more",

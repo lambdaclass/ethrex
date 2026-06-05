@@ -6,6 +6,12 @@ use std::path::Path;
 #[cfg(all(feature = "sp1", feature = "stateless"))]
 compile_error!("Only one of `sp1` and `stateless` can be enabled at a time.");
 
+// test-levm / test-sp1 read snobal-devnet-6 + legacy from `vectors/`.
+// test-stateless reads zkevm@v0.4.1 (EIP-8025 canonical bundle) from a separate
+// `vectors_zkevm/` so the bundles don't overlay each other.
+#[cfg(feature = "stateless")]
+const TEST_FOLDER: &str = "vectors_zkevm/";
+#[cfg(not(feature = "stateless"))]
 const TEST_FOLDER: &str = "vectors/";
 
 // Base skips shared by all runs.
@@ -21,20 +27,22 @@ const SKIPPED_BASE: &[&str] = &[
 ];
 
 // Extra skips added only for prover backends.
-#[cfg(feature = "sp1")]
+#[cfg(all(feature = "sp1", not(feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[
     // I believe these tests fail because of how much stress they put into the zkVM, they probably cause an OOM though this should be checked
     "static_Call50000",
     "Return50000",
     "static_Call1MB1024Calldepth",
 ];
-#[cfg(not(feature = "sp1"))]
+#[cfg(feature = "stateless")]
+const EXTRA_SKIPS: &[&str] = &[];
+#[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 
 // Select backend
 #[cfg(feature = "stateless")]
 const BACKEND: Option<BackendType> = Some(BackendType::Exec);
-#[cfg(feature = "sp1")]
+#[cfg(all(feature = "sp1", not(feature = "stateless")))]
 const BACKEND: Option<BackendType> = Some(BackendType::SP1);
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const BACKEND: Option<BackendType> = None;

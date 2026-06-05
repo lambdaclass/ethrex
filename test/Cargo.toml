@@ -11,13 +11,15 @@ path = "src/lib.rs"
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
+rayon = ["ethrex-levm/rayon"]
+eip-8025 = ["ethrex-levm/eip-8025"]
 
 [dependencies]
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-ethrex-p2p.workspace = true
+ethrex-p2p = { workspace = true, features = ["test-utils"] }
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
 ethrex-levm.workspace = true

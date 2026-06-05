@@ -5,13 +5,16 @@
 
 use std::cmp::min;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ethrex_blockchain::{
     BatchBlockProcessingFailure, Blockchain,
     error::{ChainError, InvalidBlockError},
 };
-use ethrex_common::{H256, types::Block};
+use ethrex_common::{
+    H256,
+    types::{Block, block_access_list::BlockAccessList},
+};
 use ethrex_storage::Store;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -21,6 +24,34 @@ use crate::peer_handler::{BlockRequestOrder, PeerHandler};
 use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
+
+/// Forkchoice heads older than this (in seconds) trigger a "consensus is behind"
+/// warning during sync. A synced consensus client always advertises a head only
+/// a few seconds old, so a large age means the consensus client itself is lagging
+/// chain head and is the sync bottleneck.
+const STALE_FORKCHOICE_HEAD_SECS: u64 = 1800;
+
+/// Distance (in blocks) below which the node is considered to be following head.
+/// Below this we suppress the per-cycle sync-target logging to avoid noise on an
+/// already-synced node, which runs a sync cycle on every slot.
+const FOLLOW_DISTANCE: u64 = 8;
+
+/// Render a duration in seconds as a compact human string, e.g. "13d 4h".
+fn humanize_secs(secs: u64) -> String {
+    if secs < 60 {
+        return "< 1m".to_string();
+    }
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let mins = (secs % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}
 
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
@@ -47,6 +78,13 @@ pub async fn sync_cycle_full(
         pending_blocks.insert(0, block);
     }
 
+    // The consensus-provided forkchoice head, captured before `sync_head` is rewound
+    // over the pending blocks above. Used for sync-target diagnostics so we report the
+    // actual head rather than the rewound ancestor we end up requesting headers from.
+    let fcu_head = pending_blocks
+        .last()
+        .map(|block| (block.header.number, block.header.timestamp));
+
     // Request all block headers between the sync head and our local chain
     // We will begin from the sync head so that we download the latest state first, ensuring we follow the correct chain
     // This step is not parallelized
@@ -56,6 +94,12 @@ pub async fn sync_cycle_full(
     let mut single_batch = true;
 
     let mut attempts = 0;
+
+    // Tracks whether this cycle started meaningfully behind the consensus-provided
+    // head, so we can log progress and a final "caught up" message without spamming
+    // a synced node. Set on the first batch of headers we fetch.
+    let mut started_behind = false;
+    let mut sync_target_logged = false;
 
     // Request and store all block headers from the advertised sync head
     loop {
@@ -89,6 +133,35 @@ pub async fn sync_cycle_full(
             first_header.number,
             last_header.number,
         );
+
+        // On the first batch, report the distance to the consensus-provided head and
+        // warn if that head is stale (a strong signal the consensus client is behind).
+        if !sync_target_logged {
+            sync_target_logged = true;
+            let (target, target_ts) =
+                fcu_head.unwrap_or((first_header.number, first_header.timestamp));
+            let local_head = store.get_latest_block_number().await?;
+            let behind = target.saturating_sub(local_head);
+            if behind > FOLLOW_DISTANCE {
+                started_behind = true;
+                info!(
+                    "Sync target from consensus forkchoice: block {target} ({behind} blocks ahead of local head {local_head})"
+                );
+                let now = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let age = now.saturating_sub(target_ts);
+                if age > STALE_FORKCHOICE_HEAD_SECS {
+                    warn!(
+                        "Consensus forkchoice head (block {target}) is {} old. This can happen while the consensus client is still catching up to chain head; \
+                         if so, execution will only advance as fast as it does. If sync seems slow, it may be worth checking the consensus client's sync status.",
+                        humanize_secs(age)
+                    );
+                }
+            }
+        }
+
         end_block_number = end_block_number.max(first_header.number);
         start_block_number = last_header.number;
 
@@ -236,6 +309,7 @@ pub async fn sync_cycle_full(
             blocks,
             final_batch,
             store.clone(),
+            peers,
         )
         .await?;
     }
@@ -257,8 +331,18 @@ pub async fn sync_cycle_full(
             pending_blocks,
             true,
             store.clone(),
+            peers,
         )
         .await?;
+    }
+
+    // If this cycle started behind, announce that we've caught up to the head the
+    // consensus client gave us, so the operator can tell idle-waiting from a hang.
+    if started_behind {
+        let local_head = store.get_latest_block_number().await?;
+        info!(
+            "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
+        );
     }
 
     store.clear_fullsync_headers().await?;
@@ -271,6 +355,7 @@ async fn add_blocks_in_batch(
     blocks: Vec<Block>,
     final_batch: bool,
     store: Store,
+    peers: &mut PeerHandler,
 ) -> Result<(), SyncError> {
     let execution_start = Instant::now();
     // Copy some values for later
@@ -289,9 +374,31 @@ async fn add_blocks_in_batch(
         .ok_or(SyncError::InvalidRangeReceived)?;
 
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
+    let chain_config = store.get_chain_config();
+    let bals: Vec<Option<BlockAccessList>> = {
+        // Only the final batch goes through `run_blocks_pipeline`, which is the
+        // path that actually consumes BALs. Non-final batches use
+        // `blockchain.add_blocks_in_batch()` which doesn't accept BALs, so
+        // fetching them for those batches just wastes a network round-trip.
+        let any_amsterdam = final_batch
+            && blocks
+                .iter()
+                .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
+        if any_amsterdam {
+            match peers.request_block_access_lists(&blocks_hashes).await {
+                Ok(Some(bals)) if bals.len() == blocks.len() => bals,
+                _ => {
+                    debug!("[SYNCING] BAL fetch unavailable or failed, proceeding without BALs");
+                    vec![None; blocks.len()]
+                }
+            }
+        } else {
+            vec![None; blocks.len()]
+        }
+    };
     // Run the batch
     if let Err((err, batch_failure)) =
-        add_blocks(blockchain.clone(), blocks, final_batch, cancel_token).await
+        add_blocks(blockchain.clone(), blocks, bals, final_batch, cancel_token).await
     {
         if let Some(batch_failure) = batch_failure {
             warn!("Failed to add block during FullSync: {err}");
@@ -353,12 +460,13 @@ async fn add_blocks_in_batch(
 async fn add_blocks(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
+    bals: Vec<Option<BlockAccessList>>,
     sync_head_found: bool,
     cancel_token: CancellationToken,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     // If we found the sync head, run the blocks sequentially to store all the blocks's state
     if sync_head_found {
-        return run_blocks_pipeline(blockchain, blocks).await;
+        return run_blocks_pipeline(blockchain, blocks, bals).await;
     }
 
     // Try batch execution first (faster).
@@ -390,7 +498,7 @@ async fn add_blocks(
                 "Batch execution failed at {failed_block_info} with: {err}. \
                  Retrying batch with per-block pipeline execution."
             );
-            run_blocks_pipeline(blockchain, blocks).await
+            run_blocks_pipeline(blockchain, blocks, bals).await
         }
         Err(e) => Err(e),
     }
@@ -415,20 +523,23 @@ fn is_post_execution_error(err: &InvalidBlockError) -> bool {
 async fn run_blocks_pipeline(
     blockchain: Arc<Blockchain>,
     blocks: Vec<Block>,
+    bals: Vec<Option<BlockAccessList>>,
 ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
     tokio::task::spawn_blocking(move || {
         let mut last_valid_hash = H256::default();
-        for block in blocks {
+        for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
-            blockchain.add_block_pipeline(block, None).map_err(|e| {
-                (
-                    e,
-                    Some(BatchBlockProcessingFailure {
-                        last_valid_hash,
-                        failed_block_hash: block_hash,
-                    }),
-                )
-            })?;
+            blockchain
+                .add_block_pipeline(block, bal.as_ref())
+                .map_err(|e| {
+                    (
+                        e,
+                        Some(BatchBlockProcessingFailure {
+                            last_valid_hash,
+                            failed_block_hash: block_hash,
+                        }),
+                    )
+                })?;
             last_valid_hash = block_hash;
         }
         Ok(())

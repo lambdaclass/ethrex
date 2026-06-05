@@ -10,6 +10,11 @@ pub const MIN_BASE_FEE_PER_BLOB_GAS: u64 = 1; // Defined in [EIP-4844](https://e
 pub const BLOB_BASE_FEE_UPDATE_FRACTION: u64 = 3338477; // Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
 pub const VERSIONED_HASH_VERSION_KZG: u8 = 0x01; // Defined in [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844)
 /// Minimum tip, obtained from geth's default miner config (https://github.com/ethereum/go-ethereum/blob/f750117ad19d623622cc4a46ea361a716ba7407e/miner/miner.go#L56)
+///
+/// Scope: this constant is consumed only by the RPC gas-price estimators
+/// (`eth_gasPrice`, `eth_maxPriorityFeePerGas`). It is NOT a mempool
+/// admission gate — zero-tip transactions are currently admitted.
+///
 /// TODO: This should be configurable along with the tip filter on https://github.com/lambdaclass/ethrex/issues/680
 pub const MIN_GAS_TIP: u64 = 1000000;
 
@@ -27,3 +32,13 @@ pub const FIELD_ELEMENTS_PER_EXT_BLOB: usize = 2 * FIELD_ELEMENTS_PER_BLOB;
 pub const FIELD_ELEMENTS_PER_CELL: usize = 64;
 pub const BYTES_PER_CELL: usize = FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT;
 pub const CELLS_PER_EXT_BLOB: usize = FIELD_ELEMENTS_PER_EXT_BLOB / FIELD_ELEMENTS_PER_CELL;
+
+// Mempool admission size caps — peer-policy defaults, not consensus.
+// Matches geth `txMaxSize` (legacypool) and `txMaxSize` (blobpool), reth
+// `DEFAULT_MAX_TX_INPUT_BYTES`, nethermind `MaxTxSize` / `MaxBlobTxSize`.
+/// Maximum RLP-encoded wire size for a non-blob transaction (128 KiB).
+pub const MAX_TX_SIZE: usize = 131_072;
+/// Maximum RLP-encoded core size for an EIP-4844 blob transaction (1 MiB),
+/// excluding the blob sidecar. Sidecar size is bounded separately by the
+/// per-blob byte count and the fork's max blob count.
+pub const MAX_BLOB_TX_SIZE: usize = 1_048_576;
