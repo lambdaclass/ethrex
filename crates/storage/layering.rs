@@ -1,8 +1,9 @@
 use ethrex_common::H256;
 use fastbloom::AtomicBloomFilter;
+use lru::LruCache;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use std::{fmt, sync::Arc};
+use std::{fmt, num::NonZeroUsize, sync::Arc, sync::atomic::AtomicU64};
 
 use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
@@ -92,6 +93,11 @@ impl TrieLayerCache {
         AtomicBloomFilter::with_false_pos(FALSE_POSITIVE_RATE)
             .hasher(FxBuildHasher)
             .expected_items(expected_items.max(BLOOM_SIZE))
+    }
+
+    /// Returns `true` if the cache has no layers.
+    pub fn is_empty(&self) -> bool {
+        self.layers.is_empty()
     }
 
     /// Looks up a trie node `key` starting from the layer identified by `state_root`,
@@ -260,6 +266,228 @@ impl TrieLayerCache {
             .collect();
         Some(nodes_to_commit)
     }
+
+    /// Removes ALL layers from the cache and returns their merged trie node diffs
+    /// (newest layer's values win for duplicate keys).
+    ///
+    /// Used to force-flush the entire cache to disk before batch mode starts,
+    /// ensuring no stale in-memory layers can shadow fresher on-disk data.
+    pub fn drain_all(&mut self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        // Collect all layers sorted oldest-first so newer values overwrite older ones.
+        let mut all_layers: Vec<TrieLayer> = self
+            .layers
+            .drain()
+            .map(|(_, arc)| Arc::unwrap_or_clone(arc))
+            .collect();
+        all_layers.sort_by_key(|l| l.id);
+
+        // Merge: older entries first, newer entries overwrite.
+        let mut merged: FxHashMap<Vec<u8>, Vec<u8>> = FxHashMap::default();
+        for layer in all_layers {
+            merged.extend(layer.nodes);
+        }
+
+        // Reset state.
+        self.last_id = 0;
+        self.bloom = Self::create_filter(BLOOM_SIZE);
+
+        merged.into_iter().collect()
+    }
+}
+
+/// Default capacity for the flat LRU trie cache used during full sync batch mode.
+///
+/// 4 million entries covers the hot working set of ~1024 blocks comfortably.
+/// Each entry is a trie node path (typically 33-131 bytes) plus its RLP value,
+/// so 4M entries ≈ 600 MB–1.2 GB depending on average node size.
+const FLAT_CACHE_DEFAULT_CAPACITY: usize = 4_000_000;
+
+/// Simple LRU-based trie node cache for full sync batch mode.
+///
+/// Unlike [`TrieLayerCache`], this has no layer chains, no parent pointers,
+/// no bloom filter, and no RCU overhead. Nodes are inserted on write and
+/// evicted in LRU order when the cache is full. On commit, all cached nodes
+/// are written to disk and the cache is cleared.
+///
+/// This cache is only used during `add_blocks_in_batch` (full sync). Normal
+/// CL block processing continues to use `TrieLayerCache`.
+pub struct FlatTrieCache {
+    cache: LruCache<Vec<u8>, Vec<u8>, FxBuildHasher>,
+    hits: u64,
+    misses: u64,
+    inserts: u64,
+    evictions: u64,
+}
+
+impl fmt::Debug for FlatTrieCache {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FlatTrieCache")
+            .field("len", &self.cache.len())
+            .field("cap", &self.cache.cap())
+            .finish()
+    }
+}
+
+impl Clone for FlatTrieCache {
+    fn clone(&self) -> Self {
+        // LruCache doesn't expose an iterator for cloning, so we create a fresh
+        // empty one with the same capacity. This is acceptable because the flat
+        // cache is only a performance optimization; losing cached entries on clone
+        // just means a few extra disk reads.
+        let cap = self.cache.cap();
+        Self {
+            cache: LruCache::with_hasher(
+                NonZeroUsize::new(cap.into()).unwrap_or(NonZeroUsize::MIN),
+                FxBuildHasher,
+            ),
+            hits: 0,
+            misses: 0,
+            inserts: 0,
+            evictions: 0,
+        }
+    }
+}
+
+impl Default for FlatTrieCache {
+    fn default() -> Self {
+        Self::new(FLAT_CACHE_DEFAULT_CAPACITY)
+    }
+}
+
+impl FlatTrieCache {
+    /// Creates a new LRU cache with the given capacity (number of entries).
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            cache: LruCache::with_hasher(
+                NonZeroUsize::new(capacity).unwrap_or(NonZeroUsize::MIN),
+                FxBuildHasher,
+            ),
+            hits: 0,
+            misses: 0,
+            inserts: 0,
+            evictions: 0,
+        }
+    }
+
+    /// Look up a trie node by its path key. Returns `Some(value)` if cached.
+    pub fn get(&mut self, key: &[u8]) -> Option<Vec<u8>> {
+        let result = self.cache.get(key).cloned();
+        if result.is_some() {
+            self.hits += 1;
+        } else {
+            self.misses += 1;
+        }
+        result
+    }
+
+    /// Insert a trie node into the cache. If the cache is full, the least
+    /// recently used entry is evicted.
+    pub fn put(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        let was_full = self.cache.len() == usize::from(self.cache.cap());
+        self.cache.put(key, value);
+        self.inserts += 1;
+        if was_full {
+            self.evictions += 1;
+        }
+    }
+
+    /// Insert a batch of trie nodes into the cache.
+    pub fn put_batch(&mut self, key_values: Vec<(Vec<u8>, Vec<u8>)>) {
+        for (key, value) in key_values {
+            self.put(key, value);
+        }
+    }
+
+    /// Clear the cache entirely.
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
+    /// Returns cache statistics: (hits, misses, inserts, evictions, len, cap).
+    pub fn stats(&self) -> FlatCacheStats {
+        FlatCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            inserts: self.inserts,
+            evictions: self.evictions,
+            len: self.cache.len(),
+            cap: usize::from(self.cache.cap()),
+        }
+    }
+}
+
+/// Snapshot of [`FlatTrieCache`] statistics for logging.
+pub struct FlatCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub inserts: u64,
+    pub evictions: u64,
+    pub len: usize,
+    pub cap: usize,
+}
+
+impl fmt::Display for FlatCacheStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let total = self.hits + self.misses;
+        let hit_rate = if total > 0 {
+            self.hits as f64 / total as f64 * 100.0
+        } else {
+            0.0
+        };
+        write!(
+            f,
+            "hits={} misses={} hit_rate={:.1}% inserts={} evictions={} fill={}/{}",
+            self.hits, self.misses, hit_rate, self.inserts, self.evictions, self.len, self.cap
+        )
+    }
+}
+
+/// Global accumulator for flat cache stats across all batches.
+pub static FLAT_CACHE_TOTAL_HITS: AtomicU64 = AtomicU64::new(0);
+pub static FLAT_CACHE_TOTAL_MISSES: AtomicU64 = AtomicU64::new(0);
+pub static FLAT_CACHE_TOTAL_INSERTS: AtomicU64 = AtomicU64::new(0);
+pub static FLAT_CACHE_TOTAL_EVICTIONS: AtomicU64 = AtomicU64::new(0);
+
+/// Enum that lets [`TrieWrapper`] use either the layered cache (normal block processing)
+/// or the flat LRU cache (full sync batch mode) without requiring separate wrapper types.
+#[derive(Clone)]
+pub enum TrieCacheRef {
+    /// Standard diff-layer cache for normal CL block processing.
+    Layered(Arc<TrieLayerCache>),
+    /// Simple LRU cache for full sync batch mode. Uses `Arc<std::sync::Mutex<_>>` because
+    /// `LruCache::get` requires `&mut self`.
+    Flat(Arc<std::sync::Mutex<FlatTrieCache>>),
+}
+
+impl fmt::Debug for TrieCacheRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Layered(c) => write!(f, "TrieCacheRef::Layered({c:?})"),
+            Self::Flat(c) => write!(f, "TrieCacheRef::Flat({c:?})"),
+        }
+    }
+}
+
+impl TrieCacheRef {
+    /// Look up a trie node. Dispatches to the appropriate cache variant.
+    pub fn get(&self, state_root: H256, key: &[u8]) -> Option<Vec<u8>> {
+        match self {
+            Self::Layered(cache) => cache.get(state_root, key),
+            Self::Flat(cache) => cache.lock().ok()?.get(key),
+        }
+    }
+}
+
+impl From<Arc<TrieLayerCache>> for TrieCacheRef {
+    fn from(cache: Arc<TrieLayerCache>) -> Self {
+        Self::Layered(cache)
+    }
+}
+
+impl From<Arc<std::sync::Mutex<FlatTrieCache>>> for TrieCacheRef {
+    fn from(cache: Arc<std::sync::Mutex<FlatTrieCache>>) -> Self {
+        Self::Flat(cache)
+    }
 }
 
 /// [`TrieDB`] adapter that checks in-memory diff-layers ([`TrieLayerCache`]) first,
@@ -269,7 +497,7 @@ impl TrieLayerCache {
 /// waiting for a disk flush.
 pub struct TrieWrapper {
     pub state_root: H256,
-    pub inner: Arc<TrieLayerCache>,
+    pub inner: TrieCacheRef,
     pub db: Box<dyn TrieDB>,
     /// Pre-computed prefix nibbles for storage tries.
     /// For state tries this is None; for storage tries this is
@@ -280,10 +508,11 @@ pub struct TrieWrapper {
 impl TrieWrapper {
     pub fn new(
         state_root: H256,
-        inner: Arc<TrieLayerCache>,
+        inner: impl Into<TrieCacheRef>,
         db: Box<dyn TrieDB>,
         prefix: Option<H256>,
     ) -> Self {
+        let inner = inner.into();
         let prefix_nibbles = prefix.map(|p| Nibbles::from_bytes(p.as_bytes()).append_new(17));
         Self {
             state_root,
