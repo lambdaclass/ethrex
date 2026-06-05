@@ -450,4 +450,34 @@ mod tests {
     fn test_get_storage_values_request_rejects_empty() {
         assert!(GetStorageValuesRequest::parse(&Some(vec![json!({})])).is_err());
     }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_single_account_over_cap() {
+        let slots: Vec<_> = (0..=MAX_STORAGE_VALUES_SLOTS)
+            .map(|slot| format!("{slot:#x}"))
+            .collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": slots
+        })]);
+
+        assert!(matches!(
+            GetStorageValuesRequest::parse(&params),
+            Err(RpcErr::BadParams(ref msg)) if msg.contains("too many slots")
+        ));
+    }
+
+    #[test]
+    fn test_get_storage_values_request_rejects_multi_account_over_cap() {
+        let first_slots: Vec<_> = (0..600).map(|slot| format!("{slot:#x}")).collect();
+        let second_slots: Vec<_> = (600..1200).map(|slot| format!("{slot:#x}")).collect();
+        let params = Some(vec![json!({
+            "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef": first_slots,
+            "0xfeedfeedfeedfeedfeedfeedfeedfeedfeedfeed": second_slots,
+        })]);
+
+        assert!(matches!(
+            GetStorageValuesRequest::parse(&params),
+            Err(RpcErr::BadParams(ref msg)) if msg.contains("too many slots")
+        ));
+    }
 }
