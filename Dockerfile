@@ -70,7 +70,8 @@ COPY --from=planner --link /ethrex/recipe.json recipe.json
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH},sharing=locked \
-    cargo chef cook --profile $PROFILE --recipe-path recipe.json $BUILD_FLAGS
+    cargo chef cook --profile $PROFILE --recipe-path recipe.json $BUILD_FLAGS \
+    || echo "WARNING: cook skipped (the [patch] ethrex-* deps resolve to ./crates paths not yet copied here); full build below reuses the target cache mount"
 
 # Fetch solc using buildx's TARGETARCH (no shell uname).
 RUN case "$TARGETARCH" in \

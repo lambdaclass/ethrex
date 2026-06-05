@@ -11,6 +11,22 @@ repository. This repo pins a single tooling commit that is used by **both**:
 Both must point at the **same** commit, otherwise the built binary and the CI
 tooling drift apart. The procedure below keeps them in sync.
 
+## Local development
+
+Targets that use the physical tooling files (`make load-test`,
+`make sort-genesis-files`, etc.) expect `ethrex-tooling` checked out at
+`./tooling`. Set it up with:
+
+```sh
+make setup-tooling    # clone (if needed) and check out the pinned rev
+make verify-tooling   # check ./tooling matches the rev pinned in Cargo.toml
+```
+
+`setup-tooling` checks out the exact rev pinned in `Cargo.toml`, so local builds
+match CI. These targets fail fast with a pointer to this doc if `./tooling` is
+missing, and `verify-tooling` reports a mismatch if the checkout drifts from the
+pin (e.g. after a `rev` bump — re-run `make setup-tooling` to sync).
+
 ## Where the revision lives
 
 | Location | Field | Format |
@@ -53,7 +69,13 @@ individual workflows.
    add a matching entry to the `[patch."https://github.com/lambdaclass/ethrex"]`
    section in `Cargo.toml` (see the comment there). Otherwise tooling's
    transitive ethrex deps will resolve to a duplicate git copy instead of the
-   local workspace crates.
+   local workspace crates. CI enforces this via
+   `.github/scripts/check_tooling_patch.sh` (run in the L1 lint job); run it
+   locally to check:
+
+   ```sh
+   bash .github/scripts/check_tooling_patch.sh
+   ```
 
 6. Verify:
 

@@ -79,6 +79,9 @@ jobs:
       - name: Run cargo check
         run: cargo check
 
+      - name: Check ethrex-tooling [patch] coverage
+        run: bash .github/scripts/check_tooling_patch.sh
+
       - name: Run cargo clippy
         run: |
           cargo clippy -- -D warnings
