@@ -7,9 +7,9 @@ use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CA
 use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, compute_receipts_root,
-    validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
-    validate_pre_cancun_header_fields, validate_pre_shanghai_header_fields,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt,
+    compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields, validate_pre_shanghai_header_fields,
     validate_shanghai_header_fields,
 };
 use ethrex_crypto::Crypto;
@@ -82,19 +82,28 @@ pub fn validate_gas_used(
     Ok(())
 }
 
-/// Validates that the receipts root matches the block header.
-pub fn validate_receipts_root(
+/// Validates both the receipts root and the header `logs_bloom` against the executed
+/// receipts in a single pass.
+///
+/// The receipts root commits to each receipt's per-receipt bloom, but *not* to the
+/// header's aggregate `logs_bloom` field — so the aggregate must be checked separately
+/// or a block with a correct receipts root but an arbitrary bloom would be accepted,
+/// diverging from geth/reth. Both checks need each receipt's bloom, so computing them
+/// together hashes it only once (it is cycle-counted in the zkVM guest).
+pub fn validate_receipts_root_and_logs_bloom(
     block_header: &BlockHeader,
     receipts: &[Receipt],
     crypto: &dyn Crypto,
 ) -> Result<(), InvalidBlockError> {
-    let receipts_root = compute_receipts_root(receipts, crypto);
+    let (receipts_root, logs_bloom) = compute_receipts_root_and_logs_bloom(receipts, crypto);
 
-    if receipts_root == block_header.receipts_root {
-        Ok(())
-    } else {
-        Err(InvalidBlockError::ReceiptsRootMismatch)
+    if receipts_root != block_header.receipts_root {
+        return Err(InvalidBlockError::ReceiptsRootMismatch);
     }
+    if logs_bloom != block_header.logs_bloom {
+        return Err(InvalidBlockError::LogsBloomMismatch);
+    }
+    Ok(())
 }
 
 /// Validates that the requests hash matches the block header (Prague+).
