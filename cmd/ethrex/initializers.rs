@@ -457,16 +457,51 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
 
     let local_public_key = public_key_from_signing_key(signer);
 
-    let (bind_addr, external_addr) = resolve_p2p_endpoints(
+    let (rlpx_bind_addr, rlpx_external_addr) = resolve_p2p_endpoints(
         opts.p2p_addr.as_deref(),
         opts.nat_extip.as_deref(),
         local_ip().ok(),
         local_ipv6().ok(),
     );
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    // Determine discovery bind address.
+    // --discovery.addr sets the UDP bind addr independently of RLPx.
+    // Defaults to rlpx_bind_addr so the two channels co-locate by default.
+    // NOTE: we currently enforce that discovery and RLPx use the same address
+    // family. Mixed-family (e.g. IPv4 discv4 + IPv6 RLPx) is structurally
+    // supported by NetworkConfig but not yet tested end-to-end. A future
+    // dual-stack PR (feat/p2p-dual-stack-ipv6) will relax this constraint.
+    let discovery_bind_addr: IpAddr = opts
+        .discovery_addr
+        .as_deref()
+        .map(|a| {
+            let addr: IpAddr = a.parse().expect("Failed to parse --discovery.addr address");
+            assert!(
+                addr.is_ipv4() == rlpx_external_addr.is_ipv4(),
+                "--discovery.addr and external address must use the same address family (both IPv4 or both IPv6)"
+            );
+            addr
+        })
+        .unwrap_or(rlpx_bind_addr);
+
+    // Discovery external address: always use rlpx_external_addr (which is
+    // --nat.extip when set) so the announced address reflects what peers see.
+    // Only fall back to the discovery bind addr when no NAT external IP is
+    // configured and the bind addr is a specific (non-wildcard) IP.
+    let discovery_external_addr = if opts.nat_extip.is_some() {
+        rlpx_external_addr
+    } else if !discovery_bind_addr.is_unspecified() {
+        discovery_bind_addr
+    } else {
+        rlpx_external_addr
+    };
+
+    let node = Node::new(rlpx_external_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
-        bind_addr,
+        discovery_bind_addr,
+        discovery_external_addr,
+        rlpx_bind_addr,
+        rlpx_external_addr,
         tcp_port,
         udp_port,
     };

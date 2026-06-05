@@ -6,6 +6,7 @@ use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{EngineType, Store};
 use secp256k1::SecretKey;
+use std::net::IpAddr;
 use std::{net::SocketAddr, str::FromStr};
 
 const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
@@ -181,5 +182,45 @@ fn verify_enr_signature_fails_when_decode_drops_unknown_pairs() {
     );
     assert_eq!(decoded.pairs().tcp_port, Some(13000));
     assert_eq!(decoded.encode_to_vec(), raw_record);
+    assert!(decoded.verify_signature());
+}
+
+#[test]
+fn node_record_from_ipv6_node_uses_ip6_and_tcp6_udp6() {
+    let signer = SecretKey::from_slice(&[
+        16, 125, 177, 238, 167, 212, 168, 215, 239, 165, 77, 224, 199, 143, 55, 205, 9, 194, 87,
+        139, 92, 46, 30, 191, 74, 37, 68, 242, 38, 225, 104, 246,
+    ])
+    .unwrap();
+
+    let ipv6_addr: IpAddr = "2001:db8::1".parse().unwrap();
+    let node = Node::new(ipv6_addr, 30303, 30303, public_key_from_signing_key(&signer));
+    let record = NodeRecord::from_node(&node, 1, &signer).unwrap();
+    let pairs = record.pairs();
+
+    // IPv6 node must use ip6/tcp6/udp6 ENR keys, not ip/tcp/udp.
+    assert!(pairs.ip.is_none(), "IPv6 node should not set ip (v4) field");
+    assert!(
+        pairs.tcp_port.is_none(),
+        "IPv6 node should not set tcp (v4) field"
+    );
+    assert!(
+        pairs.udp_port.is_none(),
+        "IPv6 node should not set udp (v4) field"
+    );
+    assert!(pairs.ip6.is_some(), "IPv6 node must set ip6 field");
+    assert_eq!(pairs.tcp6_port, Some(30303));
+    assert_eq!(pairs.udp6_port, Some(30303));
+
+    // Round-trip: encode → decode → verify the same fields survive.
+    let encoded = record.encode_to_vec();
+    let decoded = NodeRecord::decode(&encoded).unwrap();
+    let decoded_pairs = decoded.pairs();
+    assert_eq!(decoded_pairs.ip6, pairs.ip6);
+    assert_eq!(decoded_pairs.tcp6_port, Some(30303));
+    assert_eq!(decoded_pairs.udp6_port, Some(30303));
+    assert!(decoded_pairs.ip.is_none());
+    assert!(decoded_pairs.tcp_port.is_none());
+    assert!(decoded_pairs.udp_port.is_none());
     assert!(decoded.verify_signature());
 }
