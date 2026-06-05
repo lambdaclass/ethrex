@@ -14,12 +14,14 @@
 //! handling.
 
 use blst::{
-    MultiPoint, blst_bendian_from_fp, blst_final_exp, blst_fp, blst_fp_from_bendian, blst_fp2,
-    blst_fp12, blst_fp12_is_one, blst_fp12_mul, blst_map_to_g1, blst_map_to_g2, blst_miller_loop,
-    blst_p1, blst_p1_add_or_double_affine, blst_p1_affine, blst_p1_affine_in_g1,
-    blst_p1_affine_on_curve, blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine, blst_p2,
-    blst_p2_add_or_double_affine, blst_p2_affine, blst_p2_affine_in_g2, blst_p2_affine_on_curve,
-    blst_p2_from_affine, blst_p2_mult, blst_p2_to_affine, blst_scalar, blst_scalar_from_bendian,
+    blst_bendian_from_fp, blst_final_exp, blst_fp, blst_fp_from_bendian, blst_fp2, blst_fp12,
+    blst_fp12_is_one, blst_fp12_mul, blst_map_to_g1, blst_map_to_g2, blst_miller_loop, blst_p1,
+    blst_p1_add_or_double_affine, blst_p1_affine, blst_p1_affine_in_g1, blst_p1_affine_on_curve,
+    blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine, blst_p1s_mult_pippenger,
+    blst_p1s_mult_pippenger_scratch_sizeof, blst_p2, blst_p2_add_or_double_affine, blst_p2_affine,
+    blst_p2_affine_in_g2, blst_p2_affine_on_curve, blst_p2_from_affine, blst_p2_mult,
+    blst_p2_to_affine, blst_p2s_mult_pippenger, blst_p2s_mult_pippenger_scratch_sizeof,
+    blst_scalar, blst_scalar_from_bendian,
 };
 
 use crate::provider::CryptoError;
@@ -108,6 +110,64 @@ fn p2_scalar_mul(p: &blst_p2_affine, scalar: &blst_scalar) -> blst_p2_affine {
     // SAFETY: all operands are valid; `scalar.b` is a 32-byte little-endian buffer.
     unsafe { blst_p2_mult(&mut out, &p_jac, scalar.b.as_ptr(), scalar.b.len() * 8) };
     p2_to_affine(&out)
+}
+
+// Pippenger MSM, called single-threaded.
+//
+// blst's safe `MultiPoint::mult` wrapper forks every call across blst's global
+// thread pool. Inside the (already serial) EVM precompile path that fork/join is
+// pure overhead: it adds per-call latency and its workers contend with the
+// node's many runnable threads, which makes MSM *slower* than the serial path
+// for the small point counts EIP-2537 MSMs reach. So we call blst's C
+// `..._mult_pippenger` entry directly with our own scratch, keeping the fast
+// serial Pippenger without spawning any threads.
+//
+// `points` is a non-empty slice and `scalars` holds `points.len()` consecutive
+// 32-byte little-endian scalars (`SCALAR_BITS` wide). blst's array arguments are
+// null-terminated lists of pointers to contiguous arrays.
+
+#[inline]
+fn p1_msm(points: &[blst_p1_affine], scalars: &[u8]) -> blst_p1 {
+    let npoints = points.len();
+    let p: [*const blst_p1_affine; 2] = [points.as_ptr(), core::ptr::null()];
+    let s: [*const u8; 2] = [scalars.as_ptr(), core::ptr::null()];
+    let mut out = blst_p1::default();
+    // SAFETY: `npoints >= 1`, `scalars` is `npoints * 32` bytes, and scratch is
+    // sized by blst's own helper.
+    unsafe {
+        let mut scratch = vec![0u64; blst_p1s_mult_pippenger_scratch_sizeof(npoints) / 8];
+        blst_p1s_mult_pippenger(
+            &mut out,
+            p.as_ptr(),
+            npoints,
+            s.as_ptr(),
+            SCALAR_BITS,
+            scratch.as_mut_ptr(),
+        );
+    }
+    out
+}
+
+#[inline]
+fn p2_msm(points: &[blst_p2_affine], scalars: &[u8]) -> blst_p2 {
+    let npoints = points.len();
+    let p: [*const blst_p2_affine; 2] = [points.as_ptr(), core::ptr::null()];
+    let s: [*const u8; 2] = [scalars.as_ptr(), core::ptr::null()];
+    let mut out = blst_p2::default();
+    // SAFETY: `npoints >= 1`, `scalars` is `npoints * 32` bytes, and scratch is
+    // sized by blst's own helper.
+    unsafe {
+        let mut scratch = vec![0u64; blst_p2s_mult_pippenger_scratch_sizeof(npoints) / 8];
+        blst_p2s_mult_pippenger(
+            &mut out,
+            p.as_ptr(),
+            npoints,
+            s.as_ptr(),
+            SCALAR_BITS,
+            scratch.as_mut_ptr(),
+        );
+    }
+    out
 }
 
 // ── parsing / serialization ────────────────────────────────────────────────
@@ -280,7 +340,7 @@ pub fn g1_msm(pairs: &[(([u8; 48], [u8; 48]), [u8; 32])]) -> Result<[u8; 96], Cr
     }
 
     let scalar_bytes: Vec<u8> = scalars.iter().flat_map(|s| s.b).collect();
-    let result = p1_to_affine(&points.mult(&scalar_bytes, SCALAR_BITS));
+    let result = p1_to_affine(&p1_msm(&points, &scalar_bytes));
     Ok(encode_g1(&result))
 }
 
@@ -310,7 +370,7 @@ pub fn g2_msm(
     }
 
     let scalar_bytes: Vec<u8> = scalars.iter().flat_map(|s| s.b).collect();
-    let result = p2_to_affine(&points.mult(&scalar_bytes, SCALAR_BITS));
+    let result = p2_to_affine(&p2_msm(&points, &scalar_bytes));
     Ok(encode_g2(&result))
 }
 
