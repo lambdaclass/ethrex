@@ -9,8 +9,8 @@ use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
     Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt,
     compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
-    validate_prague_header_fields, validate_pre_cancun_header_fields, validate_pre_shanghai_header_fields,
-    validate_shanghai_header_fields,
+    validate_prague_header_fields, validate_pre_cancun_header_fields,
+    validate_pre_shanghai_header_fields, validate_shanghai_header_fields,
 };
 use ethrex_crypto::Crypto;
 use ethrex_rlp::encode::RLPEncode;
