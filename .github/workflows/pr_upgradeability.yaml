@@ -11,6 +11,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+env:
+  # ethrex-tooling commit; keep in sync with the Cargo.toml rev (docs/updating-ethrex-tooling.md)
+  TOOLING_REV: b62817ad3840305fc0d0acf0ba457c577a121e46
+
 jobs:
   upgradeability:
     runs-on: ubuntu-latest
@@ -26,7 +30,11 @@ jobs:
           node-version: 20
 
       - name: Checkout ethrex-tooling
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Install dependencies
         run: |

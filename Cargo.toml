@@ -87,8 +87,9 @@ ethrex-guest-program = { path = "./crates/guest-program", default-features = fal
 ethrex-storage-rollup = { path = "./crates/l2/storage" }
 ethrex = { path = "./cmd/ethrex" }
 ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
-# Keep this rev in sync with the ref in .github/actions/checkout-tooling/action.yml
-# so CI tooling and the built binary use the same tooling commit.
+# Keep this rev in sync with env.TOOLING_REV in .github/workflows/*.yaml so CI
+# tooling and the built binary use the same tooling commit (see
+# docs/updating-ethrex-tooling.md).
 ethrex-monitor = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "b62817ad" }
 ethrex-repl = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "b62817ad" }
 

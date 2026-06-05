@@ -13,6 +13,8 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # ethrex-tooling commit; keep in sync with the Cargo.toml rev (docs/updating-ethrex-tooling.md)
+  TOOLING_REV: b62817ad3840305fc0d0acf0ba457c577a121e46
 
 jobs:
   report-loc-changes:
@@ -27,7 +29,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Checkout ethrex-tooling
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Find merge base
         id: find_merge_base
@@ -47,7 +53,11 @@ jobs:
           ref: ${{ steps.find_merge_base.outputs.merge_base }}
 
       - name: Checkout ethrex-tooling (base)
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -68,7 +78,11 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Checkout ethrex-tooling (PR)
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust

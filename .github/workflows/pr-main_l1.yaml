@@ -20,6 +20,8 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # ethrex-tooling commit; keep in sync with the Cargo.toml rev (docs/updating-ethrex-tooling.md)
+  TOOLING_REV: b62817ad3840305fc0d0acf0ba457c577a121e46
 
 jobs:
   detect-changes:
@@ -91,7 +93,11 @@ jobs:
           cargo fmt --all -- --check
 
       - name: Checkout ethrex-tooling
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Run tooling cargo check
         run: cargo check --workspace --all-targets
@@ -128,7 +134,11 @@ jobs:
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
       - name: Checkout ethrex-tooling
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
@@ -510,7 +520,11 @@ jobs:
         uses: ./.github/actions/setup-rust
 
       - name: Checkout ethrex-tooling
-        uses: ./.github/actions/checkout-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Compile ethrex binary
         run: cargo build --bin ethrex

@@ -32,12 +32,14 @@ pin (e.g. after a `rev` bump — re-run `make setup-tooling` to sync).
 | Location | Field | Format |
 |----------|-------|--------|
 | `Cargo.toml` | `rev` on `ethrex-monitor` and `ethrex-repl` | short SHA |
-| `.github/actions/checkout-tooling/action.yml` | `ref` | full 40-char SHA |
+| `.github/workflows/*.yaml` | `env.TOOLING_REV` (the `ref` of each ethrex-tooling checkout) | full 40-char SHA |
 | `Cargo.lock` | `ethrex-monitor` / `ethrex-repl` source | regenerated, do not hand-edit |
 
-All CI workflows checkout via the `./.github/actions/checkout-tooling` composite
-action, so the `ref` only needs to change in that one file, never in the
-individual workflows.
+Each workflow defines `TOOLING_REV` once at the top and every ethrex-tooling
+checkout uses `ref: ${{ env.TOOLING_REV }}`. A plain `actions/checkout` (not a
+local composite action) is used on purpose: some jobs check out tooling before /
+without the ethrex repo tree (and on the base ref), where a local action would
+not yet exist.
 
 ## Procedure
 
@@ -55,9 +57,13 @@ individual workflows.
    ethrex-repl    = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "<short-sha>" }
    ```
 
-3. Update `.github/actions/checkout-tooling/action.yml` — set `ref` to the
+3. Update `env.TOOLING_REV` in every workflow under `.github/workflows/` to the
    **full** 40-char SHA (`actions/checkout` resolves a full SHA reliably; a
-   short SHA may not fetch).
+   short SHA may not fetch). They all hold the same value, so:
+
+   ```sh
+   sed -i -E 's/(  TOOLING_REV: ).*/\1<full-sha>/' .github/workflows/*.yaml
+   ```
 
 4. Refresh the lockfile so it records the new commit:
 
@@ -84,13 +90,13 @@ individual workflows.
    ```
 
 7. Commit all of the above together (`Cargo.toml`, `Cargo.lock`,
-   `.github/actions/checkout-tooling/action.yml`, and any `[patch]` change) in a
-   single commit so the pin stays atomic.
+   `.github/workflows/*.yaml`, and any `[patch]` change) in a single commit so
+   the pin stays atomic.
 
 ## Checklist
 
 - [ ] `Cargo.toml` `rev` bumped on both crates (short SHA)
-- [ ] `checkout-tooling/action.yml` `ref` bumped (full SHA, same commit)
+- [ ] `env.TOOLING_REV` bumped in every `.github/workflows/*.yaml` (full SHA, same commit)
 - [ ] `Cargo.lock` regenerated via `cargo update --precise`
 - [ ] `[patch]` updated if tooling added a new workspace crate dependency
 - [ ] `cargo check --workspace` passes
