@@ -183,6 +183,18 @@ P2P options:
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
 
+      --p2p.snap-scoring <STRATEGY>
+          Peer scoring strategy during snap sync. One of: success, latency, bandwidth.
+
+          [env: ETHREX_P2P_SNAP_SCORING=]
+          [default: bandwidth]
+
+      --p2p.live-scoring <STRATEGY>
+          Peer scoring strategy during live/full sync. One of: success, latency, bandwidth.
+
+          [env: ETHREX_P2P_LIVE_SCORING=]
+          [default: latency]
+
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).

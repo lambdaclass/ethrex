@@ -37,12 +37,19 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     path::Path,
     sync::atomic::Ordering,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 use tracing::{debug, error, info, trace, warn};
 
 // Re-export DumpError from error module
 pub use super::error::DumpError;
+
+/// Lightweight transfer statistics returned by snap workers for bandwidth/latency scoring.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TransferStats {
+    pub elapsed: Duration,
+    pub response_bytes: u64,
+}
 
 /// Metadata for requesting trie nodes
 #[derive(Debug, Clone)]
@@ -69,6 +76,7 @@ struct StorageTaskResult {
     remaining_start: usize,
     remaining_end: usize,
     remaining_hash_range: (H256, Option<H256>),
+    transfer_stats: TransferStats,
 }
 
 #[derive(Debug)]
@@ -136,8 +144,12 @@ pub async fn request_account_range(
     let mut all_accounts_state = Vec::new();
 
     // channel to send the tasks to the peers
-    let (task_sender, mut task_receiver) =
-        tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
+    let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<(
+        Vec<AccountRangeUnit>,
+        H256,
+        Option<(H256, H256)>,
+        TransferStats,
+    )>(1000);
 
     info!("Starting to download account ranges from peers");
 
@@ -186,7 +198,7 @@ pub async fn request_account_range(
             last_update = SystemTime::now();
         }
 
-        if let Ok((accounts, peer_id, chunk_start_end)) = task_receiver.try_recv() {
+        if let Ok((accounts, peer_id, chunk_start_end, stats)) = task_receiver.try_recv() {
             if let Some((chunk_start, chunk_end)) = chunk_start_end {
                 if chunk_start <= chunk_end {
                     tasks_queue_not_started.push_back((chunk_start, chunk_end));
@@ -200,6 +212,19 @@ pub async fn request_account_range(
             if accounts.is_empty() {
                 peers.peer_table.record_failure(peer_id)?;
                 continue;
+            }
+            // Record latency/bandwidth only after validation (non-empty response).
+            if !stats.elapsed.is_zero() {
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
+                if stats.response_bytes > 0 {
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
+                }
             }
             peers.peer_table.record_success(peer_id)?;
 
@@ -355,6 +380,7 @@ pub async fn request_bytecodes(
         peer_id: H256,
         remaining_start: usize,
         remaining_end: usize,
+        transfer_stats: TransferStats,
     }
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
 
@@ -376,6 +402,7 @@ pub async fn request_bytecodes(
                 peer_id,
                 remaining_start,
                 remaining_end,
+                transfer_stats: stats,
             } = result;
 
             debug!(
@@ -391,6 +418,19 @@ pub async fn request_bytecodes(
             if bytecodes.is_empty() {
                 peers.peer_table.record_failure(peer_id)?;
                 continue;
+            }
+            // Record latency/bandwidth only after validation (non-empty response).
+            if !stats.elapsed.is_zero() {
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
+                if stats.response_bytes > 0 {
+                    let _ = peers.peer_table.record_bandwidth(
+                        peer_id,
+                        stats.response_bytes,
+                        stats.elapsed,
+                    );
+                }
             }
 
             downloaded_count += bytecodes.len() as u64;
@@ -447,13 +487,20 @@ pub async fn request_bytecodes(
                 bytes: MAX_RESPONSE_BYTES,
             });
 
+            let req_start = Instant::now();
             let response = connection
                 .outgoing_request(request, PEER_REPLY_TIMEOUT)
                 .await;
+            let req_elapsed = req_start.elapsed();
             drop(permit);
 
-            let (bytecodes, remaining_start) = match response {
+            let (bytecodes, remaining_start, transfer_stats) = match response {
                 Ok(RLPxMessage::ByteCodes(ByteCodes { id: _, codes })) if !codes.is_empty() => {
+                    let response_bytes: u64 = codes.iter().map(|c| c.len() as u64).sum();
+                    let stats = TransferStats {
+                        elapsed: req_elapsed,
+                        response_bytes,
+                    };
                     let validated_codes: Vec<Bytes> = codes
                         .into_iter()
                         .zip(hashes_to_request)
@@ -461,15 +508,23 @@ pub async fn request_bytecodes(
                         .map(|(b, _hash)| b)
                         .collect();
                     let new_remaining_start = chunk_start + validated_codes.len();
-                    (validated_codes, new_remaining_start)
+                    (validated_codes, new_remaining_start, stats)
                 }
                 Ok(RLPxMessage::ByteCodes(_)) => {
                     // Empty response; retry the full chunk.
-                    (Vec::new(), chunk_start)
+                    let stats = TransferStats {
+                        elapsed: req_elapsed,
+                        response_bytes: 0,
+                    };
+                    (Vec::new(), chunk_start, stats)
                 }
                 _ => {
                     tracing::debug!("Failed to get bytecode");
-                    (Vec::new(), chunk_start)
+                    let stats = TransferStats {
+                        elapsed: req_elapsed,
+                        response_bytes: 0,
+                    };
+                    (Vec::new(), chunk_start, stats)
                 }
             };
 
@@ -479,6 +534,7 @@ pub async fn request_bytecodes(
                 peer_id,
                 remaining_start,
                 remaining_end: chunk_end,
+                transfer_stats,
             };
             tx.send(result).await.ok();
         });
@@ -624,7 +680,18 @@ pub async fn request_storage_ranges(
                 remaining_start,
                 remaining_end,
                 remaining_hash_range: (hash_start, hash_end),
+                transfer_stats: stats,
             } = result;
+            // Record latency/bandwidth only for responses with actual data.
+            if !stats.elapsed.is_zero() && stats.response_bytes > 0 {
+                let _ = peers
+                    .peer_table
+                    .record_response_latency(peer_id, stats.elapsed);
+                let _ =
+                    peers
+                        .peer_table
+                        .record_bandwidth(peer_id, stats.response_bytes, stats.elapsed);
+            }
             completed_tasks += 1;
 
             for (_, accounts) in accounts_by_root_hash[start_index..remaining_start].iter() {
@@ -1110,7 +1177,12 @@ async fn request_account_range_worker(
     chunk_start: H256,
     chunk_end: H256,
     state_root: H256,
-    tx: tokio::sync::mpsc::Sender<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>,
+    tx: tokio::sync::mpsc::Sender<(
+        Vec<AccountRangeUnit>,
+        H256,
+        Option<(H256, H256)>,
+        TransferStats,
+    )>,
     permit: RequestPermit,
 ) -> Result<(), SnapError> {
     debug!("Requesting account range from peer {peer_id}, chunk: {chunk_start:?} - {chunk_end:?}");
@@ -1125,25 +1197,38 @@ async fn request_account_range_worker(
 
     // Perform the wire request and release the peer slot as soon as the
     // response (or error) is in — processing below is pure computation.
+    let start = Instant::now();
     let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await;
+    let elapsed = start.elapsed();
     drop(permit);
 
-    let retry = || {
+    let retry = |stats: TransferStats| {
         (
             Vec::<AccountRangeUnit>::new(),
             Some((chunk_start, chunk_end)),
+            stats,
         )
     };
-    let (accounts_out, chunk_left) = if let Ok(RLPxMessage::AccountRange(AccountRange {
+    let (accounts_out, chunk_left, stats) = if let Ok(RLPxMessage::AccountRange(AccountRange {
         id: _,
         accounts,
         proof,
     })) = response
     {
+        let response_bytes = accounts
+            .iter()
+            .map(|u| u.account.encode_to_vec().len() + 32)
+            .sum::<usize>()
+            + proof.iter().map(|p| p.len()).sum::<usize>();
+        let stats = TransferStats {
+            elapsed,
+            response_bytes: response_bytes as u64,
+        };
+
         if accounts.is_empty() {
-            retry()
+            retry(stats)
         } else {
             // Validate response — build the verification inputs by borrowing
             // `accounts` so we can still consume it for the filtered output.
@@ -1180,20 +1265,26 @@ async fn request_account_range_worker(
                         .into_iter()
                         .filter(|unit| unit.hash <= chunk_end)
                         .collect::<Vec<_>>();
-                    (filtered, chunk_left)
+                    (filtered, chunk_left, stats)
                 }
                 Err(_) => {
                     tracing::error!("Received invalid account range");
-                    retry()
+                    retry(stats)
                 }
             }
         }
     } else {
+        let stats = TransferStats {
+            elapsed,
+            response_bytes: 0,
+        };
         tracing::debug!("Failed to get account range");
-        retry()
+        retry(stats)
     };
 
-    tx.send((accounts_out, peer_id, chunk_left)).await.ok();
+    tx.send((accounts_out, peer_id, chunk_left, stats))
+        .await
+        .ok();
     Ok::<(), SnapError>(())
 }
 
@@ -1214,12 +1305,13 @@ async fn request_storage_ranges_worker(
 
     // Defaults for the "retry this same range" outcome used by every failure
     // branch below.
-    let retry_outcome = || {
+    let retry_outcome = |stats: TransferStats| {
         (
             Vec::<Vec<(H256, U256)>>::new(),
             task.start_index,
             task.end_index,
             (start_hash, task.end_hash),
+            stats,
         )
     };
 
@@ -1236,12 +1328,14 @@ async fn request_storage_ranges_worker(
 
     // Perform the wire request and release the peer slot as soon as the
     // response (or error) is in — validation below is pure computation.
+    let req_start = Instant::now();
     let response = connection
         .outgoing_request(request, PEER_REPLY_TIMEOUT)
         .await;
+    let req_elapsed = req_start.elapsed();
     drop(permit);
 
-    let (account_storages, remaining_start, remaining_end, remaining_hash_range) = 'outcome: {
+    let (account_storages, remaining_start, remaining_end, remaining_hash_range, transfer_stats) = 'outcome: {
         let Ok(RLPxMessage::StorageRanges(StorageRanges {
             id: _,
             slots,
@@ -1252,17 +1346,30 @@ async fn request_storage_ranges_worker(
             ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("timeout");
             tracing::trace!(peer_id = %peer_id, msg_type = "GetStorageRanges", outcome = "timeout", "Storage range request failed");
             tracing::debug!("Failed to get storage range");
-            break 'outcome retry_outcome();
+            break 'outcome retry_outcome(TransferStats {
+                elapsed: req_elapsed,
+                response_bytes: 0,
+            });
+        };
+        let response_bytes = slots
+            .iter()
+            .flat_map(|acct_slots| acct_slots.iter())
+            .map(|_slot| 32 + 32) // hash + U256 value
+            .sum::<usize>()
+            + proof.iter().map(|p| p.len()).sum::<usize>();
+        let transfer_stats = TransferStats {
+            elapsed: req_elapsed,
+            response_bytes: response_bytes as u64,
         };
         if slots.is_empty() && proof.is_empty() {
             #[cfg(feature = "metrics")]
             ethrex_metrics::sync::METRICS_SYNC.inc_storage_request("empty");
             tracing::trace!(peer_id = %peer_id, msg_type = "StorageRanges", outcome = "empty", "Storage range response empty");
             tracing::debug!("Received empty storage range");
-            break 'outcome retry_outcome();
+            break 'outcome retry_outcome(transfer_stats);
         }
         if slots.len() > chunk_storage_roots.len() || slots.is_empty() {
-            break 'outcome retry_outcome();
+            break 'outcome retry_outcome(transfer_stats);
         }
         let proof = encodable_to_proof(&proof);
         let mut account_storages: Vec<Vec<(H256, U256)>> = vec![];
@@ -1286,7 +1393,7 @@ async fn request_storage_ranges_worker(
                 Some(root) => root,
                 None => {
                     error!("No storage root for account {i}");
-                    break 'outcome retry_outcome();
+                    break 'outcome retry_outcome(transfer_stats);
                 }
             };
 
@@ -1325,7 +1432,7 @@ async fn request_storage_ranges_worker(
         }
 
         if validation_failed {
-            break 'outcome retry_outcome();
+            break 'outcome retry_outcome(transfer_stats);
         }
 
         let (remaining_start, remaining_end, remaining_start_hash) = if should_continue {
@@ -1333,14 +1440,14 @@ async fn request_storage_ranges_worker(
                 Some(storage) => storage,
                 None => {
                     error!("No account storage found, this shouldn't happen");
-                    break 'outcome retry_outcome();
+                    break 'outcome retry_outcome(transfer_stats);
                 }
             };
             let (last_hash, _) = match last_account_storage.last() {
                 Some(last_hash) => last_hash,
                 None => {
                     error!("No last hash found, this shouldn't happen");
-                    break 'outcome retry_outcome();
+                    break 'outcome retry_outcome(transfer_stats);
                 }
             };
             let next_hash_u256 = U256::from_big_endian(&last_hash.0).saturating_add(1.into());
@@ -1358,6 +1465,7 @@ async fn request_storage_ranges_worker(
             remaining_start,
             remaining_end,
             (remaining_start_hash, task.end_hash),
+            transfer_stats,
         )
     };
 
@@ -1368,6 +1476,7 @@ async fn request_storage_ranges_worker(
         remaining_start,
         remaining_end,
         remaining_hash_range,
+        transfer_stats,
     };
     tx.send(task_result).await.ok();
     Ok::<(), SnapError>(())
