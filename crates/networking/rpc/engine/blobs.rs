@@ -382,7 +382,9 @@ mod tests {
 
     #[tokio::test]
     async fn blobs_v1_accepts_max_hashes() {
-        let context = context_with_chain_config(true).await;
+        // V1 is unsupported once Osaka is active, so this size-boundary test
+        // must run with a pre-Osaka chain config.
+        let context = context_with_chain_config(false).await;
         let request = BlobsV1Request {
             blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
         };
