@@ -8,8 +8,8 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::{ChainError, InvalidBlockError};
 use ethrex_common::constants::DEFAULT_OMMERS_HASH;
 use ethrex_common::types::{
-    Block, BlockBody, BlockHeader, ChainConfig, ELASTICITY_MULTIPLIER, Genesis, GenesisAccount,
-    Receipt, calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
+    Block, BlockBody, BlockHeader, ChainConfig, ELASTICITY_MULTIPLIER, Genesis, Receipt,
+    calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
 };
 use ethrex_common::{Address, Bloom, Bytes, H256, U256};
 use ethrex_crypto::NativeCrypto;
