@@ -86,7 +86,7 @@ pub fn execution_program(
 ) -> Result<ProgramOutput, ExecutionError> {
     use libssz_merkle::HashTreeRoot;
 
-    let decoded = super::decode_eip8025(bytes).map_err(|err| {
+    let decoded = super::decode_eip8025(bytes, crypto.as_ref()).map_err(|err| {
         ExecutionError::Internal(format!("failed to decode EIP-8025 input: {err}"))
     })?;
 
@@ -357,27 +357,29 @@ fn validate_versioned_hashes<'a>(
 }
 
 #[cfg(feature = "eip-8025")]
+fn unwrap_ssz_list<const INNER: usize, const OUTER: usize>(
+    list: libssz_types::SszList<libssz_types::SszList<u8, INNER>, OUTER>,
+) -> Vec<bytes::Bytes> {
+    list.into_inner()
+        .into_iter()
+        .map(|inner| bytes::Bytes::from(inner.into_inner()))
+        .collect()
+}
+
+#[cfg(feature = "eip-8025")]
 fn canonical_execution_witness_to_rpc(
     witness: CanonicalExecutionWitness,
 ) -> ethrex_common::types::block_execution_witness::RpcExecutionWitness {
-    use bytes::Bytes;
-
-    fn copy_ssz_bytes<const MAX_BYTES: usize>(
-        bytes: &libssz_types::SszList<u8, MAX_BYTES>,
-    ) -> Bytes {
-        Bytes::from(bytes.iter().copied().collect::<Vec<u8>>())
-    }
-
     ethrex_common::types::block_execution_witness::RpcExecutionWitness {
-        state: witness.state.iter().map(copy_ssz_bytes).collect(),
+        state: unwrap_ssz_list(witness.state),
         // The specs do not have a `keys` field in the witness. This field
         // is inherited from a legacy debug_executionWitness design.
         // A `keys` field is not currently planned to be included in
         // the specs. It might if there is rough consensus it is valuable
         // for execution witness validation performance.
         keys: Vec::new(),
-        codes: witness.codes.iter().map(copy_ssz_bytes).collect(),
-        headers: witness.headers.iter().map(copy_ssz_bytes).collect(),
+        codes: unwrap_ssz_list(witness.codes),
+        headers: unwrap_ssz_list(witness.headers),
     }
 }
 
@@ -399,7 +401,8 @@ fn validate_eip8025_canonical_execution(
         .execution_payload
         .block_number;
     let rpc_witness = canonical_execution_witness_to_rpc(stateless_input.witness);
-    let execution_witness = rpc_witness.into_execution_witness(chain_config, block_number)?;
+    let execution_witness =
+        rpc_witness.into_execution_witness(chain_config, block_number, crypto.as_ref())?;
 
     validate_eip8025_amsterdam_execution(
         &stateless_input.new_payload_request,

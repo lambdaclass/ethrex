@@ -319,6 +319,7 @@ impl Trie {
     pub fn get_embedded_root(
         all_nodes: &BTreeMap<H256, Node>,
         root_hash: H256,
+        crypto: &dyn Crypto,
     ) -> Result<NodeRef, TrieError> {
         // If the root hash is of the empty trie then we can get away by setting the NodeRef to default
         if root_hash == *EMPTY_TRIE_HASH {
@@ -332,6 +333,7 @@ impl Trie {
         fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Node>,
             cur_node: &Node,
+            crypto: &dyn Crypto,
         ) -> Result<Node, TrieError> {
             Ok(match cur_node.clone() {
                 Node::Branch(mut node) => {
@@ -341,8 +343,8 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
-                                Some(node) => get_embedded_node(all_nodes, node)?.into(),
+                            *choice = match all_nodes.get(&hash.finalize(crypto)) {
+                                Some(node) => get_embedded_node(all_nodes, node, crypto)?.into(),
                                 None => hash.into(),
                             };
                         }
@@ -355,8 +357,8 @@ impl Trie {
                         return Ok(node.into());
                     };
 
-                    node.child = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
-                        Some(node) => get_embedded_node(all_nodes, node)?.into(),
+                    node.child = match all_nodes.get(&hash.finalize(crypto)) {
+                        Some(node) => get_embedded_node(all_nodes, node, crypto)?.into(),
                         None => hash.into(),
                     };
 
@@ -366,7 +368,7 @@ impl Trie {
             })
         }
 
-        let root = get_embedded_node(all_nodes, root_rlp)?;
+        let root = get_embedded_node(all_nodes, root_rlp, crypto)?;
         Ok(root.into())
     }
 
@@ -380,9 +382,10 @@ impl Trie {
     pub fn from_nodes(
         root_hash: H256,
         state_nodes: &BTreeMap<H256, Node>,
+        crypto: &dyn Crypto,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
-        let root = Self::get_embedded_root(state_nodes, root_hash)?;
+        let root = Self::get_embedded_root(state_nodes, root_hash, crypto)?;
         trie.root = root;
 
         Ok(trie)

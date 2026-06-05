@@ -663,6 +663,20 @@ impl ChainConfig {
 
         (block_number_based_forks, timestamp_based_forks)
     }
+
+    #[cfg(feature = "eip-8025")]
+    pub fn encode_bytes(&self) -> Vec<u8> {
+        use libssz::SszEncode;
+        SszChainConfig::from(self).to_ssz()
+    }
+
+    #[cfg(feature = "eip-8025")]
+    pub fn decode_bytes(data: &[u8]) -> Result<Self, String> {
+        use libssz::SszDecode;
+        SszChainConfig::from_ssz_bytes(data)
+            .map(|s| ChainConfig::from(&s))
+            .map_err(|e| format!("failed to decode chain config bytes: {e}"))
+    }
 }
 
 #[allow(unused)]
@@ -773,6 +787,277 @@ impl Genesis {
         Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
     }
 }
+
+#[cfg(feature = "eip-8025")]
+#[derive(Clone, Default, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+#[ssz(enum_behaviour = "union")]
+pub enum SszOptionU64 {
+    #[default]
+    None,
+    Some(u64),
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<Option<u64>> for SszOptionU64 {
+    fn from(v: Option<u64>) -> Self {
+        match v {
+            None => Self::None,
+            Some(v) => Self::Some(v),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<&SszOptionU64> for Option<u64> {
+    fn from(v: &SszOptionU64) -> Self {
+        match v {
+            SszOptionU64::None => None,
+            SszOptionU64::Some(v) => Some(*v),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Clone, Default, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+#[ssz(enum_behaviour = "union")]
+pub enum SszOptionU128 {
+    #[default]
+    None,
+    Some(u128),
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<Option<u128>> for SszOptionU128 {
+    fn from(v: Option<u128>) -> Self {
+        match v {
+            None => Self::None,
+            Some(v) => Self::Some(v),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<&SszOptionU128> for Option<u128> {
+    fn from(v: &SszOptionU128) -> Self {
+        match v {
+            SszOptionU128::None => None,
+            SszOptionU128::Some(v) => Some(*v),
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Clone, Default, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+#[ssz(enum_behaviour = "union")]
+pub enum SszOptionBlobSchedule {
+    #[default]
+    None,
+    Some(SszForkBlobSchedule),
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Default, Clone, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct SszChainConfig {
+    pub chain_id: u64,
+    pub homestead_block: SszOptionU64,
+    pub dao_fork_block: SszOptionU64,
+    pub dao_fork_support: bool,
+
+    pub eip150_block: SszOptionU64,
+    pub eip155_block: SszOptionU64,
+    pub eip158_block: SszOptionU64,
+
+    pub byzantium_block: SszOptionU64,
+    pub constantinople_block: SszOptionU64,
+    pub petersburg_block: SszOptionU64,
+    pub istanbul_block: SszOptionU64,
+    pub muir_glacier_block: SszOptionU64,
+    pub berlin_block: SszOptionU64,
+    pub london_block: SszOptionU64,
+    pub arrow_glacier_block: SszOptionU64,
+    pub gray_glacier_block: SszOptionU64,
+    pub merge_netsplit_block: SszOptionU64,
+
+    pub shanghai_time: SszOptionU64,
+    pub cancun_time: SszOptionU64,
+    pub prague_time: SszOptionU64,
+    pub verkle_time: SszOptionU64,
+    pub osaka_time: SszOptionU64,
+
+    pub bpo1_time: SszOptionU64,
+    pub bpo2_time: SszOptionU64,
+    pub bpo3_time: SszOptionU64,
+    pub bpo4_time: SszOptionU64,
+    pub bpo5_time: SszOptionU64,
+    pub amsterdam_time: SszOptionU64,
+
+    pub terminal_total_difficulty: SszOptionU128,
+    pub terminal_total_difficulty_passed: bool,
+
+    pub blob_schedule_cancun: SszForkBlobSchedule,
+    pub blob_schedule_prague: SszForkBlobSchedule,
+    pub blob_schedule_osaka: SszForkBlobSchedule,
+    pub blob_schedule_bpo1: SszForkBlobSchedule,
+    pub blob_schedule_bpo2: SszForkBlobSchedule,
+    pub blob_schedule_bpo3: SszOptionBlobSchedule,
+    pub blob_schedule_bpo4: SszOptionBlobSchedule,
+    pub blob_schedule_bpo5: SszOptionBlobSchedule,
+    pub blob_schedule_amsterdam: SszOptionBlobSchedule,
+
+    pub deposit_contract_address: [u8; 20],
+    pub enable_verkle_at_genesis: bool,
+}
+
+#[cfg(feature = "eip-8025")]
+#[derive(Default, Clone, libssz_derive::SszEncode, libssz_derive::SszDecode)]
+pub struct SszForkBlobSchedule {
+    pub target: u32,
+    pub max: u32,
+    pub base_fee_update_fraction: u64,
+}
+
+#[cfg(feature = "eip-8025")]
+fn fork_blob_schedule_to_ssz(s: &ForkBlobSchedule) -> SszForkBlobSchedule {
+    SszForkBlobSchedule {
+        target: s.target,
+        max: s.max,
+        base_fee_update_fraction: s.base_fee_update_fraction,
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+fn ssz_to_fork_blob_schedule(s: &SszForkBlobSchedule) -> ForkBlobSchedule {
+    ForkBlobSchedule {
+        target: s.target,
+        max: s.max,
+        base_fee_update_fraction: s.base_fee_update_fraction,
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<&ChainConfig> for SszChainConfig {
+    fn from(c: &ChainConfig) -> Self {
+        SszChainConfig {
+            chain_id: c.chain_id,
+            homestead_block: c.homestead_block.into(),
+            dao_fork_block: c.dao_fork_block.into(),
+            dao_fork_support: c.dao_fork_support,
+            eip150_block: c.eip150_block.into(),
+            eip155_block: c.eip155_block.into(),
+            eip158_block: c.eip158_block.into(),
+            byzantium_block: c.byzantium_block.into(),
+            constantinople_block: c.constantinople_block.into(),
+            petersburg_block: c.petersburg_block.into(),
+            istanbul_block: c.istanbul_block.into(),
+            muir_glacier_block: c.muir_glacier_block.into(),
+            berlin_block: c.berlin_block.into(),
+            london_block: c.london_block.into(),
+            arrow_glacier_block: c.arrow_glacier_block.into(),
+            gray_glacier_block: c.gray_glacier_block.into(),
+            merge_netsplit_block: c.merge_netsplit_block.into(),
+            shanghai_time: c.shanghai_time.into(),
+            cancun_time: c.cancun_time.into(),
+            prague_time: c.prague_time.into(),
+            verkle_time: c.verkle_time.into(),
+            osaka_time: c.osaka_time.into(),
+            bpo1_time: c.bpo1_time.into(),
+            bpo2_time: c.bpo2_time.into(),
+            bpo3_time: c.bpo3_time.into(),
+            bpo4_time: c.bpo4_time.into(),
+            bpo5_time: c.bpo5_time.into(),
+            amsterdam_time: c.amsterdam_time.into(),
+            terminal_total_difficulty: c.terminal_total_difficulty.into(),
+            terminal_total_difficulty_passed: c.terminal_total_difficulty_passed,
+            blob_schedule_cancun: fork_blob_schedule_to_ssz(&c.blob_schedule.cancun),
+            blob_schedule_prague: fork_blob_schedule_to_ssz(&c.blob_schedule.prague),
+            blob_schedule_osaka: fork_blob_schedule_to_ssz(&c.blob_schedule.osaka),
+            blob_schedule_bpo1: fork_blob_schedule_to_ssz(&c.blob_schedule.bpo1),
+            blob_schedule_bpo2: fork_blob_schedule_to_ssz(&c.blob_schedule.bpo2),
+            blob_schedule_bpo3: match &c.blob_schedule.bpo3 {
+                Some(s) => SszOptionBlobSchedule::Some(fork_blob_schedule_to_ssz(s)),
+                None => SszOptionBlobSchedule::None,
+            },
+            blob_schedule_bpo4: match &c.blob_schedule.bpo4 {
+                Some(s) => SszOptionBlobSchedule::Some(fork_blob_schedule_to_ssz(s)),
+                None => SszOptionBlobSchedule::None,
+            },
+            blob_schedule_bpo5: match &c.blob_schedule.bpo5 {
+                Some(s) => SszOptionBlobSchedule::Some(fork_blob_schedule_to_ssz(s)),
+                None => SszOptionBlobSchedule::None,
+            },
+            blob_schedule_amsterdam: match &c.blob_schedule.amsterdam {
+                Some(s) => SszOptionBlobSchedule::Some(fork_blob_schedule_to_ssz(s)),
+                None => SszOptionBlobSchedule::None,
+            },
+            deposit_contract_address: c.deposit_contract_address.0,
+            enable_verkle_at_genesis: c.enable_verkle_at_genesis,
+        }
+    }
+}
+
+#[cfg(feature = "eip-8025")]
+impl From<&SszChainConfig> for ChainConfig {
+    fn from(s: &SszChainConfig) -> Self {
+        ChainConfig {
+            chain_id: s.chain_id,
+            homestead_block: (&s.homestead_block).into(),
+            dao_fork_block: (&s.dao_fork_block).into(),
+            dao_fork_support: s.dao_fork_support,
+            eip150_block: (&s.eip150_block).into(),
+            eip155_block: (&s.eip155_block).into(),
+            eip158_block: (&s.eip158_block).into(),
+            byzantium_block: (&s.byzantium_block).into(),
+            constantinople_block: (&s.constantinople_block).into(),
+            petersburg_block: (&s.petersburg_block).into(),
+            istanbul_block: (&s.istanbul_block).into(),
+            muir_glacier_block: (&s.muir_glacier_block).into(),
+            berlin_block: (&s.berlin_block).into(),
+            london_block: (&s.london_block).into(),
+            arrow_glacier_block: (&s.arrow_glacier_block).into(),
+            gray_glacier_block: (&s.gray_glacier_block).into(),
+            merge_netsplit_block: (&s.merge_netsplit_block).into(),
+            shanghai_time: (&s.shanghai_time).into(),
+            cancun_time: (&s.cancun_time).into(),
+            prague_time: (&s.prague_time).into(),
+            verkle_time: (&s.verkle_time).into(),
+            osaka_time: (&s.osaka_time).into(),
+            bpo1_time: (&s.bpo1_time).into(),
+            bpo2_time: (&s.bpo2_time).into(),
+            bpo3_time: (&s.bpo3_time).into(),
+            bpo4_time: (&s.bpo4_time).into(),
+            bpo5_time: (&s.bpo5_time).into(),
+            amsterdam_time: (&s.amsterdam_time).into(),
+            terminal_total_difficulty: (&s.terminal_total_difficulty).into(),
+            terminal_total_difficulty_passed: s.terminal_total_difficulty_passed,
+            blob_schedule: BlobSchedule {
+                cancun: ssz_to_fork_blob_schedule(&s.blob_schedule_cancun),
+                prague: ssz_to_fork_blob_schedule(&s.blob_schedule_prague),
+                osaka: ssz_to_fork_blob_schedule(&s.blob_schedule_osaka),
+                bpo1: ssz_to_fork_blob_schedule(&s.blob_schedule_bpo1),
+                bpo2: ssz_to_fork_blob_schedule(&s.blob_schedule_bpo2),
+                bpo3: match &s.blob_schedule_bpo3 {
+                    SszOptionBlobSchedule::None => None,
+                    SszOptionBlobSchedule::Some(s) => Some(ssz_to_fork_blob_schedule(s)),
+                },
+                bpo4: match &s.blob_schedule_bpo4 {
+                    SszOptionBlobSchedule::None => None,
+                    SszOptionBlobSchedule::Some(s) => Some(ssz_to_fork_blob_schedule(s)),
+                },
+                bpo5: match &s.blob_schedule_bpo5 {
+                    SszOptionBlobSchedule::None => None,
+                    SszOptionBlobSchedule::Some(s) => Some(ssz_to_fork_blob_schedule(s)),
+                },
+                amsterdam: match &s.blob_schedule_amsterdam {
+                    SszOptionBlobSchedule::None => None,
+                    SszOptionBlobSchedule::Some(s) => Some(ssz_to_fork_blob_schedule(s)),
+                },
+            },
+            deposit_contract_address: Address::from(s.deposit_contract_address),
+            enable_verkle_at_genesis: s.enable_verkle_at_genesis,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;

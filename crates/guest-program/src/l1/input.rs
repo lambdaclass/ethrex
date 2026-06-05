@@ -1,16 +1,14 @@
 use ethrex_common::types::Block;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 
+#[cfg(feature = "eip-8025")]
+use ethrex_common::types::block_execution_witness::{
+    MAX_BYTES_PER_CODE, MAX_BYTES_PER_HEADER, MAX_BYTES_PER_PUBLIC_KEY, MAX_BYTES_PER_WITNESS_NODE,
+    MAX_PUBLIC_KEYS, MAX_WITNESS_CODES, MAX_WITNESS_HEADERS, MAX_WITNESS_NODES,
+};
+
 /// Input for the L1 stateless validation program.
-#[derive(
-    Clone,
-    Default,
-    serde::Serialize,
-    serde::Deserialize,
-    rkyv::Deserialize,
-    rkyv::Serialize,
-    rkyv::Archive,
-)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProgramInput {
     /// Blocks to execute.
     pub blocks: Vec<Block>,
@@ -36,12 +34,12 @@ pub const EIP8025_VERSION_LEGACY: u8 = 0x00;
 #[cfg(feature = "eip-8025")]
 pub const EIP8025_VERSION_CANONICAL: u8 = 0x01;
 
-/// Encode a `NewPayloadRequest` (SSZ) and `ExecutionWitness` (rkyv) into the
+/// Encode a `NewPayloadRequest` (SSZ) and `ExecutionWitness` (SSZ) into the
 /// legacy EIP-8025 length-prefixed wire format:
 ///
-///   `[version=0x00] [ssz_len: u32 LE] [ssz_bytes] [rkyv_bytes]`
+///   `[version=0x00] [ssz_len: u32 LE] [ssz_bytes] [witness_ssz_bytes]`
 ///
-/// Returns an error if rkyv serialization of the execution witness fails.
+/// Returns an error if SSZ serialization of the execution witness fails.
 #[cfg(feature = "eip-8025")]
 pub fn encode_eip8025(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
@@ -51,35 +49,17 @@ pub fn encode_eip8025(
 
     let ssz_bytes = new_payload_request.to_ssz();
     let ssz_len = ssz_bytes.len() as u32;
-    let rkyv_bytes = rkyv::to_bytes::<rkyv::rancor::Error>(execution_witness)
-        .map_err(|e| ProgramInputEncodeError::Rkyv(e.to_string()))?;
+    let witness_ssz_bytes = execution_witness
+        .to_ssz_bytes()
+        .map_err(ProgramInputEncodeError::WitnessSsz)?;
 
-    let mut out = Vec::with_capacity(1 + 4 + ssz_bytes.len() + rkyv_bytes.len());
+    let mut out = Vec::with_capacity(1 + 4 + ssz_bytes.len() + witness_ssz_bytes.len());
     out.push(EIP8025_VERSION_LEGACY);
     out.extend_from_slice(&ssz_len.to_le_bytes());
     out.extend_from_slice(&ssz_bytes);
-    out.extend_from_slice(&rkyv_bytes);
+    out.extend_from_slice(&witness_ssz_bytes);
     Ok(out)
 }
-
-// ── canonical SSZ schema ───────────────────────────────────────────
-
-#[cfg(feature = "eip-8025")]
-const MAX_WITNESS_NODES: usize = 1 << 20;
-#[cfg(feature = "eip-8025")]
-const MAX_WITNESS_CODES: usize = 1 << 16;
-#[cfg(feature = "eip-8025")]
-const MAX_WITNESS_HEADERS: usize = 256;
-#[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_WITNESS_NODE: usize = 1 << 20;
-#[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_CODE: usize = 1 << 24;
-#[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_HEADER: usize = 1 << 10;
-#[cfg(feature = "eip-8025")]
-const MAX_PUBLIC_KEYS: usize = 1 << 20;
-#[cfg(feature = "eip-8025")]
-const MAX_BYTES_PER_PUBLIC_KEY: usize = 65;
 
 /// Mirrors `SszChainConfig` from the Amsterdam stateless-validation spec.
 #[cfg(feature = "eip-8025")]
@@ -144,19 +124,22 @@ impl core::fmt::Debug for DecodedEip8025 {
 ///
 /// The first byte is a version discriminator:
 /// - `0x00` → legacy framing
-///   (`[ssz_len: u32 LE] [ssz_bytes] [rkyv ExecutionWitness]`).
+///   (`[ssz_len: u32 LE] [ssz_bytes] [ssz_witness_bytes]`).
 /// - `0x01` → canonical-input framing
-///   (`[ssz_len: u32 LE] [ssz_bytes] [cfg_len: u32 LE] [rkyv ChainConfig]`).
+///   (`[ssz_len: u32 LE] [ssz_bytes] [cfg_len: u32 LE] [ssz ChainConfig]`).
 ///
 /// Anything else surfaces as [`ProgramInputDecodeError::UnknownVersion`].
 #[cfg(feature = "eip-8025")]
-pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecodeError> {
+pub fn decode_eip8025(
+    bytes: &[u8],
+    crypto: &dyn ethrex_crypto::Crypto,
+) -> Result<DecodedEip8025, ProgramInputDecodeError> {
     let (version, rest) = bytes
         .split_first()
         .ok_or(ProgramInputDecodeError::TooShort)?;
     match *version {
         EIP8025_VERSION_LEGACY => {
-            let (new_payload_request, execution_witness) = decode_eip8025_legacy(rest)?;
+            let (new_payload_request, execution_witness) = decode_eip8025_legacy(rest, crypto)?;
             Ok(DecodedEip8025::Legacy {
                 new_payload_request,
                 execution_witness,
@@ -176,6 +159,7 @@ pub fn decode_eip8025(bytes: &[u8]) -> Result<DecodedEip8025, ProgramInputDecode
 #[cfg(feature = "eip-8025")]
 fn decode_eip8025_legacy(
     bytes: &[u8],
+    crypto: &dyn ethrex_crypto::Crypto,
 ) -> Result<
     (
         ethrex_common::types::eip8025_ssz::NewPayloadRequest,
@@ -194,13 +178,13 @@ fn decode_eip8025_legacy(
         return Err(ProgramInputDecodeError::TooShort);
     }
     let ssz_bytes = &bytes[4..4 + ssz_len];
-    let rkyv_bytes = &bytes[4 + ssz_len..];
+    let witness_ssz_bytes = &bytes[4 + ssz_len..];
 
     let new_payload_request =
         ethrex_common::types::eip8025_ssz::NewPayloadRequest::from_ssz_bytes(ssz_bytes)
             .map_err(ProgramInputDecodeError::Ssz)?;
-    let execution_witness = rkyv::from_bytes::<ExecutionWitness, rkyv::rancor::Error>(rkyv_bytes)
-        .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;
+    let execution_witness = ExecutionWitness::from_ssz_bytes(witness_ssz_bytes, crypto)
+        .map_err(ProgramInputDecodeError::WitnessSsz)?;
 
     Ok((new_payload_request, execution_witness))
 }
@@ -240,9 +224,8 @@ fn decode_eip8025_canonical(
 
     let stateless_input =
         CanonicalStatelessInput::from_ssz_bytes(ssz_bytes).map_err(ProgramInputDecodeError::Ssz)?;
-    let chain_config =
-        rkyv::from_bytes::<ethrex_common::types::ChainConfig, rkyv::rancor::Error>(cfg_bytes)
-            .map_err(|e| ProgramInputDecodeError::Rkyv(e.to_string()))?;
+    let chain_config = ethrex_common::types::ChainConfig::decode_bytes(cfg_bytes)
+        .map_err(ProgramInputDecodeError::ChainConfigSsz)?;
 
     Ok((stateless_input, chain_config))
 }
@@ -250,14 +233,14 @@ fn decode_eip8025_canonical(
 #[cfg(feature = "eip-8025")]
 #[derive(Debug)]
 pub enum ProgramInputEncodeError {
-    Rkyv(String),
+    WitnessSsz(ethrex_common::types::block_execution_witness::ExecutionWitnessSszError),
 }
 
 #[cfg(feature = "eip-8025")]
 impl core::fmt::Display for ProgramInputEncodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Rkyv(e) => write!(f, "rkyv encode error: {e}"),
+            Self::WitnessSsz(e) => write!(f, "execution witness SSZ encode error: {e}"),
         }
     }
 }
@@ -267,7 +250,8 @@ impl core::fmt::Display for ProgramInputEncodeError {
 pub enum ProgramInputDecodeError {
     TooShort,
     Ssz(libssz::DecodeError),
-    Rkyv(String),
+    WitnessSsz(ethrex_common::types::block_execution_witness::ExecutionWitnessSszError),
+    ChainConfigSsz(String),
     UnknownVersion(u8),
 }
 
@@ -277,7 +261,8 @@ impl core::fmt::Display for ProgramInputDecodeError {
         match self {
             Self::TooShort => write!(f, "input too short"),
             Self::Ssz(e) => write!(f, "SSZ decode error: {e}"),
-            Self::Rkyv(e) => write!(f, "rkyv decode error: {e}"),
+            Self::WitnessSsz(e) => write!(f, "execution witness SSZ decode error: {e}"),
+            Self::ChainConfigSsz(e) => write!(f, "chain config SSZ decode error: {e}"),
             Self::UnknownVersion(v) => write!(f, "unknown EIP-8025 wire version: {v:#04x}"),
         }
     }
