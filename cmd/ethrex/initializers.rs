@@ -310,6 +310,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        nat_extip_set: opts.nat_extip.is_some(),
         ..Default::default()
     };
 
