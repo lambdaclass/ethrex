@@ -332,6 +332,22 @@ impl Mempool {
         Ok(())
     }
 
+    /// `(hash, sender, nonce)` for every blob tx in the pool. `blobs_bundle_pool`
+    /// is keyed by blob-tx hash, so its keys are exactly the held blob txs.
+    pub fn blob_txs(&self) -> Result<Vec<(H256, Address, u64)>, StoreError> {
+        let inner = self.read()?;
+        Ok(inner
+            .blobs_bundle_pool
+            .keys()
+            .filter_map(|hash| {
+                inner
+                    .transaction_pool
+                    .get(hash)
+                    .map(|tx| (*hash, tx.sender(), tx.nonce()))
+            })
+            .collect())
+    }
+
     /// Add a blobs bundle to the pool by its blob transaction hash
     pub fn add_blobs_bundle(
         &self,

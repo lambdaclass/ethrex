@@ -290,6 +290,12 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
+                    // Reset blob sub-pool against on-chain nonces (head-block
+                    // pruning above misses stale blobs from non-head blocks).
+                    context
+                        .blockchain
+                        .remove_stale_blob_txs(block.hash())
+                        .await?;
                 }
                 Ok(None) => {
                     warn!(
