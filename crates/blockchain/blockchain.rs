@@ -2665,6 +2665,36 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
+    /// Per-block pruning only covers the head block, so stale blob txs from
+    /// non-head canonical blocks leak in and are never evicted (value/nonce
+    /// eviction pins low nonces). Resetting against on-chain nonces clears them.
+    pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
+        let blob_txs = self.mempool.blob_txs()?;
+        if blob_txs.is_empty() {
+            return Ok(());
+        }
+        // Cache on-chain nonce per sender to avoid repeated state reads.
+        let mut nonce_by_sender: HashMap<Address, u64> = HashMap::new();
+        for (hash, sender, tx_nonce) in blob_txs {
+            let state_nonce = match nonce_by_sender.entry(sender) {
+                Entry::Occupied(e) => *e.get(),
+                Entry::Vacant(e) => {
+                    let nonce = self
+                        .storage
+                        .get_account_info_by_hash(head_hash, sender)?
+                        .map(|info| info.nonce)
+                        .unwrap_or(0);
+                    *e.insert(nonce)
+                }
+            };
+            if tx_nonce < state_nonce {
+                self.mempool.remove_transaction(&hash)?;
+            }
+        }
+        Ok(())
+    }
+
     /*
 
     SOME VALIDATIONS THAT WE COULD INCLUDE

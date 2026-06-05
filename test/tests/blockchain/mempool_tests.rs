@@ -653,6 +653,53 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
     hash
 }
 
+// Like `add_blob_tx` but with an explicit sender; returns its hash.
+fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H256 {
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        max_fee_per_blob_gas: 1.into(),
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let hash = H256::random();
+    mempool.add_blobs_bundle(hash, bundle).unwrap();
+    mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("Failed to add blob transaction");
+    hash
+}
+
+#[test]
+fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let sender = H160::random();
+    let blob0 = add_blob_tx_with_sender(&mempool, sender, 0);
+    let blob1 = add_blob_tx_with_sender(&mempool, sender, 1);
+
+    // A regular tx must not appear in the blob listing.
+    let plain = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let plain_hash = plain.hash();
+    mempool
+        .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
+        .unwrap();
+
+    let mut got = mempool.blob_txs().unwrap();
+    got.sort_by_key(|(_, _, nonce)| *nonce);
+    assert_eq!(got, vec![(blob0, sender, 0), (blob1, sender, 1)]);
+}
+
 #[test]
 fn blob_eviction_keeps_includable_low_nonce_tx() {
     // When the blob sub-pool is over its cap, eviction must drop the least
@@ -672,7 +719,9 @@ fn blob_eviction_keeps_includable_low_nonce_tx() {
 
     // FIFO would have evicted `keep` (oldest); the new policy must keep it.
     assert!(
-        mempool.contains_tx(keep).expect("contains_tx should succeed"),
+        mempool
+            .contains_tx(keep)
+            .expect("contains_tx should succeed"),
         "includable low-nonce blob tx was evicted in favor of high-nonce ones"
     );
 }
