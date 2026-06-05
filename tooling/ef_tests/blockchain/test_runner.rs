@@ -14,7 +14,7 @@ use ethrex_common::types::block_access_list::BlockAccessList;
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
-    constants::EMPTY_KECCACK_HASH,
+    constants::EMPTY_KECCAK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
         InvalidBlockHeaderError,
@@ -461,7 +461,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             );
             // Check code
             let code_hash = expected_account.info.code_hash;
-            if code_hash != *EMPTY_KECCACK_HASH {
+            if code_hash != *EMPTY_KECCAK_HASH {
                 // We don't want to get account code if there's no code.
                 let db_account_code = db
                     .get_account_code(code_hash)
