@@ -27,11 +27,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Checkout ethrex-tooling
-        uses: actions/checkout@v6
-        with:
-          repository: lambdaclass/ethrex-tooling
-          ref: main
-          path: tooling
+        uses: ./.github/actions/checkout-tooling
 
       - name: Find merge base
         id: find_merge_base
@@ -51,11 +47,7 @@ jobs:
           ref: ${{ steps.find_merge_base.outputs.merge_base }}
 
       - name: Checkout ethrex-tooling (base)
-        uses: actions/checkout@v6
-        with:
-          repository: lambdaclass/ethrex-tooling
-          ref: main
-          path: tooling
+        uses: ./.github/actions/checkout-tooling
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
@@ -76,11 +68,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Checkout ethrex-tooling (PR)
-        uses: actions/checkout@v6
-        with:
-          repository: lambdaclass/ethrex-tooling
-          ref: main
-          path: tooling
+        uses: ./.github/actions/checkout-tooling
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust

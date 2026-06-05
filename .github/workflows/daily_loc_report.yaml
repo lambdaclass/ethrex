@@ -32,11 +32,7 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v6
       - name: Checkout ethrex-tooling
-        uses: actions/checkout@v6
-        with:
-          repository: lambdaclass/ethrex-tooling
-          ref: main
-          path: tooling
+        uses: ./.github/actions/checkout-tooling
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

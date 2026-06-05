@@ -110,6 +110,9 @@ For more details, please refer to our [Security Policy](./.github/SECURITY.md).
 Development tools (EF tests, load tests, monitor TUI, REPL, benchmarks, etc.)
 live in the [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling) repository.
 
+The tooling commit used by the build and CI is pinned in this repo. To bump it,
+follow [docs/updating-ethrex-tooling.md](docs/updating-ethrex-tooling.md).
+
 ## Contributing
 
 We welcome contributions!  

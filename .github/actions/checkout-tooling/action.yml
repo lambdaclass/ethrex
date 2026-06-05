@@ -1,0 +1,14 @@
+name: Checkout ethrex-tooling
+description: >
+  Checks out lambdaclass/ethrex-tooling into ./tooling at the pinned revision.
+  Keep the ref below in sync with the `ethrex-monitor`/`ethrex-repl` rev in the
+  root Cargo.toml so CI tooling and the built binary use the same tooling commit.
+runs:
+  using: composite
+  steps:
+    - name: Checkout ethrex-tooling
+      uses: actions/checkout@v6
+      with:
+        repository: lambdaclass/ethrex-tooling
+        ref: b62817ad3840305fc0d0acf0ba457c577a121e46
+        path: tooling
