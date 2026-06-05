@@ -268,16 +268,21 @@ async fn test_ip_voting_updates_ip_on_threshold() {
     let voter2 = H256::from_low_u64_be(2);
     let voter3 = H256::from_low_u64_be(3);
 
-    assert_eq!(discv5(&mut server).record_ip_vote(new_ip, voter1), None);
+    assert_eq!(server.ip_predictor.record_ip_vote(new_ip, voter1), None);
     assert_eq!(server.local_node.ip, original_ip);
 
-    assert_eq!(discv5(&mut server).record_ip_vote(new_ip, voter2), None);
+    assert_eq!(server.ip_predictor.record_ip_vote(new_ip, voter2), None);
     assert_eq!(server.local_node.ip, original_ip);
 
     // Vote 3 triggers round end and returns the winning IP
-    let result = discv5(&mut server).record_ip_vote(new_ip, voter3);
+    let result = server.ip_predictor.record_ip_vote(new_ip, voter3);
     assert_eq!(result, Some(new_ip));
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    assert!(server.ip_predictor.ip_votes.is_empty());
+
+    // Applying the winner must update the local node IP (the point of the test).
+    server.apply_predicted_ip(result.unwrap());
+    assert_eq!(server.local_node.ip, new_ip);
+    assert_ne!(server.local_node.ip, original_ip);
 }
 
 #[tokio::test]
@@ -287,12 +292,12 @@ async fn test_ip_voting_same_peer_votes_once() {
     let new_ip: IpAddr = "203.0.113.50".parse().unwrap();
     let same_voter = H256::from_low_u64_be(1);
 
-    discv5(&mut server).record_ip_vote(new_ip, same_voter);
-    discv5(&mut server).record_ip_vote(new_ip, same_voter);
-    discv5(&mut server).record_ip_vote(new_ip, same_voter);
+    server.ip_predictor.record_ip_vote(new_ip, same_voter);
+    server.ip_predictor.record_ip_vote(new_ip, same_voter);
+    server.ip_predictor.record_ip_vote(new_ip, same_voter);
 
     assert_eq!(
-        discv5(&mut server).ip_votes.get(&new_ip).map(|v| v.len()),
+        server.ip_predictor.ip_votes.get(&new_ip).map(|v| v.len()),
         Some(1)
     );
 }
@@ -306,13 +311,13 @@ async fn test_ip_voting_no_update_if_same_ip() {
     let voter2 = H256::from_low_u64_be(2);
     let voter3 = H256::from_low_u64_be(3);
 
-    discv5(&mut server).record_ip_vote(original_ip, voter1);
-    discv5(&mut server).record_ip_vote(original_ip, voter2);
-    discv5(&mut server).record_ip_vote(original_ip, voter3);
+    server.ip_predictor.record_ip_vote(original_ip, voter1);
+    server.ip_predictor.record_ip_vote(original_ip, voter2);
+    server.ip_predictor.record_ip_vote(original_ip, voter3);
 
     assert_eq!(server.local_node.ip, original_ip);
-    assert!(discv5(&mut server).ip_votes.is_empty());
-    assert!(discv5(&mut server).first_ip_vote_round_completed);
+    assert!(server.ip_predictor.ip_votes.is_empty());
+    assert!(server.ip_predictor.first_ip_vote_round_completed);
 }
 
 #[tokio::test]
@@ -338,9 +343,9 @@ async fn test_handle_pong_same_ip_does_not_bump_enr_seq() {
 
     // Round must have actually completed; otherwise the guard at discv5_handle_pong
     // is never evaluated and the assertions below would trivially pass.
-    assert!(discv5(&mut server).first_ip_vote_round_completed);
+    assert!(server.ip_predictor.first_ip_vote_round_completed);
     // Voting round reached threshold with the local IP as winner; the guard at
-    // discv5_handle_pong must skip update_local_ip and leave the ENR sequence intact.
+    // apply_predicted_ip must skip update_local_ip and leave the ENR sequence intact.
     assert_eq!(server.local_node.ip, original_ip);
     assert_eq!(server.local_node_record.seq, original_seq);
 }
@@ -356,16 +361,16 @@ async fn test_ip_voting_split_votes_no_update() {
     let voter2 = H256::from_low_u64_be(2);
     let voter3 = H256::from_low_u64_be(3);
 
-    discv5(&mut server).record_ip_vote(ip1, voter1);
+    server.ip_predictor.record_ip_vote(ip1, voter1);
     assert_eq!(server.local_node.ip, original_ip);
 
-    discv5(&mut server).record_ip_vote(ip2, voter2);
+    server.ip_predictor.record_ip_vote(ip2, voter2);
     assert_eq!(server.local_node.ip, original_ip);
 
-    discv5(&mut server).record_ip_vote(ip1, voter3);
+    server.ip_predictor.record_ip_vote(ip1, voter3);
     assert_eq!(server.local_node.ip, original_ip);
-    assert!(discv5(&mut server).ip_votes.is_empty());
-    assert!(discv5(&mut server).first_ip_vote_round_completed);
+    assert!(server.ip_predictor.ip_votes.is_empty());
+    assert!(server.ip_predictor.first_ip_vote_round_completed);
 }
 
 #[tokio::test]
@@ -377,14 +382,14 @@ async fn test_ip_vote_cleanup() {
 
     let mut voters = FxHashSet::default();
     voters.insert(voter1);
-    discv5(&mut server).ip_votes.insert(ip, voters);
-    discv5(&mut server).ip_vote_period_start = Some(Instant::now());
-    assert_eq!(discv5(&mut server).ip_votes.len(), 1);
+    server.ip_predictor.ip_votes.insert(ip, voters);
+    server.ip_predictor.ip_vote_period_start = Some(Instant::now());
+    assert_eq!(server.ip_predictor.ip_votes.len(), 1);
 
-    discv5(&mut server).cleanup_stale_entries();
-    assert_eq!(discv5(&mut server).ip_votes.len(), 1);
+    server.ip_predictor.check_timeout();
+    assert_eq!(server.ip_predictor.ip_votes.len(), 1);
 
-    assert!(!discv5(&mut server).first_ip_vote_round_completed);
+    assert!(!server.ip_predictor.first_ip_vote_round_completed);
 }
 
 #[tokio::test]
@@ -396,35 +401,38 @@ async fn test_ip_voting_ignores_private_ips() {
     let voter3 = H256::from_low_u64_be(3);
 
     let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
-    discv5(&mut server).record_ip_vote(private_ip, voter1);
-    discv5(&mut server).record_ip_vote(private_ip, voter2);
-    discv5(&mut server).record_ip_vote(private_ip, voter3);
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    server.ip_predictor.record_ip_vote(private_ip, voter1);
+    server.ip_predictor.record_ip_vote(private_ip, voter2);
+    server.ip_predictor.record_ip_vote(private_ip, voter3);
+    assert!(server.ip_predictor.ip_votes.is_empty());
 
     let loopback: IpAddr = "127.0.0.1".parse().unwrap();
-    discv5(&mut server).record_ip_vote(loopback, voter1);
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    server.ip_predictor.record_ip_vote(loopback, voter1);
+    assert!(server.ip_predictor.ip_votes.is_empty());
 
     let link_local: IpAddr = "169.254.1.1".parse().unwrap();
-    discv5(&mut server).record_ip_vote(link_local, voter1);
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    server.ip_predictor.record_ip_vote(link_local, voter1);
+    assert!(server.ip_predictor.ip_votes.is_empty());
 
     let ipv6_loopback: IpAddr = "::1".parse().unwrap();
-    discv5(&mut server).record_ip_vote(ipv6_loopback, voter1);
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    server.ip_predictor.record_ip_vote(ipv6_loopback, voter1);
+    assert!(server.ip_predictor.ip_votes.is_empty());
 
     let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
-    discv5(&mut server).record_ip_vote(ipv6_link_local, voter1);
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    server.ip_predictor.record_ip_vote(ipv6_link_local, voter1);
+    assert!(server.ip_predictor.ip_votes.is_empty());
 
     let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
-    discv5(&mut server).record_ip_vote(ipv6_unique_local, voter1);
-    assert!(discv5(&mut server).ip_votes.is_empty());
+    server
+        .ip_predictor
+        .record_ip_vote(ipv6_unique_local, voter1);
+    assert!(server.ip_predictor.ip_votes.is_empty());
 
     let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
-    discv5(&mut server).record_ip_vote(public_ip, voter1);
+    server.ip_predictor.record_ip_vote(public_ip, voter1);
     assert_eq!(
-        discv5(&mut server)
+        server
+            .ip_predictor
             .ip_votes
             .get(&public_ip)
             .map(|v| v.len()),

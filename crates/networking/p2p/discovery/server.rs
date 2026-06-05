@@ -1,4 +1,5 @@
 use crate::{
+    discovery::ip_predictor::IpPredictor,
     discv4::{
         messages::Packet as Discv4Packet,
         server::{Discv4Message, Discv4State},
@@ -24,11 +25,15 @@ use spawned_concurrency::{
         spawn_listener,
     },
 };
-use std::{net::SocketAddr, sync::Arc, time::Duration};
+use std::{
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
+};
 use thiserror::Error;
 use tokio::net::UdpSocket;
 use tokio_util::udp::UdpFramed;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use super::{DiscoveryConfig, codec::DiscriminatingCodec, lookup_interval_function};
 
@@ -92,6 +97,10 @@ pub struct DiscoveryServer {
     pub(crate) config: DiscoveryConfig,
     pub discv4: Option<Discv4State>,
     pub discv5: Option<Discv5State>,
+    /// Shared IP predictor fed by both discv4 and discv5 PONGs.
+    pub ip_predictor: IpPredictor,
+    /// When true the user supplied `--nat extip:<addr>` and we must not override it.
+    pub(crate) ip_override_locked: bool,
 }
 
 impl std::fmt::Debug for DiscoveryServer {
@@ -100,6 +109,8 @@ impl std::fmt::Debug for DiscoveryServer {
             .field("local_node", &self.local_node)
             .field("discv4_enabled", &self.discv4.is_some())
             .field("discv5_enabled", &self.discv5.is_some())
+            .field("ip_predictor", &self.ip_predictor)
+            .field("ip_override_locked", &self.ip_override_locked)
             .finish()
     }
 }
@@ -149,6 +160,7 @@ impl DiscoveryServer {
             None
         };
 
+        let ip_override_locked = config.nat_extip_set;
         let mut server = Self {
             local_node: local_node.clone(),
             local_node_record,
@@ -156,6 +168,8 @@ impl DiscoveryServer {
             udp_socket: udp_socket.clone(),
             store: storage,
             peer_table: peer_table.clone(),
+            ip_predictor: IpPredictor::default(),
+            ip_override_locked,
             config,
             discv4,
             discv5,
@@ -387,27 +401,41 @@ impl DiscoveryServer {
                 .pending_find_node
                 .retain(|_, sent_at| sent_at.elapsed() < expiration);
         }
-        let winning_ip = self
-            .discv5
-            .as_mut()
-            .and_then(|discv5| discv5.cleanup_stale_entries());
-        if let Some(winning_ip) = winning_ip
-            && winning_ip != self.local_node.ip
-        {
-            info!(
-                protocol = "discv5",
-                old_ip = %self.local_node.ip,
-                new_ip = %winning_ip,
-                "External IP detected via PONG voting, updating local ENR"
-            );
-            update_local_ip(
-                &mut self.local_node,
-                &mut self.local_node_record,
-                &self.signer,
-                winning_ip,
-            );
+        if let Some(discv5) = &mut self.discv5 {
+            discv5.cleanup_stale_entries();
+        }
+        if let Some(ip) = self.ip_predictor.check_timeout() {
+            self.apply_predicted_ip(ip);
         }
         Ok(())
+    }
+
+    pub fn apply_predicted_ip(&mut self, winning_ip: IpAddr) {
+        if self.ip_override_locked {
+            return;
+        }
+        if winning_ip == self.local_node.ip {
+            return;
+        }
+        if winning_ip.is_ipv4() != self.local_node.ip.is_ipv4() {
+            warn!(
+                predicted_ip = %winning_ip,
+                local_ip = %self.local_node.ip,
+                "Predicted external IP has different address family than local IP, ignoring"
+            );
+            return;
+        }
+        info!(
+            old_ip = %self.local_node.ip,
+            new_ip = %winning_ip,
+            "External IP detected via PONG voting, updating local ENR"
+        );
+        update_local_ip(
+            &mut self.local_node,
+            &mut self.local_node_record,
+            &self.signer,
+            winning_ip,
+        );
     }
 
     pub(crate) async fn get_lookup_interval(&self) -> Duration {
@@ -458,9 +486,12 @@ impl DiscoveryServer {
                 discv4_enabled: false,
                 discv5_enabled: true,
                 initial_lookup_interval: 1000.0,
+                nat_extip_set: false,
             },
             discv4: None,
             discv5: Some(Discv5State::default()),
+            ip_predictor: IpPredictor::default(),
+            ip_override_locked: false,
         }
     }
 }
