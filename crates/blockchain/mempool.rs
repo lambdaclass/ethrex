@@ -1,4 +1,5 @@
 use std::{
+    cmp::Reverse,
     collections::{BTreeMap, VecDeque, hash_map::Entry},
     sync::RwLock,
     sync::atomic::{AtomicU64, Ordering},
@@ -36,15 +37,20 @@ use tracing::warn;
 pub const MAX_ALTERNATES_PER_HASH: usize = 8;
 
 /// Maximum number of blob (EIP-4844) transactions retained in the mempool,
-/// independent of `max_mempool_size`. Blob txs live in a dedicated sub-pool with
-/// its own FIFO so a flood of regular transactions cannot evict them: under load
-/// a node would otherwise drop the (scarce, high-value) blob txs it needs to
-/// build full blocks. Worst-case memory is bounded by this count times the
-/// per-tx blob sidecar size (`MAX_BLOB_TX_SIZE`, ~1 MiB).
+/// independent of `max_mempool_size`. Blob txs live in a dedicated sub-pool so a
+/// flood of regular transactions cannot evict them, and the sub-pool itself is
+/// evicted by value/nonce (see `remove_worst_blob_transaction`), never FIFO, so
+/// the node keeps the (scarce, high-value, includable) blob txs it needs to build
+/// full blocks.
 ///
-/// TODO(#6691-fu): expose this through `BlockchainOptions` / CLI like
-/// `max_mempool_size`.
-pub const MAX_BLOB_MEMPOOL_SIZE: usize = 1024;
+/// Sized to comfortably hold several blocks' worth of includable blobs (Amsterdam
+/// allows up to 21 blobs/block) while bounding worst-case memory: blobs are held
+/// in RAM, so the bound is this count times the per-tx sidecar (`MAX_BLOB_TX_SIZE`,
+/// ~1 MiB) ⇒ ~0.5 GiB worst case.
+///
+/// TODO(#6691-fu): expose through CLI and prefer a byte-based cap (like geth's
+/// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
+pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
 /// An alternate announcer for a known-in-flight transaction hash. Carries the
 /// announcer's own announced type and size so the eventual retry can validate
@@ -81,22 +87,16 @@ struct MempoolInner {
     blobs_bundle_by_versioned_hash: FxHashMap<H256, FxHashMap<H256, usize>>,
     txs_by_sender_nonce: BTreeMap<(H160, u64), H256>,
     txs_order: VecDeque<H256>,
-    /// Insertion order of blob (EIP-4844) txs only, kept separate from
-    /// `txs_order` so blob txs are evicted against their own cap rather than by
-    /// the regular-tx FIFO.
-    blob_txs_order: VecDeque<H256>,
     max_mempool_size: usize,
     max_blob_mempool_size: usize,
     // Max number of transactions to let the mempool order queue grow before pruning it
     mempool_prune_threshold: usize,
-    blob_mempool_prune_threshold: usize,
 }
 
 impl MempoolInner {
     fn new(max_mempool_size: usize) -> Self {
         MempoolInner {
             txs_order: VecDeque::with_capacity(max_mempool_size * 2),
-            blob_txs_order: VecDeque::with_capacity(MAX_BLOB_MEMPOOL_SIZE * 2),
             transaction_pool: FxHashMap::with_capacity_and_hasher(
                 max_mempool_size,
                 Default::default(),
@@ -104,7 +104,6 @@ impl MempoolInner {
             max_mempool_size,
             max_blob_mempool_size: MAX_BLOB_MEMPOOL_SIZE,
             mempool_prune_threshold: max_mempool_size + max_mempool_size / 2,
-            blob_mempool_prune_threshold: MAX_BLOB_MEMPOOL_SIZE + MAX_BLOB_MEMPOOL_SIZE / 2,
             ..Default::default()
         }
     }
@@ -173,17 +172,33 @@ impl MempoolInner {
         Ok(())
     }
 
-    /// Evict the oldest blob transactions until the blob sub-pool is back under
-    /// its cap. Only drains `blob_txs_order`.
-    fn remove_oldest_blob_transaction(&mut self) -> Result<(), StoreError> {
+    /// Evict blob transactions until the blob sub-pool is back under its cap.
+    ///
+    /// Unlike a FIFO, this drops the *least includable* blob tx first: highest
+    /// nonce (most likely to sit behind a nonce gap, so not includable yet),
+    /// tie-broken by lowest blob fee. This preserves the low-nonce,
+    /// ready-to-include blob txs the block builder actually needs, instead of
+    /// evicting them just because they arrived early; a sustained backlog of
+    /// future-nonce blob txs would otherwise FIFO-evict the includable ones and
+    /// slowly starve block building of blobs.
+    fn remove_worst_blob_transaction(&mut self) -> Result<(), StoreError> {
         while self.blob_tx_count() > self.max_blob_mempool_size {
-            if let Some(oldest_hash) = self.blob_txs_order.pop_front() {
-                self.remove_transaction_with_lock(&oldest_hash)?;
-            } else {
-                warn!(
-                    "Blob mempool is full but there are no blob transactions to remove, this should not happen and will make the mempool grow indefinitely"
-                );
-                break;
+            // `blobs_bundle_pool` is keyed by blob-tx hash, so its keys are
+            // exactly the blob txs currently held.
+            let worst = self
+                .blobs_bundle_pool
+                .keys()
+                .filter_map(|hash| self.transaction_pool.get(hash).map(|tx| (*hash, tx)))
+                .max_by_key(|(_, tx)| (tx.nonce(), Reverse(tx.max_fee_per_blob_gas())))
+                .map(|(hash, _)| hash);
+            match worst {
+                Some(hash) => self.remove_transaction_with_lock(&hash)?,
+                None => {
+                    warn!(
+                        "Blob mempool is over cap but no evictable blob transaction is present, this should not happen"
+                    );
+                    break;
+                }
             }
         }
 
@@ -211,6 +226,15 @@ impl Mempool {
             tx_added: tokio::sync::Notify::new(),
             tx_seq: AtomicU64::new(0),
         }
+    }
+
+    /// Override the blob sub-pool capacity (defaults to [`MAX_BLOB_MEMPOOL_SIZE`]).
+    /// Builder-style; intended for configuration and tests.
+    pub fn with_max_blob_mempool_size(self, max_blob_mempool_size: usize) -> Self {
+        if let Ok(mut inner) = self.inner.write() {
+            inner.max_blob_mempool_size = max_blob_mempool_size;
+        }
+        self
     }
 
     pub(crate) fn tx_added(&self) -> &tokio::sync::Notify {
@@ -242,25 +266,23 @@ impl Mempool {
     ) -> Result<(), StoreError> {
         let mut inner = self.write()?;
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
-        // Prune the order queues if they have grown too much
-        if inner.txs_order.len() > inner.mempool_prune_threshold
-            || inner.blob_txs_order.len() > inner.blob_mempool_prune_threshold
-        {
+        // Prune the regular order queue if it has grown too much
+        if inner.txs_order.len() > inner.mempool_prune_threshold {
             // NOTE: we do this to avoid borrow checker errors
             let txpool = core::mem::take(&mut inner.transaction_pool);
             inner.txs_order.retain(|tx| txpool.contains_key(tx));
-            inner.blob_txs_order.retain(|tx| txpool.contains_key(tx));
             inner.transaction_pool = txpool;
         }
         // Blob txs are evicted against their own cap so a flood of regular txs
-        // can't push them out (and vice versa).
+        // can't push them out (and vice versa). Blob eviction is value/nonce
+        // ordered (see `remove_worst_blob_transaction`), not FIFO, so it never
+        // drops the next-includable blob tx; regular txs stay FIFO.
         if is_blob {
             // The bundle is inserted before the tx (see add_blob_transaction_to_pool),
             // so the incoming blob is already counted by `blob_tx_count`.
             if inner.blob_tx_count() > inner.max_blob_mempool_size {
-                inner.remove_oldest_blob_transaction()?;
+                inner.remove_worst_blob_transaction()?;
             }
-            inner.blob_txs_order.push_back(hash);
         } else {
             if inner.regular_tx_count() >= inner.max_mempool_size {
                 inner.remove_oldest_regular_transaction()?;

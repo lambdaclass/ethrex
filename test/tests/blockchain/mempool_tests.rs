@@ -628,6 +628,55 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
     }
 }
 
+// Inserts a 1-blob tx straight into the pool (bypassing validation) with the
+// given nonce and blob fee; returns its hash.
+fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        max_fee_per_blob_gas: blob_fee.into(),
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let hash = H256::random();
+    let sender = H160::random();
+    mempool.add_blobs_bundle(hash, bundle).unwrap();
+    mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("Failed to add blob transaction");
+    hash
+}
+
+#[test]
+fn blob_eviction_keeps_includable_low_nonce_tx() {
+    // When the blob sub-pool is over its cap, eviction must drop the least
+    // includable blob tx (highest nonce), not the earliest-inserted one. A FIFO
+    // would evict the first-added low-nonce tx (which is the includable one);
+    // the value/nonce-ordered policy keeps it.
+    let blob_cap = 4;
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST).with_max_blob_mempool_size(blob_cap);
+
+    // Insert FIRST (oldest): an includable low-nonce, high-fee blob tx.
+    let keep = add_blob_tx(&mempool, 0, 1000);
+
+    // Then flood the blob sub-pool past its cap with higher-nonce, low-fee txs.
+    for n in 0..(blob_cap as u64 + 4) {
+        add_blob_tx(&mempool, 100 + n, 1);
+    }
+
+    // FIFO would have evicted `keep` (oldest); the new policy must keep it.
+    assert!(
+        mempool.contains_tx(keep).expect("contains_tx should succeed"),
+        "includable low-nonce blob tx was evicted in favor of high-nonce ones"
+    );
+}
+
 mod alternates {
     use super::*;
     use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;
