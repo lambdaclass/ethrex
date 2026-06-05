@@ -10,11 +10,12 @@ use std::time::Duration;
 // RESPONSE LIMITS
 // =============================================================================
 
-/// Maximum response size in bytes for snap protocol requests (512 KB).
+/// Maximum response size in bytes for snap protocol requests (2 MiB).
 ///
-/// This limits the amount of data a peer can return in a single response,
-/// preventing memory exhaustion and ensuring reasonable response times.
-pub const MAX_RESPONSE_BYTES: u64 = 512 * 1024;
+/// Matches geth's `softResponseLimit` so peers can fill responses up to
+/// their own cap. Lower values (we were at 512 KiB) leave bandwidth on the
+/// table on every round-trip.
+pub const MAX_RESPONSE_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum number of accounts/items to request in a single snap request.
 ///
@@ -47,10 +48,14 @@ pub const RANGE_FILE_CHUNK_SIZE: usize = 1024 * 1024 * 64;
 pub const ACCOUNT_RANGE_CHUNK_COUNT: usize = 800;
 
 /// Number of storage accounts to process per batch during state healing.
-pub const STORAGE_BATCH_SIZE: usize = 300;
+/// geth caps the response by `softResponseLimit` (bytes), not by account
+/// count, so we can request the max it'll process. 1024 is geth's practical
+/// upper bound.
+pub const STORAGE_BATCH_SIZE: usize = 1024;
 
 /// Number of trie nodes to request per batch during state/storage healing.
-pub const NODE_BATCH_SIZE: usize = 500;
+/// Same reasoning as STORAGE_BATCH_SIZE — bounded by response bytes, not count.
+pub const NODE_BATCH_SIZE: usize = 1024;
 
 /// Number of bytecodes to download per batch.
 pub const BYTECODE_CHUNK_SIZE: usize = 50_000;
@@ -63,7 +68,16 @@ pub const CODE_HASH_WRITE_BUFFER_SIZE: usize = 100_000;
 // =============================================================================
 
 /// Timeout for peer responses in snap sync operations.
-pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(5);
+///
+/// `GetAccountRange` / `GetStorageRanges` / `GetByteCodes` / `GetTrieNodes`
+/// responses can be up to ~2 MiB and include Merkle proofs. On busy archival
+/// peers (Gnosis mainnet Nethermind/Erigon, community hardware) 5 s wasn't
+/// enough — every request hit the timer, and the late responses arrived after
+/// we'd already removed the entry from `current_requests`, so they were
+/// silently dropped with "Request id not present". 10 s matches the bnb branch
+/// — enough headroom for slow archival peers, still tight enough to fail over
+/// from truly dead peers quickly.
+pub const PEER_REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Number of retry attempts when selecting a peer for a request.
 pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
@@ -72,7 +86,9 @@ pub const PEER_SELECT_RETRY_ATTEMPTS: u32 = 3;
 pub const REQUEST_RETRY_ATTEMPTS: u32 = 5;
 
 /// Maximum number of concurrent in-flight requests during storage healing.
-pub const MAX_IN_FLIGHT_REQUESTS: u32 = 77;
+/// geth allows one concurrent heal request per connected peer (no global
+/// cap), so sized to allow full utilization with 100+ snap-capable peers.
+pub const MAX_IN_FLIGHT_REQUESTS: u32 = 256;
 
 /// Soft limit on the number of entries in a healing pending-parents queue.
 ///
@@ -136,13 +152,20 @@ pub const MIN_FULL_BLOCKS: u64 = 10_000;
 pub const EXECUTE_BATCH_SIZE_DEFAULT: usize = 1024;
 
 /// Average time between blocks (used for timestamp-based calculations).
-pub const SECONDS_PER_BLOCK: u64 = 12;
+///
+/// Gnosis Chain produces a block every 5 seconds (vs Ethereum L1's 12s).
+/// Mismatch here makes `new_pivot_block_number` undershoot by ~2.4×, and
+/// stretches the pivot-staleness window from the intended ~10 min to ~25 min,
+/// so the pivot is "fresh" while the chain has already moved on. Set to the
+/// Gnosis value on this branch; this constant should eventually be plumbed
+/// through `ChainConfig`.
+pub const SECONDS_PER_BLOCK: u64 = 5;
 
 /// Assumed percentage of slots that are missing blocks.
 ///
 /// This is used to adjust timestamp-based pivot updates and to find "safe"
 /// blocks in the chain that are unlikely to be re-orged.
-pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.8;
+pub const MISSING_SLOTS_PERCENTAGE: f64 = 0.98;
 
 // =============================================================================
 // PROGRESS REPORTING

@@ -339,6 +339,16 @@ impl LEVM {
             VMType::L2(_) => Default::default(),
         };
 
+        // Gnosis Chain: post-block calls to withdrawal + block-rewards contracts.
+        // No-op on Ethereum (only fires when ChainConfig::is_gnosis()).
+        apply_gnosis_post_block_calls(
+            &block.header,
+            block.body.withdrawals.as_deref(),
+            db,
+            vm_type,
+            crypto,
+        )?;
+
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
         }
@@ -486,6 +496,15 @@ impl LEVM {
                 }
                 VMType::L2(_) => Default::default(),
             };
+
+            // Gnosis Chain: post-block system calls (no-op on Ethereum).
+            apply_gnosis_post_block_calls(
+                &block.header,
+                block.body.withdrawals.as_deref(),
+                db,
+                vm_type,
+                crypto,
+            )?;
 
             if let Some(withdrawals) = &block.body.withdrawals {
                 Self::process_withdrawals(db, withdrawals)?;
@@ -743,6 +762,22 @@ impl LEVM {
             VMType::L1 => extract_all_requests_levm(&receipts, db, &block.header, vm_type, crypto)?,
             VMType::L2(_) => Default::default(),
         };
+
+        // Gnosis Chain: post-block calls to withdrawal + block-rewards contracts.
+        // No-op on Ethereum (only fires when ChainConfig::is_gnosis()). Without
+        // this hook on the sequential pipeline path, FullSync on Gnosis fails
+        // every block with a state-root mismatch — the withdrawals contract
+        // and POSDAO rewards never run, so our post-execution state diverges
+        // from canonical. The other two execution paths (`execute_block` and
+        // the BAL-parallel branch above) already call this; the sequential
+        // pipeline must too.
+        apply_gnosis_post_block_calls(
+            &block.header,
+            block.body.withdrawals.as_deref(),
+            db,
+            vm_type,
+            crypto,
+        )?;
 
         if let Some(withdrawals) = &block.body.withdrawals {
             Self::process_withdrawals(db, withdrawals)?;
@@ -2305,6 +2340,15 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         withdrawals: &[Withdrawal],
     ) -> Result<(), EvmError> {
+        // On Gnosis Chain, withdrawals are NOT natively credited.
+        // Instead, the EL invokes the deposit/withdrawal contract via a
+        // post-block system call (see `apply_gnosis_post_block_calls`),
+        // which pays out GNO ERC-20 to the recipients.
+        // Reference: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
+        let chain_config = db.store.get_chain_config()?;
+        if chain_config.is_gnosis() {
+            return Ok(());
+        }
         // For every withdrawal we increment the target account's balance
         for (address, increment) in withdrawals
             .iter()
@@ -2586,6 +2630,117 @@ pub fn generic_system_contract_levm(
     }
 
     Ok(report)
+}
+
+/// Gnosis Chain post-block system calls.
+///
+/// After all user transactions, Gnosis calls two contracts via the system
+/// sender `0xff..fe`:
+///
+/// 1. **Withdrawal contract** (post-Shapella): `executeSystemWithdrawals(...)`
+///    Pays out GNO ERC-20 to validator withdrawal recipients. Replaces the
+///    native EIP-4895 balance credit (which `process_withdrawals` skips on
+///    Gnosis chains).
+///
+/// 2. **Block rewards contract**: `reward([coinbase], [0])` returns
+///    `(receivers, amounts)`. We credit each receiver's native balance.
+///    This is how xDAI is minted post-Merge.
+///
+/// Both calls run with effectively unlimited gas. A revert/halt is fatal —
+/// the block is invalid.
+///
+/// Reference: <https://github.com/gnosischain/specs/blob/master/execution/posdao-post-merge.md>
+/// Reference: <https://github.com/gnosischain/specs/blob/master/execution/withdrawals.md>
+pub fn apply_gnosis_post_block_calls(
+    block_header: &BlockHeader,
+    withdrawals: Option<&[Withdrawal]>,
+    db: &mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &dyn Crypto,
+) -> Result<(), EvmError> {
+    use ethrex_gnosis::system_calls as gnosis_calls;
+
+    if let VMType::L2(_) = vm_type {
+        return Ok(());
+    }
+
+    let chain_config = db.store.get_chain_config()?;
+    if !chain_config.is_gnosis() {
+        return Ok(());
+    }
+
+    // (1) Withdrawal contract — only after Shapella.
+    if chain_config.is_shanghai_activated(block_header.timestamp) {
+        let withdrawal_contract = chain_config.deposit_contract_address;
+        let withdrawals = withdrawals.unwrap_or(&[]);
+        let amounts: Vec<u64> = withdrawals.iter().map(|w| w.amount).collect();
+        let addresses: Vec<Address> = withdrawals.iter().map(|w| w.address).collect();
+        let calldata = gnosis_calls::encode_execute_system_withdrawals(&amounts, &addresses);
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::from(calldata),
+            db,
+            withdrawal_contract,
+            SYSTEM_ADDRESS,
+            vm_type,
+            crypto,
+        )?;
+        match report.result {
+            crate::backends::levm::TxResult::Success => {}
+            crate::backends::levm::TxResult::Revert(err) => {
+                return Err(EvmError::SystemContractCallFailed(format!(
+                    "Gnosis withdrawal contract call reverted: {err:?}"
+                )));
+            }
+        }
+    }
+
+    // (2) Block rewards contract — every block post-Merge.
+    if let Some(block_rewards_contract) = chain_config.block_rewards_contract {
+        let calldata = gnosis_calls::encode_reward(block_header.coinbase);
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::from(calldata),
+            db,
+            block_rewards_contract,
+            SYSTEM_ADDRESS,
+            vm_type,
+            crypto,
+        )?;
+
+        let return_data = match report.result {
+            crate::backends::levm::TxResult::Success => report.output,
+            crate::backends::levm::TxResult::Revert(err) => {
+                return Err(EvmError::SystemContractCallFailed(format!(
+                    "Gnosis block-rewards contract call reverted: {err:?}"
+                )));
+            }
+        };
+
+        // Decode (address[] receivers, uint256[] amounts) and credit balances.
+        let pairs = gnosis_calls::decode_reward_return(return_data.as_ref()).map_err(|e| {
+            EvmError::SystemContractCallFailed(format!("decode block-rewards reward() return: {e}"))
+        })?;
+        for (receiver, amount) in pairs {
+            let account = db.get_account_mut(receiver).map_err(|_| {
+                EvmError::DB(format!(
+                    "Gnosis block-reward receiver {receiver:?} not found"
+                ))
+            })?;
+            let initial_balance = account.info.balance;
+            account.info.balance =
+                account.info.balance.checked_add(amount).ok_or_else(|| {
+                    EvmError::Custom("Gnosis reward balance overflow".to_string())
+                })?;
+            let new_balance = account.info.balance;
+            if let Some(recorder) = db.bal_recorder_mut() {
+                recorder.set_initial_balance(receiver, initial_balance);
+                recorder.record_balance_change(receiver, new_balance);
+            }
+        }
+    }
+
+    Ok(())
 }
 
 #[allow(unreachable_code)]

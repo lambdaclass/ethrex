@@ -54,6 +54,8 @@ fn random_block_header(rng: &mut impl Rng) -> BlockHeader {
         requests_hash: Some(H256(rng.random())),
         block_access_list_hash: None,
         slot_number: None,
+        aura_step: None,
+        aura_seal: None,
     }
 }
 

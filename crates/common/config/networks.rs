@@ -5,6 +5,7 @@ use std::{
 };
 
 use ethrex_common::types::{ChainConfig, Genesis, GenesisError};
+use ethrex_gnosis::genesis as gnosis_genesis;
 use serde::{Deserialize, Serialize};
 
 //TODO: Look for a better place to move these files
@@ -27,6 +28,8 @@ pub const LOCAL_DEVNET_PRIVATE_KEYS: &str =
 pub const MAINNET_CHAIN_ID: u64 = 0x1;
 pub const HOODI_CHAIN_ID: u64 = 0x88bb0;
 pub const SEPOLIA_CHAIN_ID: u64 = 0xAA36A7;
+pub const CHIADO_CHAIN_ID: u64 = gnosis_genesis::CHIADO_CHAIN_ID;
+pub const GNOSIS_CHAIN_ID: u64 = gnosis_genesis::GNOSIS_MAINNET_CHAIN_ID;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Network {
@@ -43,6 +46,8 @@ pub enum PublicNetwork {
     Hoodi,
     Sepolia,
     Mainnet,
+    Chiado,
+    Gnosis,
 }
 
 impl From<&str> for Network {
@@ -51,6 +56,8 @@ impl From<&str> for Network {
             "hoodi" => Network::PublicNetwork(PublicNetwork::Hoodi),
             "mainnet" => Network::PublicNetwork(PublicNetwork::Mainnet),
             "sepolia" => Network::PublicNetwork(PublicNetwork::Sepolia),
+            "chiado" => Network::PublicNetwork(PublicNetwork::Chiado),
+            "gnosis" => Network::PublicNetwork(PublicNetwork::Gnosis),
             // Note that we don't allow to manually specify the local devnet genesis
             s => Network::GenesisPath(PathBuf::from(s)),
         }
@@ -65,6 +72,8 @@ impl TryFrom<u64> for Network {
             MAINNET_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Mainnet)),
             SEPOLIA_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Sepolia)),
             HOODI_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Hoodi)),
+            CHIADO_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Chiado)),
+            GNOSIS_CHAIN_ID => Ok(Network::PublicNetwork(PublicNetwork::Gnosis)),
             _ => Err(format!("Unknown chain ID: {}", value)),
         }
     }
@@ -88,6 +97,8 @@ impl fmt::Display for Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => write!(f, "hoodi"),
             Network::PublicNetwork(PublicNetwork::Mainnet) => write!(f, "mainnet"),
             Network::PublicNetwork(PublicNetwork::Sepolia) => write!(f, "sepolia"),
+            Network::PublicNetwork(PublicNetwork::Chiado) => write!(f, "chiado"),
+            Network::PublicNetwork(PublicNetwork::Gnosis) => write!(f, "gnosis"),
             Network::LocalDevnet => write!(f, "local-devnet"),
             Network::LocalDevnetL2 => write!(f, "local-devnet-l2"),
             Network::L2Chain(chain_id) => write!(f, "l2-chain-{}", chain_id),
@@ -103,6 +114,13 @@ impl Network {
 
     pub fn get_genesis(&self) -> Result<Genesis, GenesisError> {
         match self {
+            // Gnosis genesis files contain values that exceed u128 (TTD) and
+            // some chain-specific fields; we delegate to the gnosis crate
+            // which knows how to parse them.
+            Network::PublicNetwork(PublicNetwork::Chiado) => Ok(gnosis_genesis::chiado_genesis()),
+            Network::PublicNetwork(PublicNetwork::Gnosis) => {
+                Ok(gnosis_genesis::gnosis_mainnet_genesis())
+            }
             Network::PublicNetwork(public_network) => {
                 Ok(serde_json::from_str(get_genesis_contents(*public_network))?)
             }
@@ -128,6 +146,8 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Mainnet) => Some("mainnet".to_owned()),
             Network::PublicNetwork(PublicNetwork::Hoodi) => Some("hoodi".to_owned()),
             Network::PublicNetwork(PublicNetwork::Sepolia) => Some("sepolia".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Chiado) => Some("chiado".to_owned()),
+            Network::PublicNetwork(PublicNetwork::Gnosis) => Some("gnosis".to_owned()),
             Network::LocalDevnet => None,
             Network::LocalDevnetL2 => None,
             Network::L2Chain(chain_id) => Some(format!("chain-{chain_id}")),
@@ -147,6 +167,8 @@ impl Network {
             "mainnet", // PublicNetwork::Mainnet
             "hoodi",   // PublicNetwork::Hoodi
             "sepolia", // PublicNetwork::Sepolia
+            "chiado",  // PublicNetwork::Chiado
+            "gnosis",  // PublicNetwork::Gnosis
             "dev",     // dev mode
         ]
     }
@@ -156,9 +178,22 @@ impl Network {
             Network::PublicNetwork(PublicNetwork::Hoodi) => HOODI_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Mainnet) => MAINNET_BOOTNODES,
             Network::PublicNetwork(PublicNetwork::Sepolia) => SEPOLIA_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Chiado) => gnosis_genesis::CHIADO_BOOTNODES,
+            Network::PublicNetwork(PublicNetwork::Gnosis) => {
+                gnosis_genesis::GNOSIS_MAINNET_BOOTNODES
+            }
             _ => return vec![],
         };
         serde_json::from_str(bootnodes).expect("bootnodes file should be valid JSON")
+    }
+
+    /// Returns true if the network is Gnosis Chain mainnet or Chiado testnet.
+    pub fn is_gnosis(&self) -> bool {
+        matches!(
+            self,
+            Network::PublicNetwork(PublicNetwork::Chiado)
+                | Network::PublicNetwork(PublicNetwork::Gnosis)
+        )
     }
 }
 
@@ -167,6 +202,14 @@ fn get_genesis_contents(network: PublicNetwork) -> &'static str {
         PublicNetwork::Hoodi => HOODI_GENESIS_CONTENTS,
         PublicNetwork::Mainnet => MAINNET_GENESIS_CONTENTS,
         PublicNetwork::Sepolia => SEPOLIA_GENESIS_CONTENTS,
+        PublicNetwork::Chiado => {
+            // Chiado is parsed via the gnosis crate (handles overflow + Gnosis fields).
+            // get_genesis() short-circuits before reaching here; this is defensive.
+            unreachable!("use Network::get_genesis() for Chiado")
+        }
+        PublicNetwork::Gnosis => {
+            unreachable!("use Network::get_genesis() for Gnosis mainnet")
+        }
     }
 }
 

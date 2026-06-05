@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 ethrex-common = { workspace = true, default-features = false }
 ethrex-crypto.workspace = true
+ethrex-gnosis.workspace = true
 ethrex-levm = { path = "./levm", default-features = false }
 ethrex-rlp.workspace = true
 

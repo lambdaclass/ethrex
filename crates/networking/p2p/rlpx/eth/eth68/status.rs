@@ -129,4 +129,5 @@ impl StatusMessage for StatusMessage68 {
     fn get_genesis(&self) -> BlockHash {
         self.genesis
     }
+    // eth/68 has no earliest_block field; default trait impl (returns 0).
 }

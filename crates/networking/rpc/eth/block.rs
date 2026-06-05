@@ -320,6 +320,9 @@ impl RpcHandler for GetBlobBaseFee {
                 .get_fork_blob_schedule(header.timestamp)
                 .map(|schedule| schedule.base_fee_update_fraction)
                 .unwrap_or_default(),
+            config
+                .min_blob_gas_price
+                .unwrap_or(ethrex_common::constants::MIN_BASE_FEE_PER_BLOB_GAS),
         );
 
         serde_json::to_value(format!("{blob_base_fee:#x}"))
@@ -352,6 +355,9 @@ pub async fn get_all_block_rpc_receipts(
             .get_fork_blob_schedule(header.timestamp)
             .map(|schedule| schedule.base_fee_update_fraction)
             .unwrap_or_default(),
+        config
+            .min_blob_gas_price
+            .unwrap_or(ethrex_common::constants::MIN_BASE_FEE_PER_BLOB_GAS),
     );
     let base_fee_per_gas = header.base_fee_per_gas;
     let blob_base_fee_u64: u64 = blob_base_fee

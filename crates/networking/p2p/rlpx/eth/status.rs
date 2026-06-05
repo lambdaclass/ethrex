@@ -22,6 +22,15 @@ pub trait StatusMessage {
     fn get_fork_id(&self) -> ForkId;
 
     fn get_genesis(&self) -> BlockHash;
+
+    /// Earliest block this peer can serve. Default `0` means the peer is
+    /// archival or hasn't advertised pruning (e.g. eth/68 has no such field).
+    /// eth/69+ peers populate this from the `earliestBlock` Status field
+    /// (see EIP-7642). Callers can use it to skip peers that have pruned
+    /// the block range they want.
+    fn get_earliest_block(&self) -> u64 {
+        0
+    }
 }
 
 /// Shared status data for eth/69+ protocols (eth/69, eth/70, eth/71, ...).

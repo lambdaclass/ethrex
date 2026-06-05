@@ -45,4 +45,8 @@ impl StatusMessage for StatusMessage69 {
     fn get_genesis(&self) -> BlockHash {
         self.0.genesis
     }
+
+    fn get_earliest_block(&self) -> u64 {
+        self.0.earliest_block
+    }
 }

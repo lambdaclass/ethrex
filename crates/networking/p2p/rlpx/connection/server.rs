@@ -914,18 +914,31 @@ where
             Message::Status68(msg_data) => {
                 trace!(peer=%state.node, "Received Status(68)");
                 backend::validate_status(msg_data, &state.storage, &eth).await?
+                // eth/68 status has no earliest_block field, leave default (0).
             }
             Message::Status69(msg_data) => {
-                trace!(peer=%state.node, "Received Status(69)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                debug!(peer=%state.node, earliest_block=%msg_data.0.earliest_block, latest_block=%msg_data.0.latest_block, "Received Status(69)");
+                let earliest = msg_data.0.earliest_block;
+                backend::validate_status(msg_data, &state.storage, &eth).await?;
+                let _ = state
+                    .peer_table
+                    .set_peer_earliest_block(state.node.node_id(), earliest);
             }
             Message::Status70(msg_data) => {
-                trace!(peer=%state.node, "Received Status(70)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                debug!(peer=%state.node, earliest_block=%msg_data.earliest_block, latest_block=%msg_data.latest_block, "Received Status(70)");
+                let earliest = msg_data.earliest_block;
+                backend::validate_status(msg_data, &state.storage, &eth).await?;
+                let _ = state
+                    .peer_table
+                    .set_peer_earliest_block(state.node.node_id(), earliest);
             }
             Message::Status71(msg_data) => {
-                trace!(peer=%state.node, "Received Status(71)");
-                backend::validate_status(msg_data, &state.storage, &eth).await?
+                debug!(peer=%state.node, earliest_block=%msg_data.0.earliest_block, latest_block=%msg_data.0.latest_block, "Received Status(71)");
+                let earliest = msg_data.0.earliest_block;
+                backend::validate_status(msg_data, &state.storage, &eth).await?;
+                let _ = state
+                    .peer_table
+                    .set_peer_earliest_block(state.node.node_id(), earliest);
             }
             Message::Disconnect(disconnect) => {
                 return Err(PeerConnectionError::HandshakeError(format!(

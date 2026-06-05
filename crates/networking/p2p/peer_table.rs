@@ -298,6 +298,11 @@ pub struct PeerData {
     requests: i64,
     /// Timestamp (seconds since UNIX epoch) of the last successful response from this peer
     pub last_response_time: Option<u64>,
+    /// Earliest block this peer can serve over the eth/68+ protocol.
+    /// Populated from eth/69+ Status `earliestBlock` field (EIP-7642); 0 if
+    /// the peer used eth/68 (no such field) or hasn't been read yet. Used to
+    /// skip peers when requesting block ranges they've pruned.
+    pub earliest_block: u64,
 }
 
 impl PeerData {
@@ -316,6 +321,7 @@ impl PeerData {
             score: Default::default(),
             requests: Default::default(),
             last_response_time: None,
+            earliest_block: 0,
         }
     }
 }
@@ -402,6 +408,13 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn dec_requests(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_unwanted(&self, node_id: H256) -> Result<(), ActorError>;
     fn set_is_fork_id_valid(&self, node_id: H256, valid: bool) -> Result<(), ActorError>;
+    /// Record the `earliestBlock` value a peer advertised in its eth/69+ Status
+    /// message (EIP-7642). Used to skip peers when requesting block ranges they
+    /// have pruned. `earliest_block == 0` is the default (peer is archival or
+    /// hasn't advertised pruning); higher values mean the peer prunes blocks
+    /// below this number.
+    fn set_peer_earliest_block(&self, node_id: H256, earliest_block: u64)
+    -> Result<(), ActorError>;
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
@@ -451,6 +464,12 @@ pub trait PeerTableServerProtocol: Send + Sync {
     /// Read-only predicate: is there any eligible peer matching `capabilities`?
     /// Does not reserve a slot; use for capacity/rotation probes only.
     fn has_eligible_peer(&self, capabilities: Vec<Capability>) -> Response<bool>;
+    /// Minimum `earliest_block` over all currently-connected peers that have
+    /// any of the requested capabilities. Returns `None` if no such peer
+    /// exists. A peer that hasn't advertised pruning (eth/68 or
+    /// `earliest_block == 0`) acts as a free pass — the minimum collapses to
+    /// 0 and `request_block_headers` can ask for the entire chain.
+    fn min_peer_earliest_block(&self, capabilities: Vec<Capability>) -> Response<Option<u64>>;
     fn get_score(&self, node_id: H256) -> Response<i64>;
     fn get_connected_nodes(&self) -> Response<Vec<Node>>;
     fn get_peers_with_capabilities(&self)
@@ -611,6 +630,17 @@ impl PeerTableServer {
         if let Some(contact) = self.get_contact_mut(&msg.node_id) {
             contact.is_fork_id_valid = Some(msg.valid);
         }
+    }
+
+    #[send_handler]
+    async fn handle_set_peer_earliest_block(
+        &mut self,
+        msg: peer_table_server_protocol::SetPeerEarliestBlock,
+        _ctx: &Context<Self>,
+    ) {
+        self.peers
+            .entry(msg.node_id)
+            .and_modify(|peer_data| peer_data.earliest_block = msg.earliest_block);
     }
 
     #[send_handler]
@@ -893,6 +923,25 @@ impl PeerTableServer {
                     .iter()
                     .any(|cap| peer_data.supported_capabilities.contains(cap))
         })
+    }
+
+    #[request_handler]
+    async fn handle_min_peer_earliest_block(
+        &mut self,
+        msg: peer_table_server_protocol::MinPeerEarliestBlock,
+        _ctx: &Context<Self>,
+    ) -> Option<u64> {
+        self.peers
+            .values()
+            .filter(|peer_data| {
+                peer_data.connection.is_some()
+                    && msg
+                        .capabilities
+                        .iter()
+                        .any(|cap| peer_data.supported_capabilities.contains(cap))
+            })
+            .map(|peer_data| peer_data.earliest_block)
+            .min()
     }
 
     #[request_handler]

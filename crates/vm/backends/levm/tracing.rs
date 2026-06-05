@@ -46,10 +46,18 @@ impl LEVM {
         }
 
         // Process withdrawals only if the whole block has been executed.
-        if stop_index.is_none()
-            && let Some(withdrawals) = &block.body.withdrawals
-        {
-            Self::process_withdrawals(db, withdrawals)?;
+        if stop_index.is_none() {
+            // Gnosis: post-block system calls before withdrawals (no-op on L1).
+            super::apply_gnosis_post_block_calls(
+                &block.header,
+                block.body.withdrawals.as_deref(),
+                db,
+                vm_type,
+                crypto,
+            )?;
+            if let Some(withdrawals) = &block.body.withdrawals {
+                Self::process_withdrawals(db, withdrawals)?;
+            }
         };
 
         Ok(())

@@ -138,6 +138,36 @@ impl PeerHandler {
             .current_step
             .set(CurrentStepValue::DownloadingHeaders);
 
+        // EIP-7642 (eth/69+) earliestBlock: peers advertise the oldest block
+        // they retain. If every connected peer has pruned below `start`, we'd
+        // spend forever requesting headers no one can serve (this is the norm
+        // on chains like Chiado where peers all use OtterSync-style snapshot
+        // dissemination). Skip ahead so the request range overlaps the
+        // peer-served window. We still leave a gap below `effective_start`,
+        // but that is unavoidable without a snapshot/checkpoint-state import
+        // path; at least the visible-progress phase won't be permanently
+        // wedged at 0 headers/s.
+        let effective_start = if let Some(min_earliest) = self
+            .peer_table
+            .min_peer_earliest_block(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await?
+        {
+            if min_earliest > start {
+                warn!(
+                    "All connected peers have pruned blocks below {min_earliest} \
+                     (request started at {start}); skipping ahead to avoid \
+                     downloading headers no peer can serve. Chain history below \
+                     {min_earliest} will not be downloaded — consider a snapshot \
+                     or checkpoint-state import for full archival."
+                );
+                min_earliest
+            } else {
+                start
+            }
+        } else {
+            start
+        };
+
         let mut ret = Vec::<BlockHeader>::new();
 
         let mut sync_head_number = 0_u64;
@@ -210,7 +240,9 @@ impl PeerHandler {
             Some(sync_head_number_retrieval_elapsed);
         *METRICS.sync_head_hash.lock().await = sync_head;
 
-        let block_count = sync_head_number + 1 - start;
+        // Use `effective_start` (clamped to peer-served window above) so we
+        // don't enqueue chunks below `min_earliest` that no peer can serve.
+        let block_count = sync_head_number.saturating_sub(effective_start) + 1;
         let chunk_count = if block_count < 800_u64 { 1 } else { 800_u64 };
 
         // 2) partition the amount of headers in `K` tasks
@@ -220,13 +252,15 @@ impl PeerHandler {
         let mut tasks_queue_not_started = VecDeque::<(u64, u64)>::new();
 
         for i in 0..chunk_count {
-            tasks_queue_not_started.push_back((i * chunk_limit + start, chunk_limit));
+            tasks_queue_not_started.push_back((i * chunk_limit + effective_start, chunk_limit));
         }
 
         // Push the reminder
         if !block_count.is_multiple_of(chunk_count) {
-            tasks_queue_not_started
-                .push_back((chunk_count * chunk_limit + start, block_count % chunk_count));
+            tasks_queue_not_started.push_back((
+                chunk_count * chunk_limit + effective_start,
+                block_count % chunk_count,
+            ));
         }
 
         let mut downloaded_count = 0_u64;
@@ -291,9 +325,18 @@ impl PeerHandler {
                     );
 
                     tasks_queue_not_started.push_back((new_start, new_chunk_limit));
-                }
 
-                self.peer_table.record_success(peer_id)?;
+                    // Partial response: peer returned some headers but not the
+                    // full range. Score as a failure so `get_best_peer` rotates
+                    // away on the next pick. Without this, a peer that
+                    // consistently returns 1-of-N still gets `record_success`
+                    // each call → score saturates → it keeps winning selection,
+                    // and the chunk's tail crawls at ~1 header per request.
+                    // Full-range responses still score as success below.
+                    self.peer_table.record_failure(peer_id)?;
+                } else {
+                    self.peer_table.record_success(peer_id)?;
+                }
                 debug!("Downloader {peer_id} freed");
             }
             let Some((peer_id, mut connection, permit)) = self

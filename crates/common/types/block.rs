@@ -152,6 +152,24 @@ pub struct BlockHeader {
         default = "Option::default"
     )]
     pub slot_number: Option<u64>,
+
+    /// AuRa seal step (pre-Merge Gnosis Chain only). Pre-Merge Gnosis/xDai
+    /// blocks use OpenEthereum's AuRa consensus, whose header RLP replaces
+    /// positions 14/15 (geth's `mix_hash`/`nonce`) with `aura_step` (a
+    /// variable-length uint) and `aura_seal` (a 65-byte signature). When this
+    /// field is `Some`, the header MUST be encoded with the AuRa shape (and
+    /// `aura_seal` MUST also be `Some`); otherwise the header is encoded with
+    /// geth's `prev_randao`/`nonce` shape. `None` on Ethereum mainnet/Sepolia
+    /// and on post-Merge Gnosis blocks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = crate::rkyv_utils::OptionU256Wrapper)]
+    pub aura_step: Option<U256>,
+
+    /// AuRa seal signature (pre-Merge Gnosis Chain only). See `aura_step`.
+    /// Always 65 bytes when `Some`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[rkyv(with = crate::rkyv_utils::OptionBytesWrapper)]
+    pub aura_seal: Option<Bytes>,
 }
 
 // Needs a explicit impl due to the hash OnceLock.
@@ -182,6 +200,8 @@ impl PartialEq for BlockHeader {
             requests_hash,
             block_access_list_hash,
             slot_number,
+            aura_step,
+            aura_seal,
         } = self;
 
         parent_hash == &other.parent_hash
@@ -205,6 +225,8 @@ impl PartialEq for BlockHeader {
             && requests_hash == &other.requests_hash
             && block_access_list_hash == &other.block_access_list_hash
             && slot_number == &other.slot_number
+            && aura_step == &other.aura_step
+            && aura_seal == &other.aura_seal
             && logs_bloom == &other.logs_bloom
             && extra_data == &other.extra_data
     }
@@ -212,7 +234,7 @@ impl PartialEq for BlockHeader {
 
 impl RLPEncode for BlockHeader {
     fn encode(&self, buf: &mut dyn bytes::BufMut) {
-        Encoder::new(buf)
+        let mut encoder = Encoder::new(buf)
             .encode_field(&self.parent_hash)
             .encode_field(&self.ommers_hash)
             .encode_field(&self.coinbase)
@@ -225,9 +247,24 @@ impl RLPEncode for BlockHeader {
             .encode_field(&self.gas_limit)
             .encode_field(&self.gas_used)
             .encode_field(&self.timestamp)
-            .encode_field(&self.extra_data)
-            .encode_field(&self.prev_randao)
-            .encode_field(&self.nonce.to_be_bytes())
+            .encode_field(&self.extra_data);
+
+        // Positions 14/15 differ between geth-style headers (mix_hash + nonce)
+        // and AuRa pre-Merge headers (seal_step + 65-byte seal_signature).
+        // Pre-Merge Gnosis blocks must be re-encoded with the AuRa shape so
+        // their re-hashes match the canonical chain. Otherwise child blocks'
+        // `parent_hash` linkage breaks.
+        if let (Some(aura_step), Some(aura_seal)) =
+            (self.aura_step.as_ref(), self.aura_seal.as_ref())
+        {
+            encoder = encoder.encode_field(aura_step).encode_field(aura_seal);
+        } else {
+            encoder = encoder
+                .encode_field(&self.prev_randao)
+                .encode_field(&self.nonce.to_be_bytes());
+        }
+
+        encoder
             .encode_optional_field(&self.base_fee_per_gas)
             .encode_optional_field(&self.withdrawals_root)
             .encode_optional_field(&self.blob_gas_used)
@@ -256,9 +293,24 @@ impl RLPDecode for BlockHeader {
         let (gas_used, decoder) = decoder.decode_field("gas_used")?;
         let (timestamp, decoder) = decoder.decode_field("timestamp")?;
         let (extra_data, decoder) = decoder.decode_field("extra_data")?;
-        let (prev_randao, decoder) = decoder.decode_field("prev_randao")?;
-        let (nonce, decoder) = decoder.decode_field("nonce")?;
-        let nonce = u64::from_be_bytes(nonce);
+
+        // Detect AuRa-shaped header. Geth-style writes mix_hash as a 32-byte
+        // string (RLP prefix 0xa0). AuRa writes seal_step, a small variable-
+        // length uint that won't share that prefix in practice (step values
+        // are < 2^32 so the encoding is ≤ 5 bytes with a 0x80..0x84 prefix or
+        // a tiny single-byte value). Peek the first byte of the next item to
+        // decide which branch to take.
+        let (next_encoded, decoder) = decoder.get_encoded_item_ref()?;
+        let is_geth_shape = next_encoded.first().copied() == Some(0xa0);
+        let (prev_randao, nonce, aura_step, aura_seal, decoder) = if is_geth_shape {
+            let (mix_hash, _) = H256::decode_unfinished(next_encoded)?;
+            let (nonce, decoder) = decoder.decode_field("nonce")?;
+            (mix_hash, u64::from_be_bytes(nonce), None, None, decoder)
+        } else {
+            let (step, _) = U256::decode_unfinished(next_encoded)?;
+            let (seal_bytes, decoder) = decoder.decode_field::<Bytes>("aura_seal")?;
+            (H256::zero(), 0, Some(step), Some(seal_bytes), decoder)
+        };
         let (base_fee_per_gas, decoder) = decoder.decode_optional_field();
         let (withdrawals_root, decoder) = decoder.decode_optional_field();
         let (blob_gas_used, decoder) = decoder.decode_optional_field();
@@ -294,6 +346,8 @@ impl RLPDecode for BlockHeader {
                 requests_hash,
                 block_access_list_hash,
                 slot_number,
+                aura_step,
+                aura_seal,
             },
             decoder.finish()?,
         ))
@@ -488,12 +542,24 @@ fn check_gas_limit(gas_limit: u64, parent_gas_limit: u64) -> bool {
 
 /// Calculates the base fee per blob gas for the current block based on
 /// it's parent excess blob gas and the update fraction, which depends on the fork.
-pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fraction: u64) -> U256 {
+///
+/// `min_base_fee_per_blob_gas` is the chain's floor (Ethereum: 1 wei /
+/// `MIN_BASE_FEE_PER_BLOB_GAS`; Gnosis Chain: 1 gwei /
+/// `chain_config.min_blob_gas_price`). It is the factor of the
+/// `fake_exponential` formula, so substituting the wrong floor scales the
+/// computed blob fee by orders of magnitude — relevant on Gnosis because
+/// the EIP-7918 condition in `calc_excess_blob_gas` compares this against
+/// the execution base fee.
+pub fn calculate_base_fee_per_blob_gas(
+    parent_excess_blob_gas: u64,
+    update_fraction: u64,
+    min_base_fee_per_blob_gas: u64,
+) -> U256 {
     if update_fraction == 0 {
         return U256::zero();
     }
     fake_exponential(
-        U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
+        U256::from(min_base_fee_per_blob_gas),
         U256::from(parent_excess_blob_gas),
         update_fraction,
     )
@@ -853,10 +919,18 @@ fn validate_excess_blob_gas(
     parent_header: &BlockHeader,
     chain_config: &ChainConfig,
 ) -> Result<(), InvalidBlockHeaderError> {
+    let min_blob = chain_config
+        .min_blob_gas_price
+        .unwrap_or(MIN_BASE_FEE_PER_BLOB_GAS);
     let expected_excess_blob_gas = chain_config
         .get_fork_blob_schedule(header.timestamp)
         .map(|schedule| {
-            calc_excess_blob_gas(parent_header, schedule, chain_config.fork(header.timestamp))
+            calc_excess_blob_gas(
+                parent_header,
+                schedule,
+                chain_config.fork(header.timestamp),
+                min_blob,
+            )
         })
         .unwrap_or_default();
     if header
@@ -868,7 +942,12 @@ fn validate_excess_blob_gas(
     Ok(())
 }
 
-pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fork: Fork) -> u64 {
+pub fn calc_excess_blob_gas(
+    parent: &BlockHeader,
+    schedule: ForkBlobSchedule,
+    fork: Fork,
+    min_base_fee_per_blob_gas: u64,
+) -> u64 {
     let parent_blob_gas_used = parent.blob_gas_used.unwrap_or_default();
     let parent_base_fee_per_gas = parent.base_fee_per_gas.unwrap_or_default();
     let parent_excess_blob_gas = parent.excess_blob_gas.unwrap_or_default();
@@ -885,6 +964,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
                 * calculate_base_fee_per_blob_gas(
                     parent_excess_blob_gas,
                     schedule.base_fee_update_fraction,
+                    min_base_fee_per_blob_gas,
                 )
     {
         return parent_excess_blob_gas
@@ -1082,7 +1162,7 @@ mod test {
         };
         let fork = Fork::Osaka;
 
-        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        let res = calc_excess_blob_gas(&parent, schedule, fork, MIN_BASE_FEE_PER_BLOB_GAS);
         assert_eq!(res, 5617366)
     }
 
@@ -1100,7 +1180,7 @@ mod test {
             base_fee_update_fraction: 20609697,
         };
         let fork = Fork::Osaka;
-        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        let res = calc_excess_blob_gas(&parent, schedule, fork, MIN_BASE_FEE_PER_BLOB_GAS);
         assert_eq!(res, 20107103)
     }
 
@@ -1119,7 +1199,7 @@ mod test {
         };
         let fork = Fork::Osaka;
 
-        let res = calc_excess_blob_gas(&parent, schedule, fork);
+        let res = calc_excess_blob_gas(&parent, schedule, fork, MIN_BASE_FEE_PER_BLOB_GAS);
         assert_eq!(res, 3538944)
     }
 
@@ -1139,5 +1219,44 @@ mod test {
         );
         // With u64 this overflows
         assert!(thing.is_ok());
+    }
+
+    #[test]
+    fn aura_header_roundtrip() {
+        // AuRa-shaped pre-Merge Gnosis header: positions 14/15 carry
+        // seal_step (variable uint) + seal_signature (65-byte string), not
+        // mix_hash + nonce.
+        let header = BlockHeader {
+            aura_step: Some(U256::from(0x0123_4567_u64)),
+            aura_seal: Some(Bytes::from(vec![0xabu8; 65])),
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        header.encode(&mut buf);
+        let decoded = BlockHeader::decode(&buf).expect("decode should succeed");
+        assert_eq!(decoded.aura_step, header.aura_step);
+        assert_eq!(decoded.aura_seal, header.aura_seal);
+        assert_eq!(decoded.prev_randao, H256::zero());
+        assert_eq!(decoded.nonce, 0);
+        assert_eq!(decoded, header);
+    }
+
+    #[test]
+    fn geth_header_roundtrip_still_works() {
+        // Geth-shaped header keeps the standard mix_hash + nonce path; ensure
+        // adding the AuRa branch didn't regress it.
+        let header = BlockHeader {
+            prev_randao: H256::repeat_byte(0x42),
+            nonce: 0x1234_5678_9abc_def0,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        header.encode(&mut buf);
+        let decoded = BlockHeader::decode(&buf).expect("decode should succeed");
+        assert_eq!(decoded.aura_step, None);
+        assert_eq!(decoded.aura_seal, None);
+        assert_eq!(decoded.prev_randao, header.prev_randao);
+        assert_eq!(decoded.nonce, header.nonce);
+        assert_eq!(decoded, header);
     }
 }

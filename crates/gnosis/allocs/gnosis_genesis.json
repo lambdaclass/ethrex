@@ -1,0 +1,70 @@
+{
+  "config": {
+    "chainId": 100,
+    "homesteadBlock": 0,
+    "daoForkSupport": false,
+    "eip150Block": 0,
+    "eip155Block": 0,
+    "byzantiumBlock": 0,
+    "constantinopleBlock": 1604400,
+    "petersburgBlock": 2508800,
+    "istanbulBlock": 7298030,
+    "berlinBlock": 16101500,
+    "londonBlock": 19040000,
+    "shanghaiTime": 1690889660,
+    "cancunTime": 1710181820,
+    "pragueTime": 1746021820,
+    "osakaTime": 1776168380,
+    "terminalTotalDifficultyPassed": true,
+    "balancerHardforkTime": 1766419900,
+    "blobGasPriceUpdateFraction": 1112826,
+    "blockRewardsContract": "0x481c034c6d9441db23Ea48De68BCAe812C5d39bA",
+    "burntContract": {
+      "19040000": "0x6BBe78ee9e474842Dbd4AB4987b3CeFE88426A92"
+    },
+    "eip1559collector": "0x6BBe78ee9e474842Dbd4AB4987b3CeFE88426A92",
+    "maxBlobGasPerBlock": 262144,
+    "minBlobGasPrice": 1000000000,
+    "targetBlobGasPerBlock": 131072,
+    "depositContractAddress": "0x0b98057ea310f4d31f2a452b414647007d1645d9",
+    "blobSchedule": {
+      "cancun": {
+        "target": 1,
+        "max": 2,
+        "baseFeeUpdateFraction": 1112826
+      },
+      "prague": {
+        "target": 1,
+        "max": 2,
+        "baseFeeUpdateFraction": 1112826
+      },
+      "osaka": {
+        "target": 1,
+        "max": 2,
+        "baseFeeUpdateFraction": 1112826
+      }
+    },
+    "posdaoBlock": 9186425
+  },
+  "coinbase": "0x0000000000000000000000000000000000000000",
+  "difficulty": "0x20000",
+  "extraData": "0x",
+  "gasLimit": "0x989680",
+  "nonce": "0x0",
+  "mixHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "timestamp": "0x0",
+  "alloc": {
+    "0x0000000000000000000000000000000000000001": {
+      "balance": "0x1"
+    },
+    "0x0000000000000000000000000000000000000002": {
+      "balance": "0x1"
+    },
+    "0x0000000000000000000000000000000000000003": {
+      "balance": "0x1"
+    },
+    "0x0000000000000000000000000000000000000004": {
+      "balance": "0x1"
+    }
+  }
+}
