@@ -125,14 +125,18 @@ flamegraph-levm-bench-generic:
 	mkdir -p flamegraph_levm_benchmark
 	cargo flamegraph --root --package revm_comparison --bin benchmark --output flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
 
+# Absolute target dir so the benchmark binary lands in this crate's target/
+# regardless of the directory the build command cd's into.
+LEVM_TARGET_DIR := $(CURDIR)/target
+
 build-revm-comparison:
 	cd ../../../tooling/revm_comparison && \
-		CARGO_TARGET_DIR=../../crates/vm/levm/target \
+		CARGO_TARGET_DIR=$(LEVM_TARGET_DIR) \
 		cargo build --release --bin benchmark
 
 build-revm-comparison-debuginfo:
 	cd ../../../tooling/revm_comparison && \
-		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=../../crates/vm/levm/target \
+		CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_TARGET_DIR=$(LEVM_TARGET_DIR) \
 		cargo build --release --bin benchmark
 
 ###### Build Client with LEVM ######
