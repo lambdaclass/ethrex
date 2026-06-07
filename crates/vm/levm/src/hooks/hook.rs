@@ -14,6 +14,14 @@ pub trait Hook {
         vm: &mut VM<'_>,
         report: &mut ContextResult,
     ) -> Result<(), VMError>;
+
+    /// True iff this hook reads the top-level call-frame backup (`db.tx_backup`) in
+    /// `finalize_execution`. Drives `VM::preserve_top_level_backup`: when any installed hook
+    /// returns true, the backup is deep-cloned (not moved out) on the revert / invalid-tx paths
+    /// so the hook still sees it. Defaults to false; only `BackupHook` overrides it.
+    fn reads_top_level_backup(&self) -> bool {
+        false
+    }
 }
 
 pub fn get_hooks(vm_type: &VMType) -> Vec<Rc<RefCell<dyn Hook + 'static>>> {
