@@ -34,7 +34,7 @@ After updating the version in the `Cargo.toml` files, we need to update the `Car
 - `crates/guest-program/bin/zisk/Cargo.lock`
 - `crates/guest-program/bin/openvm/Cargo.lock`
 - `crates/l2/tee/quote-gen/Cargo.lock`
-- `crates/vm/levm/bench/revm_comparison/Cargo.lock`
+- `tooling/revm_comparison/Cargo.lock`
 - `tooling/Cargo.lock`
 
 Then, go to the `CLI.md` file located in `docs/` and update the version of the `--builder.extra-data` flag default value to match the new version (for both ethrex and ethrex l2 sections).

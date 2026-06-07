@@ -22,12 +22,12 @@ members = [
   "crates/storage",
   "crates/vm",
   "crates/vm/levm",
-  "crates/vm/levm/runner",
+  "tooling/runner",
   "crates/common/config",
   "tooling/repl",
   "test",
 ]
-exclude = ["crates/vm/levm/bench/revm_comparison"]
+exclude = ["tooling/revm_comparison"]
 resolver = "2"
 
 default-members = ["cmd/ethrex"]
