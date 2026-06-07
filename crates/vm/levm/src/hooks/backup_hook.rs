@@ -32,4 +32,8 @@ impl Hook for BackupHook {
 
         Ok(())
     }
+
+    fn reads_top_level_backup(&self) -> bool {
+        true
+    }
 }
