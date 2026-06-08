@@ -5,6 +5,8 @@ mod block;
 pub mod block_access_list;
 pub mod block_execution_witness;
 mod constants;
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+pub(crate) mod eip8025_cell;
 #[cfg(feature = "eip-8025")]
 pub mod eip8025_ssz;
 mod fork_id;
