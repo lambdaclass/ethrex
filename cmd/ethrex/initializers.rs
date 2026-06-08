@@ -22,7 +22,7 @@ use ethrex_p2p::{
     peer_table::{PeerTable, PeerTableServer},
     sync::SyncMode,
     sync_manager::SyncManager,
-    types::{NetworkConfig, Node, NodeRecord},
+    types::{LocalNode, NetworkConfig, Node, NodeRecord, SharedLocalNode},
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
@@ -36,9 +36,9 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -229,8 +229,7 @@ pub async fn init_rpc_api(
     opts: &Options,
     datadir: &Path,
     peer_handler: PeerHandler,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     store: Store,
     blockchain: Arc<Blockchain>,
     cancel_token: CancellationToken,
@@ -274,8 +273,7 @@ pub async fn init_rpc_api(
         store,
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         get_client_version(),
@@ -297,6 +295,7 @@ pub async fn init_network(
     tracker: TaskTracker,
     blockchain: Arc<Blockchain>,
     context: P2PContext,
+    shared_local_node: SharedLocalNode,
 ) {
     #[cfg(not(feature = "l2"))]
     if opts.dev {
@@ -315,7 +314,7 @@ pub async fn init_network(
         ..Default::default()
     };
 
-    ethrex_p2p::start_network(context, bootnodes, discovery_config)
+    ethrex_p2p::start_network(context, bootnodes, discovery_config, shared_local_node)
         .await
         .expect("Network starts");
 
@@ -488,6 +487,8 @@ fn resolve_p2p_endpoints(
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
+    use ethrex_p2p::discovery::ip_predictor::IpPredictor;
+
     let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
     let udp_port = opts
         .discovery_port
@@ -503,7 +504,25 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         local_ipv6().ok(),
     );
 
-    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    // When no explicit external IP is provided and the resolved announce address is
+    // private or unspecified, defer endpoint advertisement until the IP predictor
+    // learns the public external IP from discv4/discv5 PONG votes.
+    let announce_addr = if opts.nat_extip.is_none() && IpPredictor::is_private_ip(external_addr) {
+        let unspecified = if external_addr.is_ipv6() {
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED)
+        } else {
+            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+        };
+        info!(
+            detected = %external_addr,
+            "Detected IP is private; endpoint advertisement deferred until public IP is learned via PONG voting"
+        );
+        unspecified
+    } else {
+        external_addr
+    };
+
+    let node = Node::new(announce_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
         bind_addr,
         tcp_port,
@@ -575,7 +594,7 @@ async fn set_sync_block(store: &Store) {
 pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
+) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, SharedLocalNode)> {
     let network = get_network(&opts);
     let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
 
@@ -647,6 +666,12 @@ pub async fn init_l1(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
+    // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node.clone(),
+        record: local_node_record,
+    }));
+
     let peer_table =
         PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
 
@@ -678,8 +703,7 @@ pub async fn init_l1(
         &opts,
         &datadir,
         peer_handler.clone(),
-        local_p2p_node,
-        local_node_record.clone(),
+        shared_local_node.clone(),
         store.clone(),
         blockchain.clone(),
         cancel_token.clone(),
@@ -704,6 +728,7 @@ pub async fn init_l1(
             tracker.clone(),
             blockchain.clone(),
             p2p_context,
+            shared_local_node.clone(),
         )
         .await;
     } else {
@@ -714,7 +739,7 @@ pub async fn init_l1(
         datadir.clone(),
         cancel_token,
         peer_handler.peer_table,
-        local_node_record,
+        shared_local_node,
     ))
 }
 

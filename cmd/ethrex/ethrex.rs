@@ -4,7 +4,7 @@ use ethrex::{
     initializers::{init_l1, init_tracing},
     utils::{NodeConfigFile, get_client_version, is_memory_datadir, store_node_config_file},
 };
-use ethrex_p2p::{peer_table::PeerTable, types::NodeRecord};
+use ethrex_p2p::{peer_table::PeerTable, types::SharedLocalNode};
 use serde::Deserialize;
 use std::{path::Path, time::Duration};
 use tokio::signal::unix::{SignalKind, signal};
@@ -49,14 +49,21 @@ async fn server_shutdown(
     datadir: &Path,
     cancel_token: &CancellationToken,
     peer_table: PeerTable,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
 ) {
     info!("Server shut down started...");
     cancel_token.cancel();
     if !is_memory_datadir(datadir) {
         let node_config_path = datadir.join("node_config.json");
         info!("Storing config at {:?}...", node_config_path);
-        let node_config = NodeConfigFile::new(peer_table, local_node_record).await;
+        // Clone the current (possibly updated) record out and drop the guard.
+        let record = {
+            let guard = shared_local_node
+                .read()
+                .expect("shared_local_node poisoned");
+            guard.record.clone()
+        };
+        let node_config = NodeConfigFile::new(peer_table, record).await;
         store_node_config_file(node_config, node_config_path);
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -179,7 +186,7 @@ async fn main() -> eyre::Result<()> {
     info!("ethrex version: {}", get_client_version());
     tokio::spawn(periodically_check_version_update());
 
-    let (datadir, cancel_token, peer_table, local_node_record) =
+    let (datadir, cancel_token, peer_table, shared_local_node) =
         init_l1(opts, Some(log_filter_handler)).await?;
 
     let mut signal_terminate = signal(SignalKind::terminate())?;
@@ -188,10 +195,10 @@ async fn main() -> eyre::Result<()> {
 
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node).await;
         }
         _ = signal_terminate.recv() => {
-            server_shutdown(&datadir, &cancel_token, peer_table, local_node_record).await;
+            server_shutdown(&datadir, &cancel_token, peer_table, shared_local_node).await;
         }
     }
 
