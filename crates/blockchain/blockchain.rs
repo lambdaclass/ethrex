@@ -60,6 +60,9 @@ use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::MAX_BLOB_TX_SIZE;
+use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -70,7 +73,6 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
@@ -142,6 +144,12 @@ type BlockExecutionPipelineResult = (
     usize,                   // max queue length
     [Instant; 7],            // timing instants
     Duration,                // warmer duration
+);
+
+type AddBlockPipelineInnerResult = (
+    Option<BlockAccessList>,
+    Option<ExecutionWitness>,
+    Result<(), ChainError>,
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -514,6 +522,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
+        collect_witness: bool,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -555,7 +564,7 @@ impl Blockchain {
             } else {
                 None
             };
-        let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
+        let optimistic_witness: Option<Vec<AccountUpdate>> = if collect_witness {
             optimistic_updates.as_ref().map(|m| {
                 m.iter()
                     .map(|(addr, item)| AccountUpdate {
@@ -767,6 +776,7 @@ impl Blockchain {
                                     parent_header_ref,
                                     queue_length_ref,
                                     max_queue_length_ref,
+                                    collect_witness,
                                 )?
                             };
                         let merkle_end_instant = Instant::now();
@@ -838,6 +848,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
+        collect_witness: bool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -909,13 +920,8 @@ impl Blockchain {
             let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            // Accumulator for witness generation (only used if precompute_witnesses is true)
             let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                if self.options.precompute_witnesses {
-                    Some(FxHashMap::default())
-                } else {
-                    None
-                };
+                collect_witness.then(FxHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -2009,7 +2015,7 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
-        let (_, result) = self.add_block_pipeline_inner(block, bal)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result
     }
 
@@ -2024,9 +2030,25 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// Same as [`add_block_pipeline`] but returns the execution witness produced
+    /// while importing the block.
+    pub fn add_block_pipeline_with_witness(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<ExecutionWitness, ChainError> {
+        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        result?;
+        witness.ok_or_else(|| {
+            ChainError::WitnessGeneration(
+                "forced witness collection completed without producing a witness".to_string(),
+            )
+        })
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
@@ -2041,7 +2063,8 @@ impl Blockchain {
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
-    ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        force_witness: bool,
+    ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -2049,7 +2072,10 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+        let should_store_witness = self.options.precompute_witnesses && self.is_synced();
+        let collect_witness = should_store_witness || force_witness;
+
+        let (mut vm, logger) = if collect_witness {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
@@ -2087,7 +2113,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2097,17 +2123,32 @@ impl Blockchain {
         );
         let block_hash = block.hash();
 
+        let mut witness = None;
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
-            let witness = self.generate_witness_from_account_updates(
+            let block_hash = block.hash();
+            let generated_witness = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
                 parent_header,
                 &logger,
             )?;
-            self.storage
-                .store_witness(block_hash, block_number, witness)?;
+            match (should_store_witness, force_witness) {
+                (true, true) => {
+                    witness = Some(generated_witness.clone());
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (true, false) => {
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (false, true) => {
+                    witness = Some(generated_witness);
+                }
+                (false, false) => {}
+            }
         };
 
         // Store the block's BAL so peers can request it later without re-execution.
@@ -2156,7 +2197,7 @@ impl Blockchain {
             METRICS_BAL.slot_count.set(slot_count as i64);
         });
 
-        Ok((produced_bal, result))
+        Ok((produced_bal, witness, result))
     }
 
     #[allow(clippy::too_many_arguments)]
