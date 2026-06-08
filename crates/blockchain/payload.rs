@@ -465,8 +465,32 @@ impl Blockchain {
         Ok(res)
     }
 
-    /// Completes the payload building process, return the block value
+    /// Completes the payload building process, return the block value.
+    /// Transactions are pulled from the mempool.
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, None)
+    }
+
+    /// Builds a payload from an explicit, ordered list of transactions instead of the
+    /// mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully and is included in the given order; the first failing
+    /// transaction aborts the build (matching geth's `BuildTestingPayload`).
+    pub fn build_payload_with_transactions(
+        &self,
+        payload: Block,
+        transactions: Vec<Transaction>,
+    ) -> Result<PayloadBuildResult, ChainError> {
+        self.build_payload_inner(payload, Some(transactions))
+    }
+
+    /// Shared block-building pipeline. When `explicit_transactions` is `None` the
+    /// payload is filled from the mempool; otherwise the provided transactions are
+    /// applied verbatim.
+    fn build_payload_inner(
+        &self,
+        payload: Block,
+        explicit_transactions: Option<Vec<Transaction>>,
+    ) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
 
         debug!("Building payload");
@@ -476,7 +500,10 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.fill_transactions(&mut context)?;
+        match explicit_transactions {
+            None => self.fill_transactions(&mut context)?,
+            Some(transactions) => self.fill_explicit_transactions(&mut context, transactions)?,
+        }
         // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
         // Order must match geth: requests (system calls) BEFORE withdrawals.
         if context
@@ -676,6 +703,39 @@ impl Blockchain {
                 Ok(()) => txs.shift()?,
                 Err(_) => txs.pop(),
             }
+        }
+        Ok(())
+    }
+
+    /// Applies an explicit, ordered list of transactions to the payload, bypassing
+    /// the mempool. Used by `testing_buildBlockV1`. Every transaction must execute
+    /// successfully; the first failure aborts the build.
+    ///
+    /// Blob (type-3) transactions are rejected: their blobs are not carried in the
+    /// canonical encoding accepted here, so a blobs bundle cannot be reconstructed
+    /// (geth panics on this path; we return a clean error instead).
+    fn fill_explicit_transactions(
+        &self,
+        context: &mut PayloadBuildContext,
+        transactions: Vec<Transaction>,
+    ) -> Result<(), ChainError> {
+        let base_fee = context.base_fee_per_gas();
+        for tx in transactions {
+            if matches!(tx, Transaction::EIP4844Transaction(_)) {
+                return Err(ChainError::Custom(
+                    "blob transactions are not supported in an explicit transaction list"
+                        .to_string(),
+                ));
+            }
+            let sender = tx.sender(&NativeCrypto).map_err(|err| {
+                ChainError::Custom(format!("invalid transaction signature: {err}"))
+            })?;
+            let tip = tx.effective_gas_tip(base_fee).unwrap_or_default();
+            let head = HeadTransaction {
+                tx: MempoolTransaction::new(tx, sender),
+                tip,
+            };
+            self.apply_tx_to_payload(head, context)?;
         }
         Ok(())
     }
