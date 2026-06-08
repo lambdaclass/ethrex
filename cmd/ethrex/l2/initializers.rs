@@ -21,7 +21,7 @@ use ethrex_p2p::{
     peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
-    types::{LocalNode, Node, NodeRecord, SharedLocalNode},
+    types::{LocalNode, SharedLocalNode},
 };
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_storage::{Store, StoreConfig};
