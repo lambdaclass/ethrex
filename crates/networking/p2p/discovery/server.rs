@@ -9,7 +9,7 @@ use crate::{
         server::{Discv5Message, Discv5State, update_local_ip},
     },
     peer_table::{DiscoveryProtocol, PeerTable, PeerTableServerProtocol as _},
-    types::{INITIAL_ENR_SEQ, Node, NodeRecord},
+    types::{INITIAL_ENR_SEQ, Node, NodeRecord, SharedLocalNode},
 };
 use bytes::BytesMut;
 use ethrex_common::utils::keccak;
@@ -101,6 +101,8 @@ pub struct DiscoveryServer {
     pub ip_predictor: IpPredictor,
     /// When true the user supplied `--nat extip:<addr>` and we must not override it.
     pub(crate) ip_override_locked: bool,
+    /// Live-updated local node identity shared with the RPC layer.
+    pub shared_local_node: SharedLocalNode,
 }
 
 impl std::fmt::Debug for DiscoveryServer {
@@ -117,6 +119,7 @@ impl std::fmt::Debug for DiscoveryServer {
 
 #[actor(protocol = DiscoveryServerProtocol)]
 impl DiscoveryServer {
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn(
         storage: Store,
         local_node: Node,
@@ -125,6 +128,7 @@ impl DiscoveryServer {
         peer_table: PeerTable,
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
+        shared_local_node: SharedLocalNode,
     ) -> Result<(), DiscoveryServerError> {
         debug!("Starting discovery server");
 
@@ -173,6 +177,7 @@ impl DiscoveryServer {
             config,
             discv4,
             discv5,
+            shared_local_node,
         };
 
         // Ping discv4 bootnodes
@@ -436,6 +441,13 @@ impl DiscoveryServer {
             &self.signer,
             winning_ip,
         );
+        // Propagate to the shared Arc so RPC and shutdown see the current identity.
+        let mut guard = self
+            .shared_local_node
+            .write()
+            .expect("shared_local_node poisoned");
+        guard.node = self.local_node.clone();
+        guard.record = self.local_node_record.clone();
     }
 
     pub(crate) async fn get_lookup_interval(&self) -> Duration {
@@ -474,6 +486,12 @@ impl DiscoveryServer {
         udp_socket: Arc<UdpSocket>,
         peer_table: PeerTable,
     ) -> Self {
+        use crate::types::LocalNode;
+        use std::sync::{Arc, RwLock};
+        let shared_local_node = Arc::new(RwLock::new(LocalNode {
+            node: local_node.clone(),
+            record: local_node_record.clone(),
+        }));
         Self {
             local_node,
             local_node_record,
@@ -492,6 +510,117 @@ impl DiscoveryServer {
             discv5: Some(Discv5State::default()),
             ip_predictor: IpPredictor::default(),
             ip_override_locked: false,
+            shared_local_node,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        peer_table::{PeerTableServer, TARGET_PEERS},
+        types::{INITIAL_ENR_SEQ, LocalNode},
+    };
+    use ethrex_common::H256;
+    use secp256k1::SecretKey;
+    use std::{
+        net::Ipv4Addr,
+        sync::{Arc, RwLock},
+    };
+    use tokio::net::UdpSocket;
+
+    async fn make_server(ip: IpAddr, ip_override_locked: bool) -> DiscoveryServer {
+        let signer = SecretKey::new(&mut rand::rngs::OsRng);
+        let pubkey = crate::utils::public_key_from_signing_key(&signer);
+        let local_node = Node::new(ip, 30303, 30303, pubkey);
+        let local_node_record =
+            NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer).unwrap();
+        let shared_local_node = Arc::new(RwLock::new(LocalNode {
+            node: local_node.clone(),
+            record: local_node_record.clone(),
+        }));
+        let udp_socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer_table = PeerTableServer::spawn(H256::random(), TARGET_PEERS, {
+            ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory).unwrap()
+        });
+        DiscoveryServer {
+            local_node,
+            local_node_record,
+            signer,
+            udp_socket,
+            store: ethrex_storage::Store::new("", ethrex_storage::EngineType::InMemory).unwrap(),
+            peer_table,
+            config: DiscoveryConfig {
+                discv4_enabled: false,
+                discv5_enabled: false,
+                initial_lookup_interval: 1000.0,
+                nat_extip_set: ip_override_locked,
+            },
+            discv4: None,
+            discv5: None,
+            ip_predictor: IpPredictor::default(),
+            ip_override_locked,
+            shared_local_node,
+        }
+    }
+
+    /// apply_predicted_ip from unspecified -> public must update local_node, bump ENR seq,
+    /// and propagate the new identity into the shared Arc.
+    #[tokio::test]
+    async fn apply_predicted_ip_updates_shared_arc() {
+        let unspecified = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let public_ip: IpAddr = "1.2.3.4".parse().unwrap();
+
+        let mut server = make_server(unspecified, false).await;
+        let original_seq = server.local_node_record.seq;
+
+        server.apply_predicted_ip(public_ip);
+
+        assert_eq!(
+            server.local_node.ip, public_ip,
+            "local_node.ip must be updated"
+        );
+        assert!(
+            server.local_node_record.seq > original_seq,
+            "ENR seq must be bumped"
+        );
+
+        let guard = server.shared_local_node.read().unwrap();
+        assert_eq!(
+            guard.node.ip, public_ip,
+            "shared Arc node.ip must be updated"
+        );
+        assert_eq!(
+            guard.record.seq, server.local_node_record.seq,
+            "shared Arc record.seq must match"
+        );
+    }
+
+    /// With ip_override_locked=true (--nat.extip set), apply_predicted_ip is a no-op.
+    #[tokio::test]
+    async fn apply_predicted_ip_noop_when_locked() {
+        let unspecified = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
+        let public_ip: IpAddr = "1.2.3.4".parse().unwrap();
+
+        let mut server = make_server(unspecified, true).await;
+        let original_seq = server.local_node_record.seq;
+
+        server.apply_predicted_ip(public_ip);
+
+        assert_eq!(
+            server.local_node.ip, unspecified,
+            "local_node.ip must not change when locked"
+        );
+        assert_eq!(
+            server.local_node_record.seq, original_seq,
+            "ENR seq must not change when locked"
+        );
+
+        let guard = server.shared_local_node.read().unwrap();
+        assert_eq!(
+            guard.node.ip, unspecified,
+            "shared Arc must not be updated when locked"
+        );
     }
 }
