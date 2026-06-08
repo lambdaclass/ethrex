@@ -15,7 +15,7 @@ mod snap_sync;
 pub use full::is_resume_point;
 
 use crate::metrics::METRICS;
-use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
+use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
@@ -292,15 +292,16 @@ async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Opt
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await
         {
-            Ok(Some(headers)) => {
+            Ok(HeaderFetchOutcome::Headers(headers)) => {
                 if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
                     return Some(header.number);
                 }
                 debug!("Sync head probe: response did not contain target header");
             }
-            Ok(None) => {
+            Ok(outcome) => {
                 debug!(
-                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no peer response"
+                    reason = outcome.failure_reason(),
+                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no headers"
                 );
             }
             Err(e) => {
