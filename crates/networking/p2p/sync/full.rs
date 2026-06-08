@@ -20,7 +20,7 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::peer_handler::{BlockRequestOrder, PeerHandler};
+use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler};
 use crate::snap::constants::{
     MAX_BLOCK_BODIES_TO_REQUEST, MAX_BODY_FETCH_ATTEMPTS, MAX_HEADER_FETCH_ATTEMPTS,
 };
@@ -157,27 +157,36 @@ pub async fn sync_cycle_full(
 
     // Request and store all block headers from the advertised sync head
     loop {
-        let Some(mut block_headers) = peers
+        let outcome = peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
-            .await?
-        else {
-            let eth_peers = peers.eth_peer_count().await;
-            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+            .await?;
+        let mut block_headers = match outcome {
+            HeaderFetchOutcome::Headers(headers) => headers,
+            // No headers this round: `reason` says whether we couldn't find a peer to ask
+            // ("no eth peer available") or peers were asked and didn't serve ("peer(s) asked
+            // but did not serve headers"), so operators can tell connectivity apart from
+            // peers withholding data.
+            other => {
+                let reason = other.failure_reason();
+                let eth_peers = peers.eth_peer_count().await;
+                if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!(
+                        eth_peers,
+                        reason,
+                        ?sync_head,
+                        "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    );
+                    return Ok(());
+                }
+                attempts += 1;
                 warn!(
                     eth_peers,
-                    ?sync_head,
-                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head. \
-                     eth_peers=0 means no peers to ask (discovery/connectivity); >0 means peers are not serving the headers"
+                    reason,
+                    "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
                 );
-                return Ok(());
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
             }
-            attempts += 1;
-            warn!(
-                eth_peers,
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
-            );
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
         };
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
         // Reset failure counter on success so it tracks consecutive failures

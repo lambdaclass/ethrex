@@ -53,6 +53,30 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
+/// Result of a block-header request, distinguishing why no headers came back so sync
+/// diagnostics can tell a connectivity problem from peers withholding data.
+#[derive(Debug)]
+pub enum HeaderFetchOutcome {
+    /// Headers were obtained from a peer.
+    Headers(Vec<BlockHeader>),
+    /// No suitable peer was available to send the request to (e.g. no eth-capable peer
+    /// connected, or all are busy / penalized).
+    NoPeerAvailable,
+    /// A peer was queried but returned no usable response (timeout, empty, or unchained).
+    PeerFailed,
+}
+
+impl HeaderFetchOutcome {
+    /// A short, log-friendly reason for a non-`Headers` outcome.
+    pub fn failure_reason(&self) -> &'static str {
+        match self {
+            HeaderFetchOutcome::Headers(_) => "headers received",
+            HeaderFetchOutcome::NoPeerAvailable => "no eth peer available to ask",
+            HeaderFetchOutcome::PeerFailed => "peer(s) asked but did not serve headers",
+        }
+    }
+}
+
 /// Asks a single already-selected peer for the block number at `sync_head`.
 /// Consumes a `RequestPermit`; the permit drops on return, releasing the slot.
 async fn ask_peer_head_number(
@@ -413,7 +437,7 @@ impl PeerHandler {
         &mut self,
         start: H256,
         order: BlockRequestOrder,
-    ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+    ) -> Result<HeaderFetchOutcome, PeerHandlerError> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
@@ -423,7 +447,7 @@ impl PeerHandler {
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-            None => Ok(None),
+            None => Ok(HeaderFetchOutcome::NoPeerAvailable),
             Some((peer_id, mut connection, permit)) => {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
@@ -440,25 +464,25 @@ impl PeerHandler {
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
                         let _ = self.peer_table.set_disposable(peer_id);
-                        return Ok(None);
+                        return Ok(HeaderFetchOutcome::PeerFailed);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
                         self.peer_table.record_success(peer_id)?;
-                        return Ok(Some(block_headers));
+                        return Ok(HeaderFetchOutcome::Headers(block_headers));
                     }
                     // Non-empty but unchained headers is a protocol violation
                     warn!(
                         "[SYNCING] Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
                     self.peer_table.record_failure(peer_id)?;
-                    return Ok(None);
+                    return Ok(HeaderFetchOutcome::PeerFailed);
                 }
                 // Timeout or invalid response - mark peer as disposable
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
                 self.peer_table.record_failure(peer_id)?;
-                Ok(None)
+                Ok(HeaderFetchOutcome::PeerFailed)
             }
         }
     }
