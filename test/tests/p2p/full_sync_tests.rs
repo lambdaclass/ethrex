@@ -11,7 +11,7 @@
 //! canonical AND its post-state is present on disk.
 
 use ethrex_common::{H256, types::BlockHeader};
-use ethrex_p2p::sync::is_resume_point;
+use ethrex_p2p::sync::{first_resume_point_in_batch, is_resume_point};
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
 
@@ -104,4 +104,84 @@ async fn walk_back_anchors_on_state_head_not_canonical_head() {
     // have skipped the gap, wedging execution on block 3's missing parent state.
     assert_eq!(first_resumable, Some(5));
     assert_eq!(newest_to_oldest[5].number, 2);
+}
+
+/// Builds blocks 1..=`tip`, all canonical, with present state only on `stateful` block numbers.
+/// Returns (store, full chain). Mirrors a pruned layered store: the executed/state head plus a
+/// recent window have state; older canonical blocks do not.
+async fn seed_chain(tip: u64, stateful: &[u64]) -> (Store, Vec<BlockHeader>) {
+    let mut chain = Vec::new();
+    let mut parent = H256::zero();
+    for number in 1..=tip {
+        let state_root = if stateful.contains(&number) {
+            *EMPTY_TRIE_HASH
+        } else {
+            H256::from_low_u64_be(0xc0de_0000 + number)
+        };
+        let h = header(number, state_root, parent);
+        parent = h.hash();
+        chain.push(h);
+    }
+    let canonical: Vec<&BlockHeader> = chain.iter().collect();
+    let store = seed_store(&chain, &canonical).await;
+    (store, chain)
+}
+
+/// Regression for the issue #9 overshoot (introduced by tightening the walk-back merge from
+/// `is_canonical_sync` to `is_resume_point`). The node's stateful head sits in the MIDDLE of a
+/// batch whose oldest block is canonical-but-pruned. The walk must merge at the in-batch resume
+/// point, not blow past it because the batch's bottom edge isn't a resume point.
+#[tokio::test]
+async fn walk_back_merges_at_resume_point_inside_batch() {
+    // Canonical 1..=8, head = 8 = state head (only block 8 has state; 1..=7 are pruned).
+    // New blocks 9,10 are not yet canonical. local_head = 8.
+    let (store, chain) = seed_chain(8, &[8]).await;
+    let local_head = 8;
+    let new_blocks = [
+        header(10, H256::from_low_u64_be(0xaaaa), chain[7].hash()), // 10 (parent 9 placeholder)
+        header(9, H256::from_low_u64_be(0xbbbb), chain[7].hash()),  // 9
+    ];
+
+    // Batch newest->oldest spanning the new blocks down past the state head: [10, 9, 8, 7, 6, 5].
+    let batch: Vec<BlockHeader> = new_blocks
+        .iter()
+        .cloned()
+        .chain(chain[4..8].iter().rev().cloned()) // 8,7,6,5
+        .collect();
+
+    // The in-batch scan finds block 8 (canonical+stateful) at index 2, so the walk merges there
+    // and executes 10,9 — instead of descending to genesis.
+    let idx = first_resume_point_in_batch(&store, &batch, local_head)
+        .unwrap()
+        .expect("must find the in-batch resume point");
+    assert_eq!(batch[idx].number, 8);
+
+    // The pre-fix break checked only the parent of the batch's OLDEST header (block 4), which is
+    // canonical-but-pruned -> not a resume point -> old logic overshot. Document that.
+    assert!(!is_resume_point(&store, &chain[3]).unwrap());
+}
+
+/// A batch entirely above `local_head` cannot contain a resume point; the scan is skipped
+/// (returns None) so the walk keeps descending without per-header state lookups.
+#[tokio::test]
+async fn batch_entirely_above_local_head_is_skipped() {
+    let (store, chain) = seed_chain(8, &[8]).await;
+    let new_blocks = vec![
+        header(10, H256::from_low_u64_be(0xaaaa), chain[7].hash()),
+        header(9, H256::from_low_u64_be(0xbbbb), chain[7].hash()),
+    ];
+    assert_eq!(
+        first_resume_point_in_batch(&store, &new_blocks, 8).unwrap(),
+        None
+    );
+}
+
+/// A batch below the head but entirely pruned (no state) yields no resume point; the walk must
+/// continue (and ultimately hit the pruned-base guard), not falsely merge.
+#[tokio::test]
+async fn batch_with_no_retained_state_returns_none() {
+    // Canonical 1..=8 but NO state anywhere (fully pruned). local_head = 8.
+    let (store, chain) = seed_chain(8, &[]).await;
+    let batch: Vec<BlockHeader> = chain[4..8].iter().rev().cloned().collect(); // 8,7,6,5
+    assert_eq!(first_resume_point_in_batch(&store, &batch, 8).unwrap(), None);
 }
