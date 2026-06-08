@@ -101,6 +101,11 @@ pub async fn sync_cycle_full(
     let mut started_behind = false;
     let mut sync_target_logged = false;
 
+    // Latest canonical block. The backward walk below also stops here: our head
+    // (e.g. a snap-sync pivot) may be a lone canonical block sitting mid-batch,
+    // which the lowest-parent check would skip, running the walk down to genesis.
+    let local_latest_number = store.get_latest_block_number().await?;
+
     // Request and store all block headers from the advertised sync head
     loop {
         let Some(mut block_headers) = peers
@@ -166,7 +171,11 @@ pub async fn sync_cycle_full(
         start_block_number = last_header.number;
 
         sync_head = last_header.parent_hash;
-        if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
+        let parent_is_canonical = store.is_canonical_sync(sync_head)? || sync_head.is_zero();
+        // The batch has descended to our head: scan it for the canonical ancestor
+        // the lowest-parent check above can miss (e.g. a lone snap-sync pivot).
+        let reached_local_head = last_header.number <= local_latest_number;
+        if parent_is_canonical || reached_local_head {
             // Incoming chain merged with current chain
             // Filter out already canonical blocks from batch
             let mut first_canon_block = block_headers.len();
@@ -176,17 +185,22 @@ pub async fn sync_cycle_full(
                     break;
                 }
             }
-            block_headers.drain(first_canon_block..block_headers.len());
-            if let Some(last_header) = block_headers.last() {
-                start_block_number = last_header.number;
+            // Only merge if we actually connected: parent canonical, or a
+            // canonical ancestor found in the batch. Otherwise keep walking
+            // (e.g. a reorg where our head isn't on the incoming chain).
+            if parent_is_canonical || first_canon_block < block_headers.len() {
+                block_headers.drain(first_canon_block..block_headers.len());
+                if let Some(last_header) = block_headers.last() {
+                    start_block_number = last_header.number;
+                }
+                // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
+                if single_batch {
+                    headers = block_headers.into_iter().rev().collect();
+                } else {
+                    store.add_fullsync_batch(block_headers).await?;
+                }
+                break;
             }
-            // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
-            if single_batch {
-                headers = block_headers.into_iter().rev().collect();
-            } else {
-                store.add_fullsync_batch(block_headers).await?;
-            }
-            break;
         }
         store.add_fullsync_batch(block_headers).await?;
         single_batch = false;
