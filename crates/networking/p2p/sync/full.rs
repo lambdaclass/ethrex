@@ -69,7 +69,13 @@ async fn request_bodies_with_retry(
         if let Some(bodies) = peers.request_block_bodies(headers).await? {
             return Ok(Some(bodies));
         }
+        let from = headers.first().map(|h| h.number).unwrap_or_default();
+        let to = headers.last().map(|h| h.number).unwrap_or_default();
+        let eth_peers = peers.eth_peer_count().await;
         warn!(
+            eth_peers,
+            from,
+            to,
             "Failed to fetch block bodies (attempt {attempt}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -98,7 +104,14 @@ pub async fn sync_cycle_full(
     mut sync_head: H256,
     store: Store,
 ) -> Result<(), SyncError> {
-    info!("Syncing to sync_head {:?}", sync_head);
+    let local_head = store.get_latest_block_number().await?;
+    let eth_peers = peers.eth_peer_count().await;
+    info!(
+        local_head,
+        eth_peers,
+        ?sync_head,
+        "Starting full sync cycle"
+    );
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
@@ -140,14 +153,19 @@ pub async fn sync_cycle_full(
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await?
         else {
+            let eth_peers = peers.eth_peer_count().await;
             if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                 warn!(
-                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    eth_peers,
+                    ?sync_head,
+                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head. \
+                     eth_peers=0 means no peers to ask (discovery/connectivity); >0 means peers are not serving the headers"
                 );
                 return Ok(());
             }
             attempts += 1;
             warn!(
+                eth_peers,
                 "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
             );
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -290,7 +308,9 @@ pub async fn sync_cycle_full(
                         // Bodies unavailable after retries: stop gracefully (drop the sender)
                         // so the executor finishes what it has and the cycle ends without an
                         // error. The next forkchoice head will trigger a fresh attempt.
+                        let eth_peers = download_peers.eth_peer_count().await;
                         warn!(
+                            eth_peers,
                             "Block bodies unavailable from peers after retries; pausing full sync until a new forkchoice head arrives"
                         );
                         return;
@@ -351,7 +371,9 @@ pub async fn sync_cycle_full(
                         // Bodies unavailable after retries: stop gracefully (drop the sender)
                         // so the executor finishes what it has and the cycle ends without an
                         // error. The next forkchoice head will trigger a fresh attempt.
+                        let eth_peers = download_peers.eth_peer_count().await;
                         warn!(
+                            eth_peers,
                             "Block bodies unavailable from peers after retries; pausing full sync until a new forkchoice head arrives"
                         );
                         return;
