@@ -72,8 +72,7 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_storage::Store;
 use serde::Deserialize;
 use serde_json::Value;
@@ -312,10 +311,10 @@ impl std::fmt::Display for ClientVersion {
 pub struct NodeData {
     /// JWT secret for authenticating Engine API requests from consensus clients.
     pub jwt_secret: Bytes,
-    /// Local P2P node identity (public key and address).
-    pub local_p2p_node: Node,
-    /// ENR (Ethereum Node Record) for node discovery.
-    pub local_node_record: NodeRecord,
+    /// Live-updated local node identity (public key, address, and ENR).
+    /// Guarded by a std RwLock; callers must clone values out and drop the guard
+    /// before any `.await` to avoid holding a !Send guard across await points.
+    pub shared_local_node: SharedLocalNode,
     /// Client version information.
     pub client_version: ClientVersion,
     /// Extra data included in mined blocks.
@@ -496,8 +495,7 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
 /// * `storage` - Database storage instance
 /// * `blockchain` - Blockchain instance for block operations
 /// * `jwt_secret` - JWT secret for Engine API authentication
-/// * `local_p2p_node` - Local node identity for P2P networking
-/// * `local_node_record` - ENR for node discovery
+/// * `shared_local_node` - Live-updated local node identity (public key, address, and ENR)
 /// * `syncer` - Sync manager for block synchronization
 /// * `peer_handler` - Handler for P2P peer operations
 /// * `client_version` - Client version information for `web3_clientVersion` and `engine_getClientVersionV1`
@@ -520,8 +518,7 @@ pub async fn start_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: SyncManager,
     peer_handler: PeerHandler,
     client_version: ClientVersion,
@@ -542,8 +539,7 @@ pub async fn start_api(
         peer_handler: Some(peer_handler),
         node_data: NodeData {
             jwt_secret,
-            local_p2p_node,
-            local_node_record,
+            shared_local_node,
             client_version,
             extra_data: extra_data.into(),
         },
@@ -1468,9 +1464,12 @@ mod tests {
             .await
             .unwrap();
         let context = default_context_with_storage(storage).await;
-        let local_p2p_node = context.node_data.local_p2p_node.clone();
-
-        let enr_url = context.node_data.local_node_record.enr_url().unwrap();
+        let (local_p2p_node, enr_url) = {
+            let guard = context.node_data.shared_local_node.read().unwrap();
+            let node = guard.node.clone();
+            let enr_url = guard.record.enr_url().unwrap();
+            (node, enr_url)
+        };
         let result = map_http_requests(&request, context).await;
         let rpc_response = rpc_response(request.id, result).unwrap();
         let blob_schedule = serde_json::json!({
