@@ -1,0 +1,26 @@
+name: "Install ZisK"
+description: "Install ZisK Toolchain"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install ZisK dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
+
+    - name: Install ZisK
+      shell: bash
+      # Must match the `ziskos` tag in both crates/guest-program/Cargo.toml
+      # and crates/guest-program/bin/zisk/Cargo.toml.
+      env:
+        ZISK_VERSION: "0.16.1"
+      run: |
+        source "$GITHUB_WORKSPACE/.github/scripts/retry.sh"
+
+        mkdir -p "$HOME/.zisk/bin"
+        retry curl -fsSL "https://raw.githubusercontent.com/0xPolygonHermez/zisk/v${ZISK_VERSION}/ziskup/ziskup" -o "$HOME/.zisk/bin/ziskup"
+        chmod +x "$HOME/.zisk/bin/ziskup"
+        retry "$HOME/.zisk/bin/ziskup" -v "${ZISK_VERSION}"
+        echo "$HOME/.zisk/bin" >> $GITHUB_PATH

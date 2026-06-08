@@ -339,6 +339,14 @@ pub struct DeployerOptions {
     )]
     pub inclusion_max_wait: u64,
     #[arg(
+        long = "l2-gas-limit",
+        default_value = "30000000",
+        env = "ETHREX_L2_GAS_LIMIT",
+        help_heading = "Deployer options",
+        help = "L2 block gas limit. Stored in CommonBridge and used to bound privileged transaction gas."
+    )]
+    pub l2_gas_limit: u64,
+    #[arg(
         long,
         default_value = "false",
         env = "ETHREX_USE_COMPILED_GENESIS",
@@ -449,6 +457,7 @@ impl Default for DeployerOptions {
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
+            l2_gas_limit: 30_000_000,
             use_compiled_genesis: true,
             router: None,
             deploy_router: false,
@@ -553,7 +562,8 @@ const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],addres
 
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address, uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str =
+    "initialize(address,address,uint256,address,uint256,uint256)";
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 
@@ -901,6 +911,14 @@ async fn deploy_contracts(
         timelock_address.unwrap_or(on_chain_proposer_deployment.proxy_address);
 
     // if it's a required proof type, but no address has been specified, deploy it.
+    // TDX deployment shells out to `rex` which independently manages nonces for the
+    // same deployer account. We must wait for all pending transactions first so
+    // the L1 nonce is up to date when `rex` fetches it, avoiding nonce collisions.
+    if opts.tdx && opts.tdx_verifier_address.is_none() {
+        info!("Waiting for pending deploy transactions before TDX deployment");
+        wait_for_pending_transactions(eth_client, deployer.address()).await?;
+    }
+
     let tdx_verifier_address = match opts.tdx_verifier_address {
         Some(addr) if opts.tdx => addr,
         None if opts.tdx => {
@@ -970,7 +988,7 @@ fn deploy_tdx_contracts(
     opts: &DeployerOptions,
     on_chain_proposer: Address,
 ) -> Result<Address, DeployerError> {
-    Command::new("make")
+    let status = Command::new("make")
         .arg("deploy-all")
         .env("PRIVATE_KEY", hex::encode(opts.private_key.as_ref()))
         .env("RPC_URL", opts.rpc_url.as_str())
@@ -986,16 +1004,58 @@ fn deploy_tdx_contracts(
             DeployerError::DeploymentSubtaskFailed(format!("Failed to wait for make: {err}"))
         })?;
 
-    let address = read_tdx_deployment_address("TDXVerifier");
+    if !status.success() {
+        return Err(DeployerError::DeploymentSubtaskFailed(format!(
+            "make deploy-all exited with status {status}"
+        )));
+    }
+
+    let address = read_tdx_deployment_address("TDXVerifier")?;
     Ok(address)
 }
 
-fn read_tdx_deployment_address(name: &str) -> Address {
+fn read_tdx_deployment_address(name: &str) -> Result<Address, DeployerError> {
     let path = format!("tee/contracts/deploydeps/automata-dcap-attestation/evm/deployment/{name}");
-    let Ok(contents) = read_to_string(path) else {
-        return Address::zero();
-    };
-    Address::from_str(&contents).unwrap_or(Address::zero())
+    let contents = read_to_string(&path).map_err(|err| {
+        DeployerError::DeploymentSubtaskFailed(format!(
+            "Failed to read TDX deployment address from {path}: {err}"
+        ))
+    })?;
+    Address::from_str(&contents).map_err(|err| {
+        DeployerError::DeploymentSubtaskFailed(format!(
+            "Failed to parse TDX deployment address from {path}: {err}"
+        ))
+    })
+}
+
+/// Polls the L1 node until all pending transactions from `address` have been
+/// included in a block. This is used before invoking external TDX contract
+/// deployment tooling (e.g. `deploy_tdx_contracts`) to ensure that the
+/// deployer account has no outstanding pending transactions before proceeding.
+async fn wait_for_pending_transactions(
+    eth_client: &EthClient,
+    address: Address,
+) -> Result<(), DeployerError> {
+    const MAX_RETRIES: u64 = 100;
+    for i in 1..=MAX_RETRIES {
+        let latest_nonce = eth_client
+            .get_nonce(address, BlockIdentifier::Tag(BlockTag::Latest))
+            .await?;
+        let pending_nonce = eth_client
+            .get_nonce(address, BlockIdentifier::Tag(BlockTag::Pending))
+            .await?;
+        if latest_nonce == pending_nonce {
+            return Ok(());
+        }
+        info!(
+            "[{i}/{MAX_RETRIES}] Waiting for pending transactions to be included \
+             (latest_nonce={latest_nonce}, pending_nonce={pending_nonce})"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    }
+    Err(DeployerError::InternalError(format!(
+        "Timed out waiting for pending transactions to be included for address {address:#x}"
+    )))
 }
 
 fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, DeployerError> {
@@ -1015,17 +1075,17 @@ fn get_vk(prover_type: ProverType, opts: &DeployerOptions) -> Result<Bytes, Depl
         let vk_path = {
             let path = match &prover_type {
                 ProverType::RISC0 => format!(
-                    "{}/../../crates/l2/prover/src/ethrex_guest_program/src/risc0/out/riscv32im-risc0-vk",
+                    "{}/../../crates/guest-program/bin/risc0/out/riscv32im-risc0-vk",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 // Aligned requires the vk's 32 bytes hash, while the L1 verifier requires
                 // the hash as a bn254 F_r element.
                 ProverType::SP1 if opts.aligned => format!(
-                    "{}/../../crates/l2/prover/src/ethrex_guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-u32",
+                    "{}/../../crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 ProverType::SP1 if !opts.aligned => format!(
-                    "{}/../../crates/l2/prover/src/ethrex_guest_program/src/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
+                    "{}/../../crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-bn254",
                     env!("CARGO_MANIFEST_DIR")
                 ),
                 // other types don't have a verification key
@@ -1303,6 +1363,7 @@ async fn initialize_contracts(
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(contract_addresses.router.unwrap_or_default()),
             Value::Uint(genesis.config.chain_id.into()),
+            Value::Uint(opts.l2_gas_limit.into()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;
@@ -1601,26 +1662,27 @@ fn write_contract_addresses_to_env(
         "ETHREX_DEPLOYER_TDX_VERIFIER_ADDRESS={:#x}",
         contract_addresses.tdx_verifier_address
     )?;
-    // TDX aux contracts, qpl-tool depends on exact env var naming
+    // TDX aux contracts, qpl-tool depends on exact env var naming.
+    // Default to Address::zero() when TDX is not deployed (files won't exist).
     writeln!(
         writer,
         "ENCLAVE_ID_DAO={:#x}",
-        read_tdx_deployment_address("AutomataEnclaveIdentityDao")
+        read_tdx_deployment_address("AutomataEnclaveIdentityDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
         "FMSPC_TCB_DAO={:#x}",
-        read_tdx_deployment_address("AutomataFmspcTcbDao")
+        read_tdx_deployment_address("AutomataFmspcTcbDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
         "PCK_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPckDao")
+        read_tdx_deployment_address("AutomataPckDao").unwrap_or_default()
     )?;
     writeln!(
         writer,
         "PCS_DAO={:#x}",
-        read_tdx_deployment_address("AutomataPcsDao")
+        read_tdx_deployment_address("AutomataPcsDao").unwrap_or_default()
     )?;
     writeln!(
         writer,

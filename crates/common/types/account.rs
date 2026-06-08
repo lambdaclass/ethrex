@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
+use std::sync::{Arc, LazyLock};
 
 use bytes::{BufMut, Bytes};
 use ethereum_types::{H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_trie::Trie;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -15,10 +16,13 @@ use ethrex_rlp::{
 };
 
 use super::GenesisAccount;
-use crate::{
-    constants::{EMPTY_KECCACK_HASH, EMPTY_TRIE_HASH},
-    utils::keccak,
-};
+use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
+
+/// Shared empty jump-target table. `Code::default()` and any bytecode without a
+/// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
+/// `Arc` header each time. This matters because the per-tx `Code::default()`
+/// placeholder and every EOA / empty-code load would otherwise each allocate.
+static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
@@ -29,11 +33,13 @@ pub struct Code {
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
     pub bytecode: Bytes,
-    // TODO: Consider using Arc<[u32]> (needs to enable serde rc feature)
+    // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
+    // the callee's code) is a refcount bump instead of deep-copying the table.
+    // Serializes via serde's `rc` feature (enabled workspace-wide).
     // The valid addresses are 32-bit because, despite EIP-3860 restricting initcode size,
     // this does not apply to previous forks. This is tested in the EEST tests, which would
     // panic in debug mode.
-    pub jump_targets: Vec<u32>,
+    pub jump_targets: Arc<[u32]>,
 }
 
 impl Code {
@@ -49,16 +55,16 @@ impl Code {
         }
     }
 
-    pub fn from_bytecode(code: Bytes) -> Self {
+    pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self {
-            hash: keccak(code.as_ref()),
+            hash: H256(crypto.keccak256(code.as_ref())),
             bytecode: code,
             jump_targets,
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u32> {
+    fn compute_jump_targets(code: &[u8]) -> Arc<[u32]> {
         debug_assert!(code.len() <= u32::MAX as usize);
         let mut targets = Vec::new();
         let mut i = 0;
@@ -78,7 +84,13 @@ impl Code {
             }
             i += 1;
         }
-        targets
+        // Share the single empty table for jumpless bytecode (very common: EOAs,
+        // tiny contracts) so we don't allocate an `Arc` header for an empty slice.
+        if targets.is_empty() {
+            EMPTY_JUMP_TARGETS.clone()
+        } else {
+            Arc::from(targets)
+        }
     }
 
     /// Estimates the size of the Code struct in bytes
@@ -92,7 +104,7 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u32>>() + self.jump_targets.len() * size_of::<u32>();
+        let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
         hash_size + bytes_size + vec_size
     }
 }
@@ -101,6 +113,11 @@ impl AsRef<Bytes> for Code {
     fn as_ref(&self) -> &Bytes {
         &self.bytecode
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeMetadata {
+    pub length: u64,
 }
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,7 +155,7 @@ pub struct AccountStateSlimCodec(pub AccountState);
 impl Default for AccountInfo {
     fn default() -> Self {
         Self {
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
             balance: Default::default(),
             nonce: Default::default(),
         }
@@ -151,7 +168,7 @@ impl Default for AccountState {
             nonce: Default::default(),
             balance: Default::default(),
             storage_root: *EMPTY_TRIE_HASH,
-            code_hash: *EMPTY_KECCACK_HASH,
+            code_hash: *EMPTY_KECCAK_HASH,
         }
     }
 }
@@ -160,15 +177,15 @@ impl Default for Code {
     fn default() -> Self {
         Self {
             bytecode: Bytes::new(),
-            hash: *EMPTY_KECCACK_HASH,
-            jump_targets: Vec::new(),
+            hash: *EMPTY_KECCAK_HASH,
+            jump_targets: EMPTY_JUMP_TARGETS.clone(),
         }
     }
 }
 
 impl From<GenesisAccount> for Account {
     fn from(genesis: GenesisAccount) -> Self {
-        let code = Code::from_bytecode(genesis.code);
+        let code = Code::from_bytecode(genesis.code, &NativeCrypto);
         Self {
             info: AccountInfo {
                 code_hash: code.hash,
@@ -185,8 +202,8 @@ impl From<GenesisAccount> for Account {
     }
 }
 
-pub fn code_hash(code: &Bytes) -> H256 {
-    keccak(code.as_ref())
+pub fn code_hash(code: &Bytes, crypto: &dyn Crypto) -> H256 {
+    H256(crypto.keccak256(code.as_ref()))
 }
 
 impl RLPEncode for AccountInfo {
@@ -260,7 +277,7 @@ impl RLPEncode for AccountStateSlimCodec {
         struct CodeHashCodec<'a>(&'a H256);
         impl RLPEncode for CodeHashCodec<'_> {
             fn encode(&self, buf: &mut dyn BufMut) {
-                let data = if *self.0 != *EMPTY_KECCACK_HASH {
+                let data = if *self.0 != *EMPTY_KECCAK_HASH {
                     self.0.as_bytes()
                 } else {
                     &[]
@@ -304,7 +321,7 @@ impl RLPDecode for AccountStateSlimCodec {
         impl RLPDecode for CodeHashCodec {
             fn decode_unfinished(mut rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
                 let value = match rlp.split_off_first() {
-                    Some(0x80) => *EMPTY_KECCACK_HASH,
+                    Some(0x80) => *EMPTY_KECCAK_HASH,
                     Some(0xA0) => {
                         let data;
                         (data, rlp) = rlp
@@ -337,11 +354,14 @@ impl RLPDecode for AccountStateSlimCodec {
     }
 }
 
-pub fn compute_storage_root(storage: &BTreeMap<U256, U256>) -> H256 {
+pub fn compute_storage_root(storage: &BTreeMap<U256, U256>, crypto: &dyn Crypto) -> H256 {
     let iter = storage.iter().filter_map(|(k, v)| {
-        (!v.is_zero()).then_some((keccak_hash(k.to_big_endian()).to_vec(), v.encode_to_vec()))
+        (!v.is_zero()).then_some((
+            crypto.keccak256(&k.to_big_endian()).to_vec(),
+            v.encode_to_vec(),
+        ))
     });
-    Trie::compute_hash_from_unsorted_iter(iter)
+    Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
 impl From<&GenesisAccount> for AccountState {
@@ -349,8 +369,8 @@ impl From<&GenesisAccount> for AccountState {
         AccountState {
             nonce: value.nonce,
             balance: value.balance,
-            storage_root: compute_storage_root(&value.storage),
-            code_hash: code_hash(&value.code),
+            storage_root: compute_storage_root(&value.storage, &NativeCrypto),
+            code_hash: code_hash(&value.code, &NativeCrypto),
         }
     }
 }
@@ -371,7 +391,7 @@ impl Account {
 
 impl AccountInfo {
     pub fn is_empty(&self) -> bool {
-        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCACK_HASH
+        self.balance.is_zero() && self.nonce == 0 && self.code_hash == *EMPTY_KECCAK_HASH
     }
 }
 
@@ -384,7 +404,7 @@ mod test {
     #[test]
     fn test_code_hash() {
         let empty_code = Bytes::new();
-        let hash = code_hash(&empty_code);
+        let hash = code_hash(&empty_code, &NativeCrypto);
         assert_eq!(
             hash,
             H256::from_str("c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470")

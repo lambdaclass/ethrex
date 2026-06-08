@@ -12,6 +12,7 @@ use ethrex_common::{
         tx_fields::*,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment,
     db::gen_db::GeneralizedDatabase,
@@ -109,36 +110,39 @@ pub async fn run_ef_test_tx(
     fork: &Fork,
 ) -> Result<(), EFTestRunnerError> {
     let mut db = utils::load_initial_state_levm(test).await;
-    let vm_creation_result = prepare_vm_for_tx(vector, test, fork, &mut db);
-    // For handling edge case in which there's a create in a Type 4 Transaction, that sadly is detected before actual execution of the vm, when building the "Transaction" for creating a new instance of vm.
-    let levm_execution_result = match vm_creation_result {
+    // Build the tx first so it outlives the VM (the VM borrows it). The Type-4-create edge case
+    // is detected here, before the VM exists, just as it was inside the old `prepare_vm_for_tx`.
+    let levm_execution_result = match build_tx_for_vector(vector, test) {
         Err(EFTestRunnerError::EIP7702ShouldNotBeCreateType) => Err(VMError::TxValidation(
             TxValidationError::Type4TxContractCreation,
         )),
         Err(error) => return Err(error),
-        Ok(mut levm) => {
-            ensure_pre_state(&levm, test)?;
-            levm.execute()
-        }
+        Ok(tx) => match prepare_vm_for_tx(&tx, vector, test, fork, &mut db) {
+            Err(error) => return Err(error),
+            Ok(mut levm) => {
+                ensure_pre_state(&levm, test)?;
+                levm.execute()
+            }
+        },
     };
 
     ensure_post_state(&levm_execution_result, vector, test, fork, &mut db).await?;
     Ok(())
 }
 
-pub fn prepare_vm_for_tx<'a>(
+/// Builds the concrete `Transaction` for a test vector. Split out from `prepare_vm_for_tx` so the
+/// caller owns it for the VM's lifetime (`VM` borrows `&'a Transaction` rather than cloning).
+pub fn build_tx_for_vector(
     vector: &TestVector,
     test: &EFTest,
-    fork: &Fork,
-    db: &'a mut GeneralizedDatabase,
-) -> Result<VM<'a>, EFTestRunnerError> {
+) -> Result<Transaction, EFTestRunnerError> {
     let test_tx = test
         .transactions
         .get(vector)
         .ok_or(EFTestRunnerError::Internal(
             InternalError::FirstRunInternal(
                 format!(
-                    "Failed to get transaction in prepare_vm_for_tx(). LEVM runner, line: {}.",
+                    "Failed to get transaction in build_tx_for_vector(). LEVM runner, line: {}.",
                     line!()
                 )
                 .to_owned(),
@@ -165,9 +169,6 @@ pub fn prepare_vm_for_tx<'a>(
             .collect::<Vec<AuthorizationTuple>>()
     });
 
-    let blob_schedule = EVMConfig::canonical_values(*fork);
-    let config = EVMConfig::new(*fork, blob_schedule);
-
     let tx = match authorization_list {
         Some(list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match test_tx.to {
@@ -190,28 +191,61 @@ pub fn prepare_vm_for_tx<'a>(
             ..Default::default()
         }),
     };
-    let base_blob_fee_per_gas =
-        get_base_fee_per_blob_gas(test.env.current_excess_blob_gas, &config).map_err(|e| {
-            EFTestRunnerError::FailedToEnsurePreState(format!(
-                "Failed to calculate base blob fee: {e}"
-            ))
-        })?;
+    Ok(tx)
+}
+
+pub fn prepare_vm_for_tx<'a>(
+    tx: &'a Transaction,
+    vector: &TestVector,
+    test: &EFTest,
+    fork: &Fork,
+    db: &'a mut GeneralizedDatabase,
+) -> Result<VM<'a>, EFTestRunnerError> {
+    let test_tx = test
+        .transactions
+        .get(vector)
+        .ok_or(EFTestRunnerError::Internal(
+            InternalError::FirstRunInternal(
+                format!(
+                    "Failed to get transaction in prepare_vm_for_tx(). LEVM runner, line: {}.",
+                    line!()
+                )
+                .to_owned(),
+            ),
+        ))?;
+
+    let blob_schedule = EVMConfig::canonical_values(*fork);
+    let config = EVMConfig::new(*fork, blob_schedule);
+
+    let base_blob_fee_per_gas = get_base_fee_per_blob_gas(
+        test.env
+            .current_excess_blob_gas
+            .map(|x| x.try_into().unwrap()),
+        &config,
+    )
+    .map_err(|e| {
+        EFTestRunnerError::FailedToEnsurePreState(format!("Failed to calculate base blob fee: {e}"))
+    })?;
 
     VM::new(
         Environment {
             origin: test_tx.sender,
             gas_limit: test_tx.gas_limit,
             config,
-            block_number: test.env.current_number,
+            block_number: test.env.current_number.try_into().unwrap(),
             coinbase: test.env.current_coinbase,
-            timestamp: test.env.current_timestamp,
+            timestamp: test.env.current_timestamp.try_into().unwrap(),
             prev_randao: test.env.current_random,
             difficulty: test.env.current_difficulty,
+            slot_number: test.env.slot_number.unwrap_or_default(),
             chain_id: U256::from(1),
             base_fee_per_gas: test.env.current_base_fee.unwrap_or_default(),
             base_blob_fee_per_gas,
             gas_price: effective_gas_price(test, &test_tx)?,
-            block_excess_blob_gas: test.env.current_excess_blob_gas,
+            block_excess_blob_gas: test
+                .env
+                .current_excess_blob_gas
+                .map(|x| x.try_into().unwrap()),
             block_blob_gas_used: None,
             tx_blob_hashes: test_tx.blob_versioned_hashes.clone(),
             tx_max_priority_fee_per_gas: test_tx.max_priority_fee_per_gas,
@@ -221,11 +255,14 @@ pub fn prepare_vm_for_tx<'a>(
             block_gas_limit: test.env.current_gas_limit,
             is_privileged: false,
             fee_token: None,
+            disable_balance_check: false,
+            is_system_call: false,
         },
         db,
-        &tx,
+        tx,
         LevmCallTracer::disabled(),
         VMType::L1, // TODO: Should we run the EF tests with L2?
+        &NativeCrypto,
     )
     .map_err(|e| EFTestRunnerError::FailedToEnsurePreState(format!("Failed to initialize VM: {e}")))
 }

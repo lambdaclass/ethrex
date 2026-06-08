@@ -3,17 +3,15 @@ use crate::{
     utils::{self},
 };
 use clap::Parser;
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
+use ethrex_common::Address;
+use ethrex_l2::sequencer::utils::resolve_aligned_network;
 use ethrex_l2::{
     BasedConfig, BlockFetcherConfig, BlockProducerConfig, CommitterConfig, EthConfig,
     L1WatcherConfig, ProofCoordinatorConfig, SequencerConfig, StateUpdaterConfig,
-    sequencer::{
-        configs::{AdminConfig, AlignedConfig, MonitorConfig},
-        utils::resolve_aligned_network,
-    },
+    sequencer::configs::{AdminConfig, AlignedConfig, MonitorConfig},
 };
+use ethrex_l2_prover::{backend::BackendType, config::ProverConfig};
 use ethrex_l2_rpc::signer::{LocalSigner, RemoteSigner, Signer};
-use ethrex_prover_lib::{backend::BackendType, config::ProverConfig};
 use ethrex_rpc::clients::eth::{
     BACKOFF_FACTOR, MAX_NUMBER_OF_RETRIES, MAX_RETRY_DELAY, MIN_RETRY_DELAY,
 };
@@ -26,6 +24,7 @@ use std::{
 use tracing::Level;
 
 pub const DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH: &str = "./tee/contracts/automata-dcap-qpl/automata-dcap-qpl-tool/target/release/automata-dcap-qpl-tool";
+pub const DEFAULT_SPONSORED_GAS_LIMIT: u64 = 500_000;
 
 #[derive(Parser, Debug)]
 #[group(id = "L2Options")]
@@ -38,12 +37,32 @@ pub struct Options {
         long = "sponsorable-addresses",
         value_name = "SPONSORABLE_ADDRESSES_PATH",
         help = "Path to a file containing addresses of contracts to which ethrex_SendTransaction should sponsor txs",
-        help_heading = "L2 options"
+        help_heading = "L2 options",
+        env = "ETHREX_SPONSORABLE_ADDRESSES_PATH"
     )]
     pub sponsorable_addresses_file_path: Option<String>,
     //TODO: make optional when the the sponsored feature is complete
     #[arg(long, default_value = "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192", value_parser = utils::parse_private_key, env = "SPONSOR_PRIVATE_KEY", help = "The private key of ethrex L2 transactions sponsor.", help_heading = "L2 options")]
     pub sponsor_private_key: SecretKey,
+    #[arg(
+        long = "sponsored-gas-limit",
+        default_value_t = DEFAULT_SPONSORED_GAS_LIMIT,
+        value_name = "GAS_LIMIT",
+        env = "ETHREX_SPONSORED_GAS_LIMIT",
+        help = "Maximum gas limit for sponsored transactions. Transactions that estimate more gas than this will be rejected.",
+        help_heading = "L2 options"
+    )]
+    pub sponsored_gas_limit: u64,
+    #[arg(
+        long = "http.api.ethrex",
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        value_name = "BOOLEAN",
+        env = "ETHREX_HTTP_API_ETHREX",
+        help = "Expose L2-specific ethrex_* RPC methods over HTTP/WS. Enabled by default for L2 nodes.",
+        help_heading = "L2 options"
+    )]
+    pub http_api_ethrex: bool,
 }
 
 impl Default for Options {
@@ -56,6 +75,8 @@ impl Default for Options {
                 "0xffd790338a2798b648806fc8635ac7bf14af15425fed0c8f25bcc5febaa9b192",
             )
             .unwrap(),
+            sponsored_gas_limit: DEFAULT_SPONSORED_GAS_LIMIT,
+            http_api_ethrex: true,
         }
     }
 }
@@ -167,7 +188,6 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 base_fee_vault_address: opts.block_producer_opts.base_fee_vault_address,
                 operator_fee_vault_address: opts.block_producer_opts.operator_fee_vault_address,
                 elasticity_multiplier: opts.block_producer_opts.elasticity_multiplier,
-                block_gas_limit: opts.block_producer_opts.block_gas_limit,
             },
             l1_committer: CommitterConfig {
                 on_chain_proposer_address: opts
@@ -217,6 +237,7 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                     .proof_coordinator_tdx_private_key,
                 qpl_tool_path: opts.proof_coordinator_opts.proof_coordinator_qpl_tool_path,
                 validium: opts.validium,
+                prover_timeout_ms: opts.proof_coordinator_opts.prover_timeout_ms,
             },
             based: BasedConfig {
                 enabled: opts.based,
@@ -232,7 +253,8 @@ impl TryFrom<SequencerOptions> for SequencerConfig {
                 network: resolve_aligned_network(
                     &opts.aligned_opts.aligned_network.unwrap_or_default(),
                 ),
-                fee_estimate: opts.aligned_opts.fee_estimate,
+                from_block: opts.aligned_opts.from_block,
+                resubmission_timeout_secs: opts.aligned_opts.resubmission_timeout_secs.unwrap_or(0),
             },
             monitor: MonitorConfig {
                 enabled: !opts.no_monitor,
@@ -532,15 +554,6 @@ pub struct BlockProducerOptions {
         help_heading = "Proposer options"
     )]
     pub elasticity_multiplier: u64,
-    #[arg(
-        long = "block-producer.block-gas-limit",
-        default_value = "30000000",
-        value_name = "UINT64",
-        env = "ETHREX_BLOCK_PRODUCER_BLOCK_GAS_LIMIT",
-        help = "Maximum gas limit for the L2 blocks.",
-        help_heading = "Block producer options"
-    )]
-    pub block_gas_limit: u64,
 }
 
 impl Default for BlockProducerOptions {
@@ -557,7 +570,6 @@ impl Default for BlockProducerOptions {
             operator_fee_per_gas: None,
             l1_fee_vault_address: None,
             elasticity_multiplier: 2,
-            block_gas_limit: DEFAULT_BUILDER_GAS_CEIL,
         }
     }
 }
@@ -777,6 +789,15 @@ pub struct ProofCoordinatorOptions {
         help_heading = "Proof coordinator options"
     )]
     pub proof_send_interval_ms: u64,
+    #[arg(
+        long = "proof-coordinator.prover-timeout",
+        default_value = "600000",
+        value_name = "UINT64",
+        env = "ETHREX_PROOF_COORDINATOR_PROVER_TIMEOUT",
+        help = "Timeout in milliseconds before a batch assignment to a prover is considered stale.",
+        help_heading = "Proof coordinator options"
+    )]
+    pub prover_timeout_ms: u64,
 }
 
 impl Default for ProofCoordinatorOptions {
@@ -796,6 +817,7 @@ impl Default for ProofCoordinatorOptions {
             proof_coordinator_qpl_tool_path: Some(
                 DEFAULT_PROOF_COORDINATOR_QPL_TOOL_PATH.to_string(),
             ),
+            prover_timeout_ms: 600_000,
         }
     }
 }
@@ -862,16 +884,23 @@ pub struct AlignedOptions {
         help_heading = "Aligned options"
     )]
     pub aligned_network: Option<String>,
-
     #[arg(
-        long = "aligned.fee-estimate",
-        default_value = "instant",
-        value_name = "FEE_ESTIMATE",
-        env = "ETHREX_ALIGNED_FEE_ESTIMATE",
-        help = "Fee estimate for Aligned sdk",
+        long = "aligned.from-block",
+        value_name = "BLOCK_NUMBER",
+        env = "ETHREX_ALIGNED_FROM_BLOCK",
+        help = "Starting L1 block number for proof aggregation search. Helps avoid scanning blocks from before proofs were being sent.",
         help_heading = "Aligned options"
     )]
-    pub fee_estimate: String,
+    pub from_block: Option<u64>,
+    #[arg(
+        long = "aligned.resubmission-timeout",
+        required_if_eq("aligned", "true"),
+        value_name = "SECONDS",
+        env = "ETHREX_ALIGNED_RESUBMISSION_TIMEOUT_SECS",
+        help = "Timeout in seconds before resending a proof not yet verified on-chain. Required when --aligned is enabled. Aligned typically aggregates once per day, so this value should be set accordingly (e.g. 86400 for 24h).",
+        help_heading = "Aligned options"
+    )]
+    pub resubmission_timeout_secs: Option<u64>,
 }
 
 impl Default for AlignedOptions {
@@ -881,7 +910,8 @@ impl Default for AlignedOptions {
             aligned_verifier_interval_ms: 5000,
             beacon_url: None,
             aligned_network: Some("devnet".to_string()),
-            fee_estimate: "instant".to_string(),
+            from_block: None,
+            resubmission_timeout_secs: None,
         }
     }
 }
@@ -893,6 +923,7 @@ impl AlignedOptions {
             .aligned_network
             .clone()
             .or(defaults.aligned_network.clone());
+        self.from_block = self.from_block.or(defaults.from_block);
     }
 }
 
@@ -1079,11 +1110,20 @@ pub struct ProverClientOptions {
         long = "log.level",
         default_value_t = Level::INFO,
         value_name = "LOG_LEVEL",
+        env = "PROVER_CLIENT_LOG_LEVEL",
         help = "The verbosity level used for logs.",
         long_help = "Possible values: info, debug, trace, warn, error",
         help_heading = "Prover client options"
     )]
     pub log_level: Level,
+    #[arg(
+        long,
+        default_value_t = false,
+        env = "PROVER_CLIENT_TIMED",
+        help = "Measure and log proving time for each batch",
+        help_heading = "Prover client options"
+    )]
+    pub timed: bool,
     #[cfg(all(feature = "sp1", feature = "gpu"))]
     #[arg(
         long,
@@ -1101,6 +1141,7 @@ impl From<ProverClientOptions> for ProverConfig {
             backend: config.backend,
             proof_coordinators: config.proof_coordinator_endpoints,
             proving_time_ms: config.proving_time_ms,
+            timed: config.timed,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: config.sp1_server,
         }
@@ -1116,6 +1157,7 @@ impl Default for ProverClientOptions {
             proving_time_ms: 5000,
             log_level: Level::INFO,
             backend: BackendType::Exec,
+            timed: false,
             #[cfg(all(feature = "sp1", feature = "gpu"))]
             sp1_server: None,
         }

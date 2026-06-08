@@ -9,6 +9,12 @@ participants:
     cl_type: lighthouse
     cl_image: sigp/lighthouse:v8.0.0-rc.1
     validator_count: 32
+    # ethereum-package's el_admin_node_info.star bootstrap calls admin_nodeInfo
+    # to discover the enode; the new ethrex defaults only serve eth/net/web3,
+    # so opt admin/debug/txpool back in for this devnet. --http.addr is
+    # already set by ethereum-package's ethrex launcher.
+    el_extra_params:
+      - "--http.api=eth,net,web3,debug,admin,txpool"
 
 additional_services:
   - assertoor
@@ -30,7 +36,8 @@ network_params:
   deposit_contract_address: "0x4242424242424242424242424242424242424242"
 
 assertoor_params:
+  image: ethpandaops/assertoor:v0.0.17
   run_stability_check: false
   run_block_proposal_check: false
   tests:
-    - https://raw.githubusercontent.com/ethpandaops/assertoor/refs/heads/master/playbooks/stable/eoa-transactions-test.yaml
+    - https://raw.githubusercontent.com/ethpandaops/assertoor/c35b5c3a5fd543bcc843ee0e0af1e6255ca48dbd/playbooks/stable/eoa-transactions-test.yaml

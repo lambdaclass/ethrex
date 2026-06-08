@@ -27,7 +27,14 @@ use std::{
     path::PathBuf,
 };
 
-const DEFAULT_FORKS: [&str; 4] = ["Merge", "Shanghai", "Cancun", "Prague"];
+const DEFAULT_FORKS: [&str; 6] = [
+    "Merge",
+    "Shanghai",
+    "Cancun",
+    "Prague",
+    "Osaka",
+    "Amsterdam",
+];
 
 /// `Tests` structure is the result of parsing a whole `.json` file from the EF tests. This file includes at
 /// least one general test enviroment and different test cases inside each enviroment.
@@ -117,17 +124,19 @@ impl Tests {
         test_data: &HashMap<String, Value>,
         test_cases: Vec<TestCase>,
     ) -> Result<Test, serde_json::Error> {
-        // Obtain the value of the `info` field in the JSON.
-        let info_field = test_data
-            .get("_info")
-            .ok_or(serde::de::Error::missing_field("_info"))?;
-        // Parse the field value as `Info`.
-        let test_info = serde_json::from_value(info_field.clone()).map_err(|err| {
-            serde::de::Error::custom(format!(
-                "Failed to deserialize `info` field in test {}. Serde error: {}",
-                test_name, err
-            ))
-        })?;
+        // The `_info` field is optional — EF fixtures populate it but
+        // goevmlab-generated fixtures may omit it.
+        let test_info = match test_data.get("_info") {
+            Some(info_field) => {
+                Some(serde_json::from_value(info_field.clone()).map_err(|err| {
+                    serde::de::Error::custom(format!(
+                        "Failed to deserialize `info` field in test {}. Serde error: {}",
+                        test_name, err
+                    ))
+                })?)
+            }
+            None => None,
+        };
         // Obtain the value of the `env` field in the JSON.
         let env_field = test_data
             .get("env")
@@ -168,21 +177,24 @@ impl Tests {
         fork: &Fork,
         raw_post: &RawPostValue,
     ) -> Result<TestCase, RunnerError> {
-        let data_index = raw_post
+        let data_index: usize = (*raw_post
             .indexes
             .get("data")
-            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-            .as_usize();
-        let value_index = raw_post
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?)
+        .try_into()
+        .unwrap();
+        let value_index: usize = (*raw_post
             .indexes
             .get("value")
-            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-            .as_usize();
-        let gas_index = raw_post
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?)
+        .try_into()
+        .unwrap();
+        let gas_index: usize = (*raw_post
             .indexes
             .get("gas")
-            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?
-            .as_usize();
+            .ok_or(RunnerError::FailedToGetIndexValue("value".to_string()))?)
+        .try_into()
+        .unwrap();
         let access_list_raw = raw_tx.access_lists.clone().unwrap_or_default();
         let mut access_list = Vec::new();
         if !access_list_raw.is_empty() {
@@ -223,8 +235,10 @@ impl Tests {
 pub struct Test {
     pub name: String,  // The name of the test object inside the .json file.
     pub path: PathBuf, // The path of the .json file the Test can be found at.
-    pub _info: Info,   // General information about the test.
-    pub env: Env,      // The block enviroment before the test transaction happens.
+    /// General information about the test (optional — present in EF fixtures,
+    /// may be absent in goevmlab-generated ones).
+    pub _info: Option<Info>,
+    pub env: Env, // The block enviroment before the test transaction happens.
     pub pre: HashMap<Address, AccountState>, // The accounts state previous to the test transaction.
     pub test_cases: Vec<TestCase>, // A vector of specific cases to be tested under these conditions (transactions).
 }
@@ -276,6 +290,9 @@ fn get_chain_config_from_fork(fork: &Fork) -> ChainConfig {
     if *fork >= Fork::Osaka {
         basic_chain_config.osaka_time = Some(0);
     }
+    if *fork >= Fork::Amsterdam {
+        basic_chain_config.amsterdam_time = Some(0);
+    }
 
     basic_chain_config
 }
@@ -289,11 +306,13 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
             schedule.cancun.target
         } else if *fork == Fork::Prague {
             schedule.prague.target
+        } else if *fork == Fork::Osaka {
+            schedule.osaka.target
         } else {
             0
         };
 
-        Some(excess_blob_gas.as_u64() + target as u64 * GAS_PER_BLOB as u64)
+        Some(u64::try_from(excess_blob_gas).unwrap() + target as u64 * GAS_PER_BLOB as u64)
     } else {
         None
     };
@@ -311,7 +330,7 @@ pub fn genesis_from_test_and_fork(test: &Test, fork: &Fork) -> Genesis {
         timestamp: 0,
         config: chain_config,
         gas_limit: test.env.current_gas_limit,
-        base_fee_per_gas: (test.env.current_base_fee.unwrap().as_u64()
+        base_fee_per_gas: (u64::try_from(test.env.current_base_fee.unwrap()).unwrap()
             * BASE_FEE_MAX_CHANGE_DENOMINATOR as u64)
             .checked_div(7), // This was VERY carefully calculated so that the header passes validations in calculate_base_fee_per_gas
         excess_blob_gas: genesis_excess_blob_gas,
@@ -376,6 +395,8 @@ pub struct Env {
     pub current_random: Option<H256>,
     #[serde(deserialize_with = "u256::deser_hex_str")]
     pub current_timestamp: U256,
+    #[serde(default, deserialize_with = "u256::deser_hex_str_opt")]
+    pub slot_number: Option<U256>,
 }
 
 /// This structure represents a specific test case under general test conditions (`Test` struct). It is mainly
@@ -551,4 +572,80 @@ pub struct RawTransaction {
     pub access_lists: Option<Vec<Vec<AccessListItem>>>,
     #[serde(default, deserialize_with = "deserialize_authorization_lists")]
     pub authorization_list: Option<Vec<AuthorizationListTuple>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Minimal fixture body — Tests::deserialize parses every test object as a
+    /// (test_name -> raw fields) map, so the inner fields just need to be
+    /// shape-correct enough for the per-field parsers downstream.
+    fn fixture_json(with_info: bool) -> String {
+        let info = if with_info {
+            r#""_info": { "comment": "goevmlab-generated" },"#
+        } else {
+            ""
+        };
+        format!(
+            r#"{{
+                "blockhash_divergence": {{
+                    {info}
+                    "env": {{
+                        "currentCoinbase": "0xb94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+                        "currentDifficulty": "0x200000",
+                        "currentRandom": "0x0000000000000000000000000000000000000000000000000000000000200000",
+                        "currentGasLimit": "0x26e1f476fe1e22",
+                        "currentNumber": "0x1",
+                        "currentTimestamp": "0x3e8",
+                        "previousHash": "0x044852b2a670ade5407e78fb2863c51de9fcb96542a07186fe3aeda6bb8a116d",
+                        "currentBaseFee": "0x10"
+                    }},
+                    "pre": {{}},
+                    "transaction": {{
+                        "gasPrice": "0x10",
+                        "nonce": "0x0",
+                        "to": "0x00000000000000000000000000000000000000f1",
+                        "data": ["0x"],
+                        "gasLimit": ["0x5f5e100"],
+                        "value": ["0x0"],
+                        "secretKey": "0x45a915e4d060149eb4365960e6a7a45f334393093061116b197e3240065ff2d8",
+                        "sender": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b"
+                    }},
+                    "post": {{
+                        "Prague": [
+                            {{
+                                "hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                                "logs": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                                "indexes": {{ "data": 0, "gas": 0, "value": 0 }}
+                            }}
+                        ]
+                    }}
+                }}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn fixture_without_info_parses() {
+        let json = fixture_json(false);
+        let tests: Tests = serde_json::from_str(&json).expect("must parse without _info");
+        assert_eq!(tests.0.len(), 1);
+        assert!(
+            tests.0[0]._info.is_none(),
+            "_info should be None when absent"
+        );
+    }
+
+    #[test]
+    fn fixture_with_info_still_parses() {
+        let json = fixture_json(true);
+        let tests: Tests = serde_json::from_str(&json).expect("must parse with _info");
+        assert_eq!(tests.0.len(), 1);
+        let info = tests.0[0]
+            ._info
+            .as_ref()
+            .expect("_info should be Some when present");
+        assert_eq!(info.comment.as_deref(), Some("goevmlab-generated"));
+    }
 }

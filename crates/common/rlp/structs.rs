@@ -3,6 +3,8 @@ use super::{
     encode::{RLPEncode, encode_length},
     error::RLPDecodeError,
 };
+use alloc::format;
+use alloc::vec::Vec;
 use bytes::BufMut;
 use bytes::Bytes;
 
@@ -124,7 +126,7 @@ impl<'a> Decoder<'a> {
 }
 
 fn field_decode_error<T>(field_name: &str, err: RLPDecodeError) -> RLPDecodeError {
-    let typ = std::any::type_name::<T>();
+    let typ = core::any::type_name::<T>();
     let err_msg = format!("Error decoding field '{field_name}' of type {typ}: {err}");
     RLPDecodeError::Custom(err_msg)
 }

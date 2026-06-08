@@ -37,7 +37,7 @@ As said before, the settlement window must be taken into account to calculate th
 
 ## Who owns the `Timelock`
 
-There's no such thing as an unique owner of the `Timelock` necessarily. `Timelock` is a `TimelockController`, which is also an `AccessControl`, so we can define different roles and assign them to different entities. By "owner" of the `Timelock`, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).
+There's no such thing as a unique owner of the `Timelock` necessarily. `Timelock` is a `TimelockController`, which is also an `AccessControl`, so we can define different roles and assign them to different entities. By "owner" of the `Timelock`, we refer to the account that has the role to update the contract (i.e. the one that can modify the delay).
 
 That said, whoever owns the `Timelock` decides its functioning. In our stack, the owner of the contract is established during its initialization, and then that owner can transfer the ownership to another account if desired.
 

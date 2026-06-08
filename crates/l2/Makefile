@@ -6,6 +6,12 @@
 
 .DEFAULT_GOAL := help
 
+# Image metadata baked into the compose-built images (consumed by
+# docker-compose.yaml build args). Mirrors the root Makefile's build-image.
+GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 # ==============================================================================
 # Top-Level Targets
 # ==============================================================================
@@ -100,15 +106,12 @@ deploy-l1: ## 📜 Deploys the L1 contracts
 	--genesis-l2-path ${L2_GENESIS_FILE_PATH}
 
 ## Same as deploy-l1 but deploys the SP1 verifier
-deploy-l1-sp1: ## 📜 Deploys the L1 contracts
+deploy-l1-sp1: ## 📜 Deploys the L1 contracts with SP1 verifier
 	COMPILE_CONTRACTS=true \
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- l2 deploy \
 	--eth-rpc-url ${L1_RPC_URL} \
 	--private-key ${L1_PRIVATE_KEY} \
-	--risc0.verifier-address 0x00000000000000000000000000000000000000aa \
-	--sp1.deploy-verifier \
-	--tdx.verifier-address 0x00000000000000000000000000000000000000aa \
-	--aligned.aggregator-address 0x00000000000000000000000000000000000000aa \
+	--sp1 true \
 	--on-chain-proposer-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner ${L2_OWNER_ADDRESS} \
 	--bridge-owner-pk ${BRIDGE_OWNER_PRIVATE_KEY} \
@@ -232,7 +235,7 @@ clean-tee-contract-deps: ## 🧹 Cleans the dependencies for the TEE contracts.
 # ==============================================================================
 
 test: ## 🚧 Runs the L2's integration test, run `make init` and in a new terminal make test
-	cargo test l2_integration_test --profile release-with-debug -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
+	cargo test -p ethrex-test l2_integration_test --profile release-with-debug --features l2 -- --nocapture || (echo "The tests have failed.\n Is the L2 running? To start it, run:\n make rm-db-l1; make rm-db-l2; make restart" ; exit 1)
 
 integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply because if the file
 	# does not exist, the container fails to write to it.
@@ -240,11 +243,12 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
+	GIT_SHA=$(GIT_SHA) GIT_BRANCH=$(GIT_BRANCH) VERSION=$(VERSION) \
 	docker compose up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
+	RUST_LOG=info,ethrex_l2_prover=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
-	cargo test l2 --release -- --nocapture --test-threads=1
+	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT
 
 integration-test-gpu: rm-db-l2 rm-db-l1
@@ -254,13 +258,17 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
+	GIT_SHA=$(GIT_SHA) GIT_BRANCH=$(GIT_BRANCH) VERSION=$(VERSION) \
 	docker compose up --detach --build
 
-	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
-	cargo test l2 --release -- --nocapture --test-threads=1
+	RUST_LOG=info,ethrex_l2_prover=debug GPU=true make init-prover-sp1 & \
+	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 
 # State reconstruction tests
+# If this fails due to stale blobs, regenerate them following:
+# - docs/workflows/regenerate-blobs.md (agent workflow)
+# - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 state-diff-test:
 	touch .env
 	cargo run --release --features l2,l2-sql --manifest-path ../../Cargo.toml -- \
@@ -272,9 +280,12 @@ state-diff-test:
 	ETHREX_WATCHER_BLOCK_DELAY=0 \
 	docker compose -f docker-compose.yaml -f docker-compose-l2-store.overrides.yaml up --detach --no-deps ethrex_l2
 	docker logs --follow ethrex_l2 & \
-	cargo test state_reconstruct --release
+	cargo test -p ethrex-test test_state_reconstruct --release --features l2
 
 # Fast validation to check if blobs match genesis
 # Use this before state-diff-test to catch stale blobs early
+# If this fails, regenerate blobs following:
+# - docs/workflows/regenerate-blobs.md (agent workflow)
+# - docs/developers/l2/state-reconstruction-blobs.md (step-by-step guide)
 validate-blobs:
-	cargo test validate_blobs_match_genesis --release
+	cargo test -p ethrex-test validate_blobs_match_genesis --release

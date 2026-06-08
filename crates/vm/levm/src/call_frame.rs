@@ -7,9 +7,14 @@ use crate::{
     vm::VM,
 };
 use bytes::Bytes;
-use ethrex_common::{Address, U256};
-use ethrex_common::{H256, types::Code};
-use std::{collections::HashMap, fmt, hint::assert_unchecked};
+use ethrex_common::types::block_access_list::BlockAccessListCheckpoint;
+use ethrex_common::{Address, H256, U256, types::Code};
+use rustc_hash::FxHashMap;
+use std::{
+    fmt,
+    hash::{Hash, Hasher},
+    hint::assert_unchecked,
+};
 
 /// [`u64`]s that make up a [`U256`]
 const U64_PER_U256: usize = U256::MAX.0.len();
@@ -83,13 +88,17 @@ impl Stack {
 
         // The following index cannot fail because `next_offset` has already been checked and
         // `self.offset` is known to be within `STACK_LIMIT`.
+        // Store each limb individually so LLVM treats them as 4 independent i64 scalars.
+        // This prevents LLVM from grouping limbs[1..3] into a [24 x i8] alloca that would
+        // then need a memset + memcpy round-trip for values with known-zero upper limbs
+        // (e.g. PUSH1-PUSH31), allowing it to emit direct zero stores instead.
         #[expect(unsafe_code, reason = "next_offset == self.offset - 1 >= 0")]
         unsafe {
-            std::ptr::copy_nonoverlapping(
-                value.0.as_ptr(),
-                self.values.get_unchecked_mut(next_offset).0.as_mut_ptr(),
-                U64_PER_U256,
-            );
+            let slot = self.values.get_unchecked_mut(next_offset);
+            slot.0[0] = value.0[0];
+            slot.0[1] = value.0[1];
+            slot.0[2] = value.0[2];
+            slot.0[3] = value.0[3];
         }
         self.offset = next_offset;
 
@@ -218,6 +227,16 @@ impl fmt::Debug for Stack {
     }
 }
 
+impl Hash for Stack {
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "offset is always within bounds of values"
+    )]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.values[self.offset..].hash(state);
+    }
+}
+
 #[derive(Debug)]
 /// A call frame, or execution environment, is the context in which
 /// the EVM is currently executing.
@@ -268,12 +287,18 @@ pub struct CallFrame {
     pub ret_size: usize,
     /// If true then transfer value from caller to callee
     pub should_transfer_value: bool,
+    /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
+    /// Used to restore parent's state_gas_used on child revert.
+    pub state_gas_used_at_entry: i64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
 pub struct CallFrameBackup {
-    pub original_accounts_info: HashMap<Address, LevmAccount>,
-    pub original_account_storage_slots: HashMap<Address, HashMap<H256, U256>>,
+    pub original_accounts_info: FxHashMap<Address, LevmAccount>,
+    pub original_account_storage_slots: FxHashMap<Address, FxHashMap<H256, U256>>,
+    /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
+    /// while preserving touched_addresses.
+    pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
 }
 
 impl CallFrameBackup {
@@ -289,6 +314,7 @@ impl CallFrameBackup {
                 storage: Default::default(),
                 status: account.status.clone(),
                 has_storage: account.has_storage,
+                exists: account.exists,
             });
 
         Ok(())
@@ -297,18 +323,33 @@ impl CallFrameBackup {
     pub fn clear(&mut self) {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
+        self.bal_checkpoint = None;
     }
 
+    /// Merges `other` into `self`, per-address. For slots present in both,
+    /// `other`'s values win. Callers MUST pass the older/more-original backup
+    /// as `other` so the truly-original value is preserved (matches the
+    /// `or_insert` semantic in `backup_storage_slot`).
     pub fn extend(&mut self, other: CallFrameBackup) {
-        self.original_account_storage_slots
-            .extend(other.original_account_storage_slots);
+        // Per-slot merge: plain HashMap::extend would let `other`'s inner slot map
+        // replace `self`'s, dropping any slots `self` had for the same address.
+        for (address, other_storage) in other.original_account_storage_slots {
+            self.original_account_storage_slots
+                .entry(address)
+                .or_default()
+                .extend(other_storage);
+        }
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        // Don't extend bal_checkpoint - it's specific to each call frame
     }
 }
 
 impl CallFrame {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "inlined constructor, many args needed for performance"
+    )]
     // Force inline, due to lot of arguments, inlining must be forced, and it is actually beneficial
     // because passing so much data is costly. Verified with samply.
     #[inline(always)]
@@ -353,6 +394,7 @@ impl CallFrame {
             output: Bytes::default(),
             pc: 0,
             sub_return_data: Bytes::default(),
+            state_gas_used_at_entry: 0,
         }
     }
 
@@ -386,6 +428,16 @@ impl CallFrame {
         Ok(())
     }
 
+    /// EELS' `check_gas`: assert gas is available without consuming it.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    pub fn check_gas(&self, gas: u64) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 || (self.gas_remaining as u64) < gas {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+        Ok(())
+    }
+
     pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
@@ -396,6 +448,12 @@ impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
     pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        // Reserve once on the first sub-call (p99 depth ~10, max 27): keeps the ~43% of txs that
+        // never make a call alloc-free (`call_frames` starts as `Vec::new()`), while avoiding the
+        // repeated reallocs a call-heavy tx would otherwise incur as depth grows.
+        if self.call_frames.is_empty() {
+            self.call_frames.reserve(8);
+        }
         self.call_frames.push(new_call_frame);
         #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
         unsafe {
@@ -422,6 +480,19 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
         let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        restore_cache_state(self.db, callframe_backup)
+    }
+
+    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out instead of
+    /// cloning it. Only sound when nothing reads `call_frame_backup` afterward: the inner-call
+    /// revert in `handle_return` (the frame is popped right after, so its backup is dead), and
+    /// the top-level / invalid-tx revert when no `BackupHook` is installed (normal L1 block
+    /// execution, gated on `VM::preserve_top_level_backup`).
+    ///
+    /// When a `BackupHook` IS present (L2 / stateless) the top-level paths must keep cloning,
+    /// because `BackupHook::finalize` reads the backup to build the tx-level undo snapshot.
+    pub fn restore_cache_state_consuming(&mut self) -> Result<(), VMError> {
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 

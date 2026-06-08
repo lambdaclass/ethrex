@@ -7,13 +7,14 @@ use ethrex_blockchain::constants::{
 };
 use ethrex_blockchain::error::MempoolError;
 use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
-use std::collections::HashMap;
+use ethrex_crypto::NativeCrypto;
+use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
     BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    MempoolTransaction, Transaction, TxKind,
+    MempoolTransaction, Transaction, TxKind, kzg_commitment_to_versioned_hash,
 };
-use ethrex_common::{Address, Bytes, H256, U256};
+use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
 
@@ -94,6 +95,57 @@ fn create_transaction_intrinsic_gas() {
     let expected_gas_cost = TX_CREATE_GAS_COST;
     let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("Intrinsic gas");
     assert_eq!(intrinsic_gas, expected_gas_cost);
+}
+
+/// EIP-8037 / bal-devnet-4: Amsterdam CREATE tx intrinsic must match the VM
+/// charge, not the legacy `TX_CREATE_GAS_COST = 53000`. The regular portion
+/// drops to `TX_GAS_COST + REGULAR_GAS_CREATE = 30000` and a state portion
+/// (`STATE_BYTES_PER_NEW_ACCOUNT * cpsb`) is folded in. Mempool admission
+/// must return the total so txs whose `gas_limit` is below the VM intrinsic
+/// are rejected before they enter the pool, and txs above it aren't
+/// spuriously rejected.
+#[test]
+fn amsterdam_create_intrinsic_matches_vm_dimensions() {
+    use ethrex_levm::gas_cost::{
+        REGULAR_GAS_CREATE, STATE_BYTES_PER_NEW_ACCOUNT, cost_per_state_byte,
+    };
+
+    let (mut config, header) = build_basic_config_and_header(true, true);
+    // Activate Amsterdam at genesis. Intermediate forks must also be active
+    // so `config.fork(timestamp)` returns Amsterdam, not an earlier variant.
+    config.cancun_time = Some(0);
+    config.prague_time = Some(0);
+    config.osaka_time = Some(0);
+    config.bpo1_time = Some(0);
+    config.bpo2_time = Some(0);
+    config.amsterdam_time = Some(0);
+
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000_000,
+        to: TxKind::Create,
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        ..Default::default()
+    });
+
+    let cpsb = cost_per_state_byte(header.gas_limit);
+    let expected = TX_GAS_COST + REGULAR_GAS_CREATE + STATE_BYTES_PER_NEW_ACCOUNT * cpsb;
+
+    let intrinsic_gas = transaction_intrinsic_gas(&tx, &header, &config).expect("intrinsic gas");
+    assert_eq!(
+        intrinsic_gas, expected,
+        "Amsterdam CREATE intrinsic must be TX_BASE + REGULAR_GAS_CREATE + \
+         STATE_BYTES_PER_NEW_ACCOUNT * cpsb, not the legacy 53000"
+    );
+    // Guard against regression to the legacy 53000 constant.
+    assert_ne!(
+        intrinsic_gas, TX_CREATE_GAS_COST,
+        "Amsterdam CREATE must NOT use legacy TX_CREATE_GAS_COST"
+    );
 }
 
 #[test]
@@ -356,13 +408,43 @@ async fn transaction_with_blob_base_fee_below_min_should_fail() {
     ));
 }
 
+#[tokio::test]
+async fn validate_transaction_rejects_oversize_non_blob() {
+    // EIP-1559 tx with serialized RLP > MAX_TX_SIZE must be rejected at
+    // admission with `TxSizeExceeded`. The size cap is the first
+    // size-themed check; it runs before init-code, intrinsic gas, and
+    // balance lookups, so an unsigned tx with no sender state is enough.
+    use ethrex_common::types::MAX_TX_SIZE;
+
+    let (config, header) = build_basic_config_and_header(false, false);
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    // Pad calldata above MAX_TX_SIZE so the *encoded* tx is also oversized.
+    let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        data: Bytes::from(vec![0u8; MAX_TX_SIZE + 1]),
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    match res {
+        Err(MempoolError::TxSizeExceeded { actual, limit }) => {
+            assert!(actual > limit);
+            assert_eq!(limit, MAX_TX_SIZE);
+        }
+        other => panic!("expected TxSizeExceeded, got {:?}", other),
+    }
+}
+
 #[test]
 fn test_filter_mempool_transactions() {
     let plain_tx_decoded = Transaction::decode_canonical(&hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap()).unwrap();
-    let plain_tx_sender = plain_tx_decoded.sender().unwrap();
+    let plain_tx_sender = plain_tx_decoded.sender(&NativeCrypto).unwrap();
     let plain_tx = MempoolTransaction::new(plain_tx_decoded, plain_tx_sender);
     let blob_tx_decoded = Transaction::decode_canonical(&hex::decode("03f88f0780843b9aca008506fc23ac00830186a09400000000000000000000000000000000000001008080c001e1a0010657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c44401401a0840650aa8f74d2b07f40067dc33b715078d73422f01da17abdbd11e02bbdfda9a04b2260f6022bf53eadb337b3e59514936f7317d872defb891a708ee279bdca90").unwrap()).unwrap();
-    let blob_tx_sender = blob_tx_decoded.sender().unwrap();
+    let blob_tx_sender = blob_tx_decoded.sender(&NativeCrypto).unwrap();
     let blob_tx = MempoolTransaction::new(blob_tx_decoded, blob_tx_sender);
     let plain_tx_hash = plain_tx.hash();
     let blob_tx_hash = blob_tx.hash();
@@ -375,7 +457,10 @@ fn test_filter_mempool_transactions() {
         .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
-    assert_eq!(txs, HashMap::from([(blob_tx.sender(), vec![blob_tx])]));
+    assert_eq!(
+        txs,
+        FxHashMap::from_iter([(blob_tx.sender(), vec![blob_tx])])
+    );
 }
 
 #[test]
@@ -394,5 +479,214 @@ fn blobs_bundle_loadtest() {
             version: 0,
         };
         mempool.add_blobs_bundle(H256::random(), bundle).unwrap();
+    }
+}
+
+#[test]
+fn blobs_bundle_insert_and_remove() {
+    // Insert two bundles with 2 blobs, and where both bundles contain one specific blob.
+    // Then remove one bundle making sure that blob-version-hash to tx-hash cache still points to
+    // the other txn. And finally remove second bundle as well.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let (blob, commitment, proof) = ([255u8; BYTES_PER_BLOB], [255u8; 48], [255u8; 48]);
+    let versioned_hash = kzg_commitment_to_versioned_hash(&commitment);
+    let mut txn_hash = vec![];
+
+    for i in 1..=2 {
+        let blobs = [blob, [i as u8; BYTES_PER_BLOB]];
+        let commitments = [commitment, [i as u8; 48]];
+        let proofs = [proof, [i as u8; 48]];
+        let bundle = BlobsBundle {
+            blobs: blobs.to_vec(),
+            commitments: commitments.to_vec(),
+            proofs: proofs.to_vec(),
+            version: 0,
+        };
+        let tx = EIP4844Transaction {
+            nonce: 3,
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: 0.into(),
+            gas: 15_000_000,
+            to: Address::from_low_u64_be(1), // Normal tx
+            ..Default::default()
+        };
+
+        let tx = Transaction::EIP4844Transaction(tx);
+        let sender = H160::random();
+        let hash = H256::random();
+        txn_hash.push(hash);
+        mempool
+            .add_blobs_bundle(txn_hash[i as usize - 1], bundle)
+            .unwrap();
+
+        mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .expect("Failed to add blob transaction");
+    }
+
+    // When a txn is removed it should not remove the associated bundle as another txn also has the same bundle.
+    for txn_hash in txn_hash.into_iter() {
+        assert_eq!(
+            mempool
+                .get_blobs_data_by_versioned_hashes(&[versioned_hash])
+                .expect("should return a bundle")
+                .len(),
+            1
+        );
+
+        mempool
+            .remove_transaction(&txn_hash)
+            .expect("should remove blob bundle by txn_hash");
+    }
+
+    // Once both transactions are removed it should remove the bundle as well.
+    assert_eq!(
+        mempool
+            .get_blobs_data_by_versioned_hashes(&[versioned_hash])
+            .expect("should return empty"),
+        vec![None]
+    );
+}
+
+mod alternates {
+    use super::*;
+    use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;
+    use std::time::Duration;
+
+    fn h(n: u8) -> H256 {
+        let mut b = [0u8; 32];
+        b[31] = n;
+        H256::from(b)
+    }
+
+    /// Helper that reserves `hashes` with synthetic per-hash (type, size)
+    /// metadata. Tests that don't care about the metadata can use this.
+    fn reserve(mp: &Mempool, hashes: &[H256], announcer: H256) -> Vec<H256> {
+        let types = vec![0u8; hashes.len()];
+        let sizes = vec![0usize; hashes.len()];
+        mp.reserve_unknown_hashes(hashes, &types, &sizes, announcer)
+            .unwrap()
+    }
+
+    #[test]
+    fn primary_requester_is_not_an_alternate() {
+        let mp = Mempool::new(64);
+        let peer_a = h(1);
+        let tx = h(0xa);
+
+        // peer_a is the first announcer: it becomes the primary requester
+        // (returned in `unknown`), so no alternates entry should be created.
+        let unknown = reserve(&mp, &[tx], peer_a);
+        assert_eq!(unknown, vec![tx]);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn second_announcer_recorded_as_alternate() {
+        let mp = Mempool::new(64);
+        let peer_a = h(1);
+        let peer_b = h(2);
+        let tx_a = h(0xa);
+        let tx_b = h(0xb);
+
+        let unknown = reserve(&mp, &[tx_a, tx_b], peer_a);
+        assert_eq!(unknown, vec![tx_a, tx_b]);
+
+        // peer_b sees the same hashes already in-flight from peer_a, so it
+        // should be filed as an alternate for each hash.
+        let unknown = reserve(&mp, &[tx_a, tx_b], peer_b);
+        assert!(unknown.is_empty());
+
+        let alt_a = mp.pop_alternate(tx_a).unwrap().expect("alt for tx_a");
+        let alt_b = mp.pop_alternate(tx_b).unwrap().expect("alt for tx_b");
+        assert_eq!(alt_a.peer_id, peer_b);
+        assert_eq!(alt_b.peer_id, peer_b);
+    }
+
+    #[test]
+    fn alternate_carries_per_hash_type_and_size() {
+        let mp = Mempool::new(64);
+        let primary = h(1);
+        let alt_peer = h(2);
+        let tx = h(0xa);
+
+        // primary announces with one (type, size); alt announces with another.
+        // The stored alternate must carry the alt peer's metadata, not the
+        // primary's, so a later retry validates the alt peer's response
+        // against the alt's own announcement.
+        mp.reserve_unknown_hashes(&[tx], &[0x03], &[42], primary)
+            .unwrap();
+        mp.reserve_unknown_hashes(&[tx], &[0x03], &[131072], alt_peer)
+            .unwrap();
+
+        let popped = mp.pop_alternate(tx).unwrap().expect("alt present");
+        assert_eq!(popped.peer_id, alt_peer);
+        assert_eq!(popped.tx_type, 0x03);
+        assert_eq!(popped.tx_size, 131072);
+    }
+
+    #[test]
+    fn pop_alternates_is_fifo_and_drains() {
+        let mp = Mempool::new(64);
+        let tx = h(0xab);
+        let primary = h(99);
+        let p1 = h(1);
+        let p2 = h(2);
+        let p3 = h(3);
+
+        reserve(&mp, &[tx], primary);
+        reserve(&mp, &[tx], p1);
+        reserve(&mp, &[tx], p2);
+        reserve(&mp, &[tx], p3);
+
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p1);
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p2);
+        assert_eq!(mp.pop_alternate(tx).unwrap().unwrap().peer_id, p3);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn alternates_capped() {
+        let mp = Mempool::new(64);
+        let tx = h(0xcd);
+        let primary = h(0xff);
+        reserve(&mp, &[tx], primary);
+        for i in 0..(MAX_ALTERNATES_PER_HASH + 4) {
+            reserve(&mp, &[tx], h(i as u8 + 1));
+        }
+        let mut count = 0;
+        while mp.pop_alternate(tx).unwrap().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, MAX_ALTERNATES_PER_HASH);
+    }
+
+    #[test]
+    fn duplicate_announcer_not_double_counted() {
+        let mp = Mempool::new(64);
+        let tx = h(0xef);
+        let primary = h(0xff);
+        let peer = h(42);
+        reserve(&mp, &[tx], primary);
+        reserve(&mp, &[tx], peer);
+        reserve(&mp, &[tx], peer);
+        reserve(&mp, &[tx], peer);
+        let popped = mp.pop_alternate(tx).unwrap().expect("alt present");
+        assert_eq!(popped.peer_id, peer);
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
+    }
+
+    #[test]
+    fn prune_alternates_drops_stale_entries() {
+        let mp = Mempool::new(64);
+        let tx = h(0xaa);
+        reserve(&mp, &[tx], h(1));
+        reserve(&mp, &[tx], h(2));
+        // Sleep well past the TTL so a loaded CI scheduler that gives us a
+        // shorter-than-asked sleep still observes the entries as stale.
+        std::thread::sleep(Duration::from_millis(20));
+        mp.prune_alternates(Duration::from_millis(5)).unwrap();
+        assert!(mp.pop_alternate(tx).unwrap().is_none());
     }
 }

@@ -1,4 +1,4 @@
-use aligned_sdk::common::types::Network;
+use aligned_sdk::types::Network;
 use ethrex_common::{Address, U256};
 use ethrex_l2_rpc::signer::Signer;
 use reqwest::Url;
@@ -27,7 +27,6 @@ pub struct BlockProducerConfig {
     pub base_fee_vault_address: Option<Address>,
     pub operator_fee_vault_address: Option<Address>,
     pub elasticity_multiplier: u64,
-    pub block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -75,6 +74,7 @@ pub struct ProofCoordinatorConfig {
     pub validium: bool,
     pub tdx_private_key: Option<SecretKey>,
     pub qpl_tool_path: Option<String>,
+    pub prover_timeout_ms: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -103,7 +103,11 @@ pub struct AlignedConfig {
     pub aligned_verifier_interval_ms: u64,
     pub beacon_urls: Vec<Url>,
     pub network: Network,
-    pub fee_estimate: String,
+    /// Starting L1 block number for the proof aggregation search.
+    /// This helps avoid scanning blocks from before proofs were being sent.
+    pub from_block: Option<u64>,
+    /// Timeout in seconds before resending a proof that hasn't been verified on-chain.
+    pub resubmission_timeout_secs: u64,
 }
 
 #[derive(Clone, Debug)]

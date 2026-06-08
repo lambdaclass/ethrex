@@ -1,6 +1,6 @@
 { gitRev }:
-assert (builtins.stringLength gitRev == 7)
-  || throw "gitRev must be exactly 7 characters use (git rev-parse --short=7 HEAD)";
+assert (builtins.stringLength gitRev == 40)
+  || throw "gitRev must be exactly 40 characters use (git rev-parse HEAD)";
 
 let
   pkgs = import <nixpkgs> { };
@@ -12,7 +12,7 @@ let
   }) { };
   toolchain = fenix.fromToolchainFile {
       file = ../../../../rust-toolchain.toml;
-      sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
+      sha256 = "sha256-2eWc3xVTKqg5wKSHGwt1XoM/kUBC6y3MWfKg74Zn+fY=";
   };
   rustPlatform = pkgs.makeRustPlatform {
     cargo = toolchain;
@@ -38,9 +38,7 @@ let
     cargoDeps = rustPlatform.importCargoLock {
       lockFile = ./Cargo.lock;
       outputHashes = {
-        "bls12_381-0.8.0" = "sha256-8/pXRA7hVAPeMKCZ+PRPfQfxqstw5Ob4MJNp85pv5WQ=";
-        "aligned-sdk-0.1.0" = "sha256-aBU5mgGoKHDG2OYL+qJGSk97hn2AirxQ3soaK9DShpQ=";
-        "lambdaworks-crypto-0.12.0" = "sha256-4vgW/O85zVLhhFrcZUwcPjavy/rRWB8LGTabAkPNrDw=";
+        "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
       };
     };
 

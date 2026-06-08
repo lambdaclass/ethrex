@@ -17,6 +17,7 @@ use ethrex_common::{
 };
 use ethrex_config::networks::Network;
 use ethrex_l2_rpc::signer::{Signable, Signer};
+use ethrex_p2p::snap::constants::PEER_REPLY_TIMEOUT;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rpc::{
     EngineClient, EthClient,
@@ -251,12 +252,19 @@ impl Node {
         );
         let syncing_fut = wait_until_synced(&self.engine_client, fork_choice_state);
 
-        tokio::time::timeout(Duration::from_secs(5), syncing_fut)
-            .await
-            .inspect_err(|_| {
-                error!(node = self.index, "Timed out waiting for node to sync");
-            })
-            .expect("timed out waiting for node to sync");
+        // Needs to be at least 2x the p2p peer reply timeout so that if the
+        // node queries the wrong peer first (e.g. one with a different chain),
+        // it has time to retry with the correct peer. Extra 10s of slack for
+        // slow CI environments.
+        tokio::time::timeout(
+            PEER_REPLY_TIMEOUT * 2 + Duration::from_secs(10),
+            syncing_fut,
+        )
+        .await
+        .inspect_err(|_| {
+            error!(node = self.index, "Timed out waiting for node to sync");
+        })
+        .expect("timed out waiting for node to sync");
     }
 
     pub async fn build_payload(&self, mut chain: Chain) -> Chain {
@@ -295,9 +303,18 @@ impl Node {
             .unwrap();
 
         let requests_hash = compute_requests_hash(&payload_response.execution_requests.unwrap());
+        let block_access_list_hash = payload_response
+            .execution_payload
+            .block_access_list
+            .as_ref()
+            .map(|bal| bal.compute_hash());
         let block = payload_response
             .execution_payload
-            .into_block(parent_beacon_block_root, Some(requests_hash))
+            .into_block(
+                parent_beacon_block_root,
+                Some(requests_hash),
+                block_access_list_hash,
+            )
             .unwrap();
 
         info!(
@@ -322,7 +339,7 @@ impl Node {
 
     pub async fn notify_new_payload(&self, chain: &Chain) {
         let head = chain.blocks.last().unwrap();
-        let execution_payload = ExecutionPayload::from_block(head.clone());
+        let execution_payload = ExecutionPayload::from_block(head.clone(), None);
         // Support blobs
         // let commitments = execution_payload_response
         //     .blobs_bundle
@@ -338,11 +355,19 @@ impl Node {
         //     .collect();
         let commitments = vec![];
         let parent_beacon_block_root = head.header.parent_beacon_block_root.unwrap();
-        let _payload_status = self
-            .engine_client
-            .engine_new_payload_v4(execution_payload, commitments, parent_beacon_block_root)
-            .await
-            .unwrap();
+        // Amsterdam+ payloads carry a Block Access List and MUST use newPayloadV5;
+        // earlier forks use V4, which rejects the BAL field.
+        let _payload_status = if execution_payload.block_access_list.is_some() {
+            self.engine_client
+                .engine_new_payload_v5(execution_payload, commitments, parent_beacon_block_root)
+                .await
+                .unwrap()
+        } else {
+            self.engine_client
+                .engine_new_payload_v4(execution_payload, commitments, parent_beacon_block_root)
+                .await
+                .unwrap()
+        };
     }
 
     pub async fn send_eth_transfer(&self, signer: &Signer, recipient: H160, amount: u64) {

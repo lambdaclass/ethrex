@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -25,7 +25,7 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(mut peer_table: PeerTable, node_record: NodeRecord) -> Self {
+    pub async fn new(peer_table: PeerTable, node_record: NodeRecord) -> Self {
         let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {
@@ -68,6 +68,23 @@ pub fn generate_jwt_secret() -> String {
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
+}
+
+pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(eyre::eyre!("empty namespace in --http.api"));
+    }
+    if trimmed.eq_ignore_ascii_case("engine") {
+        return Err(eyre::eyre!(
+            "`engine` cannot be enabled on --http.api; it is served on the authenticated RPC port"
+        ));
+    }
+    ethrex_rpc::RpcNamespace::from_prefix(&trimmed.to_ascii_lowercase()).ok_or_else(|| {
+        eyre::eyre!(
+            "unknown RPC namespace {trimmed:?}; expected one of eth, net, web3, debug, admin, txpool"
+        )
+    })
 }
 
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {
@@ -158,17 +175,21 @@ pub fn parse_hex(s: &str) -> eyre::Result<Bytes, FromHexError> {
     }
 }
 
-/// Returns a detailed client version string with git info.
-pub fn get_client_version() -> String {
-    format!(
-        "{}/v{}-{}-{}/{}/rustc-v{}",
-        env!("CARGO_PKG_NAME"),
-        env!("CARGO_PKG_VERSION"),
-        env!("VERGEN_GIT_BRANCH"),
-        env!("VERGEN_GIT_SHA"),
-        env!("VERGEN_RUSTC_HOST_TRIPLE"),
-        env!("VERGEN_RUSTC_SEMVER")
+/// Returns a detailed client version struct with git info.
+pub fn get_client_version() -> ethrex_rpc::ClientVersion {
+    ethrex_rpc::ClientVersion::new(
+        env!("CARGO_PKG_NAME").to_string(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        env!("VERGEN_GIT_BRANCH").to_string(),
+        env!("VERGEN_GIT_SHA").to_string(),
+        env!("VERGEN_RUSTC_HOST_TRIPLE").to_string(),
+        env!("VERGEN_RUSTC_SEMVER").to_string(),
     )
+}
+
+/// Returns a detailed client version string with git info (for clap attributes).
+pub fn get_client_version_string() -> String {
+    get_client_version().to_string()
 }
 
 /// Returns a minimal client version string without git info.
@@ -177,6 +198,8 @@ pub fn get_minimal_client_version() -> String {
 }
 
 pub fn display_chain_initialization(genesis: &Genesis) {
+    const BANNER: &str = include_str!("banner.txt");
+    info!("\n{BANNER}");
     let border = "═".repeat(70);
 
     info!("{border}");

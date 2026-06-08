@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::monitor::EthrexMonitor;
 use crate::sequencer::admin_server::start_api;
 use crate::sequencer::errors::SequencerError;
-use crate::sequencer::sequencer_state::{SequencerState, SequencerStatus};
 use crate::sequencer::state_updater::StateUpdater;
 use crate::{BlockFetcher, SequencerConfig};
 use block_producer::BlockProducer;
 use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
+use ethrex_monitor::{EthrexMonitor, MonitorConfig as ExternalMonitorConfig};
+use ethrex_rpc::SubscriptionManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -20,7 +20,7 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use reqwest::Url;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -35,7 +35,7 @@ pub mod l1_watcher;
 #[cfg(feature = "metrics")]
 pub mod metrics;
 pub mod proof_coordinator;
-pub mod sequencer_state;
+pub use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
 pub mod state_updater;
 
 pub mod configs;
@@ -53,10 +53,12 @@ pub async fn start_l2(
     l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
+    l2_gas_limit: u64,
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 ) -> Result<
     (
-        Option<GenServerHandle<L1Committer>>,
-        Option<GenServerHandle<BlockProducer>>,
+        Option<ActorRef<L1Committer>>,
+        Option<ActorRef<BlockProducer>>,
         Pin<Box<dyn Future<Output = Result<(), errors::SequencerError>> + Send>>,
     ),
     errors::SequencerError,
@@ -70,7 +72,7 @@ pub async fn start_l2(
     };
 
     if let Some(batch_gas_limit) = cfg.l1_committer.batch_gas_limit {
-        let block_gas_limit = cfg.block_producer.block_gas_limit;
+        let block_gas_limit = l2_gas_limit;
         if batch_gas_limit < block_gas_limit {
             error!(
                 "The block gas limit ({block_gas_limit}) cannot be greater than the batch gas limit ({batch_gas_limit})."
@@ -146,7 +148,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
-        checkpoints_dir,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -159,6 +161,8 @@ pub async fn start_l2(
         cfg.clone(),
         shared_state.clone(),
         cfg.l1_watcher.router_address,
+        l2_gas_limit,
+        subscription_manager,
     )
     .await
     .inspect_err(|err| {
@@ -178,6 +182,7 @@ pub async fn start_l2(
             cfg.clone(),
             rollup_store.clone(),
             needed_proof_types.clone(),
+            checkpoints_dir.clone(),
         )));
     }
     let state_updater = StateUpdater::spawn(
@@ -206,11 +211,12 @@ pub async fn start_l2(
     }
 
     if cfg.monitor.enabled {
+        let monitor_cfg = monitor_config_from(&cfg);
         EthrexMonitor::spawn(
             shared_state.clone(),
             store.clone(),
             rollup_store.clone(),
-            &cfg,
+            &monitor_cfg,
             cancellation_token.clone(),
         )
         .await?;
@@ -258,6 +264,26 @@ pub async fn start_l2(
         Ok(())
     });
     Ok((l1_committer_handle, block_producer_handle, driver))
+}
+
+fn monitor_config_from(cfg: &SequencerConfig) -> ExternalMonitorConfig {
+    let sequencer_registry_address =
+        if cfg.state_updater.sequencer_registry == ethrex_common::Address::default() {
+            None
+        } else {
+            Some(cfg.state_updater.sequencer_registry)
+        };
+    ExternalMonitorConfig {
+        enabled: cfg.monitor.enabled,
+        tick_rate: cfg.monitor.tick_rate,
+        batch_widget_height: cfg.monitor.batch_widget_height,
+        on_chain_proposer_address: cfg.l1_committer.on_chain_proposer_address,
+        bridge_address: cfg.l1_watcher.bridge_address,
+        sequencer_registry_address,
+        rpc_urls: cfg.eth.rpc_url.clone(),
+        is_based: cfg.based.enabled,
+        osaka_activation_time: cfg.eth.osaka_activation_time,
+    }
 }
 
 fn handle_verifier_result(res: Result<Result<(), SequencerError>, tokio::task::JoinError>) {

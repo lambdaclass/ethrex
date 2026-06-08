@@ -2,7 +2,7 @@
 
 ## Chain IDs
 
-In an intent to standarize the deployed chains by the team, we decided to use the following convention for the chain IDs:
+In an attempt to standardize the deployed chains by the team, we decided to use the following convention for the chain IDs:
 
 - All chains will have ID `65536XYY`.
 - `X` is the stage of the chain:

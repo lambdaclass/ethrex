@@ -4,12 +4,20 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     debug::DebugMode,
     environment::Environment,
-    errors::{ContextResult, ExecutionReport, InternalError, OpcodeResult, VMError},
+    errors::{
+        ContextResult, ExceptionalHalt, ExecutionReport, InternalError, OpcodeResult, TxResult,
+        VMError,
+    },
+    gas_cost::{
+        STATE_BYTES_PER_AUTH_BASE, STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT,
+        STATE_BYTES_PER_STORAGE_SET, cost_per_state_byte as compute_cost_per_state_byte,
+    },
     hooks::{
         backup_hook::BackupHook,
         hook::{Hook, get_hooks},
     },
     memory::Memory,
+    opcode_tracer::LevmOpcodeTracer,
     opcodes::OpCodeFn,
     precompiles::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
@@ -18,20 +26,21 @@ use crate::{
 };
 use bytes::Bytes;
 use ethrex_common::{
-    Address, H160, H256, U256,
+    Address, BigEndianHash, H160, H256, U256,
     tracing::CallType,
     types::{AccessListEntry, Code, Fork, Log, Transaction, fee_config::FeeConfig},
 };
-use rustc_hash::FxHashSet;
+use ethrex_crypto::Crypto;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::{
-    cell::RefCell,
-    collections::{BTreeMap, BTreeSet, HashMap},
+    cell::{OnceCell, RefCell},
+    collections::{BTreeMap, BTreeSet},
     mem,
     rc::Rc,
 };
 
 /// Storage mapping from slot key to value.
-pub type Storage = HashMap<U256, H256>;
+pub type Storage = FxHashMap<U256, H256>;
 
 /// Specifies whether the VM operates in L1 or L2 mode.
 #[derive(Debug, Clone, Copy, Default)]
@@ -66,12 +75,17 @@ pub enum VMType {
 pub struct Substate {
     /// Parent checkpoint for reverting on failure.
     parent: Option<Box<Self>>,
+    /// Fork of the enclosing transaction. Lets the warmth helpers treat precompile addresses as
+    /// always-warm without occupying a hashset slot (EIP-2929). Constant for a tx, so it is
+    /// carried forward across `push_backup` checkpoints.
+    fork: Fork,
     /// Accounts marked for self-destruction (deleted at end of transaction).
     selfdestruct_set: FxHashSet<Address>,
     /// Addresses accessed during execution (for EIP-2929 warm/cold gas costs).
+    /// Precompiles are NOT stored here; they are warm by construction (see `is_warm_precompile`).
     accessed_addresses: FxHashSet<Address>,
     /// Storage slots accessed per address (for EIP-2929 warm/cold gas costs).
-    accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+    accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     /// Accounts created during this transaction.
     created_accounts: FxHashSet<Address>,
     /// Accumulated gas refund (e.g., from storage clears).
@@ -84,20 +98,44 @@ pub struct Substate {
 
 impl Substate {
     pub fn from_accesses(
+        fork: Fork,
         accessed_addresses: FxHashSet<Address>,
-        accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>>,
+        accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>>,
     ) -> Self {
         Self {
             parent: None,
-
+            fork,
             selfdestruct_set: FxHashSet::default(),
             accessed_addresses,
             accessed_storage_slots,
             created_accounts: FxHashSet::default(),
             refunded_gas: 0,
-            transient_storage: TransientStorage::new(),
+            transient_storage: TransientStorage::default(),
             logs: Vec::new(),
         }
+    }
+
+    /// Whether `address` is a precompile that the EVM treats as warm from the start of the tx
+    /// (EIP-2929), exactly matching the addresses `Substate::initialize` used to pre-seed.
+    ///
+    /// Replicates the pre-seed *precisely* — the contiguous range `0x01..=max_for_fork` plus the
+    /// post-Osaka P256VERIFY address `0x100` — and is intentionally `vm_type`-independent, since
+    /// the old pre-seed was too. (Using `precompiles::is_precompile`, which gates `0x100` on L2
+    /// for any fork, would change L2 pre-Osaka warmth — a consensus difference, not an opt.)
+    #[inline]
+    fn is_warm_precompile(&self, address: &Address) -> bool {
+        // Fast reject: every pre-seeded precompile has 18 leading zero bytes (max is `0x01_00`),
+        // so real contract/EOA addresses bail out here, off the hot warmth path.
+        if address.0[..18] != [0u8; 18] {
+            return false;
+        }
+        let n = u16::from_be_bytes([address.0[18], address.0[19]]);
+        let max_contiguous: u64 = match self.fork {
+            f if f >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
+            f if f >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
+            _ => SIZE_PRECOMPILES_PRE_CANCUN,
+        };
+        (n >= 1 && u64::from(n) <= max_contiguous) || (n == 0x100 && self.fork >= Fork::Osaka)
     }
 
     /// Push a checkpoint that can be either reverted or committed. All data up to this point is
@@ -105,6 +143,8 @@ impl Substate {
     pub fn push_backup(&mut self) {
         let parent = mem::take(self);
         self.refunded_gas = parent.refunded_gas;
+        // Carry the fork forward so child checkpoints keep the same precompile-warmth view.
+        self.fork = parent.fork;
         self.parent = Some(Box::new(parent));
     }
 
@@ -173,6 +213,10 @@ impl Substate {
 
     /// Mark an address as selfdestructed and return whether is was already marked.
     pub fn add_selfdestruct(&mut self, address: Address) -> bool {
+        if self.selfdestruct_set.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -220,20 +264,31 @@ impl Substate {
             .collect()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Mark an address as accessed and return whether the slot was cold.
     pub fn add_accessed_slot(&mut self, address: Address, key: H256) -> bool {
+        if self
+            .accessed_storage_slots
+            .get(&address)
+            .is_some_and(|set| set.contains(&key))
+        {
+            return false;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_slot_accessed(&address, &key))
             .unwrap_or_default();
 
-        is_present
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
+        !(is_present
             || !self
                 .accessed_storage_slots
                 .entry(address)
                 .or_default()
-                .insert(key)
+                .insert(key))
     }
 
     /// Return whether an address has already been accessed.
@@ -249,20 +304,55 @@ impl Substate {
                 .unwrap_or_default()
     }
 
-    /// Mark an address as accessed and return whether is was already marked.
+    /// Returns all accessed storage slots for a given address.
+    /// Used by SELFDESTRUCT to record storage reads in BAL per EIP-7928:
+    /// "SELFDESTRUCT: Include modified/read storage keys as storage_read"
+    pub fn get_accessed_storage_slots(&self, address: &Address) -> BTreeSet<H256> {
+        let mut slots = BTreeSet::new();
+
+        // Collect from current substate
+        if let Some(slot_set) = self.accessed_storage_slots.get(address) {
+            slots.extend(slot_set.iter().copied());
+        }
+
+        // Collect from parent substates recursively
+        if let Some(parent) = self.parent.as_ref() {
+            slots.extend(parent.get_accessed_storage_slots(address));
+        }
+
+        slots
+    }
+
+    /// Mark an address as accessed and return whether the address was cold.
     pub fn add_accessed_address(&mut self, address: Address) -> bool {
+        // Precompiles are warm from tx start (EIP-2929) without occupying a hashset slot. Returns
+        // `false` (not cold) so cold-access gas is never charged — identical to the old pre-seed.
+        if self.is_warm_precompile(&address) {
+            return false;
+        }
+
+        if self.accessed_addresses.contains(&address) {
+            return false;
+        }
+
         let is_present = self
             .parent
             .as_ref()
             .map(|parent| parent.is_address_accessed(&address))
             .unwrap_or_default();
 
-        is_present || !self.accessed_addresses.insert(address)
+        // Note: Do not simplify this expression, it uses `||` to avoid executing the right hand
+        //   expression if not necessary.
+        #[expect(clippy::nonminimal_bool, reason = "order of evaluation matters")]
+        !(is_present || !self.accessed_addresses.insert(address))
     }
 
     /// Return whether an address has already been accessed.
     pub fn is_address_accessed(&self, address: &Address) -> bool {
-        self.accessed_addresses.contains(address)
+        // Precompiles are always warm; the chain shares one `fork`, so this is consistent across
+        // sub-frame substates.
+        self.is_warm_precompile(address)
+            || self.accessed_addresses.contains(address)
             || self
                 .parent
                 .as_ref()
@@ -272,6 +362,10 @@ impl Substate {
 
     /// Mark an address as a new account and return whether is was already marked.
     pub fn add_created_account(&mut self, address: Address) -> bool {
+        if self.created_accounts.contains(&address) {
+            return true;
+        }
+
         let is_present = self
             .parent
             .as_ref()
@@ -358,7 +452,7 @@ impl Substate {
 /// # Example
 ///
 /// ```ignore
-/// let mut vm = VM::new(env, db, &tx, tracer, debug_mode, vm_type);
+/// let mut vm = VM::new(env, db, &tx, tracer, vm_type, &NativeCrypto);
 /// let report = vm.execute()?;
 /// if report.is_success() {
 ///     println!("Gas used: {}, Output: {:?}", report.gas_used, report.output);
@@ -377,31 +471,196 @@ pub struct VM<'a> {
     pub substate: Substate,
     /// Database for reading/writing account state.
     pub db: &'a mut GeneralizedDatabase,
-    /// The transaction being executed.
-    pub tx: Transaction,
+    /// The transaction being executed. Borrowed for the VM's lifetime (the caller owns it for at
+    /// least that long), avoiding a per-tx deep clone of the access/authorization lists.
+    pub tx: &'a Transaction,
     /// Execution hooks for tracing and debugging.
     pub hooks: Vec<Rc<RefCell<dyn Hook>>>,
-    /// Original storage values before transaction (for SSTORE gas calculation).
-    pub storage_original_values: BTreeMap<(Address, H256), U256>,
+    /// Original storage values before transaction (for SSTORE gas calculation),
+    /// keyed first by account to avoid hashing the full tuple on each access.
+    pub storage_original_values: FxHashMap<Address, FxHashMap<H256, U256>>,
     /// Call tracer for execution tracing.
     pub tracer: LevmCallTracer,
+    /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
+    pub opcode_tracer: LevmOpcodeTracer,
     /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
     pub stack_pool: Vec<Stack>,
     /// VM type (L1 or L2 with fee config).
     pub vm_type: VMType,
-    /// Opcode dispatch table, built dynamically per fork.
-    pub(crate) opcode_table: [OpCodeFn<'a>; 256],
+    /// Whether the top-level call-frame backup must be PRESERVED (deep-cloned) on the
+    /// revert / invalid-tx paths because a `BackupHook` will read it in `finalize_execution`
+    /// to build the tx-level undo snapshot. Derived from the installed `hooks` (via
+    /// [`Hook::reads_top_level_backup`]) rather than from `vm_type`, so it stays correct if
+    /// hook wiring changes; `add_hook` keeps it in sync for the `BackupHook` that
+    /// `stateless_execute` installs after construction. False for normal L1 block execution
+    /// (no `BackupHook`), where the backup is dead once the cache is restored and can be moved
+    /// out instead of cloned.
+    pub(crate) preserve_top_level_backup: bool,
+    /// EIP-8037: Accumulated state gas for this transaction (Amsterdam+).
+    /// Signed: goes negative when inline refunds exceed gross charges in the local frame
+    /// (e.g. SSTORE 0→x→0 restoration matching an ancestor's charge).
+    pub state_gas_used: i64,
+    /// EIP-8037: State gas reservoir pre-funded from excess gas_limit (Amsterdam+).
+    pub state_gas_reservoir: u64,
+    /// EIP-8037: Initial reservoir at tx start (before any execution). Captured in
+    /// add_intrinsic_gas so block-dimensional regular gas can be computed
+    /// independently of mid-tx reservoir activity (auth refunds, SSTORE credits).
+    pub state_gas_reservoir_initial: u64,
+    /// EIP-8037: Cumulative state gas that spilled to regular gas during execution
+    /// (when reservoir was insufficient). Subtracted when computing dimensional
+    /// regular gas for block accounting — EELS charge_state_gas spills don't
+    /// increment regular_gas_used.
+    pub state_gas_spill: u64,
+    /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
+    pub cost_per_state_byte: u64,
+    /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
+    pub state_gas_new_account: u64,
+    /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
+    pub state_gas_storage_set: u64,
+    /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
+    pub state_gas_auth_total: u64,
+    /// EIP-8037: State gas for the 23-byte EIP-7702 delegation indicator
+    /// (STATE_BYTES_PER_AUTH_BASE * cost_per_state_byte). Refunded by
+    /// `set_delegation` when no new delegation indicator bytes are written —
+    /// either the authority's code slot already holds an indicator or the
+    /// auth clears against an empty authority.
+    pub state_gas_auth_base: u64,
+    /// EIP-8037: state-gas refund channel.
+    /// Mirrors EELS `MessageCallOutput.state_refund` — a separate, monotonic accumulator
+    /// for refunds that bypass per-frame `state_gas_used` accounting. Populated by
+    /// `set_delegation` for existing-authority refunds, subtracted from block-level
+    /// state-gas at the end of `refund_sender`. Survives revert/halt/OOG since it lives
+    /// on the VM, not in any call-frame backup.
+    pub state_refund: u64,
+    /// EIP-8037: intrinsic state gas (`tx_env.intrinsic_state_gas` in EELS). Captured at
+    /// `add_intrinsic_gas` time. ethrex lumps intrinsic + execution into `state_gas_used`,
+    /// so on top-level error this field is what we leave behind when refunding the
+    /// execution portion to the reservoir — block accounting then bills the intrinsic
+    /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
+    pub intrinsic_state_gas: u64,
+    /// The opcode table mapping opcodes to opcode handlers for fast lookup.
+    /// A shared `&'static` reference to a per-fork table that is `const`-built once for the
+    /// whole process (immutable), so each VM holds only a pointer instead of a 2 KB inline copy.
+    pub(crate) opcode_table: &'static [OpCodeFn; 256],
+    /// Crypto provider for cryptographic operations.
+    pub crypto: &'a dyn Crypto,
 }
 
 impl<'a> VM<'a> {
+    /// Constructs a VM, allocating a fresh 32 KB root call-frame stack.
+    ///
+    /// Hot block execution should prefer [`VM::new_pooled`], which draws the root stack from a
+    /// reusable pool instead of allocating + zeroing one per transaction.
     pub fn new(
         env: Environment,
         db: &'a mut GeneralizedDatabase,
-        tx: &Transaction,
+        tx: &'a Transaction,
         tracer: LevmCallTracer,
         vm_type: VMType,
+        crypto: &'a dyn Crypto,
+    ) -> Result<Self, VMError> {
+        Self::new_with_root_stack(
+            env,
+            db,
+            tx,
+            tracer,
+            vm_type,
+            crypto,
+            Stack::default(),
+            Memory::default(),
+        )
+    }
+
+    /// Like [`VM::new`], but draws the root call-frame stack from `stack_pool` (falling back to a
+    /// fresh `Stack::default()` only when the pool is empty) and adopts the remaining pooled
+    /// stacks for sub-call frames. This avoids the per-tx 32 KB stack alloc+zero on a warm pool —
+    /// the dominant allocation for transfer-heavy blocks, where the root frame is the only frame.
+    ///
+    /// Pair with [`VM::reclaim_into`] after execution to return every stack (root + sub-frame)
+    /// to `stack_pool` and the root memory buffer to `memory_pool` so the next tx reuses them.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_pooled(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &'a Transaction,
+        tracer: LevmCallTracer,
+        vm_type: VMType,
+        crypto: &'a dyn Crypto,
+        stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
+    ) -> Result<Self, VMError> {
+        // Reuse a pooled stack for the root frame. `clear()` only resets the offset (no zeroing),
+        // which is sound because the EVM never reads stack slots it didn't write — the same
+        // invariant that already makes sub-frame pooling safe.
+        let mut root_stack = stack_pool.pop().unwrap_or_default();
+        root_stack.clear();
+        // Reuse a pooled root memory buffer (capacity retained from a prior tx, contents dropped).
+        // `reclaim_into` truncates it to length 0, so `resize`'s zero-fill invariant holds. Only
+        // the root buffer is pooled: sub-frame memories are `Rc` clones of it (`next_memory`).
+        let mut root_memory = memory_pool.pop().unwrap_or_default();
+        root_memory.reset_for_reuse();
+        let mut vm = Self::new_with_root_stack(
+            env,
+            db,
+            tx,
+            tracer,
+            vm_type,
+            crypto,
+            root_stack,
+            root_memory,
+        )?;
+        // Adopt the caller's pooled stacks for sub-frames; returned via `reclaim_into`.
+        mem::swap(&mut vm.stack_pool, stack_pool);
+        Ok(vm)
+    }
+
+    /// Returns this VM's reusable buffers to the caller's pools so the next transaction reuses
+    /// them instead of allocating: every stack (root call-frame stack plus any sub-frame stacks
+    /// still pooled internally) to `stack_pool`, and the root memory buffer to `memory_pool`.
+    /// Must run on both the success and error paths of [`VM::execute`].
+    pub fn reclaim_into(mut self, stack_pool: &mut Vec<Stack>, memory_pool: &mut Vec<Memory>) {
+        // Hand the internal sub-frame pool back to the caller first.
+        mem::swap(&mut self.stack_pool, stack_pool);
+        // Then reclaim the root frame's stack. Moving it out by value (VM/CallFrame have no Drop)
+        // avoids leaving a fresh 32 KB `Stack::default()` placeholder behind — which a
+        // `mem::take`/`mem::replace` against an empty pool would force, defeating the win on
+        // exactly the transfer-only blocks (no sub-frames ever seed the pool) we target.
+        let mut root_stack = self.current_call_frame.stack;
+        root_stack.clear();
+        stack_pool.push(root_stack);
+        // Reclaim the root memory buffer with its grown capacity. `reset_for_reuse` truncates it
+        // to length 0 (capacity kept) so the next tx's `resize` zero-fills correctly.
+        //
+        // Every call frame shares the same `Rc<RefCell<Vec<u8>>>` buffer, so on the error path the
+        // ancestor frames left in `call_frames` (error propagation unwinds out of `execute` without
+        // popping them) still hold clones. Drop them first so the buffer is `Rc`-unique on BOTH
+        // paths before we clear it — otherwise the clear would propagate to a frame still holding a
+        // reference. `CallFrame` has no `Drop` and these frames are never read again, so dropping
+        // them early is free.
+        self.call_frames.clear();
+        let mut root_memory = self.current_call_frame.memory;
+        debug_assert_eq!(
+            Rc::strong_count(&root_memory.buffer),
+            1,
+            "root memory buffer must be Rc-unique at reclaim; a frame is still holding it and \
+             would observe the reset_for_reuse clear",
+        );
+        root_memory.reset_for_reuse();
+        memory_pool.push(root_memory);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_with_root_stack(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &'a Transaction,
+        tracer: LevmCallTracer,
+        vm_type: VMType,
+        crypto: &'a dyn Crypto,
+        root_stack: Stack,
+        root_memory: Memory,
     ) -> Result<Self, VMError> {
         db.tx_backup = None; // If BackupHook is enabled, it will contain backup at the end of tx execution.
 
@@ -411,17 +670,65 @@ impl<'a> VM<'a> {
 
         let fork = env.config.fork;
 
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "byte-count constants are small (<200) and cpsb is bounded by block_gas_limit/year formula"
+        )]
+        let (
+            cpsb,
+            state_gas_new_account,
+            state_gas_storage_set,
+            state_gas_auth_total,
+            state_gas_auth_base,
+        ) = if fork >= Fork::Amsterdam {
+            let cpsb = compute_cost_per_state_byte(env.block_gas_limit);
+            (
+                cpsb,
+                STATE_BYTES_PER_NEW_ACCOUNT * cpsb,
+                STATE_BYTES_PER_STORAGE_SET * cpsb,
+                STATE_BYTES_PER_AUTH_TOTAL * cpsb,
+                STATE_BYTES_PER_AUTH_BASE * cpsb,
+            )
+        } else {
+            (0, 0, 0, 0, 0)
+        };
+
+        // Derive whether the top-level backup must be preserved from the installed hooks rather
+        // than from `vm_type`. The flag's real meaning is "a hook reads the top-level backup in
+        // `finalize_execution`," which today is the `BackupHook` on L2 / stateless. Deriving it
+        // keeps the flag correct if hook wiring ever changes (e.g. a future `vm_type` that adds
+        // `BackupHook`, or L2 dropping it), and `add_hook` keeps it in sync for the `BackupHook`
+        // that `stateless_execute` installs after construction. L1 block execution installs no
+        // `BackupHook` (see `l1_hooks`), so the backup is dead once the cache is restored.
+        let hooks = get_hooks(&vm_type);
+        let preserve_top_level_backup = hooks
+            .iter()
+            .any(|hook| hook.borrow().reads_top_level_backup());
+
         let mut vm = Self {
             call_frames: Vec::new(),
             substate,
             db,
-            tx: tx.clone(),
-            hooks: get_hooks(&vm_type),
-            storage_original_values: BTreeMap::new(),
+            tx,
+            hooks,
+            storage_original_values: FxHashMap::default(),
             tracer,
+            opcode_tracer: LevmOpcodeTracer::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
+            preserve_top_level_backup,
+            state_gas_used: 0,
+            state_gas_reservoir: 0,
+            state_gas_reservoir_initial: 0,
+            state_gas_spill: 0,
+            cost_per_state_byte: cpsb,
+            state_gas_new_account,
+            state_gas_storage_set,
+            state_gas_auth_total,
+            state_gas_auth_base,
+            state_refund: 0,
+            intrinsic_state_gas: 0,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -436,11 +743,12 @@ impl<'a> VM<'a> {
                 is_create,
                 0,
                 0,
-                Stack::default(),
-                Memory::default(),
+                root_stack,
+                root_memory,
             ),
             env,
             opcode_table: VM::build_opcode_table(fork),
+            crypto,
         };
 
         let call_type = if is_create {
@@ -467,20 +775,146 @@ impl<'a> VM<'a> {
     }
 
     fn add_hook(&mut self, hook: impl Hook + 'static) {
+        // Keep `preserve_top_level_backup` in sync: a hook added after construction (e.g. the
+        // `BackupHook` in `stateless_execute`) may read the top-level backup in `finalize_execution`.
+        self.preserve_top_level_backup |= hook.reads_top_level_backup();
         self.hooks.push(Rc::new(RefCell::new(hook)));
+    }
+
+    /// EIP-8037: Charge state gas, drawing from reservoir first, spilling to gas_remaining if exhausted.
+    ///
+    /// Must only be called for Amsterdam+ forks. All call sites must guard with
+    /// `fork >= Fork::Amsterdam` before invoking this method.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "arithmetic proven safe by min()"
+    )]
+    pub fn increase_state_gas(&mut self, gas: u64) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "increase_state_gas called pre-Amsterdam"
+        );
+        // Draw from reservoir first; only spill to gas_remaining if reservoir exhausted
+        let from_reservoir = self.state_gas_reservoir.min(gas);
+        // Safe: from_reservoir <= gas
+        let spill = gas - from_reservoir;
+        if spill > 0 {
+            // Charge spill from gas_remaining first — if OOG, return early
+            // without mutating reservoir or state_gas_used (matches EELS behavior)
+            self.current_call_frame.increase_consumed_gas(spill)?;
+        }
+        // Safe: from_reservoir = min(reservoir, gas) so reservoir >= from_reservoir
+        self.state_gas_reservoir -= from_reservoir;
+        // Only increment state_gas_used AFTER the charge succeeds.
+        // state_gas_used is i64; tx gas_limit caps charges well below i64::MAX.
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_add(i64::try_from(gas).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // Track the spill for block-accounting: EELS charge_state_gas spills
+        // don't count toward regular_gas_used for the regular dimension.
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_add(spill)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
+    }
+
+    /// EIP-8037: credit `amount` directly to the local frame's reservoir; `state_gas_used`
+    /// may go negative when the matching charge lives in an ancestor frame.
+    ///
+    /// Must only be called for Amsterdam+ forks.
+    pub fn credit_state_gas_refund(&mut self, amount: u64) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "credit_state_gas_refund called pre-Amsterdam"
+        );
+        self.state_gas_reservoir = self
+            .state_gas_reservoir
+            .checked_add(amount)
+            .ok_or(InternalError::Overflow)?;
+        self.state_gas_used = self
+            .state_gas_used
+            .checked_sub(i64::try_from(amount).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
+    }
+
+    /// EIP-8037 `incorporate_child_on_error`: on child revert, restore the parent's
+    /// `state_gas_used` to its pre-child value and refund the child's net
+    /// `(state_gas_used + state_gas_left)` back into the parent's reservoir.
+    ///
+    /// In ethrex's shared-VM model the child holds the entire reservoir during its
+    /// execution, so `child.state_gas_left == self.state_gas_reservoir` (absolute,
+    /// not a delta against entry). `child.state_gas_used` can be negative when
+    /// inline refunds inside the child exceeded its gross charges.
+    pub fn incorporate_child_state_gas_on_revert(
+        &mut self,
+        state_gas_used_at_entry: i64,
+    ) -> Result<(), VMError> {
+        let child_state_gas_used = self
+            .state_gas_used
+            .checked_sub(state_gas_used_at_entry)
+            .ok_or(InternalError::Overflow)?;
+        let child_state_gas_left =
+            i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
+        self.state_gas_used = state_gas_used_at_entry;
+        let net_return = child_state_gas_used
+            .checked_add(child_state_gas_left)
+            .ok_or(InternalError::Overflow)?;
+        // net_return is always >= 0 by the spec invariant (reservoir conservation
+        // means a child cannot refund more than its ancestors charged); clamp
+        // defensively and cast — `as u64` is sound because of the `.max(0)`.
+        #[expect(clippy::as_conversions, reason = ".max(0) proves non-negativity")]
+        {
+            self.state_gas_reservoir = net_return.max(0) as u64;
+        }
+        Ok(())
     }
 
     /// Executes a whole external transaction. Performing validations at the beginning.
     pub fn execute(&mut self) -> Result<ExecutionReport, VMError> {
         if let Err(e) = self.prepare_execution() {
             // Restore cache to state previous to this Tx execution because this Tx is invalid.
-            self.restore_cache_state()?;
+            // Consume the backup unless a `BackupHook` will read it (L2 / stateless); on L1 it
+            // is dead once the cache is restored.
+            if self.preserve_top_level_backup {
+                self.restore_cache_state()?;
+            } else {
+                self.restore_cache_state_consuming()?;
+            }
             return Err(e);
         }
 
         // Clear callframe backup so that changes made in prepare_execution are written in stone.
         // We want to apply these changes even if the Tx reverts. E.g. Incrementing sender nonce
         self.current_call_frame.call_frame_backup.clear();
+
+        // Empty bytecode would only execute STOP; skip the dispatch loop.
+        // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
+        // fail past this point and has no inner calls, so there's nothing to roll back.
+        if self.is_simple_transfer_fast_path() {
+            #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
+            let gas_used = self
+                .current_call_frame
+                .gas_limit
+                .checked_sub(self.current_call_frame.gas_remaining as u64)
+                .ok_or(InternalError::Underflow)?;
+            let context_result = ContextResult {
+                result: TxResult::Success,
+                gas_used,
+                gas_spent: gas_used,
+                output: Bytes::new(),
+            };
+            return self.finalize_execution(context_result);
+        }
+
+        // EIP-7928: Take a BAL checkpoint AFTER clearing the backup. This captures the state
+        // after prepare_execution (nonce increment, etc.) but before actual execution.
+        // When the top-level call fails, we restore to this checkpoint so that inner call
+        // state changes (like value transfers) are reverted from the BAL.
+        self.current_call_frame.call_frame_backup.bal_checkpoint =
+            self.db.bal_recorder.as_ref().map(|r| r.checkpoint());
 
         if self.is_create()? {
             // Create contract, reverting the Tx if address is already occupied.
@@ -498,8 +932,37 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
+    /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into
+    /// `bytecode`.
+    #[inline(always)]
+    fn is_simple_transfer_fast_path(&self) -> bool {
+        !self.current_call_frame.is_create
+            && self.current_call_frame.bytecode.bytecode.is_empty()
+            // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
+            && self.current_call_frame.gas_remaining >= 0
+            && self.tx.authorization_list().is_none()
+            // Precompiles dispatch via run_execution even with empty bytecode.
+            && !precompiles::is_precompile(
+                &self.current_call_frame.to,
+                self.env.config.fork,
+                self.vm_type,
+            )
+    }
+
     /// Main execution loop.
     pub fn run_execution(&mut self) -> Result<ContextResult, VMError> {
+        // If gas is already exhausted (negative), fail immediately.
+        // This can happen when intrinsic gas exceeds the gas limit in privileged L2 transactions.
+        // Without this check, casting negative gas_remaining to u64 would wrap to a huge value.
+        if self.current_call_frame.gas_remaining < 0 {
+            return Ok(ContextResult {
+                result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                gas_used: self.current_call_frame.gas_limit,
+                gas_spent: self.current_call_frame.gas_limit,
+                output: Bytes::new(),
+            });
+        }
+
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
         if precompiles::is_precompile(
             &self.current_call_frame.to,
@@ -515,103 +978,103 @@ impl<'a> VM<'a> {
                 call_frame.gas_limit,
                 &mut gas_remaining,
                 self.env.config.fork,
+                self.db.store.precompile_cache(),
+                self.crypto,
             );
+
+            // EIP-8037 Amsterdam 2D accounting recomputes `block_gas_used` from
+            // `raw_consumed = gas_limit - gas_remaining` inside `refund_sender`. On a
+            // top-level precompile exceptional halt, `handle_precompile_result` already
+            // sets `ContextResult.gas_used = gas_limit`, but `gas_remaining` retains the
+            // untouched forwarded amount — under Amsterdam that would make the block
+            // report only the intrinsic portion. Zero it here so the block matches the
+            // `gas_used = gas_limit` contract from `handle_precompile_result`. Pre-Amsterdam
+            // reads `ctx_result.gas_used` directly and is unaffected by this path either way.
+            if self.env.config.fork >= Fork::Amsterdam
+                && let Ok(ctx) = &result
+                && !ctx.is_success()
+            {
+                gas_remaining = 0;
+            }
 
             call_frame.gas_remaining = gas_remaining as i64;
 
             return result;
         }
 
+        let mut error = OnceCell::<VMError>::new();
+
         #[cfg(feature = "perf_opcode_timings")]
         let mut timings = crate::timings::OPCODE_TIMINGS.lock().expect("poison");
 
+        // Copy the `&'static` table pointer once; it doesn't borrow `self`, so dispatch can still
+        // pass `self` mutably to the handler without reloading the pointer each iteration.
+        let opcode_table = self.opcode_table;
+
         loop {
+            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
+            let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
+
+            // Hoist the active flag to avoid reading it twice per opcode.
+            let tracer_active = self.opcode_tracer.active;
+
+            // Struct-log pre-step capture (single branch on the fast path when disabled).
+            let gas_before_op = if tracer_active {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+                )]
+                let gas_before = self.current_call_frame.gas_remaining.max(0) as u64;
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "call depth bounded by STACK_LIMIT=1024, fits in u32"
+                )]
+                let depth = (self.call_frames.len() as u32).saturating_add(1);
+                let refund = self.substate.refunded_gas;
+                let stack_view = self.collect_stack_for_trace();
+                let mem_view = self.collect_memory_for_trace();
+                // mem_size always reflects actual memory size, regardless of enable_memory.
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "memory size is bounded by gas; fits in u64"
+                )]
+                let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
+                let storage_kv = self.read_storage_for_trace(opcode);
+                let return_data = if self.opcode_tracer.cfg.enable_return_data {
+                    self.current_call_frame.sub_return_data.clone()
+                } else {
+                    Bytes::new()
+                };
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "pc is usize, fits in u64 on supported targets"
+                )]
+                let pc_u64 = pc_of_current_op as u64;
+                self.opcode_tracer.pre_step_capture(
+                    pc_u64,
+                    opcode,
+                    gas_before,
+                    depth,
+                    refund,
+                    &stack_view,
+                    &mem_view,
+                    mem_size_for_trace,
+                    &return_data,
+                    storage_kv,
+                );
+                gas_before
+            } else {
+                0
+            };
 
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
 
             // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
-            let op_result = match opcode {
-                0x5d if self.env.config.fork >= Fork::Cancun => self.op_tstore(),
-                0x60 => self.op_push::<1>(),
-                0x61 => self.op_push::<2>(),
-                0x62 => self.op_push::<3>(),
-                0x63 => self.op_push::<4>(),
-                0x64 => self.op_push::<5>(),
-                0x65 => self.op_push::<6>(),
-                0x66 => self.op_push::<7>(),
-                0x67 => self.op_push::<8>(),
-                0x68 => self.op_push::<9>(),
-                0x69 => self.op_push::<10>(),
-                0x6a => self.op_push::<11>(),
-                0x6b => self.op_push::<12>(),
-                0x6c => self.op_push::<13>(),
-                0x6d => self.op_push::<14>(),
-                0x6e => self.op_push::<15>(),
-                0x6f => self.op_push::<16>(),
-                0x70 => self.op_push::<17>(),
-                0x71 => self.op_push::<18>(),
-                0x72 => self.op_push::<19>(),
-                0x73 => self.op_push::<20>(),
-                0x74 => self.op_push::<21>(),
-                0x75 => self.op_push::<22>(),
-                0x76 => self.op_push::<23>(),
-                0x77 => self.op_push::<24>(),
-                0x78 => self.op_push::<25>(),
-                0x79 => self.op_push::<26>(),
-                0x7a => self.op_push::<27>(),
-                0x7b => self.op_push::<28>(),
-                0x7c => self.op_push::<29>(),
-                0x7d => self.op_push::<30>(),
-                0x7e => self.op_push::<31>(),
-                0x7f => self.op_push::<32>(),
-                0x80 => self.op_dup::<0>(),
-                0x81 => self.op_dup::<1>(),
-                0x82 => self.op_dup::<2>(),
-                0x83 => self.op_dup::<3>(),
-                0x84 => self.op_dup::<4>(),
-                0x85 => self.op_dup::<5>(),
-                0x86 => self.op_dup::<6>(),
-                0x87 => self.op_dup::<7>(),
-                0x88 => self.op_dup::<8>(),
-                0x89 => self.op_dup::<9>(),
-                0x8a => self.op_dup::<10>(),
-                0x8b => self.op_dup::<11>(),
-                0x8c => self.op_dup::<12>(),
-                0x8d => self.op_dup::<13>(),
-                0x8e => self.op_dup::<14>(),
-                0x8f => self.op_dup::<15>(),
-                0x90 => self.op_swap::<1>(),
-                0x91 => self.op_swap::<2>(),
-                0x92 => self.op_swap::<3>(),
-                0x93 => self.op_swap::<4>(),
-                0x94 => self.op_swap::<5>(),
-                0x95 => self.op_swap::<6>(),
-                0x96 => self.op_swap::<7>(),
-                0x97 => self.op_swap::<8>(),
-                0x98 => self.op_swap::<9>(),
-                0x99 => self.op_swap::<10>(),
-                0x9a => self.op_swap::<11>(),
-                0x9b => self.op_swap::<12>(),
-                0x9c => self.op_swap::<13>(),
-                0x9d => self.op_swap::<14>(),
-                0x9e => self.op_swap::<15>(),
-                0x9f => self.op_swap::<16>(),
-                0x01 => self.op_add(),
-                0x39 => self.op_codecopy(),
-                0x51 => self.op_mload(),
-                0x56 => self.op_jump(),
-                0x57 => self.op_jumpi(),
-                0x5b => self.op_jumpdest(),
-                _ => {
-                    // Call the opcode, using the opcode function lookup table.
-                    // Indexing will not panic as all the opcode values fit within the table.
-                    self.opcode_table[opcode as usize].call(self)
-                }
-            };
+            let op_result = opcode_table[opcode as usize].call(self, &mut error);
 
             #[cfg(feature = "perf_opcode_timings")]
             {
@@ -619,15 +1082,45 @@ impl<'a> VM<'a> {
                 timings.update(opcode, time);
             }
 
+            // Struct-log post-step: patch gas_cost, refund-after-op, and error
+            // into the buffered entry.
+            if tracer_active {
+                #[expect(
+                    clippy::as_conversions,
+                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+                )]
+                let gas_after = self.current_call_frame.gas_remaining.max(0) as u64;
+                // Prefer the explicit opcode-overhead cost written by CALL/CREATE handlers;
+                // fall back to the gas diff for all other opcodes.
+                let gas_cost = self
+                    .opcode_tracer
+                    .last_opcode_gas_cost
+                    .take()
+                    .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
+                // refund-after-op matches geth's structLogger timing: for SSTORE and
+                // (pre-London) SELFDESTRUCT, the refund counter shown is the value
+                // *after* the opcode's accounting applied. Other opcodes don't touch
+                // refund, so the post-op value equals the captured pre-op value.
+                let refund_after = self.substate.refunded_gas;
+                let err_str = error.get().map(|e| e.to_string());
+                self.opcode_tracer
+                    .finalize_step(gas_cost, refund_after, err_str.as_deref());
+            }
+
             let result = match op_result {
-                Ok(OpcodeResult::Continue) => continue,
-                Ok(OpcodeResult::Halt) => self.handle_opcode_result()?,
-                Err(error) => self.handle_opcode_error(error)?,
+                OpcodeResult::Continue => continue,
+                OpcodeResult::Halt => match error.take() {
+                    None => self.handle_opcode_result()?,
+                    Some(error) => self.handle_opcode_error(error)?,
+                },
             };
 
             // Return the ExecutionReport if the executed callframe was the first one.
             if self.is_initial_call_frame() {
-                self.handle_state_backup(&result)?;
+                // Consume the backup (move it out) unless a `BackupHook` will read it afterward
+                // to build the tx-level undo snapshot (L2 / stateless). On L1 nothing reads it
+                // once the cache is restored, so cloning it would be dead work.
+                self.handle_state_backup(&result, !self.preserve_top_level_backup)?;
                 return Ok(result);
             }
 
@@ -643,11 +1136,18 @@ impl<'a> VM<'a> {
         gas_limit: u64,
         gas_remaining: &mut u64,
         fork: Fork,
+        cache: Option<&precompiles::PrecompileCache>,
+        crypto: &dyn Crypto,
     ) -> Result<ContextResult, VMError> {
-        let execute_precompile = precompiles::execute_precompile;
-
         Self::handle_precompile_result(
-            execute_precompile(code_address, calldata, gas_remaining, fork),
+            precompiles::execute_precompile(
+                code_address,
+                calldata,
+                gas_remaining,
+                fork,
+                cache,
+                crypto,
+            ),
             gas_limit,
             *gas_remaining,
         )
@@ -660,7 +1160,9 @@ impl<'a> VM<'a> {
 
     /// Executes without making changes to the cache.
     pub fn stateless_execute(&mut self) -> Result<ExecutionReport, VMError> {
-        // Add backup hook to restore state after execution.
+        // Add backup hook to restore state after execution. `add_hook` flips
+        // `preserve_top_level_backup` on via `Hook::reads_top_level_backup`, so the backup is
+        // cloned (not moved out) on the revert paths even though this VM was built with L1 `vm_type`.
         self.add_hook(BackupHook::default());
         let report = self.execute()?;
         // Restore cache to the state before execution.
@@ -669,8 +1171,13 @@ impl<'a> VM<'a> {
     }
 
     fn prepare_execution(&mut self) -> Result<(), VMError> {
-        for hook in self.hooks.clone() {
-            hook.borrow_mut().prepare_execution(self)?;
+        // Clone each hook's `Rc` (cheap refcount bump) so the borrow on `self.hooks` is released
+        // and `self` can be passed mutably — without `self.hooks.clone()`'s per-tx `Vec` realloc.
+        // `self.hooks` is not mutated during the loop, so `get(i)` is always `Some` in range.
+        for i in 0..self.hooks.len() {
+            if let Some(hook) = self.hooks.get(i).map(Rc::clone) {
+                hook.borrow_mut().prepare_execution(self)?;
+            }
         }
 
         Ok(())
@@ -680,69 +1187,236 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        for hook in self.hooks.clone() {
-            hook.borrow_mut()
-                .finalize_execution(self, &mut ctx_result)?;
+        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
+        // refund only the EXECUTION portion of state gas to the reservoir; the intrinsic
+        // stays in `state_gas_used` so block accounting bills it. EELS keeps these in
+        // separate fields (`tx_output.state_gas_used` vs `tx_env.intrinsic_state_gas`);
+        // ethrex lumps them so we split on the way out:
+        //   tx_output.state_gas_left += tx_output.state_gas_used
+        //   tx_output.state_gas_used  = 0
+        // becomes in lumped form (with intrinsic preserved):
+        //   reservoir   += signed(state_gas_used − intrinsic)   [clamped at 0]
+        //   state_gas_used = intrinsic
+        // Collision is handled separately in the hook.
+        if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
+            if !ctx_result.is_collision() {
+                let intrinsic_signed =
+                    i64::try_from(self.intrinsic_state_gas).map_err(|_| InternalError::Overflow)?;
+                let execution_state_gas_used = self.state_gas_used.saturating_sub(intrinsic_signed);
+                let reservoir_signed = i64::try_from(self.state_gas_reservoir)
+                    .map_err(|_| InternalError::Overflow)?
+                    .saturating_add(execution_state_gas_used);
+                self.state_gas_reservoir =
+                    u64::try_from(reservoir_signed.max(0)).map_err(|_| InternalError::Overflow)?;
+                self.state_gas_used = intrinsic_signed;
+            }
+
+            // EIP-8037: on ANY top-level CREATE-tx
+            // failure (revert / halt / OOG / collision), refund the intrinsic
+            // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the reservoir.
+            // Also add to `state_refund` so block-level accounting subtracts it.
+            // EELS reference: fork.py::process_transaction:
+            //   if isinstance(tx.to, Bytes0):
+            //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+            //       tx_output.state_gas_left += new_account_refund
+            //       tx_output.state_refund   += new_account_refund
+            if self.is_create()? {
+                let new_account_refund = self.state_gas_new_account;
+                self.state_gas_reservoir = self
+                    .state_gas_reservoir
+                    .checked_add(new_account_refund)
+                    .ok_or(InternalError::Overflow)?;
+                self.state_refund = self
+                    .state_refund
+                    .checked_add(new_account_refund)
+                    .ok_or(InternalError::Overflow)?;
+            }
+        }
+
+        // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
+        for i in 0..self.hooks.len() {
+            if let Some(hook) = self.hooks.get(i).map(Rc::clone) {
+                hook.borrow_mut()
+                    .finalize_execution(self, &mut ctx_result)?;
+            }
         }
 
         self.tracer.exit_context(&ctx_result, true)?;
 
+        // Struct-log end-of-tx capture: record final output, gas used, and revert error.
+        // gas matches geth's `executionResult.Gas` which is post-refund (`receipt.GasUsed`).
+        if self.opcode_tracer.active {
+            self.opcode_tracer.output = ctx_result.output.clone();
+            self.opcode_tracer.gas_used = ctx_result.gas_spent;
+            self.opcode_tracer.error = match ctx_result.result {
+                TxResult::Revert(ref err) => Some(err.to_string()),
+                _ => None,
+            };
+        }
+
+        // Only include logs if transaction succeeded. When a transaction reverts,
+        // no logs should be emitted (including EIP-7708 Transfer logs).
+        let logs = if ctx_result.is_success() {
+            self.substate.extract_logs()
+        } else {
+            Vec::new()
+        };
+
+        // EIP-8037: `state_gas_used` is already net (signed; credits
+        // decrement it inline). Subtract `state_refund` (EIP-7702 tx-level channel) and
+        // clamp at zero for block accounting — `state_gas_used` may be negative when inline
+        // refunds exceed gross charges.
+        let state_refund_signed =
+            i64::try_from(self.state_refund).map_err(|_| InternalError::Overflow)?;
+        let net_state_gas_used: u64 = u64::try_from(
+            self.state_gas_used
+                .saturating_sub(state_refund_signed)
+                .max(0),
+        )
+        .map_err(|_| InternalError::Overflow)?;
+
         let report = ExecutionReport {
             result: ctx_result.result.clone(),
             gas_used: ctx_result.gas_used,
+            gas_spent: ctx_result.gas_spent,
             gas_refunded: self.substate.refunded_gas,
+            state_gas_used: net_state_gas_used,
             output: std::mem::take(&mut ctx_result.output),
-            logs: self.substate.extract_logs(),
+            logs,
         };
 
         Ok(report)
+    }
+
+    // ── Struct-log helper methods ─────────────────────────────────────────────
+
+    /// Collects the current stack in bottom-first order for struct-log emission.
+    ///
+    /// LEVM stack is top-first in memory (`values[offset]` = top), so we reverse
+    /// the active slice to produce the bottom-first wire format geth uses.
+    /// Returns an empty `Vec` when `cfg.disable_stack` is true.
+    pub fn collect_stack_for_trace(&self) -> Vec<U256> {
+        use crate::constants::STACK_LIMIT;
+        if self.opcode_tracer.cfg.disable_stack {
+            return Vec::new();
+        }
+        let s = &self.current_call_frame.stack;
+        // offset <= STACK_LIMIT by stack invariant.
+        s.values
+            .get(s.offset..STACK_LIMIT)
+            .map(|slice| slice.iter().rev().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Collects the live memory bytes for the current frame.
+    ///
+    /// Returns an empty `Vec` when `cfg.enable_memory` is false or memory is empty.
+    pub fn collect_memory_for_trace(&self) -> Vec<u8> {
+        if !self.opcode_tracer.cfg.enable_memory {
+            return Vec::new();
+        }
+        self.current_call_frame.memory.live_bytes()
+    }
+
+    /// Pre-reads the storage key/value for the current SLOAD or SSTORE opcode.
+    ///
+    /// Returns `None` when:
+    /// - `cfg.disable_storage` is set, or
+    /// - `opcode` is not SLOAD (0x54) or SSTORE (0x55), or
+    /// - the stack is empty (guard against underflow before the handler runs), or
+    /// - the storage read fails for any reason (including `AccountNotFound` —
+    ///   the trace omits the entry rather than emitting an ambiguous zero).
+    ///
+    /// For SLOAD: key = `stack.top`; value = the *current* stored value read from the DB.
+    /// For SSTORE: key = `stack.top`, value = `stack[top-1]` (the new value being written).
+    pub fn read_storage_for_trace(&mut self, opcode: u8) -> Option<(H256, H256)> {
+        const SLOAD: u8 = 0x54;
+        const SSTORE: u8 = 0x55;
+
+        if self.opcode_tracer.cfg.disable_storage {
+            return None;
+        }
+        if opcode != SLOAD && opcode != SSTORE {
+            return None;
+        }
+
+        // Need at least one element on stack for SLOAD, two for SSTORE.
+        use crate::constants::STACK_LIMIT;
+        let offset = self.current_call_frame.stack.offset;
+        if offset >= STACK_LIMIT {
+            return None; // stack empty
+        }
+
+        // SLOAD/SSTORE operate on the call's storage context (`to`), not the code's
+        // address. Under DELEGATECALL/CALLCODE these differ.
+        let addr = self.current_call_frame.to;
+
+        let stack_values = &self.current_call_frame.stack.values;
+        let key_u256 = *stack_values.get(offset)?;
+        let key = BigEndianHash::from_uint(&key_u256);
+
+        if opcode == SLOAD {
+            // Omit the entry on any read failure (incl. account not yet cached);
+            // a zero value would be indistinguishable from a legitimate never-written slot.
+            let v = self.get_storage_value(addr, key).ok()?;
+            let value = BigEndianHash::from_uint(&v);
+            Some((key, value))
+        } else {
+            // SSTORE: need two stack elements.
+            let next_offset = offset.checked_add(1)?;
+            if next_offset >= STACK_LIMIT {
+                return None;
+            }
+            // values[offset+1] is the new value being written (second from top = stack[top-1]).
+            let value_u256 = *self.current_call_frame.stack.values.get(next_offset)?;
+            let value = BigEndianHash::from_uint(&value_u256);
+            Some((key, value))
+        }
     }
 }
 
 impl Substate {
     /// Initializes the VM substate, mainly adding addresses to the "accessed_addresses" field and the same with storage slots
     pub fn initialize(env: &Environment, tx: &Transaction) -> Result<Substate, VMError> {
+        let fork = env.config.fork;
+
         // Add sender and recipient to accessed accounts [https://www.evm.codes/about#access_list]
-        let mut initial_accessed_addresses = FxHashSet::default();
-        let mut initial_accessed_storage_slots: BTreeMap<Address, BTreeSet<H256>> = BTreeMap::new();
+        // Precompiles are NO LONGER inserted here — they are warm by construction (see
+        // `is_warm_precompile`), removing the ~20-entry floor that used to dominate this set. The
+        // remaining working set is small (sender + coinbase + recipient + access-list/touched
+        // addresses; real p99 ~7), so a capacity of 8 covers most txs with little waste.
+        let mut initial_accessed_addresses =
+            FxHashSet::with_capacity_and_hasher(8, Default::default());
+        // Storage slots are ~98% empty (p95 0, p99 4), so `default()` (alloc-free until first
+        // insert) beats pre-sizing, which would tax the common empty case.
+        let mut initial_accessed_storage_slots: FxHashMap<Address, FxHashSet<H256>> =
+            FxHashMap::default();
 
         // Add Tx sender to accessed accounts
         initial_accessed_addresses.insert(env.origin);
 
         // [EIP-3651] - Add coinbase to accessed accounts after Shanghai
-        if env.config.fork >= Fork::Shanghai {
+        if fork >= Fork::Shanghai {
             initial_accessed_addresses.insert(env.coinbase);
         }
 
-        // Add precompiled contracts addresses to accessed accounts.
-        let max_precompile_address = match env.config.fork {
-            spec if spec >= Fork::Prague => SIZE_PRECOMPILES_PRAGUE,
-            spec if spec >= Fork::Cancun => SIZE_PRECOMPILES_CANCUN,
-            spec if spec < Fork::Cancun => SIZE_PRECOMPILES_PRE_CANCUN,
-            _ => return Err(InternalError::InvalidFork.into()),
-        };
-
-        for i in 1..=max_precompile_address {
-            initial_accessed_addresses.insert(Address::from_low_u64_be(i));
-        }
-
-        // Add the address for the P256 verify precompile post-Osaka
-        if env.config.fork >= Fork::Osaka {
-            initial_accessed_addresses.insert(Address::from_low_u64_be(0x100));
-        }
-
         // Add access lists contents to accessed accounts and accessed storage slots.
-        for (address, keys) in tx.access_list().clone() {
-            initial_accessed_addresses.insert(address);
+        // Iterate by reference (`Address`/`H256` are `Copy`); the old `.clone()` deep-copied
+        // the whole `Vec<(Address, Vec<H256>)>` per tx just to read it.
+        for (address, keys) in tx.access_list() {
+            initial_accessed_addresses.insert(*address);
             // Access lists can have different entries even for the same address, that's why we check if there's an existing set instead of considering it empty
-            let warm_slots = initial_accessed_storage_slots.entry(address).or_default();
+            let warm_slots = initial_accessed_storage_slots.entry(*address).or_default();
             for slot in keys {
-                warm_slots.insert(slot);
+                warm_slots.insert(*slot);
             }
         }
 
-        let substate =
-            Substate::from_accesses(initial_accessed_addresses, initial_accessed_storage_slots);
+        let substate = Substate::from_accesses(
+            fork,
+            initial_accessed_addresses,
+            initial_accessed_storage_slots,
+        );
 
         Ok(substate)
     }

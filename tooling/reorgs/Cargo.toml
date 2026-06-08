@@ -2,6 +2,7 @@
 name = "reorgs"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 ethrex = { workspace = true, features = ["l2"] }

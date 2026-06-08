@@ -1,5 +1,6 @@
 #![expect(clippy::unnecessary_to_owned, clippy::useless_vec)]
 use ethereum_types::H256;
+use ethrex_crypto::NativeCrypto;
 use ethrex_trie::{Trie, verify_range};
 use proptest::collection::{btree_set, vec};
 use proptest::prelude::any;
@@ -18,7 +19,7 @@ fn verify_range_proof_of_absence() {
     let mut proof = trie.get_proof(&vec![0x00, 0xFF]).unwrap();
     proof.extend(trie.get_proof(&vec![0x01; 32]).unwrap());
 
-    let root = trie.hash_no_commit();
+    let root = trie.hash_no_commit(&NativeCrypto);
     let keys = &[H256([0x01u8; 32])];
     let values = &[vec![0x00u8]];
 
@@ -40,7 +41,7 @@ fn verify_range_regular_case_only_branch_nodes() {
     }
     let mut proof = trie.get_proof(&[50; 32].to_vec()).unwrap();
     proof.extend(trie.get_proof(&[75; 32].to_vec()).unwrap());
-    let root = trie.hash().unwrap();
+    let root = trie.hash(&NativeCrypto).unwrap();
     let keys = (50_u8..=75).map(|i| H256([i; 32])).collect::<Vec<_>>();
     let values = (50_u8..=75).map(|i| [i; 32].to_vec()).collect::<Vec<_>>();
     let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
@@ -100,7 +101,7 @@ fn verify_range_regular_case() {
     }
     let mut proof = trie.get_proof(&trie_values[7]).unwrap();
     proof.extend(trie.get_proof(&trie_values[17]).unwrap());
-    let root = trie.hash().unwrap();
+    let root = trie.hash(&NativeCrypto).unwrap();
     let fetch_more = verify_range(root, &keys[0], &keys, &values, &proof).unwrap();
     // Our trie contains more elements to the right
     assert!(fetch_more)
@@ -155,7 +156,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -182,7 +183,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -220,7 +221,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -260,7 +261,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data.into_iter().collect::<Vec<_>>();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -282,7 +283,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Range is empty
         let values = vec![];
         let keys = vec![];
@@ -303,7 +304,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -330,7 +331,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -348,7 +349,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -369,7 +370,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -395,7 +396,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = data.into_iter().collect::<Vec<_>>()[start..=end].to_vec();
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();
@@ -415,7 +416,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Range is empty
         let values = vec![];
         let keys = vec![];
@@ -434,7 +435,7 @@ proptest! {
         for val in data.iter() {
             trie.insert(val.clone(), val.clone()).unwrap()
         }
-        let root = trie.hash().unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
         // Select range to prove
         let values = vec![data.iter().collect::<Vec<_>>()[start].clone()];
         let keys = values.iter().map(|a| H256::from_slice(a)).collect::<Vec<_>>();

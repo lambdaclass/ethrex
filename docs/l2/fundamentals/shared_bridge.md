@@ -70,4 +70,4 @@ Once a cross-chain message is settled, there is no rollback mechanism in scenari
 
 ## Recommendations
 
-We advice not to register more than 100 chains, since this will enquire a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.
+We advise not to register more than 100 chains, since this will incur a high cost when verifying a batch (About 1.6M gas), due to the transfers between bridges.

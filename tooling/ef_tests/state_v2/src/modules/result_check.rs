@@ -319,7 +319,7 @@ fn verify_matching_accounts(
 
     if !code_matches {
         account_mismatch.code_diff = Some((
-            code_hash(&expected_account.code),
+            code_hash(&expected_account.code, &ethrex_crypto::NativeCrypto),
             actual_account.info.code_hash,
         ));
     }

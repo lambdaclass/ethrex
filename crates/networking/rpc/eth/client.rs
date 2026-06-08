@@ -58,13 +58,26 @@ impl RpcHandler for Syncing {
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
+            let current_block = context.storage.get_latest_block_number().await?;
+            // `get_last_fcu_head` returns the head *hash* from the last forkchoiceUpdated.
+            // Resolve it to a block number. If the header isn't canonical yet it may still
+            // be a pending block whose number we can read; only when neither is available
+            // (e.g. mid snap-sync, target not downloaded) fall back to the current block
+            // instead of reporting garbage.
+            let head_hash = syncer
+                .get_last_fcu_head()
+                .map_err(|error| RpcErr::Internal(error.to_string()))?;
+            let highest_block = match context.storage.get_block_number(head_hash).await? {
+                Some(number) => number,
+                None => match context.storage.get_pending_block(head_hash).await? {
+                    Some(block) => block.header.number,
+                    None => current_block,
+                },
+            };
             let syncing_status = SyncingStatusRpc {
                 starting_block: context.storage.get_earliest_block_number().await?,
-                current_block: context.storage.get_latest_block_number().await?,
-                highest_block: syncer
-                    .get_last_fcu_head()
-                    .map_err(|error| RpcErr::Internal(error.to_string()))?
-                    .to_low_u64_be(),
+                current_block,
+                highest_block,
             };
             serde_json::to_value(syncing_status)
                 .map_err(|error| RpcErr::Internal(error.to_string()))
@@ -113,7 +126,7 @@ impl RpcHandler for Config {
         let current_fork = chain_config.get_fork(latest_block_timestamp);
 
         if current_fork < Fork::Paris {
-            return Err(RpcErr::UnsuportedFork(
+            return Err(RpcErr::UnsupportedFork(
                 "eth-config is not supported for forks prior to Paris".to_string(),
             ));
         }

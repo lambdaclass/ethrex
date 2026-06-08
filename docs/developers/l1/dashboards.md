@@ -115,7 +115,7 @@ Live timeseries that tries to correlate to the per-block execution time by showi
 
 ![Engine Latency by Method](img/engine_latency_by_method.png)
 
-_**Limitations**: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window for calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure._
+_**Limitations**: The aggregated panels pull averages across the current dashboard range, so very short ranges can look noisy while long ranges may smooth out brief incidents. The live latency chart still relies on an 18 s window to calculate the average, which should be near-exact per-block executions but we can lose some intermediary measure._
 
 ## RPC API
 
@@ -147,7 +147,7 @@ _**Limitations**: The RPC latency views inherit the same windowing caveats as th
 
 ## Engine and RPC Error rates
 
-Collapsed row showing error rates for both Engine and RPC APIs side by side and a deagreagated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.
+Collapsed row showing error rates for both Engine and RPC APIs side by side and a disaggregated panel by method and kind of error. Each panel repeats per instance to be able to compare behaviour across nodes.
 
 ![Engine and RPC Error rates row](img/engine_and_rpc_error_rates_row.png)
 
@@ -205,17 +205,17 @@ Row panels showing process-level and host-level metrics to help you monitor reso
 ![Process & Server info row](img/process_and_server_info_row.png)
 
 ### Uptime
-Displays time since the Ethrex process started. _[need proper instance labels]_ 
+Displays time since the Ethrex process started. _\[need proper instance labels\]_ 
 
 ![Uptime](img/uptime.png)
 
 ### Threads
-Shows the number of tokio process threads in use. _[need proper instance labels]_
+Shows the number of tokio process threads in use. _\[need proper instance labels\]_
 
 ![Threads](img/threads.png)
 
 ### Open FDs
-Reports current file descriptor usage so you can compare against limits. _[need proper instance labels]_
+Reports current file descriptor usage so you can compare against limits. _\[need proper instance labels\]_
 
 ![Open FDs](img/open_fds.png)
 

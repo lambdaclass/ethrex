@@ -69,9 +69,24 @@ jobs:
           fi
           echo "build_profile=$profile" >> "$GITHUB_OUTPUT"
 
+  engine-restart:
+    name: Restart Kurtosis Engine
+    # Self-hosted runner: only fire for non-PR events or in-org PRs.
+    # Fork PRs would otherwise execute attacker-controlled code on ethrex-sync.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ethrex-sync
+    steps:
+      - name: Restart engine to match CLI version
+        run: kurtosis engine restart
+
   sync-lighthouse:
-    needs: prepare
+    needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Lighthouse
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ethrex-sync
     strategy:
       fail-fast: false
@@ -79,12 +94,18 @@ jobs:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set start timestamp
         id: start
         run: |
           echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
 
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
@@ -101,7 +122,7 @@ jobs:
         if: always()
         env:
           SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
-          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "lighthouse-${{ matrix.network }}"
           OUTCOME: ${{ steps.snapsync.outcome }}
@@ -111,8 +132,11 @@ jobs:
           bash .github/scripts/notify_snapsync_run.sh
 
   sync-prysm:
-    needs: prepare
+    needs: [prepare, engine-restart]
     name: Sync ${{ matrix.network }} - Prysm
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ethrex-sync
     strategy:
       fail-fast: false
@@ -120,12 +144,18 @@ jobs:
         include: ${{ fromJson(needs.prepare.outputs.matrix) }}
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set start timestamp
         id: start
         run: |
           echo "timestamp=$EPOCHSECONDS" >> "$GITHUB_OUTPUT"
+
+      - name: Cleanup stale Docker and Kurtosis resources
+        run: |
+          kurtosis engine stop || true
+          docker network prune -f
+          docker image prune -f
 
       - name: Run Snapsync Test
         uses: ./.github/actions/snapsync-run
@@ -142,7 +172,7 @@ jobs:
         if: always()
         env:
           SLACK_WEBHOOK_URL_SUCCESS: ${{ secrets.ETHREX_NOTIFICATIONS_SLACK_WEBHOOK }}
-          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_L1_SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL_FAILURE: ${{ secrets.ETHREX_INTERNO_SLACK_WEBHOOK }}
           REPO: ${{ github.repository }}
           NAME: "prysm-${{ matrix.network }}"
           OUTCOME: ${{ steps.snapsync.outcome }}

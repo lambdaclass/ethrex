@@ -35,7 +35,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
 
     # We need to run this step because kurtosis uses cached docker images but we want the latest ethrex image
     - name: Remove cached ethrex image
@@ -50,8 +50,14 @@ runs:
         IMAGE_TAG: ${{ inputs.ethrex_tag }}
       run: |
         echo "Building ethrex with profile: ${BUILD_PROFILE}"
+        GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo unknown)
+        GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+        VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
         docker build \
           --build-arg PROFILE="${BUILD_PROFILE}" \
+          --build-arg GIT_SHA="${GIT_SHA}" \
+          --build-arg GIT_BRANCH="${GIT_BRANCH}" \
+          --build-arg VERSION="${VERSION}" \
           -t ethrex-local:${IMAGE_TAG} \
           -f Dockerfile .
 
@@ -72,6 +78,7 @@ runs:
             el_extra_params:
               - "--syncmode=snap"
               - "--log.level=info"
+              - "--http.api=eth,net,web3,debug,admin,txpool"
             cl_type: ${CL_TYPE}
             cl_image: ${CL_IMAGE}
             count: 1
@@ -104,7 +111,7 @@ runs:
       uses: ethpandaops/kurtosis-assertoor-github-action@v1
       with:
         enclave_name: ethrex-assertoor-${{ inputs.network }}-${{ inputs.cl_type }}
-        kurtosis_version: 1.10.2
+        kurtosis_version: 1.15.2
         ethereum_package_url: github.com/ethpandaops/ethereum-package
         ethereum_package_branch: 82e5a7178138d892c0c31c3839c89d53ffd42d9a
         ethereum_package_args: .github/config/assertoor/network_params.generated.yaml

@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 documentation.workspace = true
+license.workspace = true
 
 [dependencies]
 clap.workspace = true
@@ -15,3 +16,14 @@ ethrex-storage-libmdbx = { features = [
 ], git = "https://github.com/lambdaclass/ethrex", tag = "v1.0.0", package = "ethrex-storage" }
 ethrex-storage = { features = ["rocksdb"], workspace = true }
 tokio = { features = ["full"], workspace = true }
+libc = "0.2"
+rocksdb.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "bench_migration"
+path = "src/bin/bench_migration.rs"
+
+[[bin]]
+name = "seed_migration_test"
+path = "src/bin/seed_migration_test.rs"

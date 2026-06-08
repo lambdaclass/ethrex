@@ -11,7 +11,7 @@ Build ethrex yourself for maximum flexibility and experimental features.
 
 ### L2 contracts
 
-If you want to install ethrex for L2 development, you may set the `COMPILE_CONTRACTS` env var, so the binary have the necessary contract code.
+If you want to install ethrex for L2 development, you may set the `COMPILE_CONTRACTS` env var, so the binary has the necessary contract code.
 
 ```sh
 export COMPILE_CONTRACTS=true

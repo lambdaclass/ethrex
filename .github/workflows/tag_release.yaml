@@ -73,7 +73,7 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         if: ${{ matrix.os == 'linux' }}
@@ -87,12 +87,10 @@ jobs:
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
       - name: Set up QEMU (only Linux ARM)
         if: ${{ matrix.platform == 'ubuntu-22.04-arm' }}
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: amd64
 
@@ -103,7 +101,7 @@ jobs:
         uses: ./.github/actions/install-risc0
 
       - name: Install CUDA (only Linux x86 GPU)
-        uses: Jimver/cuda-toolkit@v0.2.24
+        uses: Jimver/cuda-toolkit@v0.2.35
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }}
         id: cuda-toolkit
         with:
@@ -134,20 +132,20 @@ jobs:
           mv crates/guest-program/bin/sp1/out/riscv32im-succinct-zkvm-vk-u32 verification_keys/ethrex-riscv32im-succinct-zkvm-vk-u32
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
           path: ethrex${{ matrix.l2_suffix }}-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.gpu_suffix }}
 
       - name: Upload verification keys
         if: ${{ matrix.platform == 'ubuntu-22.04' && matrix.stack == 'l2_gpu' }} # Run only once
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: verification_keys
           path: verification_keys/
 
-  # There's a separate job to build the guest programs for SP1 and RISC0 since
-  # they need to be built without the l2 features.
+  # There's a separate job to build the guest programs for SP1, RISC0, and ZisK
+  # since they need to be built without the l2 features.
   build-ethrex-guest:
     strategy:
       matrix:
@@ -158,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -171,9 +169,7 @@ jobs:
         env:
           SHELL: /bin/bash
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1up.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
 
       - name: Install RISC0
         if: ${{ matrix.zkvm == 'risc0' }}
@@ -186,11 +182,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
-          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
-          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+        uses: ./.github/actions/install-zisk
 
       - name: Build ethrex elf - ${{ matrix.zkvm }}
         env:
@@ -198,7 +190,7 @@ jobs:
         run: |
           # Sanitize ref name by replacing '/' with '-' for valid file names
           SANITIZED_REF=$(echo "$REF_NAME" | tr '/' '-')
-          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }},ci"
+          cargo build --release --package ethrex-guest-program --features "${{ matrix.zkvm }}-build-elf,ci"
           mkdir -p ${{ matrix.zkvm }}_verification_keys
           if [ "${{ matrix.zkvm }}" = "sp1" ]; then
             mv crates/guest-program/bin/${{ matrix.zkvm }}/out/riscv32im-succinct-zkvm-elf ethrex-riscv32im-${{ matrix.zkvm }}-elf-$SANITIZED_REF
@@ -215,19 +207,19 @@ jobs:
           fi
 
       - name: Upload ethrex guest elf artifact - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ env.ELF_ARTIFACT }}
           path: ${{ env.ELF_ARTIFACT }}
 
       - name: Upload ethrex guest verification keys - ${{ matrix.zkvm }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.zkvm }}_verification_keys
           path: ${{ matrix.zkvm }}_verification_keys/
 
-  # Creates ethrex-guests.tar.gz artifact including both SP1 and
-  # RISC0 elf and verification keys.
+  # Creates ethrex-guests.tar.gz artifact including SP1, RISC0, and ZisK
+  # elf and verification keys.
   package-ethrex-guest:
     needs:
       - build-ethrex-guest
@@ -242,31 +234,31 @@ jobs:
           echo "SANITIZED_REF=$SANITIZED" >> $GITHUB_ENV
 
       - name: Download SP1 elf artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex-riscv32im-sp1-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/sp1/
 
       - name: Download SP1 verification keys artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: sp1_verification_keys
           path: ethrex_guests/sp1/
 
       - name: Download RISC0 elf artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex-riscv32im-risc0-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/risc0/
 
       - name: Download RISC0 verification keys artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: risc0_verification_keys
           path: ethrex_guests/risc0/
 
       - name: Download ZisK elf artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: ethrex-riscv64ima-zisk-elf-${{ env.SANITIZED_REF }}
           path: ethrex_guests/zisk/
@@ -277,7 +269,7 @@ jobs:
           tar -czvf ../ethrex-guests.tar.gz .
 
       - name: Upload ethrex guests artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex-guests.tar.gz
           path: ethrex-guests.tar.gz
@@ -288,10 +280,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download verification keys artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: verification_keys
           path: crates/l2/contracts/src/
@@ -302,7 +294,7 @@ jobs:
           tar -czvf ../../../../ethrex-contracts.tar.gz .
 
       - name: Upload contracts artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ethrex-contracts.tar.gz
           path: ethrex-contracts.tar.gz
@@ -330,7 +322,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -393,7 +385,7 @@ jobs:
 
     steps:
       - name: Login to Docker registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -424,12 +416,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: ./bin
           pattern: "ethrex*" # This includes the binaries, elf files, ethrex-verification-keys.tar.gz, and ethrex-contracts.tar.gz
@@ -450,9 +442,11 @@ jobs:
           fromTag: ${{ github.ref_name }}
           toTag: ${{ env.PREVIOUS_TAG }}
           writeToFile: false
+          restrictToTypes: feat,fix,perf,refactor,revert
+          excludeTypes: build,docs,other,style,chore
 
       - name: Finalize Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:

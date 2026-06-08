@@ -2,12 +2,14 @@
 members = [
   "archive_sync",
   "ef_tests/blockchain",
+  "ef_tests/engine",
   "ef_tests/state",
   "ef_tests/state_v2",
   "hive_report",
   "load_test",
   "loc",
   "migrations",
+  "monitor",
   "reorgs",
 ]
 exclude = ["ef_tests/state"]
@@ -18,6 +20,7 @@ version = "4.0.0"
 edition = "2024"
 authors = ["LambdaClass"]
 documentation = "https://docs.ethrex.xyz"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 ethrex-blockchain = { path = "../crates/blockchain" }
@@ -34,7 +37,8 @@ ethrex-rlp = { path = "../crates/common/rlp" }
 ethrex-l2 = { path = "../crates/l2" }
 ethrex-l2-common = { path = "../crates/l2/common" }
 ethrex-sdk = { path = "../crates/l2/sdk" }
-ethrex-prover = { path = "../crates/l2/prover" }
+ethrex-l2-prover = { path = "../crates/l2/prover" }
+ethrex-prover = { path = "../crates/prover", default-features = false }
 ethrex-storage-rollup = { path = "../crates/l2/storage" }
 ethrex = { path = "../cmd/ethrex" }
 ethrex-l2-rpc = { path = "../crates/l2/networking/rpc" }
@@ -55,6 +59,7 @@ hex-literal = "0.4.1"
 crc32fast = "1.4.2"
 lazy_static = "1.5.0"
 sha2 = "0.10.8"
+sha3 = "0.10.8"
 tokio-util = { version = "0.7.15", features = ["rt"] }
 jsonwebtoken = "9.3.0"
 rand = "0.8.5"
@@ -74,14 +79,16 @@ url = { version = "2.5.4", features = ["serde"] }
 kzg-rs = "0.2.6"
 libsql = "0.9.10"
 futures = "0.3.31"
-spawned-concurrency = "0.4.2"
-spawned-rt = "0.4.2"
+spawned-concurrency = "0.5.0"
+spawned-rt = "0.5.0"
 lambdaworks-crypto = "0.13.0"
 tui-logger = { version = "0.17.3", features = ["tracing-support"] }
 crossbeam = "0.8.4"
 rayon = "1.10.0"
 rkyv = { version = "0.8.10", features = ["std", "unaligned"] }
 tempfile = "3.8"
+anyhow = "1.0.86"
+datatest-stable = "0.2.9"
 uuid = { version = "1.18.1", features = ["v4"] }
 tower-http = { version = "0.6.2", features = ["cors"] }
 indexmap = { version = "2.11.4" }
@@ -99,6 +106,15 @@ codegen-units = 1
 [profile.release-with-debug]
 inherits = "release"
 debug = 2
+
+# See workspace root Cargo.toml for rationale: release-grade opt-level without
+# thin-LTO so ef_tests rebuilds are fast.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+debug = "line-tables-only"
+incremental = true
 
 [patch.crates-io]
 secp256k1 = { git = "https://github.com/sp1-patches/rust-secp256k1", tag = "patch-0.30.0-sp1-5.0.0" }

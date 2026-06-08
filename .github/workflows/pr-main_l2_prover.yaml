@@ -25,8 +25,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -49,7 +49,7 @@ jobs:
         backend: ["sp1", "risc0", "zisk"]
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -63,24 +63,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: ./.github/actions/install-risc0
 
-      - name: RISC-V SP1 toolchain install
+      - name: Install SP1
         if: matrix.backend == 'sp1'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L https://sp1.succinct.xyz | bash
-          ~/.sp1/bin/sp1up --version 5.0.8
+        uses: ./.github/actions/install-sp1
 
-      - name: ZisK toolchain install
+      - name: Install ZisK
         if: matrix.backend == 'zisk'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SETUP_KEY: none
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xz-utils jq curl build-essential qemu-system libomp-dev libgmp-dev nlohmann-json3-dev protobuf-compiler uuid-dev libgrpc++-dev libsecp256k1-dev libsodium-dev libpqxx-dev nasm libopenmpi-dev openmpi-bin openmpi-common libclang-dev clang gcc-riscv64-unknown-elf
-          curl https://raw.githubusercontent.com/0xPolygonHermez/zisk/main/ziskup/install.sh | bash
-          echo "$HOME/.zisk/bin" >> $GITHUB_PATH
+        uses: ./.github/actions/install-zisk
 
       - name: RISC-V OpenVM toolchain install
         if: matrix.backend == 'openvm'
@@ -110,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -128,7 +122,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Add Rust Cache
         uses: Swatinem/rust-cache@v2
       - name: Check tdx

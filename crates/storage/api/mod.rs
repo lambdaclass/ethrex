@@ -19,7 +19,7 @@
 //!   only used during snap-sync.
 
 use crate::error::StoreError;
-use std::{fmt::Debug, path::Path};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 pub mod tables;
 
@@ -34,7 +34,7 @@ pub trait StorageBackend: Debug + Send + Sync {
     fn clear_table(&self, table: &'static str) -> Result<(), StoreError>;
 
     /// Opens a new read view.
-    fn begin_read(&self) -> Result<Box<dyn StorageReadView + '_>, StoreError>;
+    fn begin_read(&self) -> Result<Arc<dyn StorageReadView>, StoreError>;
 
     /// Creates a new write batch.
     fn begin_write(&self) -> Result<Box<dyn StorageWriteBatch + 'static>, StoreError>;
@@ -55,7 +55,7 @@ pub trait StorageBackend: Debug + Send + Sync {
 
 /// Read-only transaction interface.
 /// Provides methods to read data from the database
-pub trait StorageReadView {
+pub trait StorageReadView: Send + Sync {
     /// Retrieves a value by key from the specified table.
     fn get(&self, table: &'static str, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
 
@@ -87,6 +87,16 @@ pub trait StorageWriteBatch: Send {
 
     /// Removes a key-value pair from the specified table.
     fn delete(&mut self, table: &'static str, key: &[u8]) -> Result<(), StoreError>;
+
+    /// Appends a merge operand for the given key in the specified table.
+    ///
+    /// The actual combine step is deferred — backends with a registered merge
+    /// operator (RocksDB) apply it at read or compaction time; backends without
+    /// (InMemory) dispatch by table and apply inline.
+    ///
+    /// Currently used for `TRANSACTION_LOCATIONS`. Calling on a table without
+    /// a registered merge function is an error.
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError>;
 
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;

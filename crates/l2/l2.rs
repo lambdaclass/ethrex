@@ -1,6 +1,6 @@
 pub mod based;
 pub mod errors;
-pub mod monitor;
+pub use ethrex_monitor as monitor;
 pub mod sequencer;
 pub mod utils;
 

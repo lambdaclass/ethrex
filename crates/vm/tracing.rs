@@ -1,6 +1,7 @@
 use crate::backends::levm::LEVM;
-use ethrex_common::tracing::CallTrace;
+use ethrex_common::tracing::{CallTrace, OpcodeTraceResult, PrestateResult};
 use ethrex_common::types::Block;
+pub use ethrex_levm::tracing::OpcodeTracerConfig;
 
 use crate::{Evm, EvmError};
 
@@ -31,6 +32,61 @@ impl Evm {
             only_top_call,
             with_log,
             self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Executes a single tx and captures the pre/post account state (prestateTracer).
+    /// Assumes that the received state already contains changes from previous transactions.
+    pub fn trace_tx_prestate(
+        &mut self,
+        block: &Block,
+        tx_index: usize,
+        diff_mode: bool,
+        include_empty: bool,
+    ) -> Result<PrestateResult, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
+        LEVM::trace_tx_prestate(
+            &mut self.db,
+            &block.header,
+            tx,
+            diff_mode,
+            include_empty,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
+    }
+
+    /// Executes a single tx and captures the per-opcode (EIP-3155) trace.
+    /// Assumes that the received state already contains changes from previous transactions.
+    pub fn trace_tx_opcodes(
+        &mut self,
+        block: &Block,
+        tx_index: usize,
+        cfg: OpcodeTracerConfig,
+    ) -> Result<OpcodeTraceResult, EvmError> {
+        let tx = block
+            .body
+            .transactions
+            .get(tx_index)
+            .ok_or(EvmError::Custom(
+                "Missing Transaction for Trace".to_string(),
+            ))?;
+
+        LEVM::trace_tx_opcodes(
+            &mut self.db,
+            &block.header,
+            tx,
+            cfg,
+            self.vm_type,
+            self.crypto.as_ref(),
         )
     }
 
@@ -43,6 +99,12 @@ impl Evm {
         block: &Block,
         stop_index: Option<usize>,
     ) -> Result<(), EvmError> {
-        LEVM::rerun_block(&mut self.db, block, stop_index, self.vm_type)
+        LEVM::rerun_block(
+            &mut self.db,
+            block,
+            stop_index,
+            self.vm_type,
+            self.crypto.as_ref(),
+        )
     }
 }

@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .build()?;
 
     // Export git commit hash and branch name as environment variables
-    let git2 = Git2Builder::default().branch(true).sha(true).build()?;
+    let git2 = Git2Builder::default().branch(true).sha(false).build()?;
 
     Emitter::default()
         .add_instructions(&rustc)?

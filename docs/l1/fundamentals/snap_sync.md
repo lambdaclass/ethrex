@@ -37,7 +37,7 @@ In the example, even if we find that node { hash: 0x317f, path: 0 } is correct, 
 
 To solve the second problem, we introduce an optimization, which is called the "Membatch"[^2]. This allows us to maintain a new invariant:
 
-[^2]: The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects it current use.
+[^2]: The membatch is an idea taken from geth, and the name comes from their code. The name should be updated to "pendingNodes" as it reflects its current use.
 
 > If a node is present in the DB, then that node and all its children must be present.
 
@@ -47,8 +47,8 @@ To maintain this invariant, we do the following:
 
 
 - When we get a new node, we don't immediately store it in the database. We keep track of the amount of every node's children that are not yet in the database. As long as it's not zero, we keep it in a separate in-memory structure "Membatch" instead of on the db.
-- When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be commited, etc.
-- When the nodes are written to the database, all it's parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.
+- When a node has all of its children in the db, we commit it and recursively go up the tree to see if its parent needs to be committed, etc.
+- When the nodes are written to the database, all its parents are deleted from the db, which preserves the subtree invariant. Because lower down nodes are always written first, we never delete a valid node.
 
 Example of a possible state after stopping fast sync due to staleness with membatch.
 
@@ -159,14 +159,14 @@ The first step is downloading all the headers, through the `request_block_header
 
 #### API
 
-When downloading the account values, we use the snap function [`GetAccountRange`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00). This requests receives:
+When downloading the account values, we use the snap function [`GetAccountRange`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getaccountrange-0x00). This request receives:
 
 - rootHash: state_root of the block we're trying to download
 - startingHash: Account hash[^4] of the first to retrieve
 - limitHash: Account hash after which to stop serving data
 - responseBytes: Soft limit at which to stop returning data
 
-[^4]: All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with adress 0x0001 whose hash would be 0x49d0...49d5
+[^4]: All accounts and storages are sent and found through the hash of their address. Example: the account with address 0xf003 would be found through the 0x26c2...38c1 hash, and would be found before the account with address 0x0001 whose hash would be 0x49d0...49d5
 
 This method returns the following
 
@@ -207,11 +207,10 @@ For an optimization for faster insertion, these are stored ordered in the RocksD
 The sst files in the `"account_state_snapshots"` subfolder are ingested into a RocksDB database. This provides an ordered array that is used for insertion.
 
 [More detailed documentation found in sorted_trie_insert.md](../../internal/l1/sorted_trie_insert.md).
-[More detailed documentation found in sorted_trie_insert.md](../../internal/l1/sorted_trie_insert.md).
 
 ### Downloading Storage Slots
 
-The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function [`GetStorageRanges`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02). This requests has the following parameters:
+The download of the storage slots is conceptually similar to the download of accounts, but very different in implementation. The method uses the snap function [`GetStorageRanges`](https://github.com/ethereum/devp2p/blob/master/caps/snap.md#getstorageranges-0x02). This request has the following parameters:
 
 - rootHash: state_root of the block we're trying to download
 - accountHashes: List of all the account address hashes of the storage tries to serve
@@ -257,11 +256,11 @@ A large amount of the accounts with storage have exactly the same storage as oth
 
 Storage trie sizes have a very uneven distribution. Around 70% of all ethereum mainnet contracts have only 1 or 2 storage slots. However, a few contracts have more storage slots than all account leaves in the entire state trie. As such, the code needs to take this pareto distribution into account to download storage tries fast.
 
-At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single requests. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.
+At the beginning of the algorithm, we divide the accounts into chunks of 300 storage roots and their corresponding accounts. We start downloading the storage slots, until we find an account whose storage doesn't fit into a single request. This will be indicated by the proof field having the data indicating that there are still more nodes to download in that account.
 
 ![proofs for missing slots](./snap_sync/SnapSyncDownloadingStorages-1.png)
 
-When we reach that situation, we chunk the big account based on the "density"[^7] of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly download.
+When we reach that situation, we chunk the big account based on the "density"[^7] of storage slots we downloaded, following this code to get chunks of 10,000 slots[^6]. We create the tasks to download those intervals, and store all of the intervals in a struct to check when everything for that account was properly downloaded.
 
 [^6]: 10_000 slots is a number chosen without hard data, we should review that number.
 
@@ -320,8 +319,8 @@ Currently, if ethrex has been downloading storages for more than 2 pivots, the n
 
 ### Downloading Bytecodes
 
-Whenever an account is download or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.
+Whenever an account is downloaded or healed we check if the code is not empty. If it isn't, we store it for future download. This is added to a list, and when the list grows beyond a certain size it is written to disk. After the healing is done and we have a complete state and storage tree, we start with the download of bytecodes, chunking them to avoid memory overflow.
 
 ### Forkchoice update
 
-Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from `snap` to `full`, and we do an `apply_forkchoice` to mark that as the last pivot as the last block.
+Once the entire state trie, all storage tries and contract bytecodes are downloaded, we switch the sync mode from `snap` to `full`, and we do an `apply_forkchoice` to mark the last pivot as the last block.

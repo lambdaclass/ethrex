@@ -1,6 +1,6 @@
 # Ethrex L2 contracts
 
-There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeables.
+There are two L1 contracts: OnChainProposer and CommonBridge. Both contracts are deployed using UUPS proxies, so they are upgradeable.
 
 ## L1 Contracts
 
@@ -34,11 +34,11 @@ The `CommonBridge` is an upgradeable smart contract that facilitates cross-chain
         bytes data; // Calldata to execute on the target L2 contract
     }
     ```
-    This expresivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
+    This expressivity allows for arbitrary cross-chain actions, e.g., depositing ETH then interacting with an L2 contract.
 2. **Withdrawals (L2 → L1)**
     - **`claimWithdrawal()`**: Withdraw ETH from `CommonBridge` via Merkle proof
     - **`claimWithdrawalERC20()`**: Withdraw ERC20 tokens from `CommonBridge` via Merkle proof
-    - **`publishWithdrawals()`**: Priviledged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
+    - **`publishWithdrawals()`**: Privileged function to add merkle root of L2 withdrawal logs to `batchWithdrawalLogsMerkleRoots` mapping to make them claimable
 3. **Transaction Management**
     - **`getPendingTransactionHashes()`**: Returns pending privileged transaction hashes
     - **`removePendingTransactionHashes()`**: Removes processed privileged transactions (only callable by OnChainProposer)
@@ -61,7 +61,7 @@ The `OnChainProposer` is an upgradeable smart contract that ensures the advancem
     - **`revertBatch()`**: Removes unverified batches (only callable when paused)
 
 2. **Proof Verification**
-    - **`verifyBatch()`**: Verifies a single batch using RISC0, SP1, or TDX proofs
+    - **`verifyBatches()`**: Verifies one or more consecutive batches using RISC0, SP1, or TDX proofs
     - **`verifyBatchesAligned()`**: Verifies multiple batches in sequence using aligned proofs with Merkle verification
 
 ## L2 Contracts
@@ -129,10 +129,14 @@ Once you have the new contract, you need to do the following three steps:
     rex send <PROXY_ADDRESS> 'upgradeToAndCall(address,bytes)' <NEW_IMPLEMENTATION_ADDRESS> <INITIALIZATION_CALLDATA> --private-key <PRIVATE_KEY>
     ```
 
+    > **Note:** The `OnChainProposer` is owned by the Timelock contract. You cannot call `upgradeToAndCall` on the OCP directly — it will revert with `onlyOwner`. The call must be routed through the Timelock. See [Timelock](./timelock.md) for the available paths (schedule + execute with delay, or `emergencyExecute` for immediate execution by the Security Council).
+    >
+    > The same applies to any operation restricted by `onlyOwner` on the OCP (e.g., `pause`, `unpause`).
+
 3. Check the proxy updated the pointed address to the new implementation. It should return the address of the new implementation:
 
     ```sh
-    curl http://localhost:8545 -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": [<PROXY_ADDRESS>, "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
+    curl <L1_RPC_URL> -d '{"jsonrpc": "2.0", "id": "1", "method": "eth_getStorageAt", "params": ["<PROXY_ADDRESS>", "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc", "latest"]}'
     ```
 
 ## Transfer ownership

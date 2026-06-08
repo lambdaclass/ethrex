@@ -57,13 +57,29 @@ failed_logs_root="${results_dir}/failed_logs"
 rm -rf "${failed_logs_root}"
 mkdir -p "${failed_logs_root}"
 
+# Tests excluded from the failure count (substring match against test case
+# name).
+KNOWN_EXCLUDED_TESTS=(
+)
+
+# Build a jq filter that excludes the known-excluded tests.
+exclude_filter='true'
+for pattern in "${KNOWN_EXCLUDED_TESTS[@]}"; do
+  exclude_filter="${exclude_filter} and (.name | contains(\"${pattern}\") | not)"
+done
+
 for json_file in "${json_files[@]}"; do
   if [[ "${json_file}" == *"hive.json" ]]; then
     continue
   fi
 
   suite_name="$(jq -r '.name // empty' "${json_file}")"
-  failed_cases="$(jq '[.testCases[]? | select(.summaryResult.pass != true)] | length' "${json_file}")"
+  failed_cases="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"')] | length' "${json_file}")"
+
+  skipped_excluded="$(jq '[.testCases[]? | select(.summaryResult.pass != true) | select(('"${exclude_filter}"') | not)] | length' "${json_file}")"
+  if [ "${skipped_excluded}" -gt 0 ]; then
+    echo "Ignoring ${skipped_excluded} known-excluded test(s) in ${suite_name:-$(basename "${json_file}")}"
+  fi
 
   if [ "${failed_cases}" -gt 0 ]; then
     echo "Detected ${failed_cases} failing test case(s) in ${suite_name:-$(basename "${json_file}")}"
@@ -71,6 +87,7 @@ for json_file in "${json_files[@]}"; do
       jq -r '
         .testCases[]?
         | select(.summaryResult.pass != true)
+        | select('"${exclude_filter}"')
         | . as $case
         | ($case.summaryResult // {}) as $summary
         | ($summary.message // $summary.reason // $summary.error // "") as $message
@@ -124,9 +141,9 @@ for json_file in "${json_files[@]}"; do
         [
           .simLog?,
           .testDetailsLog?,
-          (.testCases[]? | select(.summaryResult.pass != true) | .clientInfo? | to_entries? // [] | map(.value.logFile? // empty) | .[]),
-          (.testCases[]? | select(.summaryResult.pass != true) | .summaryResult.logFile?),
-          (.testCases[]? | select(.summaryResult.pass != true) | .logFile?)
+          (.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"') | .clientInfo? | to_entries? // [] | map(.value.logFile? // empty) | .[]),
+          (.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"') | .summaryResult.logFile?),
+          (.testCases[]? | select(.summaryResult.pass != true) | select('"${exclude_filter}"') | .logFile?)
         ]
         | map(select(. != null and . != ""))
         | unique
@@ -196,6 +213,7 @@ for json_file in "${json_files[@]}"; do
         .testCases
         | to_entries[]
         | select(.value.summaryResult.pass != true)
+        | select(.value | '"${exclude_filter}"')
         | . as $case_entry
         | ($case_entry.value.clientInfo? // {}) | to_entries[]
         | [
@@ -228,10 +246,17 @@ for json_file in "${json_files[@]}"; do
         fi
 
         case_slug="$(slugify "${raw_case_name}")"
+        case_suffix="case-${case_id}"
         if [ -n "${case_slug}" ]; then
-          case_slug="${case_slug}-case-${case_id}"
+          # Truncate the name part so the full component stays under the
+          # 255-char filesystem limit (leave room for suffix + separator).
+          max_name_len=$(( 250 - ${#case_suffix} - 1 ))
+          if [ "${#case_slug}" -gt "${max_name_len}" ]; then
+            case_slug="${case_slug:0:${max_name_len}}"
+          fi
+          case_slug="${case_slug}-${case_suffix}"
         else
-          case_slug="case-${case_id}"
+          case_slug="${case_suffix}"
         fi
 
         client_slug="$(slugify "${client_id}")"

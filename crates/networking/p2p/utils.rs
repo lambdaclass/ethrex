@@ -150,7 +150,6 @@ pub fn dump_to_file(path: &Path, contents: Vec<u8>) -> Result<(), DumpError> {
         .inspect_err(|err| error!(%err, ?path, "Failed to dump snapshot to file"))
         .map_err(|err| DumpError {
             path: path.to_path_buf(),
-            contents,
             error: err.kind(),
         })
 }
@@ -164,7 +163,6 @@ pub fn dump_accounts_to_file(
         .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
         .map_err(|_| DumpError {
             path: path.to_path_buf(),
-            contents: Vec::new(),
             error: std::io::ErrorKind::Other,
         });
     #[cfg(not(feature = "rocksdb"))]
@@ -207,7 +205,6 @@ pub fn dump_storages_to_file(
     .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
     .map_err(|_| DumpError {
         path: path.to_path_buf(),
-        contents: Vec::new(),
         error: std::io::ErrorKind::Other,
     });
 
@@ -228,5 +225,5 @@ pub fn dump_storages_to_file(
 pub fn distance(node_id_1: &H256, node_id_2: &H256) -> usize {
     let xor = node_id_1 ^ node_id_2;
     let distance = U256::from_big_endian(xor.as_bytes());
-    distance.bits().saturating_sub(1)
+    distance.bits()
 }

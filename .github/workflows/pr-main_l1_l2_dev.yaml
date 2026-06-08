@@ -27,8 +27,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -47,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Free Disk Space
         uses: ./.github/actions/free-disk
@@ -65,6 +65,7 @@ jobs:
           --block-producer.operator-fee-vault-address 0xd5d2a85751b6F158e5b9B8cD509206A865672362 \
           --block-producer.l1-fee-vault-address 0x45681AE1768a8936FB87aB11453B4755e322ceec \
           --block-producer.operator-fee-per-gas 1000000000 \
+          --committer.commit-time 15000 \
           --no-monitor  2>&1 | tee /tmp/ethrex.log &
 
       - name: Wait for ethrex L2
@@ -95,4 +96,4 @@ jobs:
           tail -n +1 -f /tmp/ethrex.log &
           tail -n +1 -f /tmp/prover.log &
           PROPOSER_COINBASE_ADDRESS=0x0007a881CD95B1484fca47615B64803dad620C8d \
-          cargo test l2 --release -- --nocapture --test-threads=1
+          cargo test -p ethrex-test l2_integration_test --release --features l2 -- --nocapture --test-threads=1

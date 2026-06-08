@@ -22,11 +22,11 @@ For performance, having an efficient cache of accounts that need to have their s
 
 ### Improving debug
 
-The functions `validate_state_root` and `validate_storage_roots` are very slow, as they rebuild the entire state trie in memory. This is 
+The functions `validate_state_root` and `validate_storage_roots` are very slow, as they rebuild the entire state trie in memory.
 
 ## Code Quality
 
-In general, snap sync lacks explanation comments that detail the functioning on the algorithm. Variables and structs should be renamed to make it properly readable.
+In general, snap sync lacks explanation comments that detail the functioning of the algorithm. Variables and structs should be renamed to make it properly readable.
 
 ### Storage downloads
 
