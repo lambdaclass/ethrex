@@ -200,6 +200,17 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Block-invariant EVM config + chain id + base blob fee, computed once and
+        // reused by every tx (mirrors `execute_block_pipeline`): avoids a per-tx
+        // chain-config copy, fork/blob-schedule recompute, and `fake_exponential` call.
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+        // Stack/memory buffer pools reused across txs (each tx draws one and reclaims it).
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+        let mut shared_memory_pool = Vec::with_capacity(1);
+
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
@@ -254,7 +265,20 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                base_blob_fee_per_gas,
+                &mut shared_stack_pool,
+                &mut shared_memory_pool,
+                false,
+                crypto,
+                evm_config,
+                chain_id,
+            )?;
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
