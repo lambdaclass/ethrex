@@ -43,13 +43,19 @@ async fn test_ip_voting_ignores_unroutable_ips_but_keeps_private() {
     for unroutable in ["127.0.0.1", "169.254.1.1", "0.0.0.0"] {
         let ip: IpAddr = unroutable.parse().unwrap();
         predictor.record_ip_vote(ip, voter1);
-        assert!(predictor.ip_votes.is_empty(), "{unroutable} should be discarded");
+        assert!(
+            predictor.ip_votes.is_empty(),
+            "{unroutable} should be discarded"
+        );
     }
 
     // RFC1918 private IPs are now KEPT as candidates (reachable on a flat private network).
     let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
     predictor.record_ip_vote(private_ip, voter1);
-    assert_eq!(predictor.ip_votes.get(&private_ip).map(|v| v.len()), Some(1));
+    assert_eq!(
+        predictor.ip_votes.get(&private_ip).map(|v| v.len()),
+        Some(1)
+    );
 
     let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
     predictor.record_ip_vote(public_ip, voter1);
@@ -69,7 +75,10 @@ async fn test_ip_voting_converges_on_private_when_only_private() {
 
     assert_eq!(predictor.record_ip_vote(private_ip, voter1), None);
     assert_eq!(predictor.record_ip_vote(private_ip, voter2), None);
-    assert_eq!(predictor.record_ip_vote(private_ip, voter3), Some(private_ip));
+    assert_eq!(
+        predictor.record_ip_vote(private_ip, voter3),
+        Some(private_ip)
+    );
 }
 
 #[tokio::test]
