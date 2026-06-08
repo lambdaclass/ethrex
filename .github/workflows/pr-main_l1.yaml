@@ -138,6 +138,24 @@ jobs:
             cat docs/known_issues.md
           } >> "$GITHUB_STEP_SUMMARY"
 
+  engine-ef-tests:
+    name: Engine EF tests
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.run_tests == 'true' && github.event_name != 'merge_group' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v6
+
+      - name: Free Disk Space
+        uses: ./.github/actions/free-disk
+
+      - name: Setup Rust Environment
+        uses: ./.github/actions/setup-rust
+
+      - name: Run Engine EF tests
+        run: make -C tooling/ef_tests/engine test
+
   known-issues-comment:
     name: Post Known Issues sticky comment
     runs-on: ubuntu-latest

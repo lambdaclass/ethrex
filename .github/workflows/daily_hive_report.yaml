@@ -136,8 +136,8 @@ jobs:
             else
               # All other forks (Prague, Osaka, Cancun, Shanghai, Paris) use fixtures_develop
               # which includes comprehensive test coverage including static tests
-              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.3.0/fixtures_develop.tar.gz"
-              FLAGS+=" --sim.buildarg branch=forks/osaka"
+              FLAGS+=" --sim.buildarg fixtures=https://github.com/ethereum/execution-spec-tests/releases/download/v5.4.0/fixtures_develop.tar.gz"
+              FLAGS+=" --sim.buildarg branch=forks/amsterdam"
             fi
             FLAGS+=" --client.checktimelimit=180s"
           fi
