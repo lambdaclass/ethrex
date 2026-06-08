@@ -1544,10 +1544,10 @@ mod tests {
         ];
         let expected_keys = vec![Bytes::from_static(&[0x02]), Bytes::from_static(&[0x03])];
         let expected = (
-            expected_headers.clone(),
-            expected_codes.clone(),
-            expected_state.clone(),
-            expected_keys.clone(),
+            expected_headers,
+            expected_codes,
+            expected_state,
+            expected_keys,
         )
             .encode_to_vec();
 
