@@ -71,8 +71,10 @@ impl HeaderFetchOutcome {
     pub fn failure_reason(&self) -> &'static str {
         match self {
             HeaderFetchOutcome::Headers(_) => "headers received",
-            HeaderFetchOutcome::NoPeerAvailable => "no eth peer available to ask",
-            HeaderFetchOutcome::PeerFailed => "peer(s) asked but did not serve headers",
+            HeaderFetchOutcome::NoPeerAvailable => {
+                "no eth-capable peer with a live connection to query (peers may be connecting or recently dropped)"
+            }
+            HeaderFetchOutcome::PeerFailed => "peer(s) queried but did not serve headers",
         }
     }
 }
@@ -148,11 +150,12 @@ impl PeerHandler {
             .await?)
     }
 
-    /// Number of connected peers that advertise the eth capabilities used for sync.
-    /// Sync diagnostics use this to tell "no peers to ask" (discovery/connectivity
-    /// problem) apart from "peers present but not serving" (the chain data is gone).
-    /// Returns 0 on any peer-table error since this is only used for logging.
-    pub async fn eth_peer_count(&self) -> usize {
+    /// Number of peers known to the table that advertise the eth capabilities used for sync.
+    /// NOTE: this counts eth-capable peers regardless of whether they currently have a live
+    /// connection, so it can be greater than the number actually queryable via
+    /// `get_random_peer` (which requires a live connection). Used only for diagnostics; logged
+    /// as `eth_capable_peers`. Returns 0 on any peer-table error.
+    pub async fn eth_capable_peer_count(&self) -> usize {
         self.peer_table
             .peer_count_by_capabilities(SUPPORTED_ETH_CAPABILITIES.to_vec())
             .await
