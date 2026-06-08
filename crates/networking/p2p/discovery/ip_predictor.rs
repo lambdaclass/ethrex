@@ -26,7 +26,13 @@ impl IpPredictor {
     /// Records an IP vote from a PONG-observed address.
     /// Returns `Some(ip)` if the voting round ended with a winning IP to apply.
     pub fn record_ip_vote(&mut self, reported_ip: IpAddr, voter_id: H256) -> Option<IpAddr> {
-        if Self::is_private_ip(reported_ip) {
+        // Discard only never-routable addresses (loopback/link-local/unspecified). RFC1918
+        // private IPs are kept as candidates: on a flat private network (e.g. a local or
+        // kurtosis enclave) the private IP is the address peers actually reach us at, and no
+        // public IP is ever observed. `finalize_ip_vote_round` still prefers a public winner
+        // when one reaches quorum, so a NAT'd node (whose peers observe its public source IP)
+        // converges on the public IP and never advertises a private one.
+        if Self::is_unroutable_ip(reported_ip) {
             return None;
         }
 
@@ -70,21 +76,51 @@ impl IpPredictor {
     /// Finalizes the current voting round.
     /// Returns `Some(winning_ip)` if a winner reached the threshold and should be applied.
     fn finalize_ip_vote_round(&mut self) -> Option<IpAddr> {
-        let winner = self
-            .ip_votes
-            .iter()
-            .map(|(ip, voters)| (*ip, voters.len()))
-            .max_by_key(|(_, count)| *count);
-
-        let result = winner.and_then(|(winning_ip, vote_count)| {
-            (vote_count >= IP_VOTE_THRESHOLD).then_some(winning_ip)
-        });
+        // Among IPs that reached quorum, prefer a public (routable) one; fall back to a
+        // private winner only if no public IP reached quorum. A NAT'd/SNAT'd node's peers
+        // observe and vote its routable public source IP, so it converges on public; a node
+        // on a flat private network only ever sees private votes, so it converges on the
+        // reachable private IP instead of advertising nothing forever.
+        let mut best_public: Option<(IpAddr, usize)> = None;
+        let mut best_private: Option<(IpAddr, usize)> = None;
+        for (ip, voters) in &self.ip_votes {
+            let count = voters.len();
+            if count < IP_VOTE_THRESHOLD {
+                continue;
+            }
+            let slot = if Self::is_private_ip(*ip) {
+                &mut best_private
+            } else {
+                &mut best_public
+            };
+            if slot.is_none_or(|(_, best)| count > best) {
+                *slot = Some((*ip, count));
+            }
+        }
+        let result = best_public.or(best_private).map(|(ip, _)| ip);
 
         self.ip_votes.clear();
         self.ip_vote_period_start = Some(Instant::now());
         self.first_ip_vote_round_completed = true;
 
         result
+    }
+
+    /// Returns true for addresses that can never be a valid externally-advertised endpoint
+    /// (loopback, link-local, unspecified). Unlike [`is_private_ip`](Self::is_private_ip),
+    /// RFC1918 / unique-local private addresses are NOT included: on a flat private network
+    /// they are the reachable address, so they remain valid vote candidates (preferred only
+    /// when no public IP reaches quorum).
+    fn is_unroutable_ip(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(v4) => v4.is_loopback() || v4.is_link_local() || v4.is_unspecified(),
+            IpAddr::V6(v6) => {
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    // link-local (fe80::/10)
+                    || (v6.segments()[0] & 0xffc0) == 0xfe80
+            }
+        }
     }
 
     /// Returns true if the IP is private/local (not useful for external connectivity).
