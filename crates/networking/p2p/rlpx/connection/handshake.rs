@@ -32,6 +32,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     sync::{Arc, RwLock},
+    time::Duration,
 };
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
@@ -156,11 +157,23 @@ pub(crate) async fn perform(
     ))
 }
 
+/// Bound on the outbound TCP connect. Without it, dialing an unreachable peer (a stale
+/// ENR, NAT'd or offline node) blocks until the OS SYN timeout (~127s on Linux), so dead
+/// dials pile up in SYN-SENT while the dialer keeps spawning new ones. Discovery on public
+/// testnets surfaces many such dead ENRs, so a tight cap keeps the dial pipeline cycling
+/// through candidates and reaching live peers faster.
+const TCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+
 async fn tcp_stream(addr: SocketAddr) -> Result<TcpStream, std::io::Error> {
-    match addr {
-        SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
-        SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
-    }
+    let connect = async {
+        match addr {
+            SocketAddr::V4(_) => TcpSocket::new_v4()?.connect(addr).await,
+            SocketAddr::V6(_) => TcpSocket::new_v6()?.connect(addr).await,
+        }
+    };
+    tokio::time::timeout(TCP_CONNECT_TIMEOUT, connect)
+        .await
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "tcp connect timed out"))?
 }
 
 async fn send_auth<S: AsyncWrite + std::marker::Unpin>(

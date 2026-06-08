@@ -1,7 +1,7 @@
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_handler::PeerHandler,
-    peer_table::PeerTableServerProtocol as _,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     rlpx::{
         p2p::SUPPORTED_SNAP_CAPABILITIES,
         snap::{GetTrieNodes, TrieNodes},
@@ -436,10 +436,12 @@ async fn ask_peers_for_nodes(
         };
 
         let tx = task_sender.clone();
+        let peer_table: PeerTable = peers.peer_table.clone();
 
         requests_task_joinset.spawn(async move {
             let req_id = gtn.id;
-            let response = request_storage_trienodes(connection, permit, gtn).await;
+            let response =
+                request_storage_trienodes(connection, permit, peer_id, &peer_table, gtn).await;
             // TODO: add error handling
             tx.try_send(response).inspect_err(
                 |err| debug!(error=?err, "Failed to send state trie nodes response"),

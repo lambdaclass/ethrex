@@ -411,9 +411,11 @@ pub async fn periodically_show_peer_stats_during_syncing(
                 .count();
             let eligible = diag.iter().filter(|p| p.eligible).count();
             let inflight: i64 = diag.iter().map(|p| p.inflight_requests).sum();
+            let connected = diag.iter().filter(|p| p.connected).count();
             ethrex_metrics::sync::METRICS_SYNC.set_snap_peers(snap_peers as i64);
             ethrex_metrics::sync::METRICS_SYNC.set_eligible_peers(eligible as i64);
             ethrex_metrics::sync::METRICS_SYNC.set_inflight_requests(inflight);
+            ethrex_metrics::sync::METRICS_SYNC.set_connected_eth_peers(connected as i64);
         }
 
         // Update previous interval counters for next rate calculation
