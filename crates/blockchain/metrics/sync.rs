@@ -16,6 +16,7 @@ pub struct MetricsSync {
     pub pivot_block: IntGauge,
     pub eligible_peers: IntGauge,
     pub snap_peers: IntGauge,
+    pub connected_eth_peers: IntGauge,
     pub inflight_requests: IntGauge,
     pub pivot_age_seconds: IntGauge,
     pub pivot_timestamp: IntGauge,
@@ -77,6 +78,11 @@ impl MetricsSync {
                 "Number of connected peers supporting the snap protocol"
             )
             .expect("Failed to create ethrex_sync_snap_peers"),
+            connected_eth_peers: register_int_gauge!(
+                "ethrex_sync_connected_eth_peers",
+                "Number of peers with an active RLPx connection"
+            )
+            .expect("Failed to create ethrex_sync_connected_eth_peers"),
             inflight_requests: register_int_gauge!(
                 "ethrex_sync_inflight_requests",
                 "Total inflight requests across all peers"
@@ -195,6 +201,10 @@ impl MetricsSync {
 
     pub fn set_snap_peers(&self, count: i64) {
         self.snap_peers.set(count);
+    }
+
+    pub fn set_connected_eth_peers(&self, count: i64) {
+        self.connected_eth_peers.set(count);
     }
 
     pub fn set_inflight_requests(&self, count: i64) {
