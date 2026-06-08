@@ -42,10 +42,10 @@ pub struct MetricsSync {
 
     // --- Block request efficiency metrics ---
     /// Total block requests by kind ("headers"|"bodies") and outcome ("served"|"empty"|"timeout"|"invalid").
-    pub block_requests: IntCounterVec,
+    pub peer_requests: IntCounterVec,
     /// Histogram of block request round-trip latency in milliseconds, by kind.
     /// Only observed on Served outcomes (latency is meaningful only when a response arrived).
-    pub block_request_latency_ms: HistogramVec,
+    pub peer_request_latency_ms: HistogramVec,
 }
 
 impl Default for MetricsSync {
@@ -177,19 +177,19 @@ impl MetricsSync {
                 &["outcome"]
             )
             .expect("Failed to create ethrex_sync_header_resolution_total"),
-            block_requests: register_int_counter_vec!(
-                "ethrex_sync_block_requests_total",
+            peer_requests: register_int_counter_vec!(
+                "ethrex_sync_peer_requests_total",
                 "Total block requests by kind (headers|bodies) and outcome (served|empty|timeout|invalid)",
                 &["kind", "outcome"]
             )
-            .expect("Failed to create ethrex_sync_block_requests_total"),
-            block_request_latency_ms: register_histogram_vec!(
-                "ethrex_sync_block_request_latency_ms",
+            .expect("Failed to create ethrex_sync_peer_requests_total"),
+            peer_request_latency_ms: register_histogram_vec!(
+                "ethrex_sync_peer_request_latency_ms",
                 "Round-trip latency in milliseconds for block requests that received a response, by kind",
                 &["kind"],
                 vec![1.0, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0]
             )
-            .expect("Failed to create ethrex_sync_block_request_latency_ms"),
+            .expect("Failed to create ethrex_sync_peer_request_latency_ms"),
         }
     }
 
@@ -233,14 +233,12 @@ impl MetricsSync {
         self.header_resolution.with_label_values(&[outcome]).inc();
     }
 
-    pub fn inc_block_request(&self, kind: &str, outcome: &str) {
-        self.block_requests
-            .with_label_values(&[kind, outcome])
-            .inc();
+    pub fn inc_peer_request(&self, kind: &str, outcome: &str) {
+        self.peer_requests.with_label_values(&[kind, outcome]).inc();
     }
 
-    pub fn observe_block_request_latency(&self, kind: &str, ms: f64) {
-        self.block_request_latency_ms
+    pub fn observe_peer_request_latency(&self, kind: &str, ms: f64) {
+        self.peer_request_latency_ms
             .with_label_values(&[kind])
             .observe(ms);
     }

@@ -440,7 +440,7 @@ impl PeerHandler {
                         #[cfg(feature = "metrics")]
                         {
                             use ethrex_metrics::sync::METRICS_SYNC;
-                            METRICS_SYNC.inc_block_request("headers", "empty");
+                            METRICS_SYNC.inc_peer_request("headers", "empty");
                         }
                         return Ok(None);
                     }
@@ -453,9 +453,8 @@ impl PeerHandler {
                         #[cfg(feature = "metrics")]
                         {
                             use ethrex_metrics::sync::METRICS_SYNC;
-                            METRICS_SYNC.inc_block_request("headers", "served");
-                            METRICS_SYNC
-                                .observe_block_request_latency("headers", latency_ms as f64);
+                            METRICS_SYNC.inc_peer_request("headers", "served");
+                            METRICS_SYNC.observe_peer_request_latency("headers", latency_ms as f64);
                         }
                         return Ok(Some(block_headers));
                     }
@@ -471,7 +470,7 @@ impl PeerHandler {
                     #[cfg(feature = "metrics")]
                     {
                         use ethrex_metrics::sync::METRICS_SYNC;
-                        METRICS_SYNC.inc_block_request("headers", "invalid");
+                        METRICS_SYNC.inc_peer_request("headers", "invalid");
                     }
                     return Ok(None);
                 }
@@ -487,7 +486,7 @@ impl PeerHandler {
                 #[cfg(feature = "metrics")]
                 {
                     use ethrex_metrics::sync::METRICS_SYNC;
-                    METRICS_SYNC.inc_block_request("headers", "timeout");
+                    METRICS_SYNC.inc_peer_request("headers", "timeout");
                 }
                 Ok(None)
             }
@@ -571,8 +570,8 @@ impl PeerHandler {
                         #[cfg(feature = "metrics")]
                         {
                             use ethrex_metrics::sync::METRICS_SYNC;
-                            METRICS_SYNC.inc_block_request("bodies", "served");
-                            METRICS_SYNC.observe_block_request_latency("bodies", latency_ms as f64);
+                            METRICS_SYNC.inc_peer_request("bodies", "served");
+                            METRICS_SYNC.observe_peer_request_latency("bodies", latency_ms as f64);
                         }
                         return Ok(Some((block_bodies, peer_id)));
                     }
@@ -588,7 +587,7 @@ impl PeerHandler {
                 #[cfg(feature = "metrics")]
                 {
                     use ethrex_metrics::sync::METRICS_SYNC;
-                    METRICS_SYNC.inc_block_request("bodies", "timeout");
+                    METRICS_SYNC.inc_peer_request("bodies", "timeout");
                 }
                 let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)

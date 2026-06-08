@@ -225,9 +225,9 @@ pub async fn request_account_range(
                     RequestOutcome::Timeout => "timeout",
                     RequestOutcome::Invalid => "invalid",
                 };
-                METRICS_SYNC.inc_block_request("account_range", outcome_str);
+                METRICS_SYNC.inc_peer_request("account_range", outcome_str);
                 if matches!(outcome, RequestOutcome::Served) {
-                    METRICS_SYNC.observe_block_request_latency("account_range", latency_ms as f64);
+                    METRICS_SYNC.observe_peer_request_latency("account_range", latency_ms as f64);
                 }
             }
             if accounts.is_empty() {
@@ -435,9 +435,9 @@ pub async fn request_bytecodes(
                     RequestOutcome::Timeout => "timeout",
                     RequestOutcome::Invalid => "invalid",
                 };
-                METRICS_SYNC.inc_block_request("bytecodes", outcome_str);
+                METRICS_SYNC.inc_peer_request("bytecodes", outcome_str);
                 if matches!(outcome, RequestOutcome::Served) {
-                    METRICS_SYNC.observe_block_request_latency("bytecodes", latency_ms as f64);
+                    METRICS_SYNC.observe_peer_request_latency("bytecodes", latency_ms as f64);
                 }
             }
             if bytecodes.is_empty() {
@@ -920,9 +920,9 @@ pub async fn request_storage_ranges(
                     RequestOutcome::Timeout => "timeout",
                     RequestOutcome::Invalid => "invalid",
                 };
-                METRICS_SYNC.inc_block_request("storage_ranges", outcome_str);
+                METRICS_SYNC.inc_peer_request("storage_ranges", outcome_str);
                 if matches!(outcome, RequestOutcome::Served) {
-                    METRICS_SYNC.observe_block_request_latency("storage_ranges", latency_ms as f64);
+                    METRICS_SYNC.observe_peer_request_latency("storage_ranges", latency_ms as f64);
                 }
             }
             if account_storages.is_empty() {
@@ -1133,7 +1133,7 @@ pub async fn request_state_trienodes(
             #[cfg(feature = "metrics")]
             {
                 use ethrex_metrics::sync::METRICS_SYNC;
-                METRICS_SYNC.inc_block_request("trienodes", "timeout");
+                METRICS_SYNC.inc_peer_request("trienodes", "timeout");
             }
             return Err(e);
         }
@@ -1144,7 +1144,7 @@ pub async fn request_state_trienodes(
         #[cfg(feature = "metrics")]
         {
             use ethrex_metrics::sync::METRICS_SYNC;
-            METRICS_SYNC.inc_block_request("trienodes", "empty");
+            METRICS_SYNC.inc_peer_request("trienodes", "empty");
         }
         return Err(SnapError::InvalidData);
     }
@@ -1159,7 +1159,7 @@ pub async fn request_state_trienodes(
             #[cfg(feature = "metrics")]
             {
                 use ethrex_metrics::sync::METRICS_SYNC;
-                METRICS_SYNC.inc_block_request("trienodes", "invalid");
+                METRICS_SYNC.inc_peer_request("trienodes", "invalid");
             }
             return Err(SnapError::InvalidHash);
         }
@@ -1169,8 +1169,8 @@ pub async fn request_state_trienodes(
     #[cfg(feature = "metrics")]
     {
         use ethrex_metrics::sync::METRICS_SYNC;
-        METRICS_SYNC.inc_block_request("trienodes", "served");
-        METRICS_SYNC.observe_block_request_latency("trienodes", latency_ms as f64);
+        METRICS_SYNC.inc_peer_request("trienodes", "served");
+        METRICS_SYNC.observe_peer_request_latency("trienodes", latency_ms as f64);
     }
     Ok(nodes)
 }
@@ -1212,9 +1212,9 @@ pub async fn request_storage_trienodes(
                 } else {
                     "empty"
                 };
-                METRICS_SYNC.inc_block_request("trienodes", outcome_str);
+                METRICS_SYNC.inc_peer_request("trienodes", outcome_str);
                 if matches!(outcome, RequestOutcome::Served) {
-                    METRICS_SYNC.observe_block_request_latency("trienodes", latency_ms as f64);
+                    METRICS_SYNC.observe_peer_request_latency("trienodes", latency_ms as f64);
                 }
             }
             Ok(trie_nodes)
@@ -1224,7 +1224,7 @@ pub async fn request_storage_trienodes(
             #[cfg(feature = "metrics")]
             {
                 use ethrex_metrics::sync::METRICS_SYNC;
-                METRICS_SYNC.inc_block_request("trienodes", "invalid");
+                METRICS_SYNC.inc_peer_request("trienodes", "invalid");
             }
             Err(RequestStorageTrieNodesError {
                 request_id,
@@ -1239,7 +1239,7 @@ pub async fn request_storage_trienodes(
             #[cfg(feature = "metrics")]
             {
                 use ethrex_metrics::sync::METRICS_SYNC;
-                METRICS_SYNC.inc_block_request("trienodes", "timeout");
+                METRICS_SYNC.inc_peer_request("trienodes", "timeout");
             }
             Err(RequestStorageTrieNodesError {
                 request_id,
