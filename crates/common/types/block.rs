@@ -361,6 +361,27 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
+/// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
+/// hashing each receipt's bloom only once (it feeds both the receipts trie and the
+/// OR-ed header bloom). Validation paths need both, so this avoids the duplicate
+/// `bloom_from_logs` keccak work — relevant in the zkVM guest where it is cycle-counted.
+pub fn compute_receipts_root_and_logs_bloom(
+    receipts: &[Receipt],
+    crypto: &dyn Crypto,
+) -> (H256, Bloom) {
+    let mut logs_bloom = Bloom::zero();
+    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
+        let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
+        logs_bloom |= bloom;
+        (
+            idx.encode_to_vec(),
+            receipt.encode_inner_with_precomputed_bloom(bloom),
+        )
+    });
+    let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
+    (receipts_root, logs_bloom)
+}
+
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
@@ -877,7 +898,7 @@ pub fn calc_excess_blob_gas(parent: &BlockHeader, schedule: ForkBlobSchedule, fo
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::constants::EMPTY_KECCACK_HASH;
+    use crate::constants::EMPTY_KECCAK_HASH;
     use crate::types::{BLOB_BASE_FEE_UPDATE_FRACTION, ELASTICITY_MULTIPLIER};
     use ethereum_types::H160;
     use hex_literal::hex;
@@ -951,7 +972,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
         let block = BlockHeader {
@@ -995,7 +1016,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
         assert!(validate_block_header(&block, &parent_block, ELASTICITY_MULTIPLIER).is_ok());

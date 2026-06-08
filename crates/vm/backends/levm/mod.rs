@@ -11,7 +11,7 @@ use bytes::Bytes;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use ethrex_common::constants::EMPTY_KECCACK_HASH;
+use ethrex_common::constants::EMPTY_KECCAK_HASH;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -54,6 +54,7 @@ use ethrex_levm::db::gen_db::{
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::memory::Memory;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -373,6 +374,10 @@ impl LEVM {
     ) -> Result<(BlockExecutionResult, Option<BlockAccessList>), EvmError> {
         let chain_config = db.store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(block.header.timestamp);
+        // Block-invariant EVM config + chain id, computed once and reused by every tx
+        // (avoids a per-tx chain-config dyn-dispatch copy + fork/blob-schedule recompute).
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
 
         // EIP-7928 BlockAccessIndex invariant — see `execute_block` for rationale.
         debug_assert!(
@@ -584,6 +589,8 @@ impl LEVM {
         Self::prepare_block(block, db, vm_type, crypto)?;
 
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+        // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
+        let mut shared_memory_pool = Vec::with_capacity(1);
 
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
@@ -642,8 +649,11 @@ impl LEVM {
                 db,
                 vm_type,
                 &mut shared_stack_pool,
+                &mut shared_memory_pool,
                 false,
                 crypto,
+                evm_config,
+                chain_id,
             )?;
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
@@ -843,10 +853,10 @@ impl LEVM {
             }
 
             // Detect account removal (EIP-161): post-state empty but pre-state existed
-            let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCACK_HASH;
+            let post_empty = balance.is_zero() && nonce == 0 && code_hash == *EMPTY_KECCAK_HASH;
             let pre_empty = prestate.balance.is_zero()
                 && prestate.nonce == 0
-                && prestate.code_hash == *EMPTY_KECCACK_HASH;
+                && prestate.code_hash == *EMPTY_KECCAK_HASH;
             let removed = post_empty && !pre_empty;
 
             let balance_changed = acct_changes
@@ -991,6 +1001,10 @@ impl LEVM {
         // invariant checkable rather than implicit.
         let chain_config = store.get_chain_config()?;
         let is_amsterdam = chain_config.is_amsterdam_activated(header.timestamp);
+        // Block-invariant EVM config + chain id, computed once and shared across the
+        // parallel workers (both are `Copy` + `Send`/`Sync`).
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
+        let chain_id = chain_config.chain_id;
         debug_assert!(
             is_amsterdam,
             "execute_block_parallel invoked on non-Amsterdam block"
@@ -1082,6 +1096,8 @@ impl LEVM {
                 // Small capacity: parallel txs rarely nest >8 call frames, and
                 // over-allocating per-tx wastes memory across many rayon tasks.
                 let mut stack_pool = Vec::with_capacity(8);
+                // Holds at most one root memory buffer (popped + reclaimed per tx).
+                let mut memory_pool = Vec::with_capacity(1);
 
                 // Enable accessed_accounts tracker (coarse) for `unaccessed_pure_accounts`
                 // diagnostics. Safe to over-report: used only to REMOVE entries from a
@@ -1110,8 +1126,11 @@ impl LEVM {
                     &mut tx_db,
                     vm_type,
                     &mut stack_pool,
+                    &mut memory_pool,
                     false,
                     crypto,
+                    evm_config,
+                    chain_id,
                 )?;
 
                 let current_state = std::mem::take(&mut tx_db.current_accounts_state);
@@ -1654,7 +1673,7 @@ impl LEVM {
                 let seeded_hash = if seeded_pos > 0 {
                     let seeded_code = &acct.code_changes[seeded_pos - 1].new_code;
                     if seeded_code.is_empty() {
-                        *EMPTY_KECCACK_HASH
+                        *EMPTY_KECCAK_HASH
                     } else {
                         ethrex_common::utils::keccak(seeded_code)
                     }
@@ -1667,7 +1686,7 @@ impl LEVM {
                             store
                                 .get_account_state(*addr)
                                 .map(|a| a.code_hash)
-                                .unwrap_or(*EMPTY_KECCACK_HASH)
+                                .unwrap_or(*EMPTY_KECCAK_HASH)
                         })
                 };
                 if account.info.code_hash != seeded_hash {
@@ -1782,7 +1801,7 @@ impl LEVM {
             if let Some(expected_code) = find_exact_change_code(&acct.code_changes, withdrawal_idx)
             {
                 let code_hash = if expected_code.is_empty() {
-                    *EMPTY_KECCACK_HASH
+                    *EMPTY_KECCAK_HASH
                 } else {
                     ethrex_common::utils::keccak(expected_code)
                 };
@@ -1932,7 +1951,7 @@ impl LEVM {
             // Code
             if !has_exact_change_code(&acct.code_changes, withdrawal_idx) {
                 let seeded_hash = match acct.code_changes.last() {
-                    Some(c) if c.new_code.is_empty() => *EMPTY_KECCACK_HASH,
+                    Some(c) if c.new_code.is_empty() => *EMPTY_KECCAK_HASH,
                     Some(c) => ethrex_common::utils::keccak(&c.new_code),
                     None => {
                         db.store
@@ -2044,13 +2063,24 @@ impl LEVM {
             sender_groups.entry(*sender).or_default().push(tx);
         }
 
-        // Parallel across sender groups, sequential within each group
+        // Block-invariant EVM config + chain id, computed once and shared (by copy)
+        // across the parallel warming workers.
+        let chain_config = store.get_chain_config()?;
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+
+        // Parallel across sender groups, sequential within each group. The stack pool is reused
+        // across all groups a worker handles (it is `Send`).
         sender_groups.into_par_iter().for_each_with(
             Vec::with_capacity(STACK_LIMIT),
             |stack_pool, (sender, txs)| {
                 if cancelled.load(Ordering::Relaxed) {
                     return;
                 }
+                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
+                // init; keep it local to this group's run, where it still amortizes the buffer
+                // alloc across the group's txs.
+                let mut memory_pool = Vec::with_capacity(1);
                 // Each sender group gets its own db instance for state propagation
                 let mut group_db = GeneralizedDatabase::new(store.clone());
                 // Execute transactions sequentially within sender group
@@ -2063,8 +2093,11 @@ impl LEVM {
                         &mut group_db,
                         vm_type,
                         stack_pool,
+                        &mut memory_pool,
                         true,
                         crypto,
+                        evm_config,
+                        chain_id,
                     );
                 }
             },
@@ -2146,7 +2179,7 @@ impl LEVM {
                 store
                     .get_account_state(ac.address)
                     .ok()
-                    .filter(|s| s.code_hash != *EMPTY_KECCACK_HASH)
+                    .filter(|s| s.code_hash != *EMPTY_KECCAK_HASH)
                     .map(|s| s.code_hash)
             })
             .collect();
@@ -2177,7 +2210,32 @@ impl LEVM {
         db: &GeneralizedDatabase,
         vm_type: VMType,
     ) -> Result<Environment, EvmError> {
+        // `chain_config` (a dyn-dispatch copy) and `EVMConfig`/fork/blob-schedule are
+        // block-invariant; in a block loop, compute them once and use
+        // `setup_env_with_config` instead. This single-tx entry point computes them here.
         let chain_config = db.store.get_chain_config()?;
+        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        Self::setup_env_with_config(
+            tx,
+            tx_sender,
+            block_header,
+            config,
+            chain_config.chain_id,
+            vm_type,
+        )
+    }
+
+    /// Per-tx `Environment` builder that takes the block-invariant `EVMConfig` and
+    /// `chain_id` precomputed once per block, avoiding a per-tx `get_chain_config()`
+    /// dyn-dispatch `ChainConfig` copy + `fork`/blob-schedule recompute.
+    fn setup_env_with_config(
+        tx: &Transaction,
+        tx_sender: Address,
+        block_header: &BlockHeader,
+        config: EVMConfig,
+        chain_id: u64,
+        vm_type: VMType,
+    ) -> Result<Environment, EvmError> {
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
             block_header.base_fee_per_gas.unwrap_or_default(),
@@ -2185,7 +2243,6 @@ impl LEVM {
         )?;
 
         let block_excess_blob_gas = block_header.excess_blob_gas;
-        let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
         let env = Environment {
             origin: tx_sender,
             gas_limit: tx.gas_limit(),
@@ -2198,7 +2255,7 @@ impl LEVM {
                 .slot_number
                 .map(U256::from)
                 .unwrap_or(U256::zero()),
-            chain_id: chain_config.chain_id.into(),
+            chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
             base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
             gas_price,
@@ -2237,7 +2294,8 @@ impl LEVM {
         vm.execute().map_err(VMError::into)
     }
 
-    // Like execute_tx but allows reusing the stack pool
+    // Like execute_tx but allows reusing the stack pool. Takes the block-invariant
+    // `config`/`chain_id` precomputed once per block (see `setup_env_with_config`).
     #[allow(clippy::too_many_arguments)]
     fn execute_tx_in_block(
         // The transaction to execute.
@@ -2249,16 +2307,31 @@ impl LEVM {
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
         stack_pool: &mut Vec<Stack>,
+        memory_pool: &mut Vec<Memory>,
         disable_balance_check: bool,
         crypto: &dyn Crypto,
+        config: EVMConfig,
+        chain_id: u64,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env = Self::setup_env(tx, tx_sender, block_header, db, vm_type)?;
+        let mut env =
+            Self::setup_env_with_config(tx, tx_sender, block_header, config, chain_id, vm_type)?;
         env.disable_balance_check = disable_balance_check;
-        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
-
-        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
+        // stacks for sub-frames), then return them afterwards so the next tx reuses them instead
+        // of allocating + zeroing a fresh 32 KB stack and a fresh memory buffer per transaction.
+        let mut vm = VM::new_pooled(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            vm_type,
+            crypto,
+            stack_pool,
+            memory_pool,
+        )?;
         let result = vm.execute().map_err(VMError::into);
-        std::mem::swap(&mut vm.stack_pool, stack_pool);
+        // Runs on both success and error paths (execute borrowed `vm` mutably but left it intact).
+        vm.reclaim_into(stack_pool, memory_pool);
         result
     }
 
@@ -2282,7 +2355,8 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(tx, env, db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
 
         vm.execute()
             .map(|value| value.into())
@@ -2453,13 +2527,15 @@ impl LEVM {
 
         adjust_disabled_base_fee(&mut env);
 
-        let mut vm = vm_from_generic(&tx, env.clone(), db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(&tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env.clone(), db, vm_type, crypto)?;
 
         vm.stateless_execute()?;
 
         // Execute the tx again, now with the created access list.
         tx.access_list = vm.substate.make_access_list();
-        let mut vm = vm_from_generic(&tx, env, db, vm_type, crypto)?;
+        let converted_tx = generic_tx_to_transaction(&tx)?;
+        let mut vm = vm_from_generic(&converted_tx, env, db, vm_type, crypto)?;
 
         let report = vm.stateless_execute()?;
 
@@ -2510,11 +2586,6 @@ pub fn generic_system_contract_levm(
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
     let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
-    let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
-    let coinbase_backup = db
-        .current_accounts_state
-        .get(&block_header.coinbase)
-        .cloned();
     let env = Environment {
         origin: system_address,
         // EIPs 2935, 4788, 7002 and 7251 dictate that the system calls have a gas limit of 30 million and they do not use intrinsic gas.
@@ -2537,6 +2608,15 @@ pub fn generic_system_contract_levm(
         config,
         ..Default::default()
     };
+
+    // Invariant relied upon below: with a zero gas price a system call charges no
+    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
+    // state change left to undo afterwards is the sender's nonce bump. If this ever
+    // becomes non-zero, the post-call cleanup must be revisited.
+    debug_assert!(
+        env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
+        "system calls must run with a zero gas price"
+    );
 
     // This check is not necessary in practice, since contract deployment has succesfully happened in all relevant testnets and mainnet
     // However, it's necessary to pass some of the Hive tests related to system contract deployment, which is why we have it
@@ -2575,20 +2655,10 @@ pub fn generic_system_contract_levm(
 
     let report = result?;
 
-    if let Some(system_account) = system_account_backup {
-        db.current_accounts_state
-            .insert(system_address, system_account);
-    } else {
-        // If the system account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&system_address);
-    }
-
-    if let Some(coinbase_account) = coinbase_backup {
-        db.current_accounts_state
-            .insert(block_header.coinbase, coinbase_account);
-    } else {
-        // If the coinbase account was not in the cache, we need to remove it
-        db.current_accounts_state.remove(&block_header.coinbase);
+    // Undo the sender nonce bump: it's the only state change a system call leaves
+    // behind given that the gas price is set to zero.
+    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
+        account.info.nonce = account.info.nonce.saturating_sub(1);
     }
 
     Ok(report)
@@ -2767,14 +2837,12 @@ fn env_from_generic(
     })
 }
 
-fn vm_from_generic<'a>(
-    tx: &GenericTransaction,
-    env: Environment,
-    db: &'a mut GeneralizedDatabase,
-    vm_type: VMType,
-    crypto: &'a dyn Crypto,
-) -> Result<VM<'a>, VMError> {
-    let tx = match &tx.authorization_list {
+/// Converts a `GenericTransaction` (RPC/simulation input) into a concrete `Transaction`.
+///
+/// Split out from `vm_from_generic` so the caller owns the resulting `Transaction` for at least
+/// the VM's lifetime — `VM` now borrows its tx (`&'a Transaction`) instead of cloning it.
+fn generic_tx_to_transaction(tx: &GenericTransaction) -> Result<Transaction, VMError> {
+    Ok(match &tx.authorization_list {
         Some(authorization_list) => Transaction::EIP7702Transaction(EIP7702Transaction {
             to: match tx.to {
                 TxKind::Call(to) => to,
@@ -2806,10 +2874,18 @@ fn vm_from_generic<'a>(
                 .collect(),
             ..Default::default()
         }),
-    };
+    })
+}
 
+fn vm_from_generic<'a>(
+    tx: &'a Transaction,
+    env: Environment,
+    db: &'a mut GeneralizedDatabase,
+    vm_type: VMType,
+    crypto: &'a dyn Crypto,
+) -> Result<VM<'a>, VMError> {
     let vm_type = adjust_disabled_l2_fees(&env, vm_type);
-    VM::new(env, db, &tx, LevmCallTracer::disabled(), vm_type, crypto)
+    VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
 }
 
 pub fn get_max_allowed_gas_limit(block_gas_limit: u64, fork: Fork) -> u64 {
@@ -2940,7 +3016,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(100),
                 nonce: 5,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: *EMPTY_KECCAK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -2967,7 +3043,7 @@ mod bal_tests {
         // Last balance entry wins
         assert_eq!(info.balance, U256::from(80));
         assert_eq!(info.nonce, 6);
-        assert_eq!(info.code_hash, *EMPTY_KECCACK_HASH);
+        assert_eq!(info.code_hash, *EMPTY_KECCAK_HASH);
         // Storage
         let key = ethrex_common::utils::u256_to_h256(U256::from(42));
         assert_eq!(*u.added_storage.get(&key).unwrap(), U256::from(999));
@@ -2982,7 +3058,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(1000),
                 nonce: 0,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: *EMPTY_KECCAK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -3023,7 +3099,7 @@ mod bal_tests {
             AccountState {
                 balance: U256::from(50),
                 nonce: 1,
-                code_hash: *EMPTY_KECCACK_HASH,
+                code_hash: *EMPTY_KECCAK_HASH,
                 storage_root: H256::zero(),
             },
         );
@@ -3081,5 +3157,149 @@ mod bal_tests {
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
         assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+    }
+}
+
+#[cfg(test)]
+mod system_call_coinbase_tests {
+    //! Regression tests for the system-call coinbase collision. When a block's
+    //! fee recipient (coinbase) equals the system contract being called,
+    //! `generic_system_contract_levm`'s post-call coinbase restore must NOT clobber
+    //! the storage write the system call just made; otherwise the write is dropped
+    //! from the emitted state updates and the state root diverges from other clients.
+    use super::*;
+    use ethrex_common::types::{AccountState, AccountUpdate, ChainConfig, Code, CodeMetadata};
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_levm::db::Database;
+    use ethrex_levm::errors::DatabaseError;
+    use std::sync::Arc;
+
+    // EIP-2935 history-contract runtime bytecode.
+    const HISTORY_RUNTIME_CODE: &str = concat!(
+        "3373fffffffffffffffffffffffffffffffffffffffe1460465760203603604257",
+        "5f35600143038111604257611fff81430311604257611fff900654",
+        "5f5260205ff35b5f5ffd5b5f35611fff60014303065500",
+    );
+
+    struct Store {
+        chain_config: ChainConfig,
+        history_code: Code,
+    }
+
+    impl Database for Store {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            if address == HISTORY_STORAGE_ADDRESS.address {
+                return Ok(AccountState {
+                    nonce: 1,
+                    code_hash: self.history_code.hash,
+                    ..Default::default()
+                });
+            }
+            Ok(AccountState::default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(self.chain_config)
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            if code_hash == self.history_code.hash {
+                return Ok(self.history_code.clone());
+            }
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            let length = if code_hash == self.history_code.hash {
+                self.history_code.bytecode.len() as u64
+            } else {
+                0
+            };
+            Ok(CodeMetadata { length })
+        }
+    }
+
+    fn history_code() -> Code {
+        let bytes = hex::decode(HISTORY_RUNTIME_CODE).expect("history runtime code is valid hex");
+        Code::from_bytecode(Bytes::from(bytes), &NativeCrypto)
+    }
+
+    fn prague_db() -> GeneralizedDatabase {
+        GeneralizedDatabase::new(Arc::new(Store {
+            chain_config: ChainConfig {
+                prague_time: Some(0),
+                ..Default::default()
+            },
+            history_code: history_code(),
+        }))
+    }
+
+    fn parent_hash_value(parent_hash: H256) -> U256 {
+        U256::from_big_endian(parent_hash.as_bytes())
+    }
+
+    fn history_slot(block_number: u64) -> H256 {
+        H256::from_low_u64_be((block_number - 1) % 8191)
+    }
+
+    /// Run the EIP-2935 system call for block 42 with the given fee recipient and
+    /// return (slot value cached on the history contract, emitted state updates,
+    /// parent hash).
+    fn run_history_update(coinbase: Address) -> (Option<U256>, Vec<AccountUpdate>, H256) {
+        let mut db = prague_db();
+        let parent_hash = H256::from_low_u64_be(0x2935);
+        let block_number = 42;
+        let header = BlockHeader {
+            parent_hash,
+            coinbase,
+            number: block_number,
+            timestamp: 1,
+            ..Default::default()
+        };
+
+        LEVM::process_block_hash_history(&header, &mut db, VMType::L1, &NativeCrypto)
+            .expect("history system call executes");
+
+        let slot = history_slot(block_number);
+        let stored_value = db
+            .current_accounts_state
+            .get(&HISTORY_STORAGE_ADDRESS.address)
+            .and_then(|account| account.storage.get(&slot).copied());
+        let updates =
+            LEVM::get_state_transitions(&mut db).expect("state transitions are generated");
+
+        (stored_value, updates, parent_hash)
+    }
+
+    fn assert_history_write_emitted(coinbase: Address) {
+        let (stored_value, updates, parent_hash) = run_history_update(coinbase);
+        let slot = history_slot(42);
+        assert_eq!(
+            stored_value,
+            Some(parent_hash_value(parent_hash)),
+            "history storage must hold the parent hash after the system call"
+        );
+        assert!(
+            updates.iter().any(|update| {
+                update.address == HISTORY_STORAGE_ADDRESS.address
+                    && update.added_storage.get(&slot) == Some(&parent_hash_value(parent_hash))
+            }),
+            "the history-contract storage write must be emitted as a state update"
+        );
+    }
+
+    #[test]
+    fn ordinary_coinbase_preserves_history_storage_write() {
+        assert_history_write_emitted(Address::from_low_u64_be(0xbeef));
+    }
+
+    /// Regression: a fee recipient equal to the EIP-2935 history contract must not
+    /// cause the system call's storage write to be dropped by the coinbase restore.
+    #[test]
+    fn history_address_coinbase_preserves_history_storage_write() {
+        assert_history_write_emitted(HISTORY_STORAGE_ADDRESS.address);
     }
 }

@@ -772,6 +772,36 @@ fn build_payload_body_response(bodies: Vec<Option<BlockBody>>) -> Result<Value, 
     serde_json::to_value(response).map_err(|error| RpcErr::Internal(error.to_string()))
 }
 
+/// Returns the block's BAL for V2 payload-body responses.
+///
+/// Reads the persisted BAL first; only when it is absent (pre-Amsterdam blocks,
+/// or Amsterdam blocks processed before BAL persistence was added) does it fall
+/// back to regenerating via re-execution, which requires the parent state trie
+/// and fails on snap-synced nodes that don't hold that historical state.
+fn bal_for_block(
+    context: &RpcApiContext,
+    block: &Block,
+) -> Result<Option<BlockAccessList>, RpcErr> {
+    let block_hash = block.hash();
+    if let Some(bal) = context.storage.get_block_access_list(block_hash)? {
+        return Ok(Some(bal));
+    }
+    let generated = context
+        .blockchain
+        .generate_bal_for_block(block)
+        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+    // Write back so subsequent requests for this block are served from the
+    // store instead of re-executing every time. Regeneration only succeeds
+    // while the parent state is still in the retained window; the block has
+    // long been accepted, so the regenerated BAL is authoritative for serving.
+    if let Some(bal) = &generated
+        && let Err(err) = context.storage.store_block_access_list(block_hash, bal)
+    {
+        warn!("Failed to persist regenerated block access list for {block_hash}: {err}");
+    }
+    Ok(generated)
+}
+
 // ==================== V2 Body Methods (EIP-7928) ====================
 
 pub struct GetPayloadBodiesByHashV2Request {
@@ -802,10 +832,7 @@ impl RpcHandler for GetPayloadBodiesByHashV2Request {
             let block = context.storage.get_block_by_hash(*hash).await?;
             let result = match block {
                 Some(block) => {
-                    let bal = context
-                        .blockchain
-                        .generate_bal_for_block(&block)
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let bal = bal_for_block(&context, &block)?;
                     Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
                 }
                 None => None,
@@ -870,10 +897,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
                             })?;
                     let block = Block { header, body };
 
-                    let bal = context
-                        .blockchain
-                        .generate_bal_for_block(&block)
-                        .map_err(|e| RpcErr::Internal(e.to_string()))?;
+                    let bal = bal_for_block(&context, &block)?;
                     Some(ExecutionPayloadBodyV2::from_body_with_bal(block.body, bal))
                 }
                 None => None,
@@ -1184,6 +1208,23 @@ async fn try_execute_payload(
         return payload_status_for_existing_block(&block, context, make_witness).await;
     }
 
+    // A payload whose parent *state* we don't have yet must be answered with
+    // SYNCING, never INVALID: without the parent state we cannot validate it,
+    // so we must not declare it invalid. This happens after a restart, when
+    // state regeneration hasn't caught up to the CL head, or when the CL sends a
+    // newPayload for a block beyond our current state. Without this guard,
+    // execution fails with `EvmError::DB("state root missing")` and gets mapped
+    // to INVALID below, wrongly poisoning the CL's view of a valid block (and
+    // persisting it via `set_latest_valid_ancestor`). The parent block being
+    // entirely absent is handled as `ParentNotFound` by `add_block` below.
+    if let Some(parent_header) = storage.get_block_header_by_hash(block.header.parent_hash)?
+        && !storage.has_state_root(parent_header.state_root)?
+    {
+        debug!(%block_hash, %block_number, "Parent state missing, returning SYNCING and triggering sync");
+        syncer.sync_to_head(block_hash);
+        return Ok(PayloadStatus::syncing());
+    }
+
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
@@ -1193,14 +1234,14 @@ async fn try_execute_payload(
             syncer.sync_to_head(block_hash);
             Ok(PayloadStatus::syncing())
         }
-        // Under the current implementation this is not possible: we always calculate the state
-        // transition of any new payload as long as the parent is present. If we received the
-        // parent payload but it was stashed, then new payload would stash this one too, with a
-        // ParentNotFoundError.
+        // Parent block is present but its state isn't available yet (e.g. state
+        // regeneration after a restart hasn't reached the CL head). This is a
+        // SYNCING condition, not an error and not INVALID: trigger a sync and
+        // report SYNCING so the CL keeps the (valid) block.
         Err(ChainError::ParentStateNotFound) => {
-            let e = "Failed to obtain parent state";
-            error!("{e} for block {block_hash}");
-            Err(RpcErr::Internal(e.to_string()))
+            debug!(%block_hash, "Parent state not found, returning SYNCING and triggering sync");
+            syncer.sync_to_head(block_hash);
+            Ok(PayloadStatus::syncing())
         }
         Err(ChainError::InvalidBlock(error)) => {
             warn!("Error executing block: {error}");
