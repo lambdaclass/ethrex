@@ -165,6 +165,20 @@ pub(crate) fn xor_distance(a: &H256, b: &H256) -> H256 {
     *a ^ *b
 }
 
+/// Outcome of a block-data request to a peer.
+/// Used to drive per-peer scoring and latency tracking.
+#[derive(Debug, Clone, Copy)]
+pub enum RequestOutcome {
+    /// Peer returned a valid, non-empty response.
+    Served,
+    /// Peer returned an empty response (has no data for the requested range).
+    Empty,
+    /// Peer did not respond within the timeout.
+    Timeout,
+    /// Peer returned a response that failed protocol validation.
+    Invalid,
+}
+
 /// Identifies which discovery protocol was used to find a contact.
 /// This allows protocol-specific lookups to only query compatible contacts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -298,6 +312,17 @@ pub struct PeerData {
     requests: i64,
     /// Timestamp (seconds since UNIX epoch) of the last successful response from this peer
     pub last_response_time: Option<u64>,
+    /// Count of requests where the peer returned a valid, non-empty response.
+    served: u64,
+    /// Count of requests where the peer returned an empty response.
+    empty: u64,
+    /// Count of requests that timed out.
+    timeouts: u64,
+    /// Count of requests that returned an invalid response.
+    invalid: u64,
+    /// Exponentially weighted moving average of response latency in milliseconds.
+    /// Uses alpha=0.2 (new sample weight), so recent samples have more influence.
+    ewma_latency_ms: Option<f64>,
 }
 
 impl PeerData {
@@ -316,6 +341,11 @@ impl PeerData {
             score: Default::default(),
             requests: Default::default(),
             last_response_time: None,
+            served: 0,
+            empty: 0,
+            timeouts: 0,
+            invalid: 0,
+            ewma_latency_ms: None,
         }
     }
 }
@@ -405,6 +435,12 @@ pub trait PeerTableServerProtocol: Send + Sync {
     fn record_success(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_failure(&self, node_id: H256) -> Result<(), ActorError>;
     fn record_critical_failure(&self, node_id: H256) -> Result<(), ActorError>;
+    fn record_request_outcome(
+        &self,
+        node_id: H256,
+        outcome: RequestOutcome,
+        latency_ms: u64,
+    ) -> Result<(), ActorError>;
     fn record_ping_sent(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_pong_received(&self, node_id: H256, ping_id: Bytes) -> Result<(), ActorError>;
     fn record_enr_request_sent(&self, node_id: H256, request_hash: H256) -> Result<(), ActorError>;
@@ -649,6 +685,43 @@ impl PeerTableServer {
         self.peers
             .entry(msg.node_id)
             .and_modify(|peer_data| peer_data.score = MIN_SCORE_CRITICAL);
+    }
+
+    #[send_handler]
+    async fn handle_record_request_outcome(
+        &mut self,
+        msg: peer_table_server_protocol::RecordRequestOutcome,
+        _ctx: &Context<Self>,
+    ) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.peers
+            .entry(msg.node_id)
+            .and_modify(|p| match msg.outcome {
+                RequestOutcome::Served => {
+                    p.score = (p.score + 1).min(MAX_SCORE);
+                    p.served += 1;
+                    p.last_response_time = Some(now);
+                    p.ewma_latency_ms = Some(match p.ewma_latency_ms {
+                        Some(prev) => 0.8 * prev + 0.2 * (msg.latency_ms as f64),
+                        None => msg.latency_ms as f64,
+                    });
+                }
+                RequestOutcome::Empty => {
+                    p.score = (p.score - 1).max(MIN_SCORE);
+                    p.empty += 1;
+                }
+                RequestOutcome::Timeout => {
+                    p.score = (p.score - 2).max(MIN_SCORE);
+                    p.timeouts += 1;
+                }
+                RequestOutcome::Invalid => {
+                    p.score = MIN_SCORE_CRITICAL;
+                    p.invalid += 1;
+                }
+            });
     }
 
     #[send_handler]
