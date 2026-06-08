@@ -249,19 +249,31 @@ pub async fn sync_cycle_full(
             Some(parent) => is_resume_point(&store, &parent)?,
             None => false,
         };
-        if parent_is_resume_point || sync_head.is_zero() {
-            // Incoming chain merged with our executed state.
-            // Drop only the already-executed (canonical + stateful) prefix; keep any
-            // canonical-but-stateless blocks so they get re-executed. Because both
-            // canonical-ness and state presence are contiguous from genesis, the first
-            // canonical+stateful header scanning newest->oldest is exactly the state head.
-            let mut first_skippable = block_headers.len();
+        // Scan THIS batch for the first resume point (newest->oldest). The batch may itself
+        // straddle our executed/state head: the walk has reached down into the region we
+        // already have state for. Checking only `parent_is_resume_point` (the parent of the
+        // batch's OLDEST header) misses this — when our stateful head sits in the MIDDLE of a
+        // batch the parent check is false, so the walk blew past our own local head and kept
+        // descending all the way to genesis (the issue #9 overshoot). Only scan once the batch
+        // can actually contain our head (its oldest block is at/below `local_head`); higher
+        // batches are entirely unexecuted and cannot hold a resume point, so skip the scan for
+        // them to keep the deep-sync walk cheap.
+        let mut first_skippable = block_headers.len();
+        if last_header.number <= local_head {
             for (index, header) in block_headers.iter().enumerate() {
                 if is_resume_point(&store, header)? {
                     first_skippable = index;
                     break;
                 }
             }
+        }
+        let batch_contains_resume_point = first_skippable < block_headers.len();
+        if parent_is_resume_point || batch_contains_resume_point || sync_head.is_zero() {
+            // Incoming chain merged with our executed state.
+            // Drop only the already-executed (canonical + stateful) prefix (computed as
+            // `first_skippable` above); keep any canonical-but-stateless blocks so they get
+            // re-executed. Because both canonical-ness and state presence are contiguous from
+            // genesis, the first canonical+stateful header newest->oldest is exactly the state head.
             block_headers.drain(first_skippable..block_headers.len());
             match block_headers.last() {
                 Some(last_header) => start_block_number = last_header.number,
