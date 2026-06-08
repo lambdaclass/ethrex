@@ -232,6 +232,19 @@ pub async fn sync_cycle_full(
                 // newer, already-stored batches that start one above this batch's newest.
                 None => start_block_number = batch_newest_number + 1,
             }
+            // If we are resuming at or below the canonical head, the canonical chain extends
+            // past the executed-state head: an FCU canonicalized blocks before their state
+            // was computed. Surface it explicitly; these canonical-but-stateless blocks are
+            // re-executed below, and the warning flags the underlying gap for investigation.
+            let canonical_head = store.get_latest_block_number().await?;
+            if start_block_number <= canonical_head {
+                warn!(
+                    state_head = start_block_number.saturating_sub(1),
+                    canonical_head,
+                    gap = canonical_head + 1 - start_block_number,
+                    "Full sync resuming below canonical head: re-executing canonical-but-stateless blocks (FCU canonicalized past executed state)"
+                );
+            }
             // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
             if single_batch {
                 headers = block_headers.into_iter().rev().collect();
