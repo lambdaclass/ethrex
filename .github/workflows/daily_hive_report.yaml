@@ -147,7 +147,11 @@ jobs:
           fi
 
           if [[ -n "$SIM_LIMIT" ]]; then
-            FLAGS+=" --sim.limit \"$SIM_LIMIT\""
+            # Single-quote the limit so regex metacharacters (e.g. the `|` in
+            # multi-fork limits) survive the action's shell re-evaluation of
+            # extra_flags. Matches pr-main_l1.yaml's escaping.
+            escaped_limit=${SIM_LIMIT//\'/\'\\\'\'}
+            FLAGS+=" --sim.limit '$escaped_limit'"
           fi
           echo "flags=$FLAGS" >> "$GITHUB_OUTPUT"
 
