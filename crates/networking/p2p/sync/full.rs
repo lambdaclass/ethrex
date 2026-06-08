@@ -16,6 +16,7 @@ use ethrex_common::{
     types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
 use ethrex_storage::Store;
+use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -25,7 +26,7 @@ use crate::snap::constants::{
     MAX_BLOCK_BODIES_TO_REQUEST, MAX_BODY_FETCH_ATTEMPTS, MAX_HEADER_FETCH_ATTEMPTS,
 };
 
-use super::{EXECUTE_BATCH_SIZE, SyncError};
+use super::{EXECUTE_BATCH_SIZE, SyncDiagnostics, SyncError};
 
 /// Forkchoice heads older than this (in seconds) trigger a "consensus is behind"
 /// warning during sync. A synced consensus client always advertises a head only
@@ -111,6 +112,7 @@ pub async fn sync_cycle_full(
     cancel_token: CancellationToken,
     mut sync_head: H256,
     store: Store,
+    diagnostics: &Arc<RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
     let local_head = store.get_latest_block_number().await?;
     let eth_capable_peers = peers.eth_capable_peer_count().await;
@@ -272,9 +274,15 @@ pub async fn sync_cycle_full(
             // was computed. Surface it explicitly; these canonical-but-stateless blocks are
             // re-executed below, and the warning flags the underlying gap for investigation.
             let canonical_head = store.get_latest_block_number().await?;
+            // `start_block_number - 1` is the highest block whose post-state is on
+            // disk (the executed/state head). Record it so `eth_syncing` reports real
+            // progress instead of the canonical pointer, which an FCU may have advanced
+            // past the executed state.
+            let state_head = start_block_number.saturating_sub(1);
+            diagnostics.write().await.executed_head = state_head;
             if start_block_number <= canonical_head {
                 warn!(
-                    state_head = start_block_number.saturating_sub(1),
+                    state_head,
                     canonical_head,
                     gap = canonical_head
                         .saturating_add(1)
