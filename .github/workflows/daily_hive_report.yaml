@@ -164,15 +164,15 @@ jobs:
         with:
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
-          # Pin hive to the commit BEFORE ethereum/hive#1507
-          # ("Source depositContractAddress from HIVE_DEPOSIT_CONTRACT_ADDRESS",
-          # merged 2026-06-04). That PR added an unparenthesized `//` alternative
-          # operator to clients/ethrex/mapper.jq, which is invalid in jq's
-          # object-value grammar (ExpD) and aborts the genesis mapper at compile
-          # time, so the ethrex container never starts (every test reports
-          # "could not start client ... terminated unexpectedly"). Unpin once the
-          # mapper is fixed upstream (wrap the value in parentheses).
-          hive_version: b61002ea0c876a0e29c0403d88f9f96fca104c21
+          # Pin hive to ethereum/hive#1530's merge commit, which fixes the
+          # clients/ethrex/mapper.jq depositContractAddress bug from #1507:
+          # #1524 wrapped the `//` value in parens (the unparenthesized form was
+          # a jq syntax error that stopped the client from starting), and #1530
+          # restored the mainnet deposit contract address as the fallback (the
+          # zero-address default made every eip6110 deposit / eip7685 request
+          # test fail). Also gives the daily report a reproducible hive version
+          # instead of floating on the action's default.
+          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily
