@@ -47,7 +47,7 @@ async fn seed_store(headers: &[BlockHeader], canonical: &[&BlockHeader]) -> Stor
 #[tokio::test]
 async fn canonical_and_stateful_is_resume_point() {
     let h = header(1, *EMPTY_TRIE_HASH, H256::zero());
-    let store = seed_store(&[h.clone()], &[&h]).await;
+    let store = seed_store(std::slice::from_ref(&h), &[&h]).await;
     assert!(
         is_resume_point(&store, &h).unwrap(),
         "canonical block with present state must be a resume point"
@@ -58,7 +58,7 @@ async fn canonical_and_stateful_is_resume_point() {
 async fn canonical_but_stateless_is_not_resume_point() {
     // Canonical, but post-state absent: the gap the fix must re-execute, not skip.
     let h = header(1, H256::from_low_u64_be(0xdead), H256::zero());
-    let store = seed_store(&[h.clone()], &[&h]).await;
+    let store = seed_store(std::slice::from_ref(&h), &[&h]).await;
     assert!(
         !is_resume_point(&store, &h).unwrap(),
         "canonical-but-stateless block must NOT be a resume point (else full sync wedges)"
@@ -69,7 +69,7 @@ async fn canonical_but_stateless_is_not_resume_point() {
 async fn non_canonical_is_not_resume_point() {
     // Present state but never canonicalized -> not a resume point.
     let h = header(1, *EMPTY_TRIE_HASH, H256::zero());
-    let store = seed_store(&[h.clone()], &[]).await;
+    let store = seed_store(std::slice::from_ref(&h), &[]).await;
     assert!(!is_resume_point(&store, &h).unwrap());
 }
 
@@ -183,5 +183,8 @@ async fn batch_with_no_retained_state_returns_none() {
     // Canonical 1..=8 but NO state anywhere (fully pruned). local_head = 8.
     let (store, chain) = seed_chain(8, &[]).await;
     let batch: Vec<BlockHeader> = chain[4..8].iter().rev().cloned().collect(); // 8,7,6,5
-    assert_eq!(first_resume_point_in_batch(&store, &batch, 8).unwrap(), None);
+    assert_eq!(
+        first_resume_point_in_batch(&store, &batch, 8).unwrap(),
+        None
+    );
 }
