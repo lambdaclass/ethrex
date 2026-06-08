@@ -470,6 +470,23 @@ impl PeerHandler {
                         return Ok(HeaderFetchOutcome::PeerFailed);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
+                        // Pin the response to the requested `start` hash. `are_block_headers_chained`
+                        // only verifies internal parent-hash linkage, not that the sequence actually
+                        // begins at `start`. A peer on a fork/minority chain can return an internally
+                        // consistent run of headers from its own chain that does NOT start at `start`;
+                        // accepting it derails the sync walk onto the wrong chain — it never reconciles
+                        // to our canonical head and walks all the way to genesis. Reject the mismatch and
+                        // penalize the peer so the caller re-rolls `get_random_peer` and keeps trying until
+                        // it lands a peer actually serving `start`'s chain (whose ancestry is hash-linked
+                        // and therefore bridges down to our canonical head). General hardening, not
+                        // devnet-specific.
+                        if block_headers[0].hash() != start {
+                            warn!(
+                                "[SYNCING] Peer {peer_id} returned headers not starting at the requested hash {start:#x}, penalizing peer"
+                            );
+                            self.peer_table.record_failure(peer_id)?;
+                            return Ok(HeaderFetchOutcome::PeerFailed);
+                        }
                         self.peer_table.record_success(peer_id)?;
                         return Ok(HeaderFetchOutcome::Headers(block_headers));
                     }
