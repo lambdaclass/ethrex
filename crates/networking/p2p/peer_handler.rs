@@ -124,6 +124,17 @@ impl PeerHandler {
             .await?)
     }
 
+    /// Number of connected peers that advertise the eth capabilities used for sync.
+    /// Sync diagnostics use this to tell "no peers to ask" (discovery/connectivity
+    /// problem) apart from "peers present but not serving" (the chain data is gone).
+    /// Returns 0 on any peer-table error since this is only used for logging.
+    pub async fn eth_peer_count(&self) -> usize {
+        self.peer_table
+            .peer_count_by_capabilities(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await
+            .unwrap_or(0)
+    }
+
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
     /// Returns the block headers or None if:
     /// - There are no available peers (the node just started up or was rejected by all other nodes)
