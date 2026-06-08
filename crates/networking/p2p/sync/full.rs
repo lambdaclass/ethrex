@@ -79,9 +79,9 @@ async fn request_bodies_with_retry(
         }
         let from = headers.first().map(|h| h.number).unwrap_or_default();
         let to = headers.last().map(|h| h.number).unwrap_or_default();
-        let eth_peers = peers.eth_peer_count().await;
+        let eth_capable_peers = peers.eth_capable_peer_count().await;
         warn!(
-            eth_peers,
+            eth_capable_peers,
             from,
             to,
             "Failed to fetch block bodies (attempt {attempt}/{MAX_BODY_FETCH_ATTEMPTS}), retrying in 2s"
@@ -113,10 +113,10 @@ pub async fn sync_cycle_full(
     store: Store,
 ) -> Result<(), SyncError> {
     let local_head = store.get_latest_block_number().await?;
-    let eth_peers = peers.eth_peer_count().await;
+    let eth_capable_peers = peers.eth_capable_peer_count().await;
     info!(
         local_head,
-        eth_peers,
+        eth_capable_peers,
         ?sync_head,
         "Starting full sync cycle"
     );
@@ -168,10 +168,10 @@ pub async fn sync_cycle_full(
             // peers withholding data.
             other => {
                 let reason = other.failure_reason();
-                let eth_peers = peers.eth_peer_count().await;
+                let eth_capable_peers = peers.eth_capable_peer_count().await;
                 if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
                     warn!(
-                        eth_peers,
+                        eth_capable_peers,
                         reason,
                         ?sync_head,
                         "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
@@ -180,7 +180,7 @@ pub async fn sync_cycle_full(
                 }
                 attempts += 1;
                 warn!(
-                    eth_peers,
+                    eth_capable_peers,
                     reason,
                     "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
                 );
@@ -327,9 +327,9 @@ pub async fn sync_cycle_full(
                         // Bodies unavailable after retries: stop gracefully (drop the sender)
                         // so the executor finishes what it has and the cycle ends without an
                         // error. The next forkchoice head will trigger a fresh attempt.
-                        let eth_peers = download_peers.eth_peer_count().await;
+                        let eth_capable_peers = download_peers.eth_capable_peer_count().await;
                         warn!(
-                            eth_peers,
+                            eth_capable_peers,
                             "Block bodies unavailable from peers after retries; pausing full sync until a new forkchoice head arrives"
                         );
                         return;
@@ -390,9 +390,9 @@ pub async fn sync_cycle_full(
                         // Bodies unavailable after retries: stop gracefully (drop the sender)
                         // so the executor finishes what it has and the cycle ends without an
                         // error. The next forkchoice head will trigger a fresh attempt.
-                        let eth_peers = download_peers.eth_peer_count().await;
+                        let eth_capable_peers = download_peers.eth_capable_peer_count().await;
                         warn!(
-                            eth_peers,
+                            eth_capable_peers,
                             "Block bodies unavailable from peers after retries; pausing full sync until a new forkchoice head arrives"
                         );
                         return;
