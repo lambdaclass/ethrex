@@ -58,11 +58,29 @@ impl RpcHandler for Syncing {
         if context.blockchain.is_synced() {
             Ok(Value::Bool(!context.blockchain.is_synced()))
         } else {
-            let current_block = context.storage.get_latest_block_number().await?;
+            // `current_block` must reflect the executed/state head, not the canonical
+            // pointer. An FCU can canonicalize blocks before their state is computed
+            // (full-sync wedge), and snap may not have healed up to the head, so the
+            // canonical head can be stateless. Reporting it would make the node look
+            // near-synced while it has no state up to the tip. Use the canonical head
+            // only when its post-state is on disk; otherwise report the executed head
+            // recorded by the sync cycle.
+            let canonical_head = context.storage.get_latest_block_number().await?;
+            let current_block = match context.storage.get_block_header(canonical_head)? {
+                Some(header) if context.storage.has_state_root(header.state_root)? => {
+                    canonical_head
+                }
+                _ => syncer
+                    .diagnostics()
+                    .read()
+                    .await
+                    .executed_head
+                    .min(canonical_head),
+            };
             // `get_last_fcu_head` returns the head *hash* from the last forkchoiceUpdated.
             // Resolve it to a block number. If the header isn't canonical yet it may still
             // be a pending block whose number we can read; only when neither is available
-            // (e.g. mid snap-sync, target not downloaded) fall back to the current block
+            // (e.g. mid snap-sync, target not downloaded) fall back to the canonical head
             // instead of reporting garbage.
             let head_hash = syncer
                 .get_last_fcu_head()
@@ -71,7 +89,7 @@ impl RpcHandler for Syncing {
                 Some(number) => number,
                 None => match context.storage.get_pending_block(head_hash).await? {
                     Some(block) => block.header.number,
-                    None => current_block,
+                    None => canonical_head,
                 },
             };
             let syncing_status = SyncingStatusRpc {

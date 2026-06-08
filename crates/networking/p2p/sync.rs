@@ -63,6 +63,12 @@ pub enum SyncMode {
 pub struct SyncDiagnostics {
     pub sync_mode: String,
     pub current_phase: String,
+    /// Highest block whose post-state is actually on disk (the executed/state head).
+    /// Updated by the full-sync cycle. May trail the canonical head when an FCU
+    /// canonicalized blocks before their state was computed; `eth_syncing` reports
+    /// this rather than the canonical pointer so the node isn't shown as near-synced
+    /// while it has no state up to the tip.
+    pub executed_head: u64,
     pub pivot_block_number: Option<u64>,
     pub pivot_timestamp: Option<u64>,
     pub pivot_age_seconds: Option<u64>,
@@ -238,6 +244,7 @@ impl Syncer {
                     self.cancel_token.clone(),
                     sync_head,
                     store,
+                    &self.diagnostics,
                 )
                 .await;
             }
@@ -264,6 +271,7 @@ impl Syncer {
                 self.cancel_token.clone(),
                 sync_head,
                 store,
+                &self.diagnostics,
             )
             .await
         }
