@@ -17,6 +17,7 @@ use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     DiscoveryConfig,
+    discovery::IpPredictor,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
@@ -487,8 +488,6 @@ fn resolve_p2p_endpoints(
 }
 
 pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
-    use ethrex_p2p::discovery::ip_predictor::IpPredictor;
-
     let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
     let udp_port = opts
         .discovery_port
