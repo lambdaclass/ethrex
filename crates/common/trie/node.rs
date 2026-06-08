@@ -3,7 +3,7 @@ mod extension;
 mod leaf;
 
 use std::sync::Arc;
-#[cfg(not(feature = "eip-8025"))]
+#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use std::sync::OnceLock;
 
 /// `OnceLock` replacement for zkVM guest gated on `eip-8025` feature
@@ -13,17 +13,13 @@ use std::sync::OnceLock;
 /// to get around the Sync requirement.
 ///
 /// This code is only sound because the guest is guaranteed to be single-threaded.
-#[cfg(all(feature = "eip-8025", not(target_arch = "riscv64")))]
-compile_error!(
-    "Feature `eip-8025` uses a single-threaded OnceLock. This is unsafe and should be used only in guest program running on riscv64im_zicclsm-unknown-none-elf."
-);
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 unsafe impl<T: Sync> Sync for OnceLock<T> {}
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T> OnceLock<T> {
     #[inline]
     fn new() -> Self {
@@ -82,7 +78,7 @@ impl<T> OnceLock<T> {
     }
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T: PartialEq> PartialEq for OnceLock<T> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
@@ -90,7 +86,7 @@ impl<T: PartialEq> PartialEq for OnceLock<T> {
     }
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T> Default for OnceLock<T> {
     #[inline]
     fn default() -> Self {
@@ -98,10 +94,10 @@ impl<T> Default for OnceLock<T> {
     }
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T: Eq> Eq for OnceLock<T> {}
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T: Clone> Clone for OnceLock<T> {
     #[inline]
     fn clone(&self) -> OnceLock<T> {
@@ -112,7 +108,7 @@ impl<T: Clone> Clone for OnceLock<T> {
     }
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T: std::fmt::Debug> std::fmt::Debug for OnceLock<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_tuple("OnceLock");
@@ -124,7 +120,7 @@ impl<T: std::fmt::Debug> std::fmt::Debug for OnceLock<T> {
     }
 }
 
-#[cfg(feature = "eip-8025")]
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
 impl<T> From<T> for OnceLock<T> {
     #[inline]
     fn from(value: T) -> Self {
