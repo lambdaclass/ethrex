@@ -9,6 +9,11 @@ mod full;
 mod healing;
 mod snap_sync;
 
+/// Test-only re-export of the full-sync resume-point predicate so integration tests can
+/// assert that canonical-but-stateless blocks are not treated as already-executed.
+#[cfg(feature = "test-utils")]
+pub use full::is_resume_point;
+
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
