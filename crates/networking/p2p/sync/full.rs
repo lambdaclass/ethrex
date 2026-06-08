@@ -21,7 +21,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::snap::constants::{
+    MAX_BLOCK_BODIES_TO_REQUEST, MAX_BODY_FETCH_ATTEMPTS, MAX_HEADER_FETCH_ATTEMPTS,
+};
 
 use super::{EXECUTE_BATCH_SIZE, SyncError};
 
@@ -65,9 +67,15 @@ async fn request_bodies_with_retry(
     peers: &mut PeerHandler,
     headers: &[BlockHeader],
 ) -> Result<Option<Vec<BlockBody>>, SyncError> {
-    for attempt in 1..=MAX_HEADER_FETCH_ATTEMPTS {
+    for attempt in 1..=MAX_BODY_FETCH_ATTEMPTS {
         if let Some(bodies) = peers.request_block_bodies(headers).await? {
             return Ok(Some(bodies));
+        }
+        // On the final attempt don't log "retrying" or sleep: the loop is about to give up.
+        // The caller emits the "bodies unavailable after retries" message. Mirrors the
+        // header-fetch loop, which checks the limit before sleeping.
+        if attempt == MAX_BODY_FETCH_ATTEMPTS {
+            break;
         }
         let from = headers.first().map(|h| h.number).unwrap_or_default();
         let to = headers.last().map(|h| h.number).unwrap_or_default();
@@ -76,7 +84,7 @@ async fn request_bodies_with_retry(
             eth_peers,
             from,
             to,
-            "Failed to fetch block bodies (attempt {attempt}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
+            "Failed to fetch block bodies (attempt {attempt}/{MAX_BODY_FETCH_ATTEMPTS}), retrying in 2s"
         );
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
@@ -248,7 +256,7 @@ pub async fn sync_cycle_full(
                 Some(last_header) => start_block_number = last_header.number,
                 // Whole batch was already executed; the blocks we keep (if any) live in
                 // newer, already-stored batches that start one above this batch's newest.
-                None => start_block_number = batch_newest_number + 1,
+                None => start_block_number = batch_newest_number.saturating_add(1),
             }
             // If we are resuming at or below the canonical head, the canonical chain extends
             // past the executed-state head: an FCU canonicalized blocks before their state
@@ -259,7 +267,9 @@ pub async fn sync_cycle_full(
                 warn!(
                     state_head = start_block_number.saturating_sub(1),
                     canonical_head,
-                    gap = canonical_head + 1 - start_block_number,
+                    gap = canonical_head
+                        .saturating_add(1)
+                        .saturating_sub(start_block_number),
                     "Full sync resuming below canonical head: re-executing canonical-but-stateless blocks (FCU canonicalized past executed state)"
                 );
             }
@@ -391,7 +401,11 @@ pub async fn sync_cycle_full(
         }
     });
 
-    // Main loop: receive downloaded batches and execute them
+    // Main loop: receive downloaded batches and execute them. `reached_target` records
+    // whether we executed the final batch; if body downloads gave up early (the task
+    // returns without sending the final batch), it stays false so we don't falsely report
+    // catching up to the consensus head below.
+    let mut reached_target = false;
     while let Some(result) = body_rx.recv().await {
         let (blocks, final_batch) = result?;
         info!(
@@ -409,6 +423,9 @@ pub async fn sync_cycle_full(
             peers,
         )
         .await?;
+        if final_batch {
+            reached_target = true;
+        }
     }
 
     // Ensure the download task completes and propagate any panics
@@ -431,15 +448,24 @@ pub async fn sync_cycle_full(
             peers,
         )
         .await?;
+        reached_target = true;
     }
 
-    // If this cycle started behind, announce that we've caught up to the head the
-    // consensus client gave us, so the operator can tell idle-waiting from a hang.
+    // If this cycle started behind, report the outcome so the operator can tell idle-waiting
+    // from a hang. Only claim we caught up if we actually executed through to the target;
+    // if body downloads gave up early we say so instead of falsely reporting success.
     if started_behind {
         let local_head = store.get_latest_block_number().await?;
-        info!(
-            "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
-        );
+        if reached_target {
+            info!(
+                "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
+            );
+        } else {
+            warn!(
+                local_head,
+                "Full sync paused before reaching the consensus-provided head (data unavailable from peers); will resume on the next forkchoice update"
+            );
+        }
     }
 
     store.clear_fullsync_headers().await?;
