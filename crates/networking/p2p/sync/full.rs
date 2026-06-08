@@ -269,6 +269,39 @@ pub async fn sync_cycle_full(
                 // newer, already-stored batches that start one above this batch's newest.
                 None => start_block_number = batch_newest_number.saturating_add(1),
             }
+            // Guard against resuming onto a base whose post-state is gone. Execution begins at
+            // `start_block_number`, whose parent (`start_block_number - 1`) must have its post-state
+            // on disk. That holds when we broke on a stateful resume point (the normal catch-up and
+            // the FCU-ahead backfill cases, where the parent is the executed/state head). It does NOT
+            // hold when the walk bottomed out at genesis (`sync_head.is_zero()`) after reconciling the
+            // consensus sync head only to a canonical block whose state was already pruned: the layered
+            // store keeps state for a recent window and drops genesis-era layers as the head advances
+            // (see `TrieLayerCache`), so a fork/deep-reorg head that diverges below that window has no
+            // stateful resume point and the walk descends to block 0. Re-executing from such a pruned
+            // base fails forever with `state root missing for block {parent}`. Detect it and pause the
+            // cycle gracefully (Ok) — mirroring the body-fetch exhaustion path — until a forkchoice head
+            // reconciles to a block whose state we still retain. (Pre-#6803 the walk anchored on the
+            // pruned canonical block and failed at block N; the stateful-resume-point gate now walks
+            // past it to genesis, so this guard is required to avoid a doomed re-exec from block 0.)
+            let resume_parent_number = start_block_number.saturating_sub(1);
+            let resume_parent_has_state = match store.get_block_header(resume_parent_number)? {
+                Some(parent) => store.has_state_root(parent.state_root)?,
+                None => false,
+            };
+            if !resume_parent_has_state {
+                let local_head = store.get_latest_block_number().await?;
+                warn!(
+                    resume_parent_number,
+                    local_head,
+                    "Full sync cannot resume: post-state for block {resume_parent_number} is absent \
+                     (pruned from the layered store, or never executed). The consensus sync head does \
+                     not reconcile to a block whose state we retain; pausing until a reconcilable \
+                     forkchoice head arrives. If this persists with no state above genesis, the datadir \
+                     needs a fresh resync (ethrex removedb)."
+                );
+                store.clear_fullsync_headers().await?;
+                return Ok(());
+            }
             // If we are resuming at or below the canonical head, the canonical chain extends
             // past the executed-state head: an FCU canonicalized blocks before their state
             // was computed. Surface it explicitly; these canonical-but-stateless blocks are
