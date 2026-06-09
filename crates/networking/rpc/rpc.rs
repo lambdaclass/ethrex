@@ -62,8 +62,8 @@ use axum_extra::{
     headers::{Authorization, authorization::Bearer},
 };
 use bytes::Bytes;
-use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
+use ethrex_blockchain::{Blockchain, BodyValidation};
 use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
@@ -451,13 +451,25 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
         .name("block_executor".to_string())
         .spawn(move || {
             while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+                // Blocks only reach this worker through engine_newPayload, which
+                // reconstructs the header's transactions/withdrawals roots from the
+                // payload body itself and then enforces the CL-provided block hash
+                // against that header, so the body is already proven to match the
+                // header roots and the pipeline can skip recomputing them.
                 let result = (|| {
                     if make_witness {
-                        let witness =
-                            blockchain.add_block_pipeline_with_witness(block, bal.as_ref())?;
+                        let witness = blockchain.add_block_pipeline_with_witness(
+                            block,
+                            bal.as_ref(),
+                            BodyValidation::AlreadyValidated,
+                        )?;
                         Ok(Some(witness))
                     } else {
-                        blockchain.add_block_pipeline(block, bal.as_ref())?;
+                        blockchain.add_block_pipeline_with_body_validation(
+                            block,
+                            bal.as_ref(),
+                            BodyValidation::AlreadyValidated,
+                        )?;
                         Ok(None)
                     }
                 })();

@@ -68,8 +68,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
-    synthesize_bal_updates, validate_block_body,
+    BlockNumber, ChainConfig, Code, InvalidBlockBodyError, Receipt, Transaction,
+    WrappedEIP4844Transaction, synthesize_bal_updates, validate_block_body,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -172,6 +172,27 @@ pub struct L2Config {
     ///
     /// Uses `RwLock` because the Watcher updates L1 fee config periodically.
     pub fee_config: Arc<RwLock<FeeConfig>>,
+}
+
+/// Whether the import pipeline must verify the block body against the header's
+/// transactions/withdrawals roots.
+///
+/// Recomputing those roots is expensive (per-tx canonical encoding + keccak +
+/// trie hashing), so callers that have already proven the body matches the
+/// header may skip it. Bodies of unknown provenance must use
+/// [`BodyValidation::Validate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyValidation {
+    /// Recompute the transactions and withdrawals roots and compare them
+    /// against the header. The safe default for bodies of unknown provenance
+    /// (e.g. RLP file imports, p2p sync).
+    Validate,
+    /// The caller already enforced that the body matches the header roots,
+    /// e.g. engine newPayload reconstructs the header roots from the body
+    /// itself and then checks the resulting header against the CL-provided
+    /// block hash. The root recomputation is skipped; cheap structural checks
+    /// (empty ommers) still run.
+    AlreadyValidated,
 }
 
 /// Core blockchain implementation for block validation and execution.
@@ -523,6 +544,7 @@ impl Blockchain {
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
         collect_witness: bool,
+        body_validation: BodyValidation,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -531,8 +553,21 @@ impl Blockchain {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
         self.validate_l1_transaction_types(block)?;
-        validate_block_body(&block.header, &block.body, &NativeCrypto)
-            .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
+        match body_validation {
+            BodyValidation::Validate => {
+                validate_block_body(&block.header, &block.body, &NativeCrypto)
+                    .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
+            }
+            // The caller already proved the body matches the header roots (see
+            // [`BodyValidation`]); only the cheap structural check remains.
+            BodyValidation::AlreadyValidated => {
+                if !block.body.ommers.is_empty() {
+                    return Err(ChainError::InvalidBlock(InvalidBlockError::InvalidBody(
+                        InvalidBlockBodyError::OmmersIsNotEmpty,
+                    )));
+                }
+            }
+        }
         let block_validated_instant = Instant::now();
 
         let exec_merkle_start = Instant::now();
@@ -2015,7 +2050,19 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
-        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        self.add_block_pipeline_with_body_validation(block, bal, BodyValidation::Validate)
+    }
+
+    /// Same as [`add_block_pipeline`] but lets callers that already proved the
+    /// body matches the header's transactions/withdrawals roots skip the
+    /// recomputation (see [`BodyValidation`]).
+    pub fn add_block_pipeline_with_body_validation(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+        body_validation: BodyValidation,
+    ) -> Result<(), ChainError> {
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false, body_validation)?;
         result
     }
 
@@ -2030,7 +2077,8 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
+        let (produced_bal, _, result) =
+            self.add_block_pipeline_inner(block, bal, false, BodyValidation::Validate)?;
         result?;
         Ok(produced_bal)
     }
@@ -2041,8 +2089,10 @@ impl Blockchain {
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
+        body_validation: BodyValidation,
     ) -> Result<ExecutionWitness, ChainError> {
-        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        let (_, witness, result) =
+            self.add_block_pipeline_inner(block, bal, true, body_validation)?;
         result?;
         witness.ok_or_else(|| {
             ChainError::WitnessGeneration(
@@ -2064,6 +2114,7 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
         force_witness: bool,
+        body_validation: BodyValidation,
     ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
@@ -2113,7 +2164,16 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
+        ) = {
+            self.execute_block_pipeline(
+                &block,
+                &parent_header,
+                &mut vm,
+                bal,
+                collect_witness,
+                body_validation,
+            )?
+        };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
