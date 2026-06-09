@@ -90,8 +90,8 @@ ethrex-l2-rpc = { path = "./crates/l2/networking/rpc" }
 # Keep this rev in sync with env.TOOLING_REV in .github/workflows/*.yaml so CI
 # tooling and the built binary use the same tooling commit (see
 # docs/updating-ethrex-tooling.md).
-ethrex-monitor = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "f71d05dce22a4d301689b8a30df2be80cbd2f66d" }
-ethrex-repl = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "f71d05dce22a4d301689b8a30df2be80cbd2f66d" }
+ethrex-monitor = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "3e4f7c3acd89f68a95e5446c67b46f37125c5172" }
+ethrex-repl = { git = "https://github.com/lambdaclass/ethrex-tooling", rev = "3e4f7c3acd89f68a95e5446c67b46f37125c5172" }
 
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.0", features = ["env-filter"] }
