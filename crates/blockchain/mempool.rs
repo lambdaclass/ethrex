@@ -180,22 +180,47 @@ impl MempoolInner {
 
     /// Evict blob transactions until the blob sub-pool is back under its cap.
     ///
-    /// Unlike a FIFO, this drops the *least includable* blob tx first: highest
-    /// nonce (most likely to sit behind a nonce gap, so not includable yet),
-    /// tie-broken by lowest blob fee. This preserves the low-nonce,
-    /// ready-to-include blob txs the block builder actually needs, instead of
-    /// evicting them just because they arrived early; a sustained backlog of
-    /// future-nonce blob txs would otherwise FIFO-evict the includable ones and
-    /// slowly starve block building of blobs.
+    /// Unlike a FIFO, this drops the *least includable* blob tx first. "Least
+    /// includable" is approximated by how deep a tx sits in its own sender's
+    /// queue: the nonce offset from that sender's lowest pooled blob nonce. A
+    /// large offset means the tx sits behind earlier same-sender blobs and
+    /// can't be included until those clear, so it is the safest to drop. Ties
+    /// are broken by lowest blob fee.
+    ///
+    /// The offset is measured per-sender on purpose. A raw cross-sender nonce
+    /// comparison would penalize long-lived high-throughput senders (e.g. a
+    /// rollup sequencer) whose on-wire nonces are large but whose txs are
+    /// perfectly includable. Measuring within a sender preserves the
+    /// low-offset, ready-to-include blobs the block builder actually needs
+    /// instead of FIFO-evicting them just because they arrived early.
     fn remove_worst_blob_transaction(&mut self) -> Result<(), StoreError> {
         while self.blob_tx_count() > self.max_blob_mempool_size {
             // `blobs_bundle_pool` is keyed by blob-tx hash, so its keys are
-            // exactly the blob txs currently held.
+            // exactly the blob txs currently held. First pass: lowest pooled
+            // blob nonce per sender, the per-sender baseline for the offset.
+            let mut min_nonce_by_sender: FxHashMap<Address, u64> = FxHashMap::default();
+            for tx in self
+                .blobs_bundle_pool
+                .keys()
+                .filter_map(|hash| self.transaction_pool.get(hash))
+            {
+                min_nonce_by_sender
+                    .entry(tx.sender())
+                    .and_modify(|n| *n = (*n).min(tx.nonce()))
+                    .or_insert(tx.nonce());
+            }
+            // O(N) scan over the blob sub-pool (N <= max_blob_mempool_size, 512
+            // today). Fine at this cap; revisit (e.g. a priority index) before
+            // exposing a much larger cap via CLI.
             let worst = self
                 .blobs_bundle_pool
                 .keys()
                 .filter_map(|hash| self.transaction_pool.get(hash).map(|tx| (*hash, tx)))
-                .max_by_key(|(_, tx)| (tx.nonce(), Reverse(tx.max_fee_per_blob_gas())))
+                .max_by_key(|(_, tx)| {
+                    let baseline = min_nonce_by_sender.get(&tx.sender()).copied().unwrap_or(0);
+                    let offset = tx.nonce().saturating_sub(baseline);
+                    (offset, Reverse(tx.max_fee_per_blob_gas()))
+                })
                 .map(|(hash, _)| hash);
             match worst {
                 Some(hash) => self.remove_transaction_with_lock(&hash)?,
@@ -290,6 +315,11 @@ impl Mempool {
                 inner.remove_worst_blob_transaction()?;
             }
         } else {
+            // The regular tx isn't in the pool yet (inserted below), so
+            // `regular_tx_count()` is the count *before* this tx: `>= max` means
+            // we're already at cap and must evict to make room. (Mirror of the
+            // blob branch, which uses `>` because the bundle is inserted first
+            // and is therefore already counted by `blob_tx_count`.)
             if inner.regular_tx_count() >= inner.max_mempool_size {
                 inner.remove_oldest_regular_transaction()?;
             }
