@@ -617,20 +617,25 @@ pub fn selfdestruct(
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
     // This cost applies both for call and create
-    // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: u64 = 0;
-    for byte in calldata {
-        calldata_cost = if *byte != 0 {
-            calldata_cost
-                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        } else {
-            calldata_cost
-                .checked_add(CALLDATA_COST_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        }
-    }
-    Ok(calldata_cost)
+    // 4 gas for each zero byte in the transaction data, 16 gas for each non-zero byte.
+    // Counting non-zero bytes in a single pass autovectorizes; the previous per-byte
+    // branch + `checked_add` did not. Byte-identical to the loop (and to the same
+    // overflow → OutOfGas behavior), since:
+    //   non_zero * 16 + zero * 4  ==  sum over bytes of (16 if non-zero else 4).
+    let len = u64::try_from(calldata.len()).map_err(|_| InternalError::TypeConversion)?;
+    let non_zero_bytes = u64::try_from(calldata.iter().filter(|&&byte| byte != 0).count())
+        .map_err(|_| InternalError::TypeConversion)?;
+    // non_zero_bytes <= len, so this never underflows.
+    let zero_bytes = len.saturating_sub(non_zero_bytes);
+
+    let non_zero_cost = non_zero_bytes
+        .checked_mul(CALLDATA_COST_NON_ZERO_BYTE)
+        .ok_or(OutOfGas)?;
+    let zero_cost = zero_bytes
+        .checked_mul(CALLDATA_COST_ZERO_BYTE)
+        .ok_or(OutOfGas)?;
+
+    non_zero_cost.checked_add(zero_cost).ok_or(OutOfGas.into())
 }
 
 /// Returns the total byte-size of an access list:

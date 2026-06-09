@@ -386,11 +386,29 @@ def build_docker_image(profile: str, image_tag: str, ethrex_dir: str) -> bool:
     """
     print(f"🔨 Building Docker image with profile '{profile}'...")
     print(f"   Image tag: {image_tag}")
+
+    def _git(args: list[str], default: str) -> str:
+        try:
+            out = subprocess.run(
+                ["git", "-C", ethrex_dir, *args],
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+            return out or default
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return default
+
+    git_sha = _git(["rev-parse", "HEAD"], "unknown")
+    git_branch = _git(["rev-parse", "--abbrev-ref", "HEAD"], "unknown")
+    version = _git(["describe", "--tags", "--always", "--dirty"], "dev")
+
     try:
         subprocess.run(
             [
                 "docker", "build",
                 "--build-arg", f"PROFILE={profile}",
+                "--build-arg", f"GIT_SHA={git_sha}",
+                "--build-arg", f"GIT_BRANCH={git_branch}",
+                "--build-arg", f"VERSION={version}",
                 "-t", image_tag,
                 "-f", f"{ethrex_dir}/Dockerfile",
                 ethrex_dir

@@ -317,6 +317,13 @@ pub mod u128 {
         }
     }
 
+    /// Deserializes an `Option<u128>` from either a `0x`-hex string or a bare
+    /// JSON number, for geth/reth genesis compatibility.
+    ///
+    /// **Precision**: bare numbers above `u64::MAX` are read through an `f64`
+    /// cast, losing ~3 decimal digits. Acceptable for sentinel-only fields like
+    /// `terminalTotalDifficulty`; if you need bit-exact `u128` here, add a new
+    /// deserializer rather than reusing this one.
     pub mod hex_str_opt {
         use serde::Serialize;
 
@@ -335,11 +342,25 @@ pub mod u128 {
         {
             let value: Option<serde_json::Value> = Option::deserialize(d)?;
             match value {
-                Some(serde_json::Value::Number(n)) => n
-                    .to_string()
-                    .parse::<u128>()
-                    .map(Some)
-                    .map_err(|_| D::Error::custom("Failed to deserialize u128 number")),
+                Some(serde_json::Value::Number(n)) => {
+                    // Values above u64::MAX (e.g. mainnet's TTD) are stored by
+                    // serde_json as f64, so `n.to_string()` can be "5.875e22",
+                    // which won't parse as u128. Read the integer directly and
+                    // fall back to f64 for the out-of-u64-range case (TTD is only
+                    // used as a post-merge sentinel, so f64 imprecision is moot).
+                    let v = if let Some(u) = n.as_u64() {
+                        u as u128
+                    } else if let Some(f) = n.as_f64().filter(|f| f.is_finite() && *f >= 0.0) {
+                        // `f as u128` saturates negatives to 0, which would mean
+                        // "PoS active" for TTD; reject them above instead.
+                        f as u128
+                    } else {
+                        return Err(D::Error::custom(format!(
+                            "u128 value must be a finite, non-negative number; got {n}"
+                        )));
+                    };
+                    Ok(Some(v))
+                }
                 Some(serde_json::Value::String(s)) if !s.is_empty() => {
                     u128::from_str_radix(s.trim_start_matches("0x"), 16)
                         .map_err(|_| D::Error::custom("Failed to deserialize u128 value"))

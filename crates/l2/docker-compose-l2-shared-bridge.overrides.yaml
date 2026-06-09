@@ -25,6 +25,9 @@ services:
       context: ../../
       args:
         - BUILD_FLAGS=--features l2,l2-sql
+        - GIT_SHA=${GIT_SHA:-unknown}
+        - GIT_BRANCH=${GIT_BRANCH:-unknown}
+        - VERSION=${VERSION:-dev}
     ports:
       # RPC
       - 127.0.0.1:1730:1730

@@ -278,6 +278,24 @@ pub fn eip7702_get_code(
     Ok((true, access_cost, auth_address, authorized_bytecode))
 }
 
+/// Precomputed intrinsic-gas components for a transaction.
+///
+/// Computed once per tx in the prepare-execution hook and reused by
+/// [`VM::validate_min_gas_limit`](crate::hooks::default_hook::validate_min_gas_limit)
+/// and [`VM::add_intrinsic_gas`]. Previously the full calldata / access-list /
+/// auth-list walk ran 2-3x per tx (once in each function, plus the pre-Amsterdam
+/// floor's own `tx_calldata`).
+#[derive(Clone, Copy, Debug)]
+pub struct IntrinsicGas {
+    /// Regular (EIP-8037) intrinsic-gas arm.
+    pub regular: u64,
+    /// State (EIP-8037, Amsterdam+) intrinsic-gas arm; always 0 pre-Amsterdam.
+    pub state: u64,
+    /// `gas_cost::tx_calldata` over `current_call_frame.calldata`. Reused by the
+    /// pre-Amsterdam floor check (same byte string, same point in execution).
+    pub calldata_cost: u64,
+}
+
 impl<'a> VM<'a> {
     /// Sets the account code as the EIP7702 determines.
     pub fn eip7702_set_access_code(&mut self) -> Result<(), VMError> {
@@ -431,10 +449,11 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    pub fn add_intrinsic_gas(&mut self) -> Result<(), VMError> {
+    pub fn add_intrinsic_gas(&mut self, intrinsic: &IntrinsicGas) -> Result<(), VMError> {
         // Intrinsic gas is the gas consumed by the transaction before the execution of the opcodes. Section 6.2 in the Yellow Paper.
 
-        let (regular_gas, state_gas) = self.get_intrinsic_gas()?;
+        let regular_gas = intrinsic.regular;
+        let state_gas = intrinsic.state;
 
         let total_gas = regular_gas.checked_add(state_gas).ok_or(OutOfGas)?;
 
@@ -502,7 +521,7 @@ impl<'a> VM<'a> {
     /// Returns `(regular_gas, state_gas)` intrinsic gas for the transaction.
     /// For Amsterdam+, state_gas is the EIP-8037 state portion.
     /// For pre-Amsterdam, state_gas is always 0.
-    pub fn get_intrinsic_gas(&self) -> Result<(u64, u64), VMError> {
+    pub fn get_intrinsic_gas(&self) -> Result<IntrinsicGas, VMError> {
         // Intrinsic Gas = Calldata cost + Create cost + Base cost + Access list cost
         let mut regular_gas: u64 = 0;
         let mut state_gas: u64 = 0;
@@ -607,7 +626,11 @@ impl<'a> VM<'a> {
                 .ok_or(OutOfGas)?;
         }
 
-        Ok((regular_gas, state_gas))
+        Ok(IntrinsicGas {
+            regular: regular_gas,
+            state: state_gas,
+            calldata_cost,
+        })
     }
 
     /// Calculates the minimum gas to be consumed in the transaction.

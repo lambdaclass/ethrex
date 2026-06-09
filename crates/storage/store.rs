@@ -72,6 +72,42 @@ const IN_MEMORY_COMMIT_THRESHOLD: usize = 10000;
 /// blocks of trie diffs (~1 GB), so we flush aggressively to bound memory.
 const BATCH_COMMIT_THRESHOLD: usize = 4;
 
+/// Default size in bytes of the RocksDB shared block cache: 12 GiB.
+///
+/// This cache holds both data blocks AND the index/bloom-filter blocks for every
+/// open SST file (because we enable `cache_index_and_filter_blocks`), so its size
+/// is the effective upper bound on RocksDB's resident memory footprint. 12 GiB
+/// keeps the filter/index working set resident plus hot EVM state; a sweep on a
+/// synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following,
+/// with larger giving no gain (the OS page cache backstops the uncompressed state
+/// CFs) and ~8 GiB the floor where the filter set starts to thrash.
+pub const DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES: usize = 12 * 1024 * 1024 * 1024;
+
+/// Tunable configuration for [`Store::new_with_config`] and related constructors.
+///
+/// Use [`StoreConfig::default()`] for production-tuned defaults; callers that
+/// don't need to override anything should keep calling [`Store::new`] directly.
+#[derive(Debug, Clone, Copy)]
+pub struct StoreConfig {
+    /// Total size in bytes of the RocksDB shared block cache. With
+    /// `cache_index_and_filter_blocks` enabled (the ethrex default), this cache
+    /// stores data blocks AND the per-SST index + bloom-filter blocks, so it is
+    /// the effective ceiling on RocksDB's resident memory. Lowering it below
+    /// the filter + working-set size degrades block-import performance —
+    /// see the `--rocksdb.block-cache-size` CLI flag for guidance.
+    ///
+    /// Ignored when the engine type is in-memory.
+    pub rocksdb_block_cache_size: usize,
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self {
+            rocksdb_block_cache_size: DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        }
+    }
+}
+
 /// Control messages for the FlatKeyValue generator
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
@@ -815,7 +851,7 @@ impl Store {
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<_>>::decode(targets)?,
+            jump_targets: <Vec<u32>>::decode(targets)?.into(),
         };
 
         // insert into cache and evict if needed
@@ -1592,7 +1628,21 @@ impl Store {
         Ok(())
     }
 
+    /// Opens (or creates) a store at `path` with the default [`StoreConfig`].
+    ///
+    /// Production callers that need to override storage tunables (e.g. the RocksDB
+    /// block cache size from a CLI option) should use [`Store::new_with_config`].
     pub fn new(path: impl AsRef<Path>, engine_type: EngineType) -> Result<Self, StoreError> {
+        Self::new_with_config(path, engine_type, StoreConfig::default())
+    }
+
+    /// Opens (or creates) a store at `path`, applying the supplied [`StoreConfig`].
+    pub fn new_with_config(
+        path: impl AsRef<Path>,
+        engine_type: EngineType,
+        // `config` only feeds the RocksDB backend; without that feature it is unused.
+        #[cfg_attr(not(feature = "rocksdb"), allow(unused_variables))] config: StoreConfig,
+    ) -> Result<Self, StoreError> {
         let db_path = path.as_ref().to_path_buf();
 
         if engine_type != EngineType::InMemory {
@@ -1628,7 +1678,10 @@ impl Store {
                     // Open backend, run migrations, then drop obsolete CFs.
                     // Cleanup must happen AFTER migrations so legacy CFs (e.g.
                     // `receipts`) are still readable during the migration.
-                    let rocksdb = Arc::new(RocksDBBackend::open(&path)?);
+                    let rocksdb = Arc::new(RocksDBBackend::open(
+                        &path,
+                        config.rocksdb_block_cache_size,
+                    )?);
                     crate::migrations::run_pending_migrations(rocksdb.as_ref(), &db_path, v)?;
                     rocksdb.drop_obsolete_cfs(&path);
                     let backend: Arc<dyn crate::api::StorageBackend> = rocksdb;
@@ -1646,7 +1699,7 @@ impl Store {
         match engine_type {
             #[cfg(feature = "rocksdb")]
             EngineType::RocksDB => {
-                let rocksdb = RocksDBBackend::open(&path)?;
+                let rocksdb = RocksDBBackend::open(&path, config.rocksdb_block_cache_size)?;
                 rocksdb.drop_obsolete_cfs(&path);
                 let backend: Arc<dyn StorageBackend> = Arc::new(rocksdb);
                 Self::from_backend(backend, db_path, DB_COMMIT_THRESHOLD)
@@ -1766,17 +1819,36 @@ impl Store {
         Ok(store)
     }
 
+    /// Opens (or creates) a store at `store_path` and seeds it from the
+    /// given genesis file, using the default [`StoreConfig`].
     pub async fn new_from_genesis(
         store_path: &Path,
         engine_type: EngineType,
         genesis_path: &str,
+    ) -> Result<Self, StoreError> {
+        Self::new_from_genesis_with_config(
+            store_path,
+            engine_type,
+            genesis_path,
+            StoreConfig::default(),
+        )
+        .await
+    }
+
+    /// Opens (or creates) a store at `store_path` from genesis, applying the
+    /// supplied [`StoreConfig`].
+    pub async fn new_from_genesis_with_config(
+        store_path: &Path,
+        engine_type: EngineType,
+        genesis_path: &str,
+        config: StoreConfig,
     ) -> Result<Self, StoreError> {
         let file = std::fs::File::open(genesis_path)
             .map_err(|error| StoreError::Custom(format!("Failed to open genesis file: {error}")))?;
         let reader = std::io::BufReader::new(file);
         let genesis: Genesis = serde_json::from_reader(reader)
             .map_err(|e| StoreError::Custom(format!("Failed to deserialize genesis file: {e}")))?;
-        let mut store = Self::new(store_path, engine_type)?;
+        let mut store = Self::new_with_config(store_path, engine_type, config)?;
         store.add_initial_state(genesis).await?;
         Ok(store)
     }
@@ -2270,6 +2342,31 @@ impl Store {
     }
 
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, false).await
+    }
+
+    /// Like [`Store::add_initial_state`], but trusts a pre-existing datadir's
+    /// state instead of validating it against the provided genesis. If a genesis
+    /// header is already stored, it is kept as-is rather than recomputing the
+    /// genesis state root from `genesis.alloc` and rejecting on mismatch. The
+    /// chain config from the genesis file is still applied either way.
+    ///
+    /// Intended for booting a datadir produced out-of-band (e.g. by a state
+    /// generator that writes the state trie directly and emits a genesis file
+    /// with an empty `alloc`), where the operator vouches for the stored state
+    /// root. Has no effect on a fresh datadir: the genesis is built normally.
+    pub async fn add_initial_state_skip_validation(
+        &mut self,
+        genesis: Genesis,
+    ) -> Result<(), StoreError> {
+        self.add_initial_state_inner(genesis, true).await
+    }
+
+    async fn add_initial_state_inner(
+        &mut self,
+        genesis: Genesis,
+        skip_genesis_validation: bool,
+    ) -> Result<(), StoreError> {
         debug!("Storing initial state from genesis");
 
         // Obtain genesis block
@@ -2278,7 +2375,14 @@ impl Store {
 
         let genesis_hash = genesis_block.hash();
 
-        // Set chain config
+        let stored_genesis_header = self.load_block_header(genesis_block_number)?;
+
+        // Always set the chain config from the genesis file. The in-memory
+        // `chain_config` starts at `Default::default()` on every boot and is
+        // not reloaded from the datadir, so skipping this would leave the store
+        // with the wrong chainId and an empty fork schedule. Skip-validation
+        // only waives the genesis state-root/header check; the `config` section
+        // of the genesis file is still authoritative and must be applied.
         self.set_chain_config(&genesis.config).await?;
 
         // The cache can't be empty
@@ -2289,7 +2393,14 @@ impl Store {
             self.latest_block_header.update(latest_block_header);
         }
 
-        match self.load_block_header(genesis_block_number)? {
+        match stored_genesis_header {
+            Some(header) if skip_genesis_validation => {
+                info!(
+                    stored_genesis = %header.hash(),
+                    "Skipping genesis state validation; trusting the genesis header and state already stored in the datadir"
+                );
+                return Ok(());
+            }
             Some(header) if header.hash() == genesis_hash => {
                 info!("Received genesis file matching a previously stored one, nothing to do");
                 return Ok(());
@@ -3417,10 +3528,12 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 
 fn encode_code(code: &Code) -> Vec<u8> {
     let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val(code.jump_targets.as_slice()),
+        6 + code.bytecode.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets),
     );
     code.bytecode.encode(&mut buf);
-    code.jump_targets.encode(&mut buf);
+    // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
+    // owned `Vec` on this cold DB-write path (code is persisted once per hash).
+    code.jump_targets.to_vec().encode(&mut buf);
     buf
 }
 
@@ -3517,7 +3630,9 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     }
     #[cfg(feature = "rocksdb")]
     {
-        let backend = match RocksDBBackend::open(path) {
+        // The cache size is irrelevant for this one-shot chain-id read (the LRU
+        // is sized as a ceiling, not pre-allocated), so we use the default.
+        let backend = match RocksDBBackend::open(path, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES) {
             Ok(backend) => backend,
             Err(e) => {
                 warn!("Failed to open RocksDB at {path:?} to read chain ID: {e}");

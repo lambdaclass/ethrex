@@ -25,7 +25,6 @@ tooling/sync/multisync_logs/
 /hive/
 ethereum-package/
 
-.docker_build_stamp
 .ef_tests_stamp_file
 
 **/.DS_Store

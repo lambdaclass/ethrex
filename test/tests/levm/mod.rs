@@ -2,6 +2,7 @@ mod test_db;
 
 mod bal_view_tests;
 mod bls12_tests;
+mod destroyed_refault_tests;
 mod eip7702_tests;
 mod eip7708_tests;
 mod eip7778_tests;

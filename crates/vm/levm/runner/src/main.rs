@@ -151,11 +151,14 @@ fn main() {
     let store: DynVmDatabase = Box::new(StoreVmDatabase::new(in_memory_db, header).unwrap());
     let mut db = GeneralizedDatabase::new_with_account_state(Arc::new(store), initial_state);
 
-    // Initialize VM
+    // Initialize VM. The VM now borrows its tx (`&'a Transaction`), so bind the tx to a
+    // local that outlives the VM instead of passing a temporary.
+    let tx =
+        Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone()));
     let mut vm = VM::new(
         env,
         &mut db,
-        &Transaction::LegacyTransaction(LegacyTransaction::from(runner_input.transaction.clone())),
+        &tx,
         LevmCallTracer::disabled(),
         VMType::L1,
         &NativeCrypto,

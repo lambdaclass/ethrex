@@ -236,6 +236,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
     loop {
         if blockchain.is_synced() {
+            if !sync_started_logged {
+                info!("Node already has state; following chain via full sync");
+                return;
+            }
             // Log sync complete summary
             let total_elapsed = format_duration(start.elapsed());
             let headers_downloaded = METRICS.downloaded_headers.get();

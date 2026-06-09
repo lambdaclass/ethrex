@@ -1,6 +1,6 @@
 { gitRev }:
-assert (builtins.stringLength gitRev == 7)
-  || throw "gitRev must be exactly 7 characters use (git rev-parse --short=7 HEAD)";
+assert (builtins.stringLength gitRev == 40)
+  || throw "gitRev must be exactly 40 characters use (git rev-parse HEAD)";
 
 let
   pkgs = import <nixpkgs> { };
