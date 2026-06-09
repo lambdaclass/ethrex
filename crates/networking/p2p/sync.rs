@@ -9,8 +9,13 @@ mod full;
 mod healing;
 mod snap_sync;
 
+/// Test-only re-export of the full-sync resume-point predicate so integration tests can
+/// assert that canonical-but-stateless blocks are not treated as already-executed.
+#[cfg(feature = "test-utils")]
+pub use full::{first_resume_point_in_batch, is_resume_point};
+
 use crate::metrics::METRICS;
-use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
+use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler, PeerHandlerError};
 use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
@@ -58,6 +63,12 @@ pub enum SyncMode {
 pub struct SyncDiagnostics {
     pub sync_mode: String,
     pub current_phase: String,
+    /// Highest block whose post-state is actually on disk (the executed/state head).
+    /// Updated by the full-sync cycle. May trail the canonical head when an FCU
+    /// canonicalized blocks before their state was computed; `eth_syncing` reports
+    /// this rather than the canonical pointer so the node isn't shown as near-synced
+    /// while it has no state up to the tip.
+    pub executed_head: u64,
     pub pivot_block_number: Option<u64>,
     pub pivot_timestamp: Option<u64>,
     pub pivot_age_seconds: Option<u64>,
@@ -233,6 +244,7 @@ impl Syncer {
                     self.cancel_token.clone(),
                     sync_head,
                     store,
+                    &self.diagnostics,
                 )
                 .await;
             }
@@ -259,6 +271,7 @@ impl Syncer {
                 self.cancel_token.clone(),
                 sync_head,
                 store,
+                &self.diagnostics,
             )
             .await
         }
@@ -287,15 +300,16 @@ async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Opt
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await
         {
-            Ok(Some(headers)) => {
+            Ok(HeaderFetchOutcome::Headers(headers)) => {
                 if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
                     return Some(header.number);
                 }
                 debug!("Sync head probe: response did not contain target header");
             }
-            Ok(None) => {
+            Ok(outcome) => {
                 debug!(
-                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no peer response"
+                    reason = outcome.failure_reason(),
+                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no headers"
                 );
             }
             Err(e) => {

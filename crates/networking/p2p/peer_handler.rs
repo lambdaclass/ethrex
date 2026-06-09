@@ -53,6 +53,32 @@ pub enum BlockRequestOrder {
     NewToOld,
 }
 
+/// Result of a block-header request, distinguishing why no headers came back so sync
+/// diagnostics can tell a connectivity problem from peers withholding data.
+#[derive(Debug)]
+pub enum HeaderFetchOutcome {
+    /// Headers were obtained from a peer.
+    Headers(Vec<BlockHeader>),
+    /// No suitable peer was available to send the request to (e.g. no eth-capable peer
+    /// connected, or all are busy / penalized).
+    NoPeerAvailable,
+    /// A peer was queried but returned no usable response (timeout, empty, or unchained).
+    PeerFailed,
+}
+
+impl HeaderFetchOutcome {
+    /// A short, log-friendly reason for a non-`Headers` outcome.
+    pub fn failure_reason(&self) -> &'static str {
+        match self {
+            HeaderFetchOutcome::Headers(_) => "headers received",
+            HeaderFetchOutcome::NoPeerAvailable => {
+                "no eth-capable peer with a live connection to query (peers may be connecting or recently dropped)"
+            }
+            HeaderFetchOutcome::PeerFailed => "peer(s) queried but did not serve headers",
+        }
+    }
+}
+
 /// Asks a single already-selected peer for the block number at `sync_head`.
 /// Consumes a `RequestPermit`; the permit drops on return, releasing the slot.
 async fn ask_peer_head_number(
@@ -122,6 +148,18 @@ impl PeerHandler {
             .peer_table
             .get_random_peer(capabilities.to_vec())
             .await?)
+    }
+
+    /// Number of peers known to the table that advertise the eth capabilities used for sync.
+    /// NOTE: this counts eth-capable peers regardless of whether they currently have a live
+    /// connection, so it can be greater than the number actually queryable via
+    /// `get_random_peer` (which requires a live connection). Used only for diagnostics; logged
+    /// as `eth_capable_peers`. Returns 0 on any peer-table error.
+    pub async fn eth_capable_peer_count(&self) -> usize {
+        self.peer_table
+            .peer_count_by_capabilities(SUPPORTED_ETH_CAPABILITIES.to_vec())
+            .await
+            .unwrap_or(0)
     }
 
     /// Requests block headers from any suitable peer, starting from the `start` block hash towards either older or newer blocks depending on the order
@@ -402,7 +440,7 @@ impl PeerHandler {
         &mut self,
         start: H256,
         order: BlockRequestOrder,
-    ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
+    ) -> Result<HeaderFetchOutcome, PeerHandlerError> {
         let request_id = rand::random();
         let request = RLPxMessage::GetBlockHeaders(GetBlockHeaders {
             id: request_id,
@@ -412,7 +450,7 @@ impl PeerHandler {
             reverse: matches!(order, BlockRequestOrder::NewToOld),
         });
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
-            None => Ok(None),
+            None => Ok(HeaderFetchOutcome::NoPeerAvailable),
             Some((peer_id, mut connection, permit)) => {
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
@@ -429,25 +467,42 @@ impl PeerHandler {
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
                         let _ = self.peer_table.set_disposable(peer_id);
-                        return Ok(None);
+                        return Ok(HeaderFetchOutcome::PeerFailed);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
+                        // Pin the response to the requested `start` hash. `are_block_headers_chained`
+                        // only verifies internal parent-hash linkage, not that the sequence actually
+                        // begins at `start`. A peer on a fork/minority chain can return an internally
+                        // consistent run of headers from its own chain that does NOT start at `start`;
+                        // accepting it derails the sync walk onto the wrong chain — it never reconciles
+                        // to our canonical head and walks all the way to genesis. Reject the mismatch and
+                        // penalize the peer so the caller re-rolls `get_random_peer` and keeps trying until
+                        // it lands a peer actually serving `start`'s chain (whose ancestry is hash-linked
+                        // and therefore bridges down to our canonical head). General hardening, not
+                        // devnet-specific.
+                        if block_headers[0].hash() != start {
+                            warn!(
+                                "[SYNCING] Peer {peer_id} returned headers not starting at the requested hash {start:#x}, penalizing peer"
+                            );
+                            self.peer_table.record_failure(peer_id)?;
+                            return Ok(HeaderFetchOutcome::PeerFailed);
+                        }
                         self.peer_table.record_success(peer_id)?;
-                        return Ok(Some(block_headers));
+                        return Ok(HeaderFetchOutcome::Headers(block_headers));
                     }
                     // Non-empty but unchained headers is a protocol violation
                     warn!(
                         "[SYNCING] Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
                     self.peer_table.record_failure(peer_id)?;
-                    return Ok(None);
+                    return Ok(HeaderFetchOutcome::PeerFailed);
                 }
                 // Timeout or invalid response - mark peer as disposable
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
                 self.peer_table.record_failure(peer_id)?;
-                Ok(None)
+                Ok(HeaderFetchOutcome::PeerFailed)
             }
         }
     }
