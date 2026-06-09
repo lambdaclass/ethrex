@@ -25,7 +25,8 @@ use ethrex_p2p::{
     utils::public_key_from_signing_key,
 };
 use ethrex_storage::{
-    EngineType, HistoryPruner, Store, error::StoreError, has_valid_db, read_chain_id_from_db,
+    EngineType, HistoryPruner, Store, StoreConfig, error::StoreError, has_valid_db,
+    read_chain_id_from_db,
 };
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
@@ -145,30 +146,76 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-/// Opens a new or pre-existing Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store with default tunables and loads the initial
+/// state provided by the network. See [`init_store_with_config`] for the variant
+/// that lets production callers thread CLI-provided storage tunables through.
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    init_store_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Opens a Store with the supplied [`StoreConfig`] and loads the initial state.
+pub async fn init_store_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
-/// Initializes a pre-existing Store
+/// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
+/// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
+pub async fn init_store_skip_validation(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+) -> Result<Store, StoreError> {
+    init_store_skip_validation_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Like [`init_store_with_config`], but trusts a pre-existing datadir's genesis
+/// instead of validating it against `genesis`.
+pub async fn init_store_skip_validation_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
+    store.add_initial_state_skip_validation(genesis).await?;
+    Ok(store)
+}
+
+/// Initializes a pre-existing Store with default tunables. See [`load_store_with_config`].
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    load_store_with_config(datadir, StoreConfig::default()).await
+}
+
+/// Initializes a pre-existing Store, applying the supplied [`StoreConfig`].
+pub async fn load_store_with_config(
+    datadir: &Path,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let store = open_store_with_config(datadir, config)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
+/// Opens a pre-existing Store or creates a new one with default tunables.
+/// See [`open_store_with_config`].
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+    open_store_with_config(datadir, StoreConfig::default())
+}
+
+/// Opens a pre-existing Store or creates a new one, applying the supplied [`StoreConfig`].
+pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+        Store::new_with_config(datadir, EngineType::InMemory, config)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        Store::new_with_config(datadir, engine_type, config)
     }
 }
 
@@ -544,7 +591,15 @@ pub async fn init_l1(
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(&datadir, genesis).await {
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+    };
+    let store_result = if opts.skip_genesis_validation {
+        init_store_skip_validation_with_config(&datadir, genesis, store_config).await
+    } else {
+        init_store_with_config(&datadir, genesis, store_config).await
+    };
+    let store = match store_result {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
         | Err(err @ StoreError::NotFoundDBVersion) => {

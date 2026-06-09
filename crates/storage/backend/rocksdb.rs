@@ -11,13 +11,24 @@ use crate::error::StoreError;
 use rocksdb::DBWithThreadMode;
 use rocksdb::checkpoint::Checkpoint;
 use rocksdb::{
-    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MultiThreaded, Options,
+    BlockBasedOptions, Cache, ColumnFamilyDescriptor, MergeOperands, MultiThreaded, Options,
     SnapshotWithThreadMode, WriteBatch,
 };
 use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
+
+use crate::store::tx_locations_merge;
+
+/// Adapter wrapping `tx_locations_merge` to match RocksDB's expected signature.
+fn tx_locations_merge_op(
+    _new_key: &[u8],
+    existing: Option<&[u8]>,
+    operands: &MergeOperands,
+) -> Option<Vec<u8>> {
+    tx_locations_merge(existing, operands)
+}
 
 /// RocksDB backend
 #[derive(Debug)]
@@ -27,7 +38,7 @@ pub struct RocksDBBackend {
 }
 
 impl RocksDBBackend {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
+    pub fn open(path: impl AsRef<Path>, block_cache_size: usize) -> Result<Self, StoreError> {
         // Rocksdb optimizations options
         let mut opts = Options::default();
         opts.create_if_missing(true);
@@ -73,9 +84,6 @@ impl RocksDBBackend {
             FULLSYNC_HEADERS,
         ];
 
-        // opts.enable_statistics();
-        // opts.set_stats_dump_period_sec(600);
-
         // Open all column families
         let existing_cfs = DBWithThreadMode::<MultiThreaded>::list_cf(&opts, path.as_ref())
             .unwrap_or_else(|_| vec!["default".to_string()]);
@@ -84,9 +92,29 @@ impl RocksDBBackend {
         all_cfs_to_open.extend(existing_cfs.iter().cloned());
         all_cfs_to_open.extend(TABLES.iter().map(|table| table.to_string()));
 
-        // Shared block cache for all column families: caches decompressed SST data
-        // blocks in userspace, reducing kernel I/O for hot data (trie nodes, accounts).
-        let block_cache = Cache::new_lru_cache(4 * 1024 * 1024 * 1024); // 4GB
+        // Shared block cache for all column families. With
+        // `cache_index_and_filter_blocks(true)` below, this cache holds both data blocks
+        // and the index/bloom-filter blocks needed to look them up, so its size is the
+        // effective ceiling on RocksDB's resident memory footprint. The caller chooses
+        // the size (see the `--rocksdb.block-cache-size` CLI flag); a value that is too
+        // small relative to the filter + working-set size will degrade block-import
+        // throughput (filter blocks displace data blocks, EVM reads spill to disk).
+        let block_cache = Cache::new_lru_cache(block_cache_size);
+
+        // Configures a CF's block-based table to keep its index and bloom-filter blocks
+        // inside the shared (bounded) block cache rather than pinning them per open file.
+        //
+        // With `max_open_files(-1)` every SST stays open, and RocksDB's default
+        // (`cache_index_and_filter_blocks = false`) pins each file's index + filter blocks
+        // in heap for the lifetime of the reader. On a large state DB this grows without
+        // bound with the number of SST files (on a 490 GB mainnet DB the pinned filters
+        // alone reached ~6 GB). Caching them instead bounds total table memory to the block
+        // cache size; pinning L0 keeps the hottest level resident to avoid a read-latency cliff.
+        let configure_block_cache = |block_opts: &mut BlockBasedOptions| {
+            block_opts.set_block_cache(&block_cache);
+            block_opts.set_cache_index_and_filter_blocks(true);
+            block_opts.set_pin_l0_filter_and_index_blocks_in_cache(true);
+        };
 
         let mut cf_descriptors = Vec::new();
         for cf_name in &all_cfs_to_open {
@@ -110,7 +138,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB blocks
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 CANONICAL_BLOCK_HASHES | BLOCK_NUMBERS => {
@@ -121,7 +149,37 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false);
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
+                    cf_opts.set_block_based_table_factory(&block_opts);
+                }
+                TRANSACTION_LOCATIONS => {
+                    cf_opts.set_write_buffer_size(64 * 1024 * 1024); // 64MB
+                    cf_opts.set_max_write_buffer_number(3);
+                    cf_opts.set_target_file_size_base(128 * 1024 * 1024); // 128MB
+
+                    // The write path uses merge_cf instead of read-modify-write,
+                    // so the per-tx negative get is gone. The merge operator
+                    // folds (block_number, block_hash, index) operands into the
+                    // Vec value on read/compaction.
+                    cf_opts.set_merge_operator_associative(
+                        "tx_locations_merge",
+                        tx_locations_merge_op,
+                    );
+
+                    // No bloom filter, intentionally. Bloom only accelerates
+                    // negative point lookups, and with the merge operator the
+                    // hot write path no longer does per-tx gets. The only
+                    // remaining negative reads are user `eth_getTransactionByHash`
+                    // on missing hashes — rare and not worth the filter's memory
+                    // + the implicit "perf depends on this config" coupling.
+                    // (Benchmarked: bloom didn't help the RMW variant either,
+                    // since deep-level coverage lags and the memtable traversal
+                    // floor is unaffected — see PR #6737.)
+                    let mut block_opts = BlockBasedOptions::default();
+                    block_opts.set_block_size(16 * 1024); // 16KB
+                    // Bound this CF's index blocks in the shared cache too (no bloom
+                    // here, but index still grows with SST count if pinned in heap).
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_TRIE_NODES | STORAGE_TRIE_NODES => {
@@ -134,7 +192,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_FLATKEYVALUE | STORAGE_FLATKEYVALUE => {
@@ -147,7 +205,7 @@ impl RocksDBBackend {
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024); // 16KB
                     block_opts.set_bloom_filter(10.0, false); // 10 bits per key
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 ACCOUNT_CODES => {
@@ -162,7 +220,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 RECEIPTS_V2 => {
@@ -172,7 +230,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(32 * 1024); // 32KB
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
                 _ => {
@@ -183,7 +241,7 @@ impl RocksDBBackend {
 
                     let mut block_opts = BlockBasedOptions::default();
                     block_opts.set_block_size(16 * 1024);
-                    block_opts.set_block_cache(&block_cache);
+                    configure_block_cache(&mut block_opts);
                     cf_opts.set_block_based_table_factory(&block_opts);
                 }
             }
@@ -415,6 +473,25 @@ impl StorageWriteBatch for RocksDBWriteTx {
         Ok(())
     }
 
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError> {
+        // Only TRANSACTION_LOCATIONS has a merge operator registered. Merging on
+        // any other CF would enqueue an operand RocksDB can't resolve, deferring
+        // the failure to read/compaction time where it's hard to diagnose — so
+        // fail fast here instead.
+        if table != TRANSACTION_LOCATIONS {
+            return Err(StoreError::Custom(format!(
+                "merge not supported for table {table} (no merge operator registered)"
+            )));
+        }
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        self.batch.merge_cf(&cf, key, operand);
+        Ok(())
+    }
+
     fn commit(&mut self) -> Result<(), StoreError> {
         // Take ownership of the batch (replaces it with an empty one) since db.write() consumes it
         let batch = std::mem::take(&mut self.batch);
@@ -451,5 +528,107 @@ impl Drop for RocksDBLocked {
                     as *mut Arc<DBWithThreadMode<MultiThreaded>>,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::store::encode_tx_location_operand;
+    use ethrex_common::H256;
+    use ethrex_common::types::{BlockHash, BlockNumber, Index};
+    use ethrex_rlp::decode::RLPDecode;
+
+    /// End-to-end guard for the associative merge operator at the real RocksDB
+    /// layer: write many operands for the same key, each flushed into its own
+    /// SST file, then force a compaction (which exercises the merge operator,
+    /// including PartialMerge). Before the operand/value format fix this dropped
+    /// entries during compaction (observed as 1664 silent drops on mainnet).
+    #[test]
+    fn merge_operator_survives_flush_and_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
+        let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
+
+        let tx_hash = H256::from_low_u64_be(0xabcd);
+        let entries: Vec<(BlockNumber, BlockHash, Index)> = (0..6u64)
+            .map(|i| (100 + i, H256::from_low_u64_be(0x10 + i), i))
+            .collect();
+
+        // Each operand in its own committed batch + flush → separate SST files.
+        for (bn, bh, idx) in &entries {
+            let mut tx = backend.begin_write().unwrap();
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &encode_tx_location_operand(*bn, *bh, *idx),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            backend.db.flush_cf(&cf).unwrap();
+        }
+
+        // Force compaction — consolidates operands across the SST files.
+        backend
+            .db
+            .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()
+            .expect("key must exist after merge + compaction");
+        let mut got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
+        got.sort();
+        let mut want = entries;
+        want.sort();
+        assert_eq!(got, want, "no entries may be dropped through compaction");
+    }
+
+    /// Same-block_hash operands must dedupe to the latest, even across a
+    /// flush+compaction boundary.
+    #[test]
+    fn merge_operator_dedupes_across_compaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let backend = RocksDBBackend::open(
+            dir.path(),
+            crate::store::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        )
+        .unwrap();
+        let cf = backend.db.cf_handle(TRANSACTION_LOCATIONS).unwrap();
+
+        let tx_hash = H256::from_low_u64_be(0x1234);
+        let bh = H256::from_low_u64_be(0xaa);
+        // Same block_hash written twice (e.g. re-import); later index must win.
+        for idx in [3u64, 7u64] {
+            let mut tx = backend.begin_write().unwrap();
+            tx.merge(
+                TRANSACTION_LOCATIONS,
+                tx_hash.as_bytes(),
+                &encode_tx_location_operand(200, bh, idx),
+            )
+            .unwrap();
+            tx.commit().unwrap();
+            backend.db.flush_cf(&cf).unwrap();
+        }
+        backend
+            .db
+            .compact_range_cf(&cf, None::<&[u8]>, None::<&[u8]>);
+
+        let read = backend.begin_read().unwrap();
+        let bytes = read
+            .get(TRANSACTION_LOCATIONS, tx_hash.as_bytes())
+            .unwrap()
+            .unwrap();
+        let got = <Vec<(BlockNumber, BlockHash, Index)>>::decode(&bytes).unwrap();
+        assert_eq!(
+            got,
+            vec![(200, bh, 7)],
+            "later write for same block_hash wins"
+        );
     }
 }

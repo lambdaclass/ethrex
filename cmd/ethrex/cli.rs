@@ -97,6 +97,28 @@ pub struct Options {
         help_heading = "Node options"
     )]
     pub force: bool,
+    #[arg(
+        long = "rocksdb.block-cache-size",
+        value_name = "BYTES",
+        default_value_t = ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+        help = "RocksDB shared block cache size in bytes (default 12 GiB). \
+                Bounds RocksDB resident memory; lower only on memory-constrained hosts.",
+        long_help = "RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks \
+                     enabled it holds data blocks plus the per-SST index and bloom-filter blocks, \
+                     so it is the effective ceiling on RocksDB's resident memory.\n\
+                     \n\
+                     Default 12 GiB keeps the filter/index working set resident plus hot EVM state. \
+                     A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with \
+                     head-following (filters resident, disk near-idle, no slow blocks); larger gives \
+                     no gain because the OS page cache backstops the uncompressed state CFs, and \
+                     ~8 GiB is the floor where the filter set starts to thrash.\n\
+                     \n\
+                     Lower only on memory-constrained hosts, accepting reduced throughput. \
+                     ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.",
+        help_heading = "Storage options",
+        env = "ETHREX_ROCKSDB_BLOCK_CACHE_SIZE",
+    )]
+    pub rocksdb_block_cache_size: usize,
     #[arg(long = "syncmode", default_value = "snap", value_name = "SYNC_MODE", value_parser = utils::parse_sync_mode, help = "The way in which the node will sync its state.", long_help = "Can be either \"full\" or \"snap\" with \"snap\" as default value.", help_heading = "P2P options", env = "ETHREX_SYNCMODE")]
     pub syncmode: SyncMode,
     #[arg(
@@ -158,6 +180,14 @@ pub struct Options {
         env = "ETHREX_NO_MIGRATE"
     )]
     pub no_migrate: bool,
+    #[arg(
+        long = "skip-genesis-validation",
+        action = ArgAction::SetTrue,
+        help = "Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.",
+        help_heading = "Node options",
+        env = "ETHREX_SKIP_GENESIS_VALIDATION"
+    )]
+    pub skip_genesis_validation: bool,
     #[arg(
         long = "no-precompile-cache",
         action = ArgAction::SetTrue,
@@ -490,6 +520,7 @@ impl Default for Options {
             network: Default::default(),
             bootnodes: Default::default(),
             datadir: Default::default(),
+            rocksdb_block_cache_size: ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
             syncmode: Default::default(),
             metrics_addr: "0.0.0.0".to_owned(),
             metrics_port: Default::default(),
@@ -505,6 +536,7 @@ impl Default for Options {
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,
+            skip_genesis_validation: false,
             no_precompile_cache: false,
             history_retention: None,
             no_bal_parallel_exec: false,
