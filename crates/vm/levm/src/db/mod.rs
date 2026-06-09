@@ -192,7 +192,6 @@ impl Database for CachingDatabase {
         self.precompile_cache.as_ref()
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_accounts(&self, addresses: &[Address]) -> Result<(), DatabaseError> {
         // Filter out already-cached addresses before issuing the batch read.
         let missing: Vec<Address> = {
