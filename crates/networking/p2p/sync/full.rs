@@ -114,6 +114,12 @@ pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, Sync
 /// Gated to batches whose oldest block is at/below `local_head`: a batch entirely above our head
 /// is all unexecuted and cannot contain a resume point, so the per-header state lookups are
 /// skipped for it, keeping the deep-sync walk cheap.
+///
+/// Cost: up to O(N) `has_state_root` probes for a batch of length N (256-1024 in production), but
+/// typically 2-5 — the scan terminates at the state head, which sits at or just below the
+/// not-yet-executed prefix. The pathological full-batch walk only happens when the state head is
+/// far below the batch's newest header (a long canonical-but-stateless gap from an FCU-ahead-of-
+/// execution window); each probe is a single MPT root lookup.
 pub fn first_resume_point_in_batch(
     store: &Store,
     block_headers: &[BlockHeader],
