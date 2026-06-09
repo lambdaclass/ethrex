@@ -8,6 +8,13 @@ use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
+/// Number of commits between full bloom filter rebuilds.
+///
+/// Deferring the rebuild is safe because the bloom is only ever a superset of the live
+/// key set: keys of removed layers linger as potential false positives (a wasted layer
+/// walk before falling through to disk), but lookups can never produce a false negative.
+/// Periodically rebuilding only sheds those stale keys to bound the false-positive rate.
+const BLOOM_REBUILD_INTERVAL: usize = 16;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {
@@ -49,7 +56,16 @@ pub struct TrieLayerCache {
     ///
     /// Used to avoid looking up all layers when the given path doesn't exist in any
     /// layer, thus going directly to the database.
-    bloom: AtomicBloomFilter<FxBuildHasher>,
+    ///
+    /// Wrapped in `Arc` so cloning the cache (the RCU pattern in `store.rs`) bumps a
+    /// refcount instead of deep-copying the bit array. Inserting through the shared
+    /// filter is safe: `AtomicBloomFilter` supports concurrent insert via `&self`, and
+    /// added keys only make the bloom a larger superset for older cache snapshots.
+    bloom: Arc<AtomicBloomFilter<FxBuildHasher>>,
+    /// Commits since the bloom was last rebuilt, used to schedule periodic rebuilds.
+    commits_since_rebuild: usize,
+    /// Keys belonging to removed layers since the last rebuild (stale bloom entries).
+    stale_keys_since_rebuild: usize,
 }
 
 impl fmt::Debug for TrieLayerCache {
@@ -66,11 +82,13 @@ impl fmt::Debug for TrieLayerCache {
 impl Default for TrieLayerCache {
     fn default() -> Self {
         Self {
-            bloom: Self::create_filter(BLOOM_SIZE),
+            bloom: Arc::new(Self::create_filter(BLOOM_SIZE)),
             last_id: 0,
             layers: Default::default(),
             // TODO (issue #6345): this is coupled with DB_COMMIT_THRESHOLD in store.rs — unify them.
             commit_threshold: 128,
+            commits_since_rebuild: 0,
+            stale_keys_since_rebuild: 0,
         }
     }
 }
@@ -81,10 +99,12 @@ impl TrieLayerCache {
     /// The threshold controls how many layers accumulate before a disk flush is triggered.
     pub fn new(commit_threshold: usize) -> Self {
         Self {
-            bloom: Self::create_filter(BLOOM_SIZE),
+            bloom: Arc::new(Self::create_filter(BLOOM_SIZE)),
             last_id: 0,
             layers: Default::default(),
             commit_threshold,
+            commits_since_rebuild: 0,
+            stale_keys_since_rebuild: 0,
         }
     }
 
@@ -213,8 +233,8 @@ impl TrieLayerCache {
 
     /// Rebuilds the global bloom filter from scratch using all keys across all remaining layers.
     ///
-    /// Called after [`commit`](Self::commit) removes layers, since the old filter may contain
-    /// keys from the removed layers (producing unnecessary false positives).
+    /// Called periodically from [`commit`](Self::commit), since the old filter may contain
+    /// keys from removed layers (producing unnecessary false positives).
     pub fn rebuild_bloom(&mut self) {
         // Pre-compute total keys for optimal filter sizing
         let total_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
@@ -228,7 +248,9 @@ impl TrieLayerCache {
             }
         });
 
-        self.bloom = filter;
+        self.bloom = Arc::new(filter);
+        self.commits_since_rebuild = 0;
+        self.stale_keys_since_rebuild = 0;
     }
 
     /// Removes the layer at `state_root` and all its ancestors from the cache, returning
@@ -240,7 +262,8 @@ impl TrieLayerCache {
     /// If it isn't, the walk exits immediately and returns `None`.
     ///
     /// After removal, any orphaned layers (older than the committed ones) are pruned, and
-    /// the bloom filter is rebuilt to remove stale entries.
+    /// the bloom filter is periodically rebuilt to shed stale entries
+    /// (see [`BLOOM_REBUILD_INTERVAL`]).
     pub fn commit(&mut self, state_root: H256) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut layers_to_commit = vec![];
         let mut current_state_root = state_root;
@@ -250,9 +273,28 @@ impl TrieLayerCache {
             layers_to_commit.push(layer);
         }
         let top_layer_id = layers_to_commit.first()?.id;
+        let mut removed_keys: usize = layers_to_commit.iter().map(|layer| layer.nodes.len()).sum();
         // older layers are useless
-        self.layers.retain(|_, item| item.id > top_layer_id);
-        self.rebuild_bloom(); // layers removed, rebuild global bloom filter.
+        self.layers.retain(|_, item| {
+            let keep = item.id > top_layer_id;
+            if !keep {
+                removed_keys += item.nodes.len();
+            }
+            keep
+        });
+        // The bloom now holds stale keys for the removed layers. That is safe (it stays a
+        // superset of the live key set: only false positives, never false negatives), so
+        // instead of paying a full rebuild on every commit we only rebuild periodically,
+        // or sooner if stale keys outnumber live ones (keeps batch-mode commits, which
+        // remove very large layers, from saturating the filter).
+        self.commits_since_rebuild += 1;
+        self.stale_keys_since_rebuild += removed_keys;
+        let live_keys: usize = self.layers.values().map(|layer| layer.nodes.len()).sum();
+        if self.commits_since_rebuild >= BLOOM_REBUILD_INTERVAL
+            || self.stale_keys_since_rebuild > live_keys
+        {
+            self.rebuild_bloom();
+        }
         let nodes_to_commit = layers_to_commit
             .into_iter()
             .rev()
@@ -331,5 +373,73 @@ impl TrieDB for TrieWrapper {
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {
         // TODO: Get rid of this.
         unimplemented!("This function should not be called");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn root(n: u64) -> H256 {
+        H256::from_low_u64_be(n)
+    }
+
+    /// Generates key-values unique to the given seed, so each layer has disjoint keys.
+    fn layer_keys(seed: u64) -> Vec<(Nibbles, Vec<u8>)> {
+        (0..32u64)
+            .map(|i| {
+                (
+                    Nibbles::from_bytes(&[seed.to_be_bytes(), i.to_be_bytes()].concat()),
+                    vec![seed as u8, i as u8],
+                )
+            })
+            .collect()
+    }
+
+    /// Every key of every layer still in the cache must be retrievable starting from the
+    /// newest root: the bloom may hold stale keys, but must never produce a false negative.
+    fn assert_live_keys_hit(cache: &TrieLayerCache, newest_root: H256) {
+        let mut current = newest_root;
+        while let Some(layer) = cache.layers.get(&current) {
+            for (key, value) in &layer.nodes {
+                assert_eq!(cache.get(newest_root, key).as_ref(), Some(value));
+            }
+            current = layer.parent;
+        }
+    }
+
+    #[test]
+    fn bloom_rebuild_is_deferred_and_keeps_superset_property() {
+        const THRESHOLD: usize = 32;
+        let mut cache = TrieLayerCache::new(THRESHOLD);
+
+        // Build the initial chain up to the commit threshold.
+        for n in 1..=THRESHOLD as u64 {
+            cache.put_batch(root(n - 1), root(n), layer_keys(n));
+        }
+
+        let mut saw_deferred_commit = false;
+        let mut saw_rebuild = false;
+        // Keep adding layers and committing, well past the rebuild interval.
+        let first = THRESHOLD as u64 + 1;
+        let last = THRESHOLD as u64 + 2 * BLOOM_REBUILD_INTERVAL as u64;
+        for n in first..=last {
+            cache.put_batch(root(n - 1), root(n), layer_keys(n));
+            let commitable = cache
+                .get_commitable(root(n))
+                .expect("a layer should be committable");
+            assert!(cache.commit(commitable).is_some());
+            if cache.commits_since_rebuild > 0 {
+                saw_deferred_commit = true;
+            } else {
+                saw_rebuild = true;
+            }
+            assert_live_keys_hit(&cache, root(n));
+        }
+        assert!(
+            saw_deferred_commit,
+            "expected at least one commit to defer the bloom rebuild"
+        );
+        assert!(saw_rebuild, "expected the bloom to be rebuilt eventually");
     }
 }
