@@ -1450,6 +1450,7 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ethrex_rlp::encode::RLPEncode;
     use crate::types::payload::ExecutionPayloadResponse;
     use crate::{rpc::RpcHandler, test_utils::default_context_with_storage};
     use ethrex_blockchain::payload::{PayloadBuildResult, PayloadOrTask};
