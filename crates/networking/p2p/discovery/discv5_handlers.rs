@@ -447,7 +447,7 @@ impl DiscoveryServer {
             .ip_predictor
             .record_ip_vote(pong_message.recipient_addr.ip(), sender_id)
         {
-            self.apply_predicted_ip(ip);
+            self.apply_predicted_ip(ip, "discv5");
         }
 
         Ok(())
