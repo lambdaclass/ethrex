@@ -7,7 +7,7 @@ use ethrex_common::types::{BlockHash, BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde::Deserialize;
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
@@ -404,16 +404,16 @@ async fn remove_head_transactions_from_pool(context: &RpcApiContext, head_hash: 
                 .blockchain
                 .remove_block_transactions_from_pool(&block)
             {
-                warn!("Failed to remove block transactions from the mempool: {error}");
+                error!("Failed to remove block transactions from the mempool: {error}");
             }
         }
         Ok(None) => {
             warn!(
-                "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
+                "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstructed network"
             )
         }
         Err(error) => {
-            warn!("Failed to get block by hash to remove transactions from the mempool: {error}");
+            error!("Failed to get block by hash to remove transactions from the mempool: {error}");
         }
     }
 }
