@@ -280,7 +280,7 @@ async fn test_ip_voting_updates_ip_on_threshold() {
     assert!(server.ip_predictor.ip_votes.is_empty());
 
     // Applying the winner must update the local node IP (the point of the test).
-    server.apply_predicted_ip(result.unwrap());
+    server.apply_predicted_ip(result.unwrap(), "test");
     assert_eq!(server.local_node.ip, new_ip);
     assert_ne!(server.local_node.ip, original_ip);
 }
