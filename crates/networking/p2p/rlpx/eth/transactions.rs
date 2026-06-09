@@ -133,10 +133,14 @@ impl NewPooledTransactionHashes {
     pub fn get_transactions_to_request(
         &self,
         blockchain: &Blockchain,
+        announcer: H256,
     ) -> Result<Vec<H256>, StoreError> {
-        blockchain
-            .mempool
-            .reserve_unknown_hashes(&self.transaction_hashes)
+        blockchain.mempool.reserve_unknown_hashes(
+            &self.transaction_hashes,
+            &self.transaction_types,
+            &self.transaction_sizes,
+            announcer,
+        )
     }
 
     /// Extract only the entries for the given `requested` hashes from this announcement.

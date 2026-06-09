@@ -1,4 +1,4 @@
-pub(crate) mod block_access_lists;
+pub mod block_access_lists;
 pub mod blocks;
 pub mod eth68;
 mod eth69;

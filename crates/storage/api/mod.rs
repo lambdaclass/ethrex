@@ -104,6 +104,16 @@ pub trait StorageWriteBatch: Send {
         end: &[u8],
     ) -> Result<(), StoreError>;
 
+    /// Appends a merge operand for the given key in the specified table.
+    ///
+    /// The actual combine step is deferred — backends with a registered merge
+    /// operator (RocksDB) apply it at read or compaction time; backends without
+    /// (InMemory) dispatch by table and apply inline.
+    ///
+    /// Currently used for `TRANSACTION_LOCATIONS`. Calling on a table without
+    /// a registered merge function is an error.
+    fn merge(&mut self, table: &'static str, key: &[u8], operand: &[u8]) -> Result<(), StoreError>;
+
     /// Commits all changes made in this transaction.
     fn commit(&mut self) -> Result<(), StoreError>;
 }
