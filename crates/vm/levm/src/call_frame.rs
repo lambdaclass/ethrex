@@ -428,6 +428,16 @@ impl CallFrame {
         Ok(())
     }
 
+    /// EELS' `check_gas`: assert gas is available without consuming it.
+    #[inline(always)]
+    #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
+    pub fn check_gas(&self, gas: u64) -> Result<(), ExceptionalHalt> {
+        if self.gas_remaining < 0 || (self.gas_remaining as u64) < gas {
+            return Err(ExceptionalHalt::OutOfGas);
+        }
+        Ok(())
+    }
+
     pub fn set_code(&mut self, code: Code) -> Result<(), VMError> {
         self.bytecode = code;
         Ok(())
@@ -438,6 +448,12 @@ impl<'a> VM<'a> {
     /// Adds current calframe to call_frames, sets current call frame to the passed callframe.
     #[inline(always)]
     pub fn add_callframe(&mut self, new_call_frame: CallFrame) {
+        // Reserve once on the first sub-call (p99 depth ~10, max 27): keeps the ~43% of txs that
+        // never make a call alloc-free (`call_frames` starts as `Vec::new()`), while avoiding the
+        // repeated reallocs a call-heavy tx would otherwise incur as depth grows.
+        if self.call_frames.is_empty() {
+            self.call_frames.reserve(8);
+        }
         self.call_frames.push(new_call_frame);
         #[allow(unsafe_code, reason = "just pushed, so the vec is not empty")]
         unsafe {
@@ -464,6 +480,19 @@ impl<'a> VM<'a> {
     /// Restores the cache state to the state before changes made during a callframe.
     pub fn restore_cache_state(&mut self) -> Result<(), VMError> {
         let callframe_backup = self.current_call_frame.call_frame_backup.clone();
+        restore_cache_state(self.db, callframe_backup)
+    }
+
+    /// Like [`Self::restore_cache_state`] but moves the current frame's backup out instead of
+    /// cloning it. Only sound when nothing reads `call_frame_backup` afterward: the inner-call
+    /// revert in `handle_return` (the frame is popped right after, so its backup is dead), and
+    /// the top-level / invalid-tx revert when no `BackupHook` is installed (normal L1 block
+    /// execution, gated on `VM::preserve_top_level_backup`).
+    ///
+    /// When a `BackupHook` IS present (L2 / stateless) the top-level paths must keep cloning,
+    /// because `BackupHook::finalize` reads the backup to build the tx-level undo snapshot.
+    pub fn restore_cache_state_consuming(&mut self) -> Result<(), VMError> {
+        let callframe_backup = std::mem::take(&mut self.current_call_frame.call_frame_backup);
         restore_cache_state(self.db, callframe_backup)
     }
 

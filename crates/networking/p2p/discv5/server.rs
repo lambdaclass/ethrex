@@ -1,3 +1,4 @@
+use crate::discovery::lookup::IterativeLookup;
 use crate::discv5::messages::Message;
 use crate::{
     discv5::messages::Packet,
@@ -47,6 +48,8 @@ pub struct Discv5State {
     pub ip_vote_period_start: Option<Instant>,
     /// Whether the first (fast) voting round has completed.
     pub first_ip_vote_round_completed: bool,
+    /// Currently active iterative lookups.
+    pub active_lookups: Vec<IterativeLookup>,
 }
 
 impl Default for Discv5State {
@@ -65,6 +68,7 @@ impl Default for Discv5State {
             ip_votes: Default::default(),
             ip_vote_period_start: None,
             first_ip_vote_round_completed: false,
+            active_lookups: Vec::new(),
         }
     }
 }
