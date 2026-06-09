@@ -4,10 +4,11 @@ These are the official execution spec tests. There are two kinds: `state tests` 
 
 > **Note:** The test tooling lives in the
 > [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling) repository.
-> Clone it into the `tooling/` directory before running the commands below:
+> Check it out into the `tooling/` directory at the pinned revision before
+> running the commands below:
 >
 > ```sh
-> git clone https://github.com/lambdaclass/ethrex-tooling tooling
+> make setup-tooling
 > ```
 
 ### State tests

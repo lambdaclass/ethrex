@@ -6,10 +6,10 @@ End-to-End tests with Hive. Hive is a system which sends RPC commands to Ethereu
 
 > **Note:** Hive test tooling (report generation, fixtures URLs) lives in the
 > [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling) repository.
-> Clone it into the `tooling/` directory:
+> Check it out into the `tooling/` directory at the pinned revision:
 >
 > ```sh
-> git clone https://github.com/lambdaclass/ethrex-tooling tooling
+> make setup-tooling
 > ```
 
 This project uses three key repositories for Hive testing:
