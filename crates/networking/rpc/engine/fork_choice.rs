@@ -5,6 +5,7 @@ use ethrex_blockchain::{
 };
 use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
+use serde::Deserialize;
 use serde_json::Value;
 use tracing::{debug, info, warn};
 
@@ -182,18 +183,17 @@ fn parse(
         return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
     }
 
-    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
+    let forkchoice_state: ForkChoiceState = Deserialize::deserialize(&params[0])?;
     let mut payload_attributes: Option<PayloadAttributesV3> = None;
     if params.len() == 2 {
         // if there is an error when parsing (or the parameter is missing), set to None
-        payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV3>>(params[1].clone()) {
-                Ok(attributes) => attributes,
-                Err(error) => {
-                    warn!("Could not parse payload attributes {}", error);
-                    None
-                }
-            };
+        payload_attributes = match Option::<PayloadAttributesV3>::deserialize(&params[1]) {
+            Ok(attributes) => attributes,
+            Err(error) => {
+                warn!("Could not parse payload attributes {}", error);
+                None
+            }
+        };
     }
 
     if payload_attributes
@@ -496,17 +496,16 @@ fn parse_v4(
         return Err(RpcErr::BadParams("Expected 2 or 1 params".to_owned()));
     }
 
-    let forkchoice_state: ForkChoiceState = serde_json::from_value(params[0].clone())?;
+    let forkchoice_state: ForkChoiceState = Deserialize::deserialize(&params[0])?;
     let mut payload_attributes: Option<PayloadAttributesV4> = None;
     if params.len() == 2 {
-        payload_attributes =
-            match serde_json::from_value::<Option<PayloadAttributesV4>>(params[1].clone()) {
-                Ok(attributes) => attributes,
-                Err(error) => {
-                    warn!("Could not parse payload attributes {}", error);
-                    None
-                }
-            };
+        payload_attributes = match Option::<PayloadAttributesV4>::deserialize(&params[1]) {
+            Ok(attributes) => attributes,
+            Err(error) => {
+                warn!("Could not parse payload attributes {}", error);
+                None
+            }
+        };
     }
     Ok((forkchoice_state, payload_attributes))
 }

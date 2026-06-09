@@ -43,7 +43,7 @@ impl RpcHandler for ExchangeTransitionConfigV1Req {
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
-        let payload: ExchangeTransitionConfigPayload = serde_json::from_value(params[0].clone())?;
+        let payload = ExchangeTransitionConfigPayload::deserialize(&params[0])?;
         Ok(ExchangeTransitionConfigV1Req { payload })
     }
 

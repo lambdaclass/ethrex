@@ -9,6 +9,7 @@ use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Encoder};
+use serde::Deserialize;
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -116,11 +117,11 @@ impl RpcHandler for NewPayloadV3Request {
             return Err(RpcErr::BadParams("Expected 3 params".to_owned()));
         }
         Ok(NewPayloadV3Request {
-            payload: serde_json::from_value(params[0].clone())
+            payload: Deserialize::deserialize(&params[0])
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: Deserialize::deserialize(&params[2])
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
         })
     }
@@ -185,13 +186,13 @@ impl RpcHandler for NewPayloadV4Request {
             return Err(RpcErr::BadParams("Expected 4 params".to_owned()));
         }
         Ok(NewPayloadV4Request {
-            payload: serde_json::from_value(params[0].clone())
+            payload: Deserialize::deserialize(&params[0])
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: Deserialize::deserialize(&params[2])
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
+            execution_requests: Deserialize::deserialize(&params[3])
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
         })
     }
@@ -328,13 +329,13 @@ impl RpcHandler for NewPayloadV5Request {
             .transpose()?;
 
         Ok(Self {
-            payload: serde_json::from_value(params[0].clone())
+            payload: Deserialize::deserialize(&params[0])
                 .map_err(|_| RpcErr::WrongParam("payload".to_string()))?,
-            expected_blob_versioned_hashes: serde_json::from_value(params[1].clone())
+            expected_blob_versioned_hashes: Deserialize::deserialize(&params[1])
                 .map_err(|_| RpcErr::WrongParam("expected_blob_versioned_hashes".to_string()))?,
-            parent_beacon_block_root: serde_json::from_value(params[2].clone())
+            parent_beacon_block_root: Deserialize::deserialize(&params[2])
                 .map_err(|_| RpcErr::WrongParam("parent_beacon_block_root".to_string()))?,
-            execution_requests: serde_json::from_value(params[3].clone())
+            execution_requests: Deserialize::deserialize(&params[3])
                 .map_err(|_| RpcErr::WrongParam("execution_requests".to_string()))?,
             raw_bal_hash,
         })
@@ -711,7 +712,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
         };
 
         Ok(GetPayloadBodiesByHashV1Request {
-            hashes: serde_json::from_value(params[0].clone())?,
+            hashes: Deserialize::deserialize(&params[0])?,
         })
     }
 
@@ -818,7 +819,7 @@ impl RpcHandler for GetPayloadBodiesByHashV2Request {
         };
 
         Ok(GetPayloadBodiesByHashV2Request {
-            hashes: serde_json::from_value(params[0].clone())?,
+            hashes: Deserialize::deserialize(&params[0])?,
         })
     }
 
@@ -916,7 +917,7 @@ fn parse_execution_payload(params: &Option<Vec<Value>>) -> Result<ExecutionPaylo
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     }
-    serde_json::from_value(params[0].clone()).map_err(|_| RpcErr::WrongParam("payload".to_string()))
+    ExecutionPayload::deserialize(&params[0]).map_err(|_| RpcErr::WrongParam("payload".to_string()))
 }
 
 fn validate_execution_payload_v1(payload: &ExecutionPayload) -> Result<(), RpcErr> {
@@ -1375,7 +1376,7 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
     if params.len() != 1 {
         return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
     };
-    let Ok(hex_str) = serde_json::from_value::<String>(params[0].clone()) else {
+    let Ok(hex_str) = String::deserialize(&params[0]) else {
         return Err(RpcErr::BadParams(
             "Expected param to be a string".to_owned(),
         ));

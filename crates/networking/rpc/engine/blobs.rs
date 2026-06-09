@@ -57,7 +57,7 @@ impl RpcHandler for BlobsV1Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV1Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: Deserialize::deserialize(&params[0])?,
         })
     }
 
@@ -115,7 +115,7 @@ impl RpcHandler for BlobsV2Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV2Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: Deserialize::deserialize(&params[0])?,
         })
     }
 
@@ -138,7 +138,7 @@ impl RpcHandler for BlobsV3Request {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         };
         Ok(BlobsV3Request {
-            blob_versioned_hashes: serde_json::from_value(params[0].clone())?,
+            blob_versioned_hashes: Deserialize::deserialize(&params[0])?,
         })
     }
 

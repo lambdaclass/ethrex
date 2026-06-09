@@ -71,7 +71,7 @@ impl RpcHandler for GetClientVersionV1Request {
         if params.len() != 1 {
             return Err(RpcErr::BadParams("Expected 1 param".to_owned()));
         }
-        let consensus_client: ClientVersionV1 = serde_json::from_value(params[0].clone())?;
+        let consensus_client = ClientVersionV1::deserialize(&params[0])?;
         Ok(GetClientVersionV1Request { consensus_client })
     }
 

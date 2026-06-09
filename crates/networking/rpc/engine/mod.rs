@@ -9,6 +9,7 @@ use crate::{
     utils::RpcErr,
     utils::RpcRequest,
 };
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 pub type ExchangeCapabilitiesRequest = Vec<String>;
@@ -61,8 +62,7 @@ impl RpcHandler for ExchangeCapabilitiesRequest {
             .first()
             .ok_or(RpcErr::BadParams("Expected 1 param".to_owned()))
             .and_then(|v| {
-                serde_json::from_value(v.clone())
-                    .map_err(|error| RpcErr::BadParams(error.to_string()))
+                Deserialize::deserialize(v).map_err(|error| RpcErr::BadParams(error.to_string()))
             })
     }
 
