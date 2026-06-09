@@ -23,8 +23,8 @@ ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 # Install cargo-chef via prebuilt binary (cargo-binstall) — avoids ~2 min source build.
 # cargo-binstall pinned for reproducibility; bump deliberately.
 ARG CARGO_BINSTALL_VERSION=v1.19.1
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     # uname -m (NOT $TARGETARCH): cargo-chef is a build-platform tool, must match
     # the stage's execution arch, not the target image arch.
     curl -fsSL https://github.com/cargo-bins/cargo-binstall/releases/download/${CARGO_BINSTALL_VERSION}/cargo-binstall-$(uname -m)-unknown-linux-musl.tgz \
@@ -69,9 +69,9 @@ ENV VERGEN_GIT_BRANCH=$GIT_BRANCH \
 
 COPY --from=planner --link /ethrex/recipe.json recipe.json
 
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH} \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH},sharing=locked \
     cargo chef cook --profile $PROFILE --recipe-path recipe.json $BUILD_FLAGS
 
 # Fetch solc using buildx's TARGETARCH (no shell uname).
@@ -100,9 +100,9 @@ COPY --link fixtures/keys ./fixtures/keys
 ENV COMPILE_CONTRACTS=true
 
 # Combine build + extract in one RUN so the target cache mount is still mounted.
-RUN --mount=type=cache,target=/usr/local/cargo/registry \
-    --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH} \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/ethrex/target,id=ethrex-target-${TARGETARCH},sharing=locked \
     cargo build --profile $PROFILE $BUILD_FLAGS \
     && mkdir -p /ethrex/bin \
     && cp /ethrex/target/${PROFILE}/ethrex /ethrex/bin/ethrex
