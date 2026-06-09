@@ -14,7 +14,7 @@ const FALSE_POSITIVE_RATE: f64 = 0.02;
 /// key set: keys of removed layers linger as potential false positives (a wasted layer
 /// walk before falling through to disk), but lookups can never produce a false negative.
 /// Periodically rebuilding only sheds those stale keys to bound the false-positive rate.
-const BLOOM_REBUILD_INTERVAL: usize = 16;
+pub(crate) const BLOOM_REBUILD_INTERVAL: usize = 16;
 
 #[derive(Debug, Clone)]
 struct TrieLayer {

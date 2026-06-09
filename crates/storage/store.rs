@@ -3877,7 +3877,228 @@ mod merge_tests {
 #[cfg(test)]
 mod trie_read_context_tests {
     use super::*;
+    use crate::layering::BLOOM_REBUILD_INTERVAL;
     use rustc_hash::FxHashMap;
+
+    /// Lands one block on top of `parent_hash` that rewrites the test account
+    /// (balance/nonce) and its storage slot to values derived from `number`,
+    /// returning the child block's (hash, state_root).
+    fn land_child_block(
+        store: &Store,
+        parent_hash: BlockHash,
+        number: BlockNumber,
+        address: Address,
+        slot: H256,
+        code_hash: H256,
+    ) -> (BlockHash, H256) {
+        let mut added_storage = FxHashMap::default();
+        added_storage.insert(slot, U256::from(number));
+        let update = AccountUpdate {
+            address,
+            info: Some(AccountInfo {
+                code_hash,
+                balance: U256::from(1000 + number),
+                nonce: number + 1,
+            }),
+            added_storage,
+            ..Default::default()
+        };
+        let updates_list = store
+            .apply_account_updates_batch(parent_hash, &[update])
+            .unwrap()
+            .unwrap();
+        let header = BlockHeader {
+            parent_hash,
+            number,
+            state_root: updates_list.state_trie_hash,
+            ..Default::default()
+        };
+        let root = header.state_root;
+        let hash = header.hash();
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: updates_list.state_updates,
+                storage_updates: updates_list.storage_updates,
+                blocks: vec![Block::new(header, BlockBody::default())],
+                receipts: vec![],
+                code_updates: updates_list.code_updates,
+                batch_mode: false,
+            })
+            .unwrap();
+        (hash, root)
+    }
+
+    /// A captured context must keep serving its root after the layer cache
+    /// has gone through the real commit machinery while the context is held:
+    /// `TrieLayerCache::commit` flushing layers to disk and removing them, and
+    /// the bloom rebuilt at least once (>= BLOOM_REBUILD_INTERVAL commits land).
+    ///
+    /// Pins the contract that a bloom rebuild swaps in a fresh filter instead
+    /// of mutating the shared one in place. Only block 1 touches the captured
+    /// account, so its trie node paths exist solely in block 1's diff-layer
+    /// (and on disk once flushed); all later layers only carry the churn
+    /// account's paths. An in-place rebuild would therefore shed the captured
+    /// account's keys once block 1's layer is removed, and the captured
+    /// reader would skip the layer walk and fall through to its point-in-time
+    /// disk view — which predates the flush and still holds genesis values
+    /// for those paths.
+    #[tokio::test]
+    async fn captured_context_survives_layer_commits_and_bloom_rebuilds() {
+        // Small threshold so commits and disk flushes run in test time (the
+        // in-memory default of 10000 layers would never commit).
+        const COMMIT_THRESHOLD: usize = 4;
+        let backend: Arc<dyn StorageBackend> = Arc::new(InMemoryBackend::open().unwrap());
+        let mut store = Store::from_backend(backend, PathBuf::new(), COMMIT_THRESHOLD).unwrap();
+
+        // `captured` is only modified by block 1; `churn` is modified by every
+        // later block to drive commits without ever rewriting `captured`'s paths.
+        let captured = Address::from_low_u64_be(0x42);
+        let churn = Address::from_low_u64_be(0xb0b);
+        let slot = H256::from_low_u64_be(1);
+        let account = GenesisAccount {
+            code: Bytes::new(),
+            storage: BTreeMap::from([(U256::one(), U256::from(0xdead))]),
+            balance: U256::from(1000),
+            nonce: 1,
+        };
+        let genesis = Genesis {
+            alloc: BTreeMap::from([(captured, account.clone()), (churn, account)]),
+            ..Default::default()
+        };
+        store.add_initial_state(genesis).await.unwrap();
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let genesis_hash = genesis_header.hash();
+        let captured_hash = hash_address_fixed(&captured);
+        let churn_hash = hash_address_fixed(&churn);
+        let code_hash = store
+            .get_account_state_by_root(genesis_header.state_root, captured)
+            .unwrap()
+            .unwrap()
+            .code_hash;
+
+        // Block 1 lives only in a diff-layer at capture time (genesis is the
+        // only state on disk), so every read of its state through the captured
+        // context depends on the captured layer cache and its bloom filter.
+        let (block1_hash, block1_root) =
+            land_child_block(&store, genesis_hash, 1, captured, slot, code_hash);
+        let ctx = store.trie_read_context().unwrap();
+        let captured_state = store
+            .get_account_state_by_root_with_context(&ctx, block1_root, captured)
+            .unwrap()
+            .unwrap();
+        assert_eq!(captured_state.balance, U256::from(1001));
+        let captured_slot = store
+            .get_storage_at_root_with_context(
+                &ctx,
+                block1_root,
+                captured_hash,
+                captured_state.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(captured_slot, Some(U256::from(1)));
+
+        // Land enough further blocks that, while the context is held, commits
+        // start (once COMMIT_THRESHOLD layers stack up) and keep firing for
+        // more than BLOOM_REBUILD_INTERVAL commits, guaranteeing at least one
+        // bloom rebuild. The captured values must survive every interleaving
+        // of layer insertion, disk flush, layer removal and bloom rebuild.
+        let last = 1 + (COMMIT_THRESHOLD + BLOOM_REBUILD_INTERVAL + 4) as u64;
+        let mut parent_hash = block1_hash;
+        let mut latest_root = block1_root;
+        for number in 2..=last {
+            (parent_hash, latest_root) =
+                land_child_block(&store, parent_hash, number, churn, slot, code_hash);
+            let stale_state = store
+                .get_account_state_by_root_with_context(&ctx, block1_root, captured)
+                .unwrap()
+                .unwrap();
+            assert_eq!(stale_state, captured_state);
+            let stale_slot = store
+                .get_storage_at_root_with_context(
+                    &ctx,
+                    block1_root,
+                    captured_hash,
+                    captured_state.storage_root,
+                    slot,
+                )
+                .unwrap();
+            assert_eq!(stale_slot, captured_slot);
+        }
+        // Drain Phase 2 (disk flush) and Phase 3 (layer removal) of the last
+        // updates before inspecting the live cache.
+        store.wait_for_persistence_idle().await.unwrap();
+
+        // The dangerous interleaving actually ran: block 1's diff-layer was
+        // flushed and removed from the live cache, while the captured
+        // snapshot still holds it.
+        let live_cache = store.trie_cache.read().unwrap().clone();
+        assert!(
+            live_cache
+                .get_commitable_with_threshold(block1_root, 1)
+                .is_none(),
+            "block 1's diff-layer should have been flushed to disk and removed"
+        );
+        assert!(
+            ctx.cache
+                .get_commitable_with_threshold(block1_root, 1)
+                .is_some(),
+            "the captured snapshot should still hold block 1's diff-layer"
+        );
+
+        // The captured context still serves the block-1 values.
+        let stale_state = store
+            .get_account_state_by_root_with_context(&ctx, block1_root, captured)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stale_state, captured_state);
+        let stale_slot = store
+            .get_storage_at_root_with_context(
+                &ctx,
+                block1_root,
+                captured_hash,
+                captured_state.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(stale_slot, Some(U256::from(1)));
+
+        // Sanity through a fresh context at the newest root: the churn account
+        // resolves to its latest values, and the captured account — whose
+        // block-1 layer is gone from the live cache — resolves through the
+        // flushed on-disk state to its block-1 values.
+        let fresh_ctx = store.trie_read_context().unwrap();
+        let fresh_churn = store
+            .get_account_state_by_root_with_context(&fresh_ctx, latest_root, churn)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh_churn.balance, U256::from(1000 + last));
+        let fresh_churn_slot = store
+            .get_storage_at_root_with_context(
+                &fresh_ctx,
+                latest_root,
+                churn_hash,
+                fresh_churn.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(fresh_churn_slot, Some(U256::from(last)));
+        let fresh_captured = store
+            .get_account_state_by_root_with_context(&fresh_ctx, latest_root, captured)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh_captured, captured_state);
+        let fresh_captured_slot = store
+            .get_storage_at_root_with_context(
+                &fresh_ctx,
+                latest_root,
+                captured_hash,
+                fresh_captured.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(fresh_captured_slot, Some(U256::from(1)));
+    }
 
     /// A context captured at a given root must keep serving that root with the
     /// values it had at capture time, agreeing with the direct (per-call
