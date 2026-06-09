@@ -265,7 +265,16 @@ fn block_bloom_matches(
     topics.iter().all(|topic_filter| {
         let allowed: Vec<&H256> = match topic_filter {
             TopicFilter::Topic(topic) => topic.iter().collect(),
-            TopicFilter::Topics(sub_topics) => sub_topics.iter().flatten().collect(),
+            TopicFilter::Topics(sub_topics) => {
+                // A `None` alternative means "any topic" at this position, making
+                // the whole position a wildcard: it must not constrain the bloom.
+                // Without this, `topics: [[null, T]]` would skip blocks that match
+                // via the wildcard, dropping valid logs.
+                if sub_topics.iter().any(|t| t.is_none()) {
+                    return true;
+                }
+                sub_topics.iter().flatten().collect()
+            }
         };
         // An empty set of allowed topics is a wildcard for this position.
         allowed.is_empty()
@@ -406,6 +415,20 @@ mod tests {
             &Bloom::zero(),
             &HashSet::new(),
             &[TopicFilter::Topics(vec![])]
+        ));
+    }
+
+    #[test]
+    fn bloom_match_topics_with_none_element_is_wildcard() {
+        // A `None` inside a `Topics([...])` alternatives list means "any topic"
+        // at this position, so the position is a wildcard and must not be skipped
+        // even when the sibling topic is absent from the bloom. Regression test for
+        // a false-negative that dropped valid logs for `topics: [[null, T]]` queries.
+        let bloom = bloom_with(&[], &[]); // contains neither topic
+        assert!(block_bloom_matches(
+            &bloom,
+            &HashSet::new(),
+            &[TopicFilter::Topics(vec![Some(topic(2)), None])]
         ));
     }
 
