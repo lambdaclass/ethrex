@@ -277,6 +277,15 @@ impl Mempool {
         Ok(())
     }
 
+    /// Remove a batch of transactions from the pool under a single write-lock acquisition
+    pub fn remove_transactions(&self, hashes: &[H256]) -> Result<(), StoreError> {
+        let mut inner = self.write()?;
+        for hash in hashes {
+            inner.remove_transaction_with_lock(hash)?;
+        }
+        Ok(())
+    }
+
     /// Applies the filter and returns a set of suitable transactions from the mempool.
     /// These transactions will be grouped by sender and sorted by nonce
     pub fn filter_transactions(

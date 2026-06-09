@@ -3,7 +3,7 @@ use ethrex_blockchain::{
     fork_choice::apply_fork_choice,
     payload::{BuildPayloadArgs, create_payload},
 };
-use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER};
+use ethrex_common::types::{BlockHash, BlockHeader, ELASTICITY_MULTIPLIER};
 use ethrex_p2p::sync::SyncMode;
 use serde::Deserialize;
 use serde_json::Value;
@@ -38,8 +38,13 @@ impl RpcHandler for ForkChoiceUpdatedV1 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 1).await?;
+        let (head_block_opt, mut response) = handle_forkchoice(
+            &self.fork_choice_state,
+            context.clone(),
+            1,
+            self.payload_attributes.is_some(),
+        )
+        .await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
             if chain_config.is_cancun_activated(attributes.timestamp) {
@@ -71,8 +76,13 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 2).await?;
+        let (head_block_opt, mut response) = handle_forkchoice(
+            &self.fork_choice_state,
+            context.clone(),
+            2,
+            self.payload_attributes.is_some(),
+        )
+        .await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             let chain_config = context.storage.get_chain_config();
             if chain_config.is_cancun_activated(attributes.timestamp) {
@@ -120,8 +130,13 @@ impl RpcHandler for ForkChoiceUpdatedV3 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 3).await?;
+        let (head_block_opt, mut response) = handle_forkchoice(
+            &self.fork_choice_state,
+            context.clone(),
+            3,
+            self.payload_attributes.is_some(),
+        )
+        .await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_attributes_v3(attributes, &head_block, &context)?;
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 3).await?;
@@ -160,8 +175,13 @@ impl RpcHandler for ForkChoiceUpdatedV4 {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let (head_block_opt, mut response) =
-            handle_forkchoice(&self.fork_choice_state, context.clone(), 4).await?;
+        let (head_block_opt, mut response) = handle_forkchoice(
+            &self.fork_choice_state,
+            context.clone(),
+            4,
+            self.payload_attributes.is_some(),
+        )
+        .await?;
         if let (Some(head_block), Some(attributes)) = (head_block_opt, &self.payload_attributes) {
             validate_attributes_v4(attributes, &head_block, &context)?;
             let payload_id = build_payload_v4(attributes, context, &self.fork_choice_state).await?;
@@ -211,6 +231,7 @@ async fn handle_forkchoice(
     fork_choice_state: &ForkChoiceState,
     context: RpcApiContext,
     version: usize,
+    has_payload_attributes: bool,
 ) -> Result<(Option<BlockHeader>, ForkChoiceResponse), RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -284,25 +305,19 @@ async fn handle_forkchoice(
             context.blockchain.set_synced();
             // Remove included transactions from the mempool after we accept the fork choice
             // TODO(#797): The remove of transactions from the mempool could be incomplete (i.e. REORGS)
-            match context.storage.get_block_by_hash(head.hash()).await {
-                Ok(Some(block)) => {
-                    // Remove executed transactions from mempool
-                    context
-                        .blockchain
-                        .remove_block_transactions_from_pool(&block)?;
-                }
-                Ok(None) => {
-                    warn!(
-                        "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
-                    )
-                }
-                Err(_) => {
-                    return Err(RpcErr::Internal(
-                        "Failed to get block by hash to remove transactions from the mempool"
-                            .to_string(),
-                    ));
-                }
-            };
+            if has_payload_attributes {
+                // The payload builder starts right after this fork choice is
+                // handled; prune synchronously so it cannot select
+                // already-included transactions.
+                remove_head_transactions_from_pool(&context, head.hash()).await;
+            } else {
+                // Pruning is best-effort, so keep it off the fcU latency path.
+                let context = context.clone();
+                let head_hash = head.hash();
+                tokio::spawn(async move {
+                    remove_head_transactions_from_pool(&context, head_hash).await;
+                });
+            }
 
             // Notify all eth_subscribe("newHeads") subscribers.
             if let Some(ws) = &context.ws {
@@ -375,6 +390,30 @@ async fn handle_forkchoice(
                 }
             };
             Ok((None, forkchoice_response))
+        }
+    }
+}
+
+/// Best-effort removal of the new head block's transactions from the mempool.
+/// Failures are logged instead of failing the fork choice update.
+async fn remove_head_transactions_from_pool(context: &RpcApiContext, head_hash: BlockHash) {
+    match context.storage.get_block_by_hash(head_hash).await {
+        Ok(Some(block)) => {
+            // Remove executed transactions from mempool
+            if let Err(error) = context
+                .blockchain
+                .remove_block_transactions_from_pool(&block)
+            {
+                warn!("Failed to remove block transactions from the mempool: {error}");
+            }
+        }
+        Ok(None) => {
+            warn!(
+                "Couldn't get block by hash to remove transactions from the mempool. This is expected in a reconstruted network"
+            )
+        }
+        Err(error) => {
+            warn!("Failed to get block by hash to remove transactions from the mempool: {error}");
         }
     }
 }
