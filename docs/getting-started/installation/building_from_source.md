@@ -55,6 +55,13 @@ git clone --branch <version-tag> --depth 1 https://github.com/lambdaclass/ethrex
 cd ethrex
 ```
 
+> **Note:** Development tooling (EF tests, load tests, monitor TUI, REPL,
+> benchmarks) lives in the separate
+> [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling) repo. Building
+> the `ethrex` binary does not require it, but if you plan to run those tools,
+> run `make setup-tooling` to check it out into `tooling/` at the pinned
+> revision.
+
 Build the binary:
 
 ```sh

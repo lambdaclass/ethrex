@@ -14,6 +14,21 @@ The full code of ethrex is available at [GitHub](https://github.com/lambdaclass/
 git clone https://github.com/lambdaclass/ethrex && cd ethrex
 ```
 
+## Setting up tooling
+
+Development tooling (EF tests, load tests, monitor TUI, REPL, benchmarks) lives
+in the separate [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling)
+repository. Building the `ethrex` binary does not require it, but to run those
+tools check it out at the pinned revision:
+
+```
+make setup-tooling
+```
+
+This clones it into `tooling/` and checks out the revision the build pins (run
+`make verify-tooling` to confirm your checkout matches). See
+[docs/updating-ethrex-tooling.md](../updating-ethrex-tooling.md) to bump the pin.
+
 ## Building the ethrex binary
 
 Ethrex can be built using cargo
