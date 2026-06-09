@@ -10,6 +10,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Genesis;
 use ethrex_l2_common::prover::ProverType;
 use ethrex_monitor::{EthrexMonitor, MonitorConfig as ExternalMonitorConfig};
+use ethrex_rpc::SubscriptionManager;
 use ethrex_storage::Store;
 use ethrex_storage_rollup::StoreRollup;
 use l1_committer::L1Committer;
@@ -19,7 +20,7 @@ use l1_watcher::L1Watcher;
 use metrics::MetricsGatherer;
 use proof_coordinator::ProofCoordinator;
 use reqwest::Url;
-use spawned_concurrency::tasks::GenServerHandle;
+use spawned_concurrency::tasks::ActorRef;
 use std::pin::Pin;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -52,10 +53,12 @@ pub async fn start_l2(
     l2_url: Url,
     genesis: Genesis,
     checkpoints_dir: PathBuf,
+    l2_gas_limit: u64,
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 ) -> Result<
     (
-        Option<GenServerHandle<L1Committer>>,
-        Option<GenServerHandle<BlockProducer>>,
+        Option<ActorRef<L1Committer>>,
+        Option<ActorRef<BlockProducer>>,
         Pin<Box<dyn Future<Output = Result<(), errors::SequencerError>> + Send>>,
     ),
     errors::SequencerError,
@@ -69,7 +72,7 @@ pub async fn start_l2(
     };
 
     if let Some(batch_gas_limit) = cfg.l1_committer.batch_gas_limit {
-        let block_gas_limit = cfg.block_producer.block_gas_limit;
+        let block_gas_limit = l2_gas_limit;
         if batch_gas_limit < block_gas_limit {
             error!(
                 "The block gas limit ({block_gas_limit}) cannot be greater than the batch gas limit ({batch_gas_limit})."
@@ -145,7 +148,7 @@ pub async fn start_l2(
         shared_state.clone(),
         rollup_store.clone(),
         needed_proof_types.clone(),
-        checkpoints_dir,
+        checkpoints_dir.clone(),
     )
     .await
     .inspect_err(|err| {
@@ -158,6 +161,8 @@ pub async fn start_l2(
         cfg.clone(),
         shared_state.clone(),
         cfg.l1_watcher.router_address,
+        l2_gas_limit,
+        subscription_manager,
     )
     .await
     .inspect_err(|err| {
@@ -177,6 +182,7 @@ pub async fn start_l2(
             cfg.clone(),
             rollup_store.clone(),
             needed_proof_types.clone(),
+            checkpoints_dir.clone(),
         )));
     }
     let state_updater = StateUpdater::spawn(

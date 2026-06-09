@@ -1,7 +1,8 @@
 use crate::cli::Options as L1Options;
 use crate::initializers::{
     self, get_authrpc_socket_addr, get_http_socket_addr, get_local_node_record, get_local_p2p_node,
-    get_network, get_signer, init_blockchain, init_network, init_store,
+    get_network, get_signer, get_ws_socket_addr, init_blockchain, init_network,
+    init_store_with_config,
 };
 use crate::l2::{L2Options, SequencerOptions};
 use crate::utils::{
@@ -9,24 +10,26 @@ use crate::utils::{
     read_jwtsecret_file, store_node_config_file,
 };
 use ethrex_blockchain::{Blockchain, BlockchainType, L2Config};
+use ethrex_common::Address;
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::fee_config::{FeeConfig, L1FeeConfig, OperatorFeeConfig};
-use ethrex_common::{Address, types::DEFAULT_BUILDER_GAS_CEIL};
-use ethrex_l2::sequencer::block_producer;
-use ethrex_l2::sequencer::l1_committer::{self, regenerate_state};
+use ethrex_l2::sequencer::block_producer::{self, block_producer_protocol};
+use ethrex_l2::sequencer::l1_committer::{self, l1_committer_protocol, regenerate_state};
 use ethrex_p2p::{
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::PeerTable,
+    peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
     types::{Node, NodeRecord},
 };
-use ethrex_storage::Store;
+use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
+use ethrex_storage::{Store, StoreConfig};
 use ethrex_storage_rollup::{EngineTypeRollup, StoreRollup};
 use eyre::OptionExt;
 use secp256k1::SecretKey;
-use spawned_concurrency::tasks::GenServerHandle;
+
+use spawned_concurrency::tasks::ActorRef;
 use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
@@ -48,12 +51,16 @@ fn init_rpc_api(
     tracker: TaskTracker,
     rollup_store: StoreRollup,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
-    gas_ceil: Option<u64>,
+    l2_gas_limit: u64,
+    ws: Option<WebSocketConfig>,
 ) {
     init_datadir(&opts.datadir);
 
+    let allowed_namespaces: std::collections::HashSet<_> = opts.http_api.iter().copied().collect();
+    let ethrex_namespace_allowed = l2_opts.http_api_ethrex;
     let rpc_api = ethrex_l2_rpc::start_api(
         get_http_socket_addr(opts),
+        ws,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -67,7 +74,10 @@ fn init_rpc_api(
         l2_opts.sponsor_private_key,
         rollup_store,
         log_filter_handler,
-        gas_ceil.unwrap_or(DEFAULT_BUILDER_GAS_CEIL),
+        l2_gas_limit,
+        l2_opts.sponsored_gas_limit,
+        allowed_namespaces,
+        ethrex_namespace_allowed,
     );
 
     tracker.spawn(rpc_api);
@@ -157,22 +167,19 @@ pub fn init_tracing(
 }
 
 async fn shutdown_sequencer_handles(
-    committer_handle: Option<GenServerHandle<l1_committer::L1Committer>>,
-    block_producer_handle: Option<GenServerHandle<block_producer::BlockProducer>>,
+    committer_handle: Option<ActorRef<l1_committer::L1Committer>>,
+    block_producer_handle: Option<ActorRef<block_producer::BlockProducer>>,
 ) {
-    // These GenServers run via start_blocking, so aborting the JoinSet alone never stops them.
-    // Sending Abort elicits CastResponse::Stop and lets the blocking loop unwind cleanly.
-    if let Some(mut handle) = committer_handle {
+    // Sending Abort triggers ctx.stop() and lets the actor unwind cleanly.
+    if let Some(handle) = committer_handle {
         handle
-            .cast(l1_committer::InMessage::Abort)
-            .await
+            .send(l1_committer_protocol::Abort)
             .inspect_err(|err| warn!("Failed to send committer abort: {err:?}"))
             .ok();
     }
-    if let Some(mut handle) = block_producer_handle {
+    if let Some(handle) = block_producer_handle {
         handle
-            .cast(block_producer::InMessage::Abort)
-            .await
+            .send(block_producer_protocol::Abort)
             .inspect_err(|err| warn!("Failed to send block producer abort: {err:?}"))
             .ok();
     }
@@ -194,7 +201,10 @@ pub async fn init_l2(
     let network = get_network(&opts.node_opts);
 
     let genesis = network.get_genesis()?;
-    let store = init_store(&datadir, genesis.clone()).await?;
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.node_opts.rocksdb_block_cache_size,
+    };
+    let store = init_store_with_config(&datadir, genesis.clone(), store_config).await?;
     let rollup_store = init_rollup_store(&rollup_store_dir).await;
 
     let operator_fee_config = get_operator_fee_config(&opts.sequencer_opts)?;
@@ -221,6 +231,10 @@ pub async fn init_l2(
         perf_logs_enabled: true,
         max_blobs_per_block: None, // L2 doesn't support blob transactions
         precompute_witnesses: opts.node_opts.precompute_witnesses,
+        precompile_cache_enabled: true,
+        bal_parallel_exec_enabled: true,
+        bal_prefetch_enabled: true,
+        bal_parallel_trie_enabled: true,
     };
 
     let blockchain = init_blockchain(store.clone(), blockchain_opts.clone());
@@ -229,7 +243,7 @@ pub async fn init_l2(
 
     let signer = get_signer(&datadir);
 
-    let local_p2p_node = get_local_p2p_node(&opts.node_opts, &signer);
+    let (local_p2p_node, network_config) = get_local_p2p_node(&opts.node_opts, &signer);
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
@@ -243,9 +257,14 @@ pub async fn init_l2(
         if !opts.sequencer_opts.based {
             blockchain.set_synced();
         }
-        let peer_table = PeerTable::spawn(opts.node_opts.target_peers, store.clone());
+        let peer_table = PeerTableServer::spawn(
+            local_p2p_node.node_id(),
+            opts.node_opts.target_peers,
+            store.clone(),
+        );
         let p2p_context = P2PContext::new(
             local_p2p_node.clone(),
+            network_config,
             tracker.clone(),
             signer,
             peer_table.clone(),
@@ -273,7 +292,7 @@ pub async fn init_l2(
             opts.node_opts.lookup_interval,
         )
         .expect("P2P context could not be created");
-        let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+        let initiator = RLPxInitiator::spawn(p2p_context.clone());
         let peer_handler = PeerHandler::new(peer_table, initiator);
 
         // Create SyncManager
@@ -306,6 +325,25 @@ pub async fn init_l2(
         (None, None)
     };
 
+    let l2_gas_limit = ethrex_l2::sequencer::utils::get_l2_gas_limit(
+        opts.sequencer_opts.eth_opts.rpc_url.clone(),
+        opts.sequencer_opts
+            .watcher_opts
+            .bridge_address
+            .ok_or_else(|| eyre::eyre!("Bridge address required to fetch L2 gas limit"))?,
+    )
+    .await?;
+
+    // Create WebSocket config when WS is enabled.
+    let ws_config = if opts.node_opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(&opts.node_opts),
+            subscription_manager: SubscriptionManager::spawn(),
+        })
+    } else {
+        None
+    };
+
     init_rpc_api(
         &opts.node_opts,
         &opts,
@@ -318,7 +356,8 @@ pub async fn init_l2(
         tracker.clone(),
         rollup_store.clone(),
         log_filter_handler,
-        Some(opts.sequencer_opts.block_producer_opts.block_gas_limit),
+        l2_gas_limit,
+        ws_config.clone(),
     );
 
     // Initialize metrics if enabled
@@ -341,6 +380,8 @@ pub async fn init_l2(
         l2_url,
         genesis,
         checkpoints_dir,
+        l2_gas_limit,
+        ws_config.as_ref().map(|ws| ws.subscription_manager.clone()),
     )
     .await?;
     join_set.spawn(l2_sequencer);

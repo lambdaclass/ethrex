@@ -81,8 +81,8 @@ pub enum MempoolError {
     BlobsBundleError(#[from] BlobsBundleError),
     #[error("Transaction max init code size exceeded")]
     TxMaxInitCodeSizeError,
-    #[error("Transaction max data size exceeded")]
-    TxMaxDataSizeError,
+    #[error("Transaction encoded size ({actual} bytes) exceeds the {limit}-byte limit")]
+    TxSizeExceeded { actual: usize, limit: usize },
     #[error("Transaction gas limit exceeded")]
     TxGasLimitExceededError,
     #[error(
@@ -116,7 +116,7 @@ pub enum MempoolError {
     #[error("Requested pooled transaction was not received")]
     RequestedPooledTxNotFound,
     #[error("Transaction sender is invalid {0}")]
-    InvalidTxSender(#[from] ethrex_common::EcdsaError),
+    InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
     #[error("Frame transactions (EIP-8141) are not supported before the Hegota fork")]
@@ -164,6 +164,8 @@ pub enum InvalidForkChoice {
     InvalidAncestor(BlockHash),
     #[error("Cannot find link between Head and the canonical chain")]
     UnlinkedHead,
+    #[error("Reorg depth {reorg_depth} exceeds the client's limit of {limit}")]
+    TooDeepReorg { reorg_depth: u64, limit: u64 },
 
     // TODO(#5564): handle arbitrary reorgs
     #[error("State root of the new head is not reachable from the database")]

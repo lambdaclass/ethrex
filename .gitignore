@@ -9,6 +9,7 @@
 *.pdb
 
 tooling/ef_tests/blockchain/vectors
+tooling/ef_tests/blockchain/vectors_zkevm
 
 tooling/ef_tests/state/vectors
 
@@ -24,7 +25,6 @@ tooling/sync/multisync_logs/
 /hive/
 ethereum-package/
 
-.docker_build_stamp
 .ef_tests_stamp_file
 
 **/.DS_Store
@@ -76,6 +76,9 @@ bench-results/
 # AI tools. Eventually we might agree on a standard, but lets keep them personal for now
 Claude.md
 GEMINI.md
+openspec/
+.github/prompts/opsx-*
+.github/skills/openspec-*
 
 # RKYV
 *.bin

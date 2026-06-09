@@ -17,6 +17,7 @@ use ethrex_common::types::{
     FrameTransaction, Transaction,
 };
 use ethrex_common::{Address, H256, U256, constants::EMPTY_TRIE_HASH};
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::db::gen_db::GeneralizedDatabase;
 use ethrex_levm::environment::{EVMConfig, Environment};
 use ethrex_levm::errors::TxResult;
@@ -95,7 +96,7 @@ fn seeded_db(accounts: &[SeededAccount]) -> GeneralizedDatabase {
             *address,
             Account::new(
                 *balance,
-                Code::from_bytecode(code.clone()),
+                Code::from_bytecode(code.clone(), &NativeCrypto),
                 *nonce,
                 FxHashMap::default(),
             ),
@@ -170,6 +171,7 @@ fn run_frame_tx(
             &transaction,
             LevmCallTracer::disabled(),
             VMType::L1,
+            &NativeCrypto,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
@@ -210,6 +212,7 @@ fn run_frame_tx_with_fees(
             &transaction,
             LevmCallTracer::disabled(),
             VMType::L1,
+            &NativeCrypto,
         )
         .expect("VM::new should succeed for a frame tx");
         vm.execute()
@@ -291,7 +294,7 @@ fn assert_db_cache_unchanged(db: &GeneralizedDatabase, accounts: &[SeededAccount
         );
         assert_eq!(
             current.info.code_hash,
-            Code::from_bytecode(code.clone()).hash,
+            Code::from_bytecode(code.clone(), &NativeCrypto).hash,
             "code of {address:?} changed after invalid tx",
         );
 
@@ -507,7 +510,10 @@ fn frameparam_reads_frame_index_from_stack_top() {
             mode: u8::from(FrameMode::Default),
             flags: 0,
             target: Some(reader),
-            gas_limit: 100_000,
+            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
+            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
+            // the frame's regular gas, so the budget must cover it.
+            gas_limit: 300_000,
             value: U256::zero(),
             data: Bytes::new(),
         },
@@ -812,7 +818,10 @@ fn frame_tx_happy_path_sstore_and_log() {
             mode: u8::from(FrameMode::Sender),
             flags: 0,
             target: Some(worker),
-            gas_limit: 100_000,
+            // EIP-8037 (active at Hegota): the new-slot SSTORE spills
+            // STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte (~98k) into
+            // the frame's regular gas, so the budget must cover it.
+            gas_limit: 300_000,
             value: U256::zero(),
             data: Bytes::new(),
         },

@@ -37,7 +37,7 @@ impl RLPEncode for ReceiptItem68 {
     /// A) Legacy receipts: `rlp(payload)` (raw list, no Bytes wrap).
     /// B) Non-legacy receipts: `rlp(Bytes(tx_type || rlp(payload)))`.
     fn encode(&self, buf: &mut dyn BufMut) {
-        let inner = self.0.encode_inner_with_bloom();
+        let inner = self.0.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         match self.0.tx_type {
             TxType::Legacy => buf.put_slice(&inner),
             _ => Bytes::from(inner).encode(buf),
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(new_buf, old_buf);
     }
 
-    /// A single non-frame receipt wire item equals `Bytes(encode_inner_with_bloom())`
+    /// A single non-frame receipt wire item equals `Bytes(encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))`
     /// for typed receipts, confirming the per-item wrap is unchanged.
     #[test]
     fn nonframe_item_wire_equals_bytes_inner_with_bloom() {
@@ -215,7 +215,8 @@ mod tests {
         ReceiptItem68(receipt.clone()).encode(&mut item_buf);
 
         let mut expected = Vec::new();
-        Bytes::from(receipt.encode_inner_with_bloom()).encode(&mut expected);
+        Bytes::from(receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))
+            .encode(&mut expected);
 
         assert_eq!(item_buf, expected);
     }
@@ -276,7 +277,8 @@ mod tests {
         let mut item_buf = Vec::new();
         ReceiptItem68(frame.clone()).encode(&mut item_buf);
         let mut expected = Vec::new();
-        Bytes::from(frame.encode_inner_with_bloom()).encode(&mut expected);
+        Bytes::from(frame.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto))
+            .encode(&mut expected);
         assert_eq!(item_buf, expected);
     }
 

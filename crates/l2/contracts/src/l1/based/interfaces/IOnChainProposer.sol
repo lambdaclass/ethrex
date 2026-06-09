@@ -7,52 +7,52 @@ pragma solidity =0.8.31;
 /// by the proposer to commit batches of l2 blocks and verify proofs.
 interface IOnChainProposer {
     // Initialization errors
-    error MissingRisc0Verifier();
-    error MissingSp1Verifier();
-    error MissingTdxVerifier();
-    error AlignedModeRequiresSp1();
-    error AlignedModeDoesNotSupportRisc0();
-    error CommitHashIsZero();
-    error MissingSp1VerificationKey();
-    error MissingRisc0VerificationKey();
-    error BridgeIsZeroAddress();
-    error BridgeIsContractAddress();
-    error AlreadyInitialized();
-    error SequencerRegistryIsZeroAddress();
-    error SequencerRegistryIsContractAddress();
+    error MissingRisc0Verifier(); // 0x1871c084
+    error MissingSp1Verifier(); // 0xc0b62621
+    error MissingTdxVerifier(); // 0xee7f6b60
+    error AlignedModeRequiresSp1(); // 0xb41e395e
+    error AlignedModeDoesNotSupportRisc0(); // 0xadae5cff
+    error CommitHashIsZero(); // 0x1f14b5aa
+    error MissingSp1VerificationKey(); // 0x544c07b4
+    error MissingRisc0VerificationKey(); // 0x60c177e0
+    error BridgeIsZeroAddress(); // 0x850138f2
+    error BridgeIsContractAddress(); // 0xdf655de9
+    error AlreadyInitialized(); // 0x0dc149f0
+    error SequencerRegistryIsZeroAddress(); // 0xd385dd80
+    error SequencerRegistryIsContractAddress(); // 0x7064abcc
 
     // Commit errors
-    error BatchNumberNotSuccessor();
-    error BatchAlreadyCommitted();
-    error LastBlockHashIsZero();
-    error InvalidPrivilegedTransactionLogs();
-    error InvalidL2MessageRollingHash();
-    error ValidiumBlobPublished();
-    error RollupBlobNotPublished();
-    error MissingVerificationKeyForCommit();
+    error BatchNumberNotSuccessor(); // 0xcd1793fe
+    error BatchAlreadyCommitted(); // 0x884923cf
+    error LastBlockHashIsZero(); // 0xf1cbbe55
+    error InvalidPrivilegedTransactionLogs(); // 0x9e6e5638
+    error InvalidL2MessageRollingHash(); // 0x52ba57cb
+    error ValidiumBlobPublished(); // 0x0c9c8061
+    error RollupBlobNotPublished(); // 0xe1aa9667
+    error MissingVerificationKeyForCommit(); // 0xf6b9798e
 
     // Verify errors
-    error UseAlignedVerification();
-    error UseSmartContractVerification();
-    error BatchNotSequential();
-    error BatchNotCommitted();
-    error EmptyBatchArray();
-    error BatchArrayLengthMismatch();
-    error ExpiredPrivilegedTransactionDeadline();
-    error InvalidRisc0Proof();
-    error InvalidSp1Proof();
-    error InvalidTdxProof();
+    error UseAlignedVerification(); // 0x2da8b4d4
+    error UseSmartContractVerification(); // 0xc8d8ecb9
+    error BatchNotSequential(); // 0xceb05a46
+    error BatchNotCommitted(); // 0xc26a3294
+    error EmptyBatchArray(); // 0x7dc57e7b
+    error BatchArrayLengthMismatch(); // 0xfc5221bd
+    error ExpiredPrivilegedTransactionDeadline(); // 0x1420ad0b
+    error InvalidRisc0Proof(); // 0x14add973
+    error InvalidSp1Proof(); // 0x7ff849b5
+    error InvalidTdxProof(); // 0x62013a95
 
     // Aligned verify errors
-    error IncorrectFirstBatchNumber();
-    error LastBatchExceedsCommitted();
-    error Sp1ProofArrayLengthMismatch();
-    error Risc0ProofArrayLengthMismatch();
-    error AlignedAggregatorCallFailed();
-    error AlignedProofVerificationFailed();
+    error IncorrectFirstBatchNumber(); // 0x5f83abb8
+    error LastBatchExceedsCommitted(); // 0xfbd95da9
+    error Sp1ProofArrayLengthMismatch(); // 0xc1af923d
+    error Risc0ProofArrayLengthMismatch(); // 0x60fecd3e
+    error AlignedAggregatorCallFailed(); // 0x63934992
+    error AlignedProofVerificationFailed(); // 0x44602025
 
     // Access control errors
-    error CallerHasNoSequencingRights();
+    error CallerHasNoSequencingRights(); // 0xac0192af
 
     /// @notice The latest committed batch number.
     /// @return The latest committed batch number as a uint256.

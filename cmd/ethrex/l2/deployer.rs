@@ -339,6 +339,14 @@ pub struct DeployerOptions {
     )]
     pub inclusion_max_wait: u64,
     #[arg(
+        long = "l2-gas-limit",
+        default_value = "30000000",
+        env = "ETHREX_L2_GAS_LIMIT",
+        help_heading = "Deployer options",
+        help = "L2 block gas limit. Stored in CommonBridge and used to bound privileged transaction gas."
+    )]
+    pub l2_gas_limit: u64,
+    #[arg(
         long,
         default_value = "false",
         env = "ETHREX_USE_COMPILED_GENESIS",
@@ -449,6 +457,7 @@ impl Default for DeployerOptions {
             deploy_based_contracts: false,
             sequencer_registry_owner: None,
             inclusion_max_wait: 3000,
+            l2_gas_limit: 30_000_000,
             use_compiled_genesis: true,
             router: None,
             deploy_router: false,
@@ -553,7 +562,8 @@ const INITIALIZE_TIMELOCK_SIGNATURE: &str = "initialize(uint256,address[],addres
 
 const TRANSFER_OWNERSHIP_SIGNATURE: &str = "transferOwnership(address)";
 const ACCEPT_OWNERSHIP_SIGNATURE: &str = "acceptOwnership()";
-const BRIDGE_INITIALIZER_SIGNATURE: &str = "initialize(address,address,uint256,address, uint256)";
+const BRIDGE_INITIALIZER_SIGNATURE: &str =
+    "initialize(address,address,uint256,address,uint256,uint256)";
 const ROUTER_INITIALIZER_SIGNATURE: &str = "initialize(address)";
 const ROUTER_REGISTER_SIGNATURE: &str = "register(uint256,address)";
 
@@ -1353,6 +1363,7 @@ async fn initialize_contracts(
             Value::Uint(opts.inclusion_max_wait.into()),
             Value::Address(contract_addresses.router.unwrap_or_default()),
             Value::Uint(genesis.config.chain_id.into()),
+            Value::Uint(opts.l2_gas_limit.into()),
         ];
         let bridge_initialization_calldata =
             encode_calldata(BRIDGE_INITIALIZER_SIGNATURE, &calldata_values)?;

@@ -22,7 +22,7 @@ use ethrex_blockchain::error::MempoolError;
 /// - `-32602`: Invalid params
 /// - `-32603`: Internal error
 /// - `-32000`: Generic server error
-/// - `-38001` to `-38005`: Engine API specific errors
+/// - `-38001` to `-38006`: Engine API specific errors
 /// - `3`: Execution reverted/halted
 #[derive(Debug, thiserror::Error)]
 pub enum RpcErr {
@@ -50,12 +50,29 @@ pub enum RpcErr {
     Halt { reason: String, gas_used: u64 },
     #[error("Authentication error: {0:?}")]
     AuthenticationError(AuthenticationError),
+    /// JSON-RPC 2.0 §5.1: the JSON sent is not a valid Request object. Used
+    /// for malformed bodies on the auth port (e.g. empty batches) where we
+    /// also drop the request id (per spec, id MUST be null when it cannot
+    /// be detected).
+    #[error("Invalid Request: {0}")]
+    InvalidRequest(String),
     #[error("Invalid forkchoice state: {0}")]
     InvalidForkChoiceState(String),
     #[error("Invalid payload attributes: {0}")]
     InvalidPayloadAttributes(String),
+    #[error("Too deep reorg: {0}")]
+    TooDeepReorg(String),
     #[error("Unknown payload: {0}")]
     UnknownPayload(String),
+    // EIP-8025 proof errors (-39001 .. -39004)
+    #[error("Invalid proof format: {0}")]
+    InvalidProofFormat(String),
+    #[error("Invalid header format: {0}")]
+    InvalidHeaderFormat(String),
+    #[error("Invalid payload: {0}")]
+    InvalidPayload(String),
+    #[error("Proof generation unavailable: {0}")]
+    ProofGenerationUnavailable(String),
 }
 
 impl From<RpcErr> for RpcErrorMetadata {
@@ -75,6 +92,11 @@ impl From<RpcErr> for RpcErrorMetadata {
                 code: -32000,
                 data: None,
                 message: format!("Invalid params: {context}"),
+            },
+            RpcErr::InvalidRequest(context) => RpcErrorMetadata {
+                code: -32600,
+                data: None,
+                message: format!("Invalid Request: {context}"),
             },
             RpcErr::MissingParam(parameter_name) => RpcErrorMetadata {
                 code: -32000,
@@ -152,10 +174,36 @@ impl From<RpcErr> for RpcErrorMetadata {
                 data: Some(data),
                 message: "Invalid payload attributes".to_string(),
             },
+            RpcErr::TooDeepReorg(data) => RpcErrorMetadata {
+                code: -38006,
+                data: Some(data),
+                message: "Too deep reorg".to_string(),
+            },
             RpcErr::UnknownPayload(context) => RpcErrorMetadata {
                 code: -38001,
                 data: None,
                 message: format!("Unknown payload: {context}"),
+            },
+            // EIP-8025 proof error codes
+            RpcErr::InvalidProofFormat(context) => RpcErrorMetadata {
+                code: -39001,
+                data: None,
+                message: format!("Invalid proof format: {context}"),
+            },
+            RpcErr::InvalidHeaderFormat(context) => RpcErrorMetadata {
+                code: -39002,
+                data: None,
+                message: format!("Invalid header format: {context}"),
+            },
+            RpcErr::InvalidPayload(context) => RpcErrorMetadata {
+                code: -39003,
+                data: None,
+                message: format!("Invalid payload: {context}"),
+            },
+            RpcErr::ProofGenerationUnavailable(context) => RpcErrorMetadata {
+                code: -39004,
+                data: None,
+                message: format!("Proof generation unavailable: {context}"),
             },
         }
     }
@@ -178,8 +226,8 @@ impl From<MempoolError> for RpcErr {
     }
 }
 
-impl From<ethrex_common::EcdsaError> for RpcErr {
-    fn from(err: ethrex_common::EcdsaError) -> Self {
+impl From<ethrex_crypto::CryptoError> for RpcErr {
+    fn from(err: ethrex_crypto::CryptoError) -> Self {
         Self::Internal(format!("Cryptography error: {err}"))
     }
 }
@@ -188,6 +236,7 @@ impl From<ethrex_common::EcdsaError> for RpcErr {
 ///
 /// Methods are namespaced by prefix (e.g., `eth_getBalance` is in the `Eth` namespace).
 /// Different namespaces may have different authentication requirements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RpcNamespace {
     /// Engine API methods for consensus client communication (requires JWT auth).
     Engine,
@@ -205,11 +254,27 @@ pub enum RpcNamespace {
     Mempool,
 }
 
+impl RpcNamespace {
+    /// Parses a namespace name from its CLI/method-prefix form.
+    pub fn from_prefix(s: &str) -> Option<Self> {
+        match s {
+            "engine" => Some(RpcNamespace::Engine),
+            "eth" => Some(RpcNamespace::Eth),
+            "admin" => Some(RpcNamespace::Admin),
+            "debug" => Some(RpcNamespace::Debug),
+            "web3" => Some(RpcNamespace::Web3),
+            "net" => Some(RpcNamespace::Net),
+            "txpool" => Some(RpcNamespace::Mempool),
+            _ => None,
+        }
+    }
+}
+
 /// JSON-RPC request identifier.
 ///
 /// Per the JSON-RPC 2.0 spec, request IDs can be either numbers or strings.
 /// The same ID must be returned in the response.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RpcRequestId {
     /// Numeric request ID.
@@ -230,7 +295,7 @@ pub enum RpcRequestId {
 ///     "params": ["0x...", "latest"]
 /// }
 /// ```
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
     /// Request identifier, echoed back in the response.
     pub id: RpcRequestId,
@@ -262,17 +327,7 @@ impl RpcRequest {
 }
 
 pub fn resolve_namespace(maybe_namespace: &str, method: String) -> Result<RpcNamespace, RpcErr> {
-    match maybe_namespace {
-        "engine" => Ok(RpcNamespace::Engine),
-        "eth" => Ok(RpcNamespace::Eth),
-        "admin" => Ok(RpcNamespace::Admin),
-        "debug" => Ok(RpcNamespace::Debug),
-        "web3" => Ok(RpcNamespace::Web3),
-        "net" => Ok(RpcNamespace::Net),
-        // TODO: The namespace is set to match geth's namespace for compatibility, consider changing it in the future
-        "txpool" => Ok(RpcNamespace::Mempool),
-        _ => Err(RpcErr::MethodNotFound(method)),
-    }
+    RpcNamespace::from_prefix(maybe_namespace).ok_or(RpcErr::MethodNotFound(method))
 }
 
 impl Default for RpcRequest {
@@ -290,7 +345,7 @@ impl Default for RpcRequest {
 ///
 /// Contains the error code, message, and optional additional data.
 /// Error codes follow the JSON-RPC 2.0 and Ethereum conventions.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcErrorMetadata {
     /// Numeric error code (negative for standard errors).
     pub code: i32,
@@ -365,14 +420,12 @@ pub fn get_message_from_revert_data(data: &str) -> Result<String, EthClientError
                 "Failed to slice index abi_decoded_error_data when getting message from revert data".to_owned(),
             ),
         )?);
-        let string_len = if string_length > usize::MAX.into() {
-            return Err(EthClientError::Custom(
+        let string_len = usize::try_from(string_length).map_err(|_| {
+            EthClientError::Custom(
                 "Failed to convert string_length to usize when getting message from revert data"
                     .to_owned(),
-            ));
-        } else {
-            string_length.as_usize()
-        };
+            )
+        })?;
         let string_data = abi_decoded_error_data
             .get(68..68 + string_len)
             .ok_or(EthClientError::Custom(

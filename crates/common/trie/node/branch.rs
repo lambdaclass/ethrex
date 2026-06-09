@@ -1,5 +1,6 @@
 use std::mem;
 
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::{
@@ -62,8 +63,10 @@ impl BranchNode {
                 let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash().finalize(),
-                            self.compute_hash().finalize(),
+                            child_ref
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
+                            self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             path.current(),
                         ),
                     ))
@@ -99,8 +102,10 @@ impl BranchNode {
                     let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
                         return Err(TrieError::InconsistentTree(Box::new(
                             InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                choice_ref.compute_hash().finalize(),
-                                self.compute_hash().finalize(),
+                                choice_ref
+                                    .compute_hash(&NativeCrypto)
+                                    .finalize(&NativeCrypto),
+                                self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                                 path.current(),
                             ),
                         )));
@@ -121,8 +126,10 @@ impl BranchNode {
                         let Some(choice_node) = choice_ref.get_node_mut(db, path.current())? else {
                             return Err(TrieError::InconsistentTree(Box::new(
                                 InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                    choice_ref.compute_hash().finalize(),
-                                    self.compute_hash().finalize(),
+                                    choice_ref
+                                        .compute_hash(&NativeCrypto)
+                                        .finalize(&NativeCrypto),
+                                    self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                                     path.current(),
                                 ),
                             )));
@@ -179,8 +186,10 @@ impl BranchNode {
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            self.choices[choice_index].compute_hash().finalize(),
-                            self.compute_hash().finalize(),
+                            self.choices[choice_index]
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
+                            self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             path.current(),
                         ),
                     )));
@@ -226,8 +235,10 @@ impl BranchNode {
                 else {
                     return Err(TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash().finalize(),
-                            self.compute_hash().finalize(),
+                            child_ref
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
+                            self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             base_path.current(),
                         ),
                     )));
@@ -261,15 +272,15 @@ impl BranchNode {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
-        self.compute_hash_no_alloc(&mut vec![])
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+        self.compute_hash_no_alloc(&mut vec![], crypto)
     }
 
     /// Computes the node's hash, using the provided buffer
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
         buf.clear();
         self.encode(buf);
-        let hash = NodeHash::from_encoded(buf);
+        let hash = NodeHash::from_encoded(buf, crypto);
         buf.clear();
         hash
     }
@@ -296,8 +307,10 @@ impl BranchNode {
                 let child_node = child_ref.get_node(db, path.current())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(
                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                            child_ref.compute_hash().finalize(),
-                            self.compute_hash().finalize(),
+                            child_ref
+                                .compute_hash(&NativeCrypto)
+                                .finalize(&NativeCrypto),
+                            self.compute_hash(&NativeCrypto).finalize(&NativeCrypto),
                             path.current(),
                         ),
                     ))
@@ -312,6 +325,7 @@ impl BranchNode {
 #[cfg(test)]
 mod test {
     use ethereum_types::H256;
+    use ethrex_crypto::NativeCrypto;
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     use super::*;
@@ -550,7 +564,7 @@ mod test {
         };
 
         assert_eq!(
-            node.compute_hash().as_ref(),
+            node.compute_hash(&NativeCrypto).as_ref(),
             &[
                 0xD5, 0x80, 0x80, 0xC2, 0x30, 0x20, 0x80, 0xC2, 0x30, 0x40, 0x80, 0x80, 0x80, 0x80,
                 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
@@ -582,7 +596,7 @@ mod test {
         };
 
         assert_eq!(
-            node.compute_hash().as_ref(),
+            node.compute_hash(&NativeCrypto).as_ref(),
             &[
                 0x0A, 0x3C, 0x06, 0x2D, 0x4A, 0xE3, 0x61, 0xEC, 0xC4, 0x82, 0x07, 0xB3, 0x2A, 0xDB,
                 0x6A, 0x3A, 0x3F, 0x3E, 0x98, 0x33, 0xC8, 0x9C, 0x9A, 0x71, 0x66, 0x3F, 0x4E, 0xB5,
@@ -601,7 +615,7 @@ mod test {
         };
 
         assert_eq!(
-            node.compute_hash().as_ref(),
+            node.compute_hash(&NativeCrypto).as_ref(),
             &[
                 0xD5, 0x80, 0x80, 0xC2, 0x30, 0x20, 0x80, 0xC2, 0x30, 0x40, 0x80, 0x80, 0x80, 0x80,
                 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x01,
@@ -633,7 +647,7 @@ mod test {
         };
 
         assert_eq!(
-            node.compute_hash().as_ref(),
+            node.compute_hash(&NativeCrypto).as_ref(),
             &[
                 0x2A, 0x85, 0x67, 0xC5, 0x63, 0x4A, 0x87, 0xBA, 0x19, 0x6F, 0x2C, 0x65, 0x15, 0x16,
                 0x66, 0x37, 0xE0, 0x9A, 0x34, 0xE6, 0xC9, 0xB0, 0x4D, 0xA5, 0x6F, 0xC4, 0x70, 0x4E,

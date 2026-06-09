@@ -14,6 +14,7 @@ pub mod trie_sorted;
 mod verify_range;
 use ethereum_types::H256;
 use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
 use rustc_hash::FxHashSet;
@@ -118,7 +119,7 @@ impl Trie {
             NodeRef::Hash(hash) if hash.is_valid() => {
                 Node::decode(&self.db.get(Nibbles::default())?.ok_or_else(|| {
                     TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                        hash.finalize(),
+                        hash.finalize(&NativeCrypto),
                     )))
                 })?)
                 .map_err(TrieError::RLPDecode)?
@@ -180,18 +181,20 @@ impl Trie {
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
     /// Also commits changes to the DB
-    pub fn hash(&mut self) -> Result<H256, TrieError> {
-        self.commit()?;
-        Ok(self.hash_no_commit())
+    pub fn hash(&mut self, crypto: &dyn Crypto) -> Result<H256, TrieError> {
+        self.commit(crypto)?;
+        Ok(self.hash_no_commit(crypto))
     }
 
     /// Return the hash of the trie's root node.
     /// Returns keccak(RLP_NULL) if the trie is empty
-    pub fn hash_no_commit(&self) -> H256 {
+    pub fn hash_no_commit(&self, crypto: &dyn Crypto) -> H256 {
         if self.root.is_valid() {
             // 512 is the maximum size of an encoded node
             let mut buf = Vec::with_capacity(512);
-            self.root.compute_hash_no_alloc(&mut buf).finalize()
+            self.root
+                .compute_hash_no_alloc(&mut buf, crypto)
+                .finalize(crypto)
         } else {
             *EMPTY_TRIE_HASH
         }
@@ -202,7 +205,9 @@ impl Trie {
             .get_node_checked(self.db.as_ref(), path)?
             .ok_or_else(|| {
                 TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(
-                    self.root.compute_hash().finalize(),
+                    self.root
+                        .compute_hash(&NativeCrypto)
+                        .finalize(&NativeCrypto),
                 )))
             })
     }
@@ -212,9 +217,12 @@ impl Trie {
     /// # Returns
     ///
     /// A tuple containing the hash and the list of changes.
-    pub fn collect_changes_since_last_hash(&mut self) -> (H256, Vec<TrieNode>) {
-        let updates = self.commit_without_storing();
-        let ret_hash = self.hash_no_commit();
+    pub fn collect_changes_since_last_hash(
+        &mut self,
+        crypto: &dyn Crypto,
+    ) -> (H256, Vec<TrieNode>) {
+        let updates = self.commit_without_storing(crypto);
+        let ret_hash = self.hash_no_commit(crypto);
         (ret_hash, updates)
     }
 
@@ -222,8 +230,8 @@ impl Trie {
     ///
     /// This method will also compute the hash of all internal nodes indirectly. It will not clear
     /// the cached nodes.
-    pub fn commit(&mut self) -> Result<(), TrieError> {
-        let acc = self.commit_without_storing();
+    pub fn commit(&mut self, crypto: &dyn Crypto) -> Result<(), TrieError> {
+        let acc = self.commit_without_storing(crypto);
         self.db.put_batch(acc)?;
 
         // Commit the underlying transaction
@@ -234,12 +242,12 @@ impl Trie {
 
     /// Computes the nodes that would be added if updating the trie.
     /// Nodes are given with their hash pre-calculated.
-    pub fn commit_without_storing(&mut self) -> Vec<TrieNode> {
+    pub fn commit_without_storing(&mut self, crypto: &dyn Crypto) -> Vec<TrieNode> {
         let mut acc = Vec::new();
         if self.root.is_valid() {
-            self.root.commit(Nibbles::default(), &mut acc);
+            self.root.commit(Nibbles::default(), &mut acc, crypto);
         }
-        if self.root.compute_hash() == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
+        if self.root.compute_hash(crypto) == NodeHash::Hashed(*EMPTY_TRIE_HASH) {
             acc.push((Nibbles::default(), vec![RLP_NULL]))
         }
         acc.extend(self.pending_removal.drain().map(|nib| (nib, vec![])));
@@ -256,7 +264,7 @@ impl Trie {
     ///   `Ok(Vec::new())` instead.
     pub fn get_proof(&self, path: &[u8]) -> Result<Vec<NodeRLP>, TrieError> {
         if self.root.is_valid() {
-            let hash = self.root.compute_hash();
+            let hash = self.root.compute_hash(&NativeCrypto);
 
             let mut node_path = Vec::new();
             if let NodeHash::Inline((data, len)) = hash {
@@ -333,7 +341,7 @@ impl Trie {
                         };
 
                         if hash.is_valid() {
-                            *choice = match all_nodes.get(&hash.finalize()) {
+                            *choice = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
                                 Some(node) => get_embedded_node(all_nodes, node)?.into(),
                                 None => hash.into(),
                             };
@@ -347,7 +355,7 @@ impl Trie {
                         return Ok(node.into());
                     };
 
-                    node.child = match all_nodes.get(&hash.finalize()) {
+                    node.child = match all_nodes.get(&hash.finalize(&NativeCrypto)) {
                         Some(node) => get_embedded_node(all_nodes, node)?.into(),
                         None => hash.into(),
                     };
@@ -383,6 +391,7 @@ impl Trie {
     /// Builds an in-memory trie from the given elements and returns its hash
     pub fn compute_hash_from_unsorted_iter(
         iter: impl Iterator<Item = (PathRLP, ValueRLP)>,
+        crypto: &dyn Crypto,
     ) -> H256 {
         let mut trie = Trie::stateless();
         for (path, value) in iter {
@@ -390,7 +399,7 @@ impl Trie {
             trie.insert(path, value).unwrap();
         }
 
-        trie.hash_no_commit()
+        trie.hash_no_commit(crypto)
     }
 
     /// Creates a new stateless trie. This trie won't be able to store any nodes so all data will be lost after calculating the hash
@@ -446,8 +455,12 @@ impl Trie {
                                 .ok_or_else(|| {
                                     TrieError::InconsistentTree(Box::new(
                                         InconsistentTreeError::NodeNotFoundOnBranchNode(
-                                            child_ref.compute_hash().finalize(),
-                                            branch_node.compute_hash().finalize(),
+                                            child_ref
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
+                                            branch_node
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             child_path.clone(),
                                         ),
                                     ))
@@ -473,11 +486,11 @@ impl Trie {
                                         ExtensionNodeErrorData {
                                             node_hash: extension_node
                                                 .child
-                                                .compute_hash()
-                                                .finalize(),
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             extension_node_hash: extension_node
-                                                .compute_hash()
-                                                .finalize(),
+                                                .compute_hash(&NativeCrypto)
+                                                .finalize(&NativeCrypto),
                                             extension_node_prefix: extension_node.prefix.clone(),
                                             node_path: child_path.clone(),
                                         },
@@ -679,8 +692,8 @@ impl ProofTrie {
         Ok(())
     }
 
-    pub fn hash(&self) -> H256 {
-        self.0.hash_no_commit()
+    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
+        self.0.hash_no_commit(crypto)
     }
 }
 

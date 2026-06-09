@@ -9,6 +9,7 @@ use ethrex_blockchain::{Blockchain, BlockchainOptions, BlockchainType};
 use ethrex_common::fd_limit::raise_fd_limit;
 use ethrex_common::types::Genesis;
 use ethrex_config::networks::Network;
+use ethrex_rpc::WebSocketConfig;
 
 use ethrex_metrics::profiling::{FunctionProfilingLayer, initialize_block_processing_profile};
 use ethrex_metrics::rpc::initialize_rpc_metrics;
@@ -17,13 +18,15 @@ use ethrex_p2p::{
     DiscoveryConfig,
     network::P2PContext,
     peer_handler::PeerHandler,
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServer},
     sync::SyncMode,
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{NetworkConfig, Node, NodeRecord},
     utils::public_key_from_signing_key,
 };
-use ethrex_storage::{EngineType, Store, error::StoreError};
+use ethrex_storage::{
+    EngineType, Store, StoreConfig, error::StoreError, has_valid_db, read_chain_id_from_db,
+};
 use local_ip_address::{local_ip, local_ipv6};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
@@ -32,7 +35,7 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -142,30 +145,76 @@ pub fn init_metrics(opts: &Options, network: &Network, tracker: TaskTracker) {
     tracker.spawn(metrics_api);
 }
 
-/// Opens a new or pre-existing Store and loads the initial state provided by the network
+/// Opens a new or pre-existing Store with default tunables and loads the initial
+/// state provided by the network. See [`init_store_with_config`] for the variant
+/// that lets production callers thread CLI-provided storage tunables through.
 pub async fn init_store(datadir: impl AsRef<Path>, genesis: Genesis) -> Result<Store, StoreError> {
-    let mut store = open_store(datadir.as_ref())?;
+    init_store_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Opens a Store with the supplied [`StoreConfig`] and loads the initial state.
+pub async fn init_store_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
     store.add_initial_state(genesis).await?;
     Ok(store)
 }
 
-/// Initializes a pre-existing Store
+/// Like [`init_store`], but trusts a pre-existing datadir's genesis instead of
+/// validating it against `genesis`. See [`Store::add_initial_state_skip_validation`].
+pub async fn init_store_skip_validation(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+) -> Result<Store, StoreError> {
+    init_store_skip_validation_with_config(datadir, genesis, StoreConfig::default()).await
+}
+
+/// Like [`init_store_with_config`], but trusts a pre-existing datadir's genesis
+/// instead of validating it against `genesis`.
+pub async fn init_store_skip_validation_with_config(
+    datadir: impl AsRef<Path>,
+    genesis: Genesis,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let mut store = open_store_with_config(datadir.as_ref(), config)?;
+    store.add_initial_state_skip_validation(genesis).await?;
+    Ok(store)
+}
+
+/// Initializes a pre-existing Store with default tunables. See [`load_store_with_config`].
 pub async fn load_store(datadir: &Path) -> Result<Store, StoreError> {
-    let store = open_store(datadir)?;
+    load_store_with_config(datadir, StoreConfig::default()).await
+}
+
+/// Initializes a pre-existing Store, applying the supplied [`StoreConfig`].
+pub async fn load_store_with_config(
+    datadir: &Path,
+    config: StoreConfig,
+) -> Result<Store, StoreError> {
+    let store = open_store_with_config(datadir, config)?;
     store.load_initial_state().await?;
     Ok(store)
 }
 
-/// Opens a pre-existing Store or creates a new one
+/// Opens a pre-existing Store or creates a new one with default tunables.
+/// See [`open_store_with_config`].
 pub fn open_store(datadir: &Path) -> Result<Store, StoreError> {
+    open_store_with_config(datadir, StoreConfig::default())
+}
+
+/// Opens a pre-existing Store or creates a new one, applying the supplied [`StoreConfig`].
+pub fn open_store_with_config(datadir: &Path, config: StoreConfig) -> Result<Store, StoreError> {
     if is_memory_datadir(datadir) {
-        Store::new(datadir, EngineType::InMemory)
+        Store::new_with_config(datadir, EngineType::InMemory, config)
     } else {
         #[cfg(feature = "rocksdb")]
         let engine_type = EngineType::RocksDB;
         #[cfg(feature = "metrics")]
         ethrex_metrics::process::set_datadir_path(datadir.to_path_buf());
-        Store::new(datadir, engine_type)
+        Store::new_with_config(datadir, engine_type, config)
     }
 }
 
@@ -177,6 +226,7 @@ pub fn init_blockchain(store: Store, blockchain_opts: BlockchainOptions) -> Arc<
 #[expect(clippy::too_many_arguments)]
 pub async fn init_rpc_api(
     opts: &Options,
+    datadir: &Path,
     peer_handler: PeerHandler,
     local_p2p_node: Node,
     local_node_record: NodeRecord,
@@ -186,8 +236,8 @@ pub async fn init_rpc_api(
     tracker: TaskTracker,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) {
-    if !is_memory_datadir(&opts.datadir) {
-        init_datadir(&opts.datadir);
+    if !is_memory_datadir(datadir) {
+        init_datadir(datadir);
     }
 
     let syncmode = if opts.dev {
@@ -203,19 +253,22 @@ pub async fn init_rpc_api(
         cancel_token,
         blockchain.clone(),
         store.clone(),
-        opts.datadir.clone(),
+        datadir.to_path_buf(),
     )
     .await;
 
-    let ws_socket_opts = if opts.ws_enabled {
-        Some(get_ws_socket_addr(opts))
+    let ws_config = if opts.ws_enabled {
+        Some(WebSocketConfig {
+            addr: get_ws_socket_addr(opts),
+            subscription_manager: ethrex_rpc::SubscriptionManager::spawn(),
+        })
     } else {
         None
     };
 
     let rpc_api = ethrex_rpc::start_api(
         get_http_socket_addr(opts),
-        ws_socket_opts,
+        ws_config,
         get_authrpc_socket_addr(opts),
         store,
         blockchain,
@@ -228,6 +281,7 @@ pub async fn init_rpc_api(
         log_filter_handler,
         opts.gas_limit,
         opts.extra_data.clone(),
+        opts.http_api.iter().copied().collect(),
     );
 
     tracker.spawn(rpc_api);
@@ -256,6 +310,7 @@ pub async fn init_network(
     let discovery_config = DiscoveryConfig {
         discv4_enabled: opts.discv4_enabled,
         discv5_enabled: opts.discv5_enabled,
+        ..Default::default()
     };
 
     ethrex_p2p::start_network(context, bootnodes, discovery_config)
@@ -353,30 +408,112 @@ pub fn get_signer(datadir: &Path) -> SecretKey {
     }
 }
 
-pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> Node {
+/// Decide the bind and externally-announced addresses for the P2P endpoint.
+///
+/// Precedence:
+/// - `--nat.extip` wins for the announced address; bind comes from `--p2p.addr` if given,
+///   else the unspecified address of the matching family.
+/// - `--p2p.addr` alone is used for both bind and announce, except when it's an unspecified
+///   address (`0.0.0.0` / `::`). In that case the announced address falls back to the
+///   auto-detected local IP of the matching family; this avoids advertising `0.0.0.0` in
+///   the ENR, which would make the node unreachable for inbound connections. Operators
+///   behind NAT still need `--nat.extip` for that case to resolve correctly.
+/// - With neither flag set, the auto-detected local IP is used for both bind and announce.
+fn resolve_p2p_endpoints(
+    p2p_addr: Option<&str>,
+    nat_extip: Option<&str>,
+    local_v4: Option<IpAddr>,
+    local_v6: Option<IpAddr>,
+) -> (IpAddr, IpAddr) {
+    match (p2p_addr, nat_extip) {
+        (_, Some(extip)) => {
+            let external: IpAddr = extip.parse().expect("Failed to parse --nat.extip address");
+            let bind: IpAddr = p2p_addr
+                .map(|a| {
+                    let addr: IpAddr = a.parse().expect("Failed to parse p2p address");
+                    assert!(
+                        addr.is_ipv4() == external.is_ipv4(),
+                        "--p2p.addr and --nat.extip must use the same address family (both IPv4 or both IPv6)"
+                    );
+                    addr
+                })
+                .unwrap_or_else(|| {
+                    if external.is_ipv6() {
+                        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+                    } else {
+                        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+                    }
+                });
+            (bind, external)
+        }
+        (Some(addr), None) => {
+            let bind: IpAddr = addr.parse().expect("Failed to parse p2p address");
+            if bind.is_unspecified() {
+                // Stay in the same address family: an IPv4 socket can't accept
+                // inbound IPv6 connections (and vice versa), so falling back
+                // across families would just advertise an unreachable address.
+                let external = if bind.is_ipv6() { local_v6 } else { local_v4 };
+                match external {
+                    Some(ext) => {
+                        info!(
+                            announced = %ext,
+                            bind = %bind,
+                            "--p2p.addr is unspecified; announcing auto-detected local IP. Set --nat.extip to override."
+                        );
+                        (bind, ext)
+                    }
+                    None => {
+                        warn!(
+                            bind = %bind,
+                            "--p2p.addr is unspecified and no local IP could be detected; \
+                             announcing the unspecified address. Inbound peer connections will fail. \
+                             Set --nat.extip=<ip> or --p2p.addr=<ip> to fix."
+                        );
+                        (bind, bind)
+                    }
+                }
+            } else {
+                (bind, bind)
+            }
+        }
+        (None, None) => {
+            let ip = local_v4
+                .or(local_v6)
+                .expect("Neither ipv4 nor ipv6 local address found");
+            (ip, ip)
+        }
+    }
+}
+
+pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkConfig) {
     let tcp_port = opts.p2p_port.parse().expect("Failed to parse p2p port");
     let udp_port = opts
         .discovery_port
         .parse()
         .expect("Failed to parse discovery port");
 
-    let p2p_node_ip: IpAddr = if let Some(addr) = &opts.p2p_addr {
-        addr.parse().expect("Failed to parse p2p address")
-    } else {
-        local_ip()
-            .unwrap_or_else(|_| local_ipv6().expect("Neither ipv4 nor ipv6 local address found"))
-    };
-
     let local_public_key = public_key_from_signing_key(signer);
 
-    let node = Node::new(p2p_node_ip, udp_port, tcp_port, local_public_key);
+    let (bind_addr, external_addr) = resolve_p2p_endpoints(
+        opts.p2p_addr.as_deref(),
+        opts.nat_extip.as_deref(),
+        local_ip().ok(),
+        local_ipv6().ok(),
+    );
+
+    let node = Node::new(external_addr, udp_port, tcp_port, local_public_key);
+    let network_config = NetworkConfig {
+        bind_addr,
+        tcp_port,
+        udp_port,
+    };
 
     // TODO Find a proper place to show node information
     // https://github.com/lambdaclass/ethrex/issues/836
     let enode = node.enode_url();
     info!(enode = %enode, "Local node initialized");
 
-    node
+    (node, network_config)
 }
 
 pub fn get_local_node_record(
@@ -437,32 +574,41 @@ pub async fn init_l1(
     opts: Options,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
 ) -> eyre::Result<(PathBuf, CancellationToken, PeerTable, NodeRecord)> {
-    let datadir: &PathBuf =
-        if opts.dev && cfg!(feature = "dev") && !is_memory_datadir(&opts.datadir) {
-            &opts.datadir.join("dev")
-        } else {
-            &opts.datadir
-        };
-
-    if !is_memory_datadir(datadir) {
-        init_datadir(datadir);
-    }
-
     let network = get_network(&opts);
+    let datadir = crate::cli::compute_effective_datadir(&opts.datadir, &network, opts.dev);
+
+    raise_fd_limit()?;
+
+    migrate_datadir_if_needed(&opts.datadir, &datadir, &network, opts.no_migrate);
+
+    if !is_memory_datadir(&datadir) {
+        init_datadir(&datadir);
+    }
 
     let genesis = network.get_genesis()?;
     display_chain_initialization(&genesis);
-
-    raise_fd_limit()?;
     debug!("Preloading KZG trusted setup");
     ethrex_crypto::kzg::warm_up_trusted_setup();
 
-    let store = match init_store(datadir, genesis).await {
+    let store_config = StoreConfig {
+        rocksdb_block_cache_size: opts.rocksdb_block_cache_size,
+    };
+    let store_result = if opts.skip_genesis_validation {
+        init_store_skip_validation_with_config(&datadir, genesis, store_config).await
+    } else {
+        init_store_with_config(&datadir, genesis, store_config).await
+    };
+    let store = match store_result {
         Ok(store) => store,
         Err(err @ StoreError::IncompatibleDBVersion { .. })
-        | Err(err @ StoreError::NotFoundDBVersion { .. }) => {
+        | Err(err @ StoreError::NotFoundDBVersion) => {
             return Err(eyre::eyre!(
                 "{err}. Please erase your DB by running `ethrex removedb` and restart node to resync. Note that this will take a while."
+            ));
+        }
+        Err(err @ StoreError::MigrationFailed { .. }) => {
+            return Err(eyre::eyre!(
+                "{err}. The database may be in an inconsistent state. Please erase your DB by running `ethrex removedb` and restart node to resync."
             ));
         }
         Err(error) => return Err(eyre::eyre!("Failed to create Store: {error}")),
@@ -483,18 +629,23 @@ pub async fn init_l1(
             r#type: BlockchainType::L1,
             max_blobs_per_block: opts.max_blobs_per_block,
             precompute_witnesses: opts.precompute_witnesses,
+            precompile_cache_enabled: !opts.no_precompile_cache,
+            bal_parallel_exec_enabled: !opts.no_bal_parallel_exec,
+            bal_prefetch_enabled: !opts.no_bal_prefetch,
+            bal_parallel_trie_enabled: !opts.no_bal_parallel_trie,
         },
     );
 
     regenerate_head_state(&store, &blockchain).await?;
 
-    let signer = get_signer(datadir);
+    let signer = get_signer(&datadir);
 
-    let local_p2p_node = get_local_p2p_node(&opts, &signer);
+    let (local_p2p_node, network_config) = get_local_p2p_node(&opts, &signer);
 
-    let local_node_record = get_local_node_record(datadir, &local_p2p_node, &signer);
+    let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
-    let peer_table = PeerTable::spawn(opts.target_peers, store.clone());
+    let peer_table =
+        PeerTableServer::spawn(local_p2p_node.node_id(), opts.target_peers, store.clone());
 
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
@@ -503,6 +654,7 @@ pub async fn init_l1(
 
     let p2p_context = P2PContext::new(
         local_p2p_node.clone(),
+        network_config,
         tracker.clone(),
         signer,
         peer_table.clone(),
@@ -515,12 +667,13 @@ pub async fn init_l1(
     )
     .expect("P2P context could not be created");
 
-    let initiator = RLPxInitiator::spawn(p2p_context.clone()).await;
+    let initiator = RLPxInitiator::spawn(p2p_context.clone());
 
     let peer_handler = PeerHandler::new(peer_table.clone(), initiator);
 
     init_rpc_api(
         &opts,
+        &datadir,
         peer_handler.clone(),
         local_p2p_node,
         local_node_record.clone(),
@@ -543,7 +696,7 @@ pub async fn init_l1(
         init_network(
             &opts,
             &network,
-            datadir,
+            &datadir,
             peer_handler.clone(),
             tracker.clone(),
             blockchain.clone(),
@@ -560,6 +713,135 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+/// Migrates data from a pre-suffix datadir layout to the new network-specific
+/// subdirectory. Migration happens automatically unless `--no-migrate` is set.
+///
+/// Migration is performed when ALL of the following hold:
+/// - `base_datadir != network_datadir` (a suffix was applied)
+/// - The network-specific dir does not already contain a valid DB
+/// - The base dir contains a valid DB with a matching chain ID
+/// - No other network subdirectories exist in the base dir
+/// - `no_migrate` is `false`
+pub fn migrate_datadir_if_needed(
+    base_datadir: &Path,
+    network_datadir: &Path,
+    network: &Network,
+    no_migrate: bool,
+) {
+    // No suffix applied — nothing to migrate.
+    if base_datadir == network_datadir {
+        return;
+    }
+
+    // Network dir already has data — nothing to do.
+    if has_valid_db(network_datadir) {
+        return;
+    }
+
+    // Base dir has no DB — nothing to migrate from.
+    if !has_valid_db(base_datadir) {
+        return;
+    }
+
+    // Check that no network subdirectories already exist (avoids partial migration).
+    for suffix in Network::all_datadir_suffixes() {
+        let subdir = base_datadir.join(suffix);
+        if subdir.exists() && subdir.is_dir() {
+            info!("Found existing network subdirectory {subdir:?}, skipping migration.");
+            return;
+        }
+    }
+
+    // Verify chain IDs match.
+    let Some(db_chain_id) = read_chain_id_from_db(base_datadir) else {
+        warn!(
+            "Found a database at {base_datadir:?} with valid store metadata but could not \
+             read its chain ID. Skipping automatic migration to {network_datadir:?}. \
+             If this is a pre-v10 database you intend to reuse, stop ethrex and move its \
+             contents into {network_datadir:?} manually before restarting. See the logs \
+             above for the specific error from the storage layer."
+        );
+        return;
+    };
+    let expected_chain_id = match network.get_genesis() {
+        Ok(genesis) => genesis.config.chain_id,
+        Err(_) => return,
+    };
+    if db_chain_id != expected_chain_id {
+        warn!(
+            "Existing database at {base_datadir:?} has chain ID {db_chain_id}, \
+             expected {expected_chain_id} for {network}. Skipping migration."
+        );
+        return;
+    }
+
+    if no_migrate {
+        info!(
+            "Existing database at {base_datadir:?} can be migrated to {network_datadir:?}. \
+             Skipping because --no-migrate is set."
+        );
+        return;
+    }
+
+    // All checks passed — migrate automatically.
+    info!("Migrating existing database from {base_datadir:?} to {network_datadir:?}.");
+    {
+        if let Err(e) = std::fs::create_dir_all(network_datadir) {
+            warn!("Failed to create {network_datadir:?}: {e}");
+            return;
+        }
+        // Collect entries to move.
+        let entries: Vec<_> = match std::fs::read_dir(base_datadir) {
+            Ok(entries) => entries.filter_map(|e| e.ok()).collect(),
+            Err(e) => {
+                warn!("Failed to read {base_datadir:?}: {e}");
+                return;
+            }
+        };
+        let network_dir_name = network_datadir
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        // Build the list of (src, dest) pairs, skipping the network subdir itself.
+        let moves: Vec<_> = entries
+            .iter()
+            .filter(|entry| entry.file_name().to_string_lossy() != network_dir_name)
+            .map(|entry| (entry.path(), network_datadir.join(entry.file_name())))
+            .collect();
+
+        // Dry-run: verify no destination already exists.
+        for (src, dest) in &moves {
+            if dest.exists() {
+                warn!(
+                    "Destination {dest:?} already exists, aborting migration. \
+                     Source {src:?} is untouched."
+                );
+                return;
+            }
+        }
+
+        // Perform the actual moves.
+        for (src, dest) in &moves {
+            if let Err(e) = std::fs::rename(src, dest) {
+                // Attempt to rollback already-moved files.
+                warn!("Failed to move {src:?} to {dest:?}: {e}. Rolling back.");
+                for (orig_src, orig_dest) in &moves {
+                    if orig_dest.exists()
+                        && !orig_src.exists()
+                        && let Err(re) = std::fs::rename(orig_dest, orig_src)
+                    {
+                        warn!("Rollback failed for {orig_dest:?} -> {orig_src:?}: {re}");
+                    }
+                }
+                warn!("Migration aborted. Database remains at {base_datadir:?}.");
+                return;
+            }
+        }
+        info!("Database migrated to {network_datadir:?}.");
+    }
 }
 
 /// Regenerates the state up to the head block by re-applying blocks from the
@@ -632,4 +914,78 @@ pub async fn regenerate_head_state(
     info!("Finished regenerating state");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_p2p_endpoints;
+    use std::net::IpAddr;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v4_announces_local_ip() {
+        let local = ip("10.0.0.5");
+        let (bind, ext) = resolve_p2p_endpoints(Some("0.0.0.0"), None, Some(local), None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, local);
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_without_local_ip_keeps_unspecified() {
+        let (bind, ext) = resolve_p2p_endpoints(Some("0.0.0.0"), None, None, None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn extip_overrides_unspecified_bind() {
+        let (bind, ext) = resolve_p2p_endpoints(
+            Some("0.0.0.0"),
+            Some("203.0.113.5"),
+            Some(ip("10.0.0.5")),
+            None,
+        );
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn specific_p2p_addr_used_for_both() {
+        let (bind, ext) =
+            resolve_p2p_endpoints(Some("10.0.0.5"), None, Some(ip("192.168.1.1")), None);
+        assert_eq!(bind, ip("10.0.0.5"));
+        assert_eq!(ext, ip("10.0.0.5"));
+    }
+
+    #[test]
+    fn no_flags_uses_local_v4_when_available() {
+        let local = ip("10.0.0.5");
+        let (bind, ext) = resolve_p2p_endpoints(None, None, Some(local), Some(ip("fe80::1")));
+        assert_eq!(bind, local);
+        assert_eq!(ext, local);
+    }
+
+    #[test]
+    fn extip_only_uses_unspecified_bind() {
+        let (bind, ext) = resolve_p2p_endpoints(None, Some("203.0.113.5"), None, None);
+        assert_eq!(bind, ip("0.0.0.0"));
+        assert_eq!(ext, ip("203.0.113.5"));
+    }
+
+    #[test]
+    fn p2p_addr_unspecified_v6_announces_local_ipv6() {
+        let local6 = ip("fe80::1");
+        let (bind, ext) = resolve_p2p_endpoints(Some("::"), None, None, Some(local6));
+        assert_eq!(bind, ip("::"));
+        assert_eq!(ext, local6);
+    }
+
+    #[test]
+    #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
+    fn family_mismatch_panics() {
+        let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
 }

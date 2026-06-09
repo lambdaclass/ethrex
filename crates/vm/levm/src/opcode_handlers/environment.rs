@@ -331,6 +331,10 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             recorder.record_touched_address(address);
         }
 
+        // Ensure the account is loaded even for size=0, so that access tracking
+        // (used by parallel BAL validation) records this address.
+        let _ = vm.db.get_account(address)?;
+
         if len > 0 {
             let data = vm
                 .db

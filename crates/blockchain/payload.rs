@@ -1,17 +1,21 @@
 use std::{
     cmp::{Ordering, max},
-    collections::HashMap,
     ops::Div,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use rustc_hash::FxHashMap;
+
 use ethrex_common::{
     Address, Bloom, Bytes, H256, U256,
-    constants::{DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE},
+    constants::{
+        DEFAULT_OMMERS_HASH, DEFAULT_REQUESTS_HASH, GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE,
+        TX_MAX_GAS_LIMIT_AMSTERDAM,
+    },
     types::{
         AccountUpdate, BlobsBundle, Block, BlockBody, BlockHash, BlockHeader, BlockNumber,
-        ChainConfig, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
+        ChainConfig, Fork, MempoolTransaction, Receipt, Transaction, TxKind, TxType, Withdrawal,
         block_access_list::BlockAccessList,
         bloom_from_logs, calc_excess_blob_gas, calculate_base_fee_per_blob_gas,
         calculate_base_fee_per_gas, compute_receipts_root, compute_transactions_root,
@@ -20,8 +24,9 @@ use ethrex_common::{
     },
 };
 
+use ethrex_crypto::NativeCrypto;
 use ethrex_crypto::keccak::Keccak256;
-use ethrex_vm::{Evm, EvmError};
+use ethrex_vm::{Evm, EvmError, check_2d_gas_allowance};
 
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
@@ -142,8 +147,8 @@ pub fn create_payload(
         ommers_hash: *DEFAULT_OMMERS_HASH,
         coinbase: args.fee_recipient,
         state_root: parent_block.state_root,
-        transactions_root: compute_transactions_root(&[]),
-        receipts_root: compute_receipts_root(&[]),
+        transactions_root: compute_transactions_root(&[], &NativeCrypto),
+        receipts_root: compute_receipts_root(&[], &NativeCrypto),
         logs_bloom: Bloom::default(),
         difficulty: U256::zero(),
         number: parent_block.number.saturating_add(1),
@@ -164,6 +169,7 @@ pub fn create_payload(
             .is_shanghai_activated(args.timestamp)
             .then_some(compute_withdrawals_root(
                 args.withdrawals.as_ref().unwrap_or(&Vec::new()),
+                &NativeCrypto,
             )),
         blob_gas_used: chain_config
             .is_cancun_activated(args.timestamp)
@@ -215,6 +221,12 @@ pub struct PayloadBuildContext {
     /// Cumulative gas spent (post-refund) for receipt tracking.
     /// Per EIP-7778 this differs from `remaining_gas` which tracks pre-refund gas.
     pub cumulative_gas_spent: u64,
+    /// EIP-8037 (Amsterdam+): cumulative regular (non-state) gas used.
+    pub block_regular_gas_used: u64,
+    /// EIP-8037 (Amsterdam+): cumulative state gas used.
+    pub block_state_gas_used: u64,
+    /// Whether Amsterdam fork is active for this block.
+    pub is_amsterdam: bool,
     pub receipts: Vec<Receipt>,
     pub requests: Option<Vec<EncodedRequests>>,
     pub block_value: U256,
@@ -257,10 +269,14 @@ impl PayloadBuildContext {
             vm.set_bal_index(0);
         }
 
+        let is_amsterdam = config.is_amsterdam_activated(payload.header.timestamp);
         let payload_size = payload.length() as u64;
         Ok(PayloadBuildContext {
             remaining_gas: payload.header.gas_limit,
             cumulative_gas_spent: 0,
+            block_regular_gas_used: 0,
+            block_state_gas_used: 0,
+            is_amsterdam,
             receipts: vec![],
             requests: config
                 .is_prague_activated(payload.header.timestamp)
@@ -278,7 +294,12 @@ impl PayloadBuildContext {
     }
 
     pub fn gas_used(&self) -> u64 {
-        self.payload.header.gas_limit - self.remaining_gas
+        if self.is_amsterdam {
+            // EIP-8037: block gas = max(sum_regular, sum_state)
+            self.block_regular_gas_used.max(self.block_state_gas_used)
+        } else {
+            self.payload.header.gas_limit - self.remaining_gas
+        }
     }
 }
 
@@ -392,6 +413,9 @@ impl Blockchain {
         const SECONDS_PER_SLOT: Duration = Duration::from_secs(12);
         // Attempt to rebuild the payload as many times within the given timeframe to maximize fee revenue
         // TODO(#4997): start with an empty block
+        // Snapshot the mempool sequence *before* the build so any tx that lands
+        // during the build is seen as newer than the current `res`.
+        let mut last_built_seq = self.mempool.tx_seq();
         let mut res = self.build_payload(payload.clone())?;
         while start.elapsed() < SECONDS_PER_SLOT && !cancel_token.is_cancelled() {
             // Wait for new transactions, cancellation, or slot deadline before rebuilding
@@ -404,6 +428,7 @@ impl Blockchain {
             }
             let payload = payload.clone();
             let self_clone = self.clone();
+            let seq_before = self.mempool.tx_seq();
             let building_task =
                 tokio::task::spawn_blocking(move || self_clone.build_payload(payload));
             // Cancel the current build process and return the previous payload if it is requested earlier
@@ -412,6 +437,7 @@ impl Blockchain {
             match cancel_token.run_until_cancelled(building_task).await {
                 Some(Ok(current_res)) => {
                     res = current_res?;
+                    last_built_seq = seq_before;
                 }
                 Some(Err(err)) => {
                     warn!(%err, "Payload-building task panicked");
@@ -419,13 +445,29 @@ impl Blockchain {
                 None => {}
             }
         }
+
+        // If a tx landed after the snapshot that produced `res`, do one final
+        // build before returning. Covers both races: (a) cancellation dropping
+        // an in-progress rebuild via `run_until_cancelled`, and (b) the slot-
+        // timeout `select!` arm winning over a simultaneous `tx_added`
+        // notification near the slot boundary.
+        if self.mempool.tx_seq() > last_built_seq {
+            let blockchain = self.clone();
+            match tokio::task::spawn_blocking(move || blockchain.build_payload(payload)).await {
+                Ok(Ok(final_res)) => res = final_res,
+                Ok(Err(err)) => {
+                    warn!(%err, "Final payload rebuild failed; returning previous result")
+                }
+                Err(err) => warn!(%err, "Final payload rebuild task panicked"),
+            }
+        }
+
         Ok(res)
     }
 
     /// Completes the payload building process, return the block value
     pub fn build_payload(&self, payload: Block) -> Result<PayloadBuildResult, ChainError> {
         let since = Instant::now();
-        let gas_limit = payload.header.gas_limit;
 
         debug!("Building payload");
         let base_fee = payload.header.base_fee_per_gas.unwrap_or_default();
@@ -434,9 +476,25 @@ impl Blockchain {
         if let BlockchainType::L1 = self.options.r#type {
             self.apply_system_operations(&mut context)?;
         }
-        self.apply_withdrawals(&mut context)?;
         self.fill_transactions(&mut context)?;
+        // EIP-7928: Post-tx phase uses index n+1 for both requests and withdrawals.
+        // Order must match geth: requests (system calls) BEFORE withdrawals.
+        if context
+            .chain_config()
+            .is_amsterdam_activated(context.payload.header.timestamp)
+        {
+            let post_tx_index =
+                u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
+            context.vm.set_bal_index(post_tx_index);
+            // Record withdrawal recipients as touched addresses per EIP-7928
+            if let Some(recorder) = context.vm.db.bal_recorder_mut()
+                && let Some(withdrawals) = &context.payload.body.withdrawals
+            {
+                recorder.extend_touched_addresses(withdrawals.iter().map(|w| w.address));
+            }
+        }
         self.extract_requests(&mut context)?;
+        self.apply_withdrawals(&mut context)?;
         self.finalize_payload(&mut context)?;
 
         let interval = Instant::now().duration_since(since).as_millis();
@@ -447,7 +505,8 @@ impl Blockchain {
         );
         metrics!(METRICS_BLOCKS.set_block_building_ms(interval as i64));
         metrics!(METRICS_BLOCKS.set_block_building_base_fee(base_fee as i64));
-        if let Some(gas_used) = gas_limit.checked_sub(context.remaining_gas) {
+        let gas_used = context.gas_used();
+        if gas_used > 0 {
             let as_gigas = (gas_used as f64).div(10_f64.powf(9_f64));
 
             if interval != 0 {
@@ -571,8 +630,15 @@ impl Blockchain {
                 &mut plain_txs
             };
 
-            // Check if we have enough gas to run the transaction
-            if context.remaining_gas < head_tx.tx.gas_limit() {
+            // Check if we have enough gas to run the transaction.
+            // EIP-7825/EIP-8037: for Amsterdam, cap at TX_MAX_GAS_LIMIT since
+            // remaining_gas tracks regular gas only.
+            let tx_gas_reservation = if context.is_amsterdam {
+                head_tx.tx.gas_limit().min(TX_MAX_GAS_LIMIT_AMSTERDAM)
+            } else {
+                head_tx.tx.gas_limit()
+            };
+            if context.remaining_gas < tx_gas_reservation {
                 debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
@@ -632,48 +698,103 @@ impl Blockchain {
                 continue;
             }
 
-            // Set BAL index for this transaction (1-indexed per EIP-7928)
-            // Index is based on current transaction count + 1
-            #[allow(clippy::cast_possible_truncation)]
-            let tx_index = (context.payload.body.transactions.len() + 1) as u16;
-            context.vm.set_bal_index(tx_index);
+            let is_frame = head_tx.tx_type() == TxType::Frame;
 
-            // Record tx sender and recipient for BAL
-            if let Some(recorder) = context.vm.db.bal_recorder_mut() {
-                recorder.record_touched_address(head_tx.tx.sender());
-                if let TxKind::Call(to) = head_tx.to() {
-                    recorder.record_touched_address(to);
-                }
-            }
-
-            // Execute tx
-            let receipt = match self.apply_transaction(&head_tx, context) {
-                Ok(receipt) => {
-                    txs.shift()?;
-                    metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head_tx.tx_type())));
-                    receipt
-                }
-                // Ignore following txs from sender
+            match self.apply_tx_to_payload(head_tx, context) {
+                Ok(()) => txs.shift()?,
                 Err(e) => {
-                    warn!("Failed to execute transaction: {tx_hash:x}, {e}");
-                    metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
                     // Frame-tx failures are deterministic (signatures bind the
                     // whole tx) EXCEPT nonce mismatches, which are transient
                     // queue-ordering artifacts — keep those pooled for a later
                     // block, mirroring how regular txs are treated.
-                    if head_tx.tx_type() == TxType::Frame && !is_nonce_mismatch(&e) {
+                    if is_frame && !is_nonce_mismatch(&e) {
                         self.remove_transaction_from_pool(&tx_hash)?;
                     }
-                    txs.pop();
-                    continue;
+                    txs.pop()
                 }
-            };
-            // Add transaction to block
-            debug!("Adding transaction: {} to payload", tx_hash);
-            context.payload.body.transactions.push(head_tx.into());
-            // Save receipt for hash calculation
-            context.receipts.push(receipt);
+            }
         }
+        Ok(())
+    }
+
+    /// Apply a single transaction to the in-progress payload.
+    ///
+    /// Runs the full per-tx pipeline: EIP-8037 2D inclusion check, EIP-7928
+    /// BAL index/checkpoint setup, sender/recipient recording, dispatch to
+    /// blob/plain execution, and on failure rolls the BAL recorder back so
+    /// rejected txs leave no trace. On success the tx is appended to the
+    /// payload body and the receipt to `context.receipts`.
+    ///
+    /// Caller is responsible for mempool bookkeeping (advancing or dropping
+    /// the sender's queue) — this function only mutates the payload context.
+    pub fn apply_tx_to_payload(
+        &self,
+        head: HeadTransaction,
+        context: &mut PayloadBuildContext,
+    ) -> Result<(), ChainError> {
+        let tx_hash = head.tx.hash();
+
+        // EIP-8037 (Amsterdam+, PR #2703): per-tx 2D inclusion check against
+        // running block totals. Run BEFORE we touch the BAL recorder so a
+        // rejected tx doesn't even produce a sender/recipient touch.
+        if context.is_amsterdam
+            && let Err(e) = check_2d_gas_allowance(
+                &head.tx,
+                Fork::Amsterdam,
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                context.payload.header.gas_limit,
+            )
+        {
+            debug!("Skipping tx {tx_hash:x}: fails 2D inclusion check: {e}");
+            return Err(e.into());
+        }
+
+        // Set BAL index for this transaction (1-indexed per EIP-7928).
+        // Must happen BEFORE tx_checkpoint: set_bal_index flushes net-zero
+        // filters for the previous (committed) tx, which may insert reads.
+        let tx_index =
+            u32::try_from(context.payload.body.transactions.len() + 1).unwrap_or(u32::MAX);
+        context.vm.set_bal_index(tx_index);
+
+        // EIP-7928: lightweight tx-level checkpoint before trying the tx.
+        // If the tx is rejected, restore so only included txs affect the BAL.
+        // Taken after set_bal_index (which flushes previous tx) but before
+        // this tx's touches, so rejected txs leave no trace.
+        let bal_checkpoint = context
+            .vm
+            .db
+            .bal_recorder
+            .as_ref()
+            .map(|r| r.tx_checkpoint());
+
+        if let Some(recorder) = context.vm.db.bal_recorder_mut() {
+            recorder.record_touched_address(head.tx.sender());
+            if let TxKind::Call(to) = head.to() {
+                recorder.record_touched_address(to);
+            }
+        }
+
+        let receipt = match self.apply_transaction(&head, context) {
+            Ok(receipt) => {
+                metrics!(METRICS_TX.inc_tx_with_type(MetricsTxType(head.tx_type())));
+                receipt
+            }
+            Err(e) => {
+                debug!("Failed to execute transaction: {tx_hash:x}, {e}");
+                metrics!(METRICS_TX.inc_tx_errors(e.to_metric()));
+                if let (Some(recorder), Some(checkpoint)) =
+                    (context.vm.db.bal_recorder_mut(), bal_checkpoint)
+                {
+                    recorder.tx_restore(checkpoint);
+                }
+                return Err(e);
+            }
+        };
+
+        debug!("Adding transaction: {} to payload", tx_hash);
+        context.payload.body.transactions.push(head.into());
+        context.receipts.push(receipt);
         Ok(())
     }
 
@@ -751,13 +872,23 @@ impl Blockchain {
 
         context.payload.header.state_root = state_root;
         context.payload.header.transactions_root =
-            compute_transactions_root(&context.payload.body.transactions);
-        context.payload.header.receipts_root = compute_receipts_root(&context.receipts);
+            compute_transactions_root(&context.payload.body.transactions, &NativeCrypto);
+        context.payload.header.receipts_root =
+            compute_receipts_root(&context.receipts, &NativeCrypto);
         context.payload.header.requests_hash = context
             .requests
             .as_ref()
             .map(|requests| compute_requests_hash(requests));
-        context.payload.header.gas_used = context.payload.header.gas_limit - context.remaining_gas;
+        let gas_used = context.gas_used();
+        if context.is_amsterdam {
+            debug!(
+                "EIP-8037 block finalize: gas_used={gas_used} regular={} state={} txs={}",
+                context.block_regular_gas_used,
+                context.block_state_gas_used,
+                context.payload.body.transactions.len(),
+            );
+        }
+        context.payload.header.gas_used = gas_used;
         context.account_updates = account_updates;
 
         // Set BAL hash in block header (EIP-7928)
@@ -772,7 +903,7 @@ impl Blockchain {
             }
         }
 
-        context.payload.header.logs_bloom = bloom_from_logs(&logs);
+        context.payload.header.logs_bloom = bloom_from_logs(&logs, &NativeCrypto);
         Ok(())
     }
 }
@@ -796,15 +927,85 @@ pub fn apply_plain_transaction(
     head: &HeadTransaction,
     context: &mut PayloadBuildContext,
 ) -> Result<Receipt, ChainError> {
-    let (receipt, gas_spent) = context.vm.execute_tx(
+    let (receipt, report) = context.vm.execute_tx(
         &head.tx,
         &context.payload.header,
-        &mut context.remaining_gas,
         &mut context.cumulative_gas_spent,
         head.tx.sender(),
     )?;
+
+    // EIP-8037 (Amsterdam+): track regular and state gas separately
+    let tx_state_gas = report.state_gas_used;
+    let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);
+
+    // Compute new totals before committing them
+    let new_regular = context
+        .block_regular_gas_used
+        .saturating_add(tx_regular_gas);
+    let new_state = context.block_state_gas_used.saturating_add(tx_state_gas);
+
+    // EIP-8037 (Amsterdam+): post-execution block gas overflow check
+    // Reject the transaction if adding it would cause max(regular, state) to exceed the gas limit
+    if context.is_amsterdam && new_regular.max(new_state) > context.payload.header.gas_limit {
+        // Rollback transaction state before returning error:
+        // 1. Undo DB mutations (nonce, balance, storage, etc.)
+        // 2. Revert cumulative gas counter inflation
+        // This ensures the next transaction executes against clean state.
+        context.vm.undo_last_tx()?;
+        // `cumulative_gas_spent` was bumped inside `execute_tx` above; revert it
+        // now that the tx is being rejected. Use `saturating_sub` as a defensive
+        // guard — cumulative must always dominate this tx's contribution unless
+        // some upstream bug leaks a stale value, in which case we'd rather clamp
+        // to 0 than underflow the counter.
+        debug_assert!(
+            context.cumulative_gas_spent >= report.gas_spent,
+            "cumulative_gas_spent underflow on tx rollback"
+        );
+        context.cumulative_gas_spent = context
+            .cumulative_gas_spent
+            .saturating_sub(report.gas_spent);
+
+        return Err(EvmError::Custom(format!(
+            "block gas limit exceeded (state gas overflow): \
+             max({new_regular}, {new_state}) = {} > gas_limit {}",
+            new_regular.max(new_state),
+            context.payload.header.gas_limit
+        ))
+        .into());
+    }
+
+    // Commit the new totals
+    context.block_regular_gas_used = new_regular;
+    context.block_state_gas_used = new_state;
+
+    if context.is_amsterdam {
+        debug!(
+            "EIP-8037 tx gas: regular={tx_regular_gas} state={tx_state_gas} gas_used={} gas_spent={} block_regular={} block_state={} block_max={}",
+            report.gas_used,
+            report.gas_spent,
+            context.block_regular_gas_used,
+            context.block_state_gas_used,
+            context
+                .block_regular_gas_used
+                .max(context.block_state_gas_used),
+        );
+    }
+
+    // Update remaining_gas for block gas limit checks.
+    // EIP-8037 (Amsterdam+): remaining_gas reflects both regular and state gas dimensions.
+    // For pre-tx heuristic checks, this ensures we reject txs when either dimension is full.
+    if context.is_amsterdam {
+        context.remaining_gas = context
+            .payload
+            .header
+            .gas_limit
+            .saturating_sub(new_regular.max(new_state));
+    } else {
+        context.remaining_gas = context.remaining_gas.saturating_sub(report.gas_used);
+    }
+
     // Block value uses gas_spent (what the user actually pays) for tip calculation
-    context.block_value += U256::from(gas_spent) * head.tip;
+    context.block_value += U256::from(report.gas_spent) * head.tip;
     Ok(receipt)
 }
 
@@ -814,7 +1015,7 @@ pub struct TransactionQueue {
     // The first transaction for each account along with its tip, sorted by highest tip
     heads: Vec<HeadTransaction>,
     // The remaining txs grouped by account and sorted by nonce
-    txs: HashMap<Address, Vec<MempoolTransaction>>,
+    txs: FxHashMap<Address, Vec<MempoolTransaction>>,
     // Base Fee stored for tip calculations
     base_fee: Option<u64>,
 }
@@ -822,7 +1023,7 @@ pub struct TransactionQueue {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeadTransaction {
     pub tx: MempoolTransaction,
-    pub tip: u64,
+    pub tip: U256,
 }
 
 impl std::ops::Deref for HeadTransaction {
@@ -842,7 +1043,7 @@ impl From<HeadTransaction> for Transaction {
 impl TransactionQueue {
     /// Creates a new TransactionQueue from a set of transactions grouped by sender and sorted by nonce
     fn new(
-        mut txs: HashMap<Address, Vec<MempoolTransaction>>,
+        mut txs: FxHashMap<Address, Vec<MempoolTransaction>>,
         base_fee: Option<u64>,
     ) -> Result<Self, ChainError> {
         let mut heads = Vec::with_capacity(100);

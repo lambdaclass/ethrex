@@ -11,13 +11,15 @@ path = "src/lib.rs"
 rocksdb = ["ethrex-storage/rocksdb"]
 l2 = []
 c-kzg = ["ethrex-common/c-kzg"]
+rayon = ["ethrex-levm/rayon"]
+eip-8025 = ["ethrex-levm/eip-8025"]
 
 [dependencies]
 ethrex-common.workspace = true
 ethrex-crypto.workspace = true
 ethrex-rlp.workspace = true
 ethrex-trie.workspace = true
-ethrex-p2p.workspace = true
+ethrex-p2p = { workspace = true, features = ["test-utils"] }
 ethrex-blockchain.workspace = true
 ethrex-storage.workspace = true
 ethrex-levm.workspace = true
@@ -25,18 +27,20 @@ ethrex-vm.workspace = true
 ethrex-rpc.workspace = true
 
 [dev-dependencies]
+ethrex-vm.workspace = true
+once_cell = "1.21"
 rustc-hash.workspace = true
 hex.workspace = true
 hex-literal.workspace = true
 ethereum-types.workspace = true
 rkyv.workspace = true
 rand.workspace = true
-tempfile.workspace = true
 secp256k1.workspace = true
 proptest = "1.0.0"
 cita_trie = "4.0.0"
 hasher = "0.1.4"
 tokio = { workspace = true, features = ["full", "test-util"] }
+aes-gcm = "0.10.3"
 lazy_static.workspace = true
 bytes.workspace = true
 serde_json.workspace = true

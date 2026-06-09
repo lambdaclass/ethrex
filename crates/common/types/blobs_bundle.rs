@@ -14,12 +14,13 @@ use ethrex_rlp::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{BYTES_PER_BLOB, SAFE_BYTES_PER_BLOB};
+use super::{BYTES_PER_BLOB, CELLS_PER_EXT_BLOB, SAFE_BYTES_PER_BLOB};
 
 pub type Bytes48 = [u8; 48];
 pub type Blob = [u8; BYTES_PER_BLOB];
 pub type Commitment = Bytes48;
 pub type Proof = Bytes48;
+pub type BlobTuple = (Box<Blob>, Commitment, Vec<Proof>);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -124,6 +125,19 @@ impl BlobsBundle {
             .collect()
     }
 
+    /// Given an index returns all or nothing `BlobTuple` if either of the commitment, proof or
+    /// blob is not found then it will return None instead of Partial data.
+    pub fn get_blob_tuple_by_index(&self, index: usize) -> Option<BlobTuple> {
+        let blob = Box::new(*self.blobs.get(index)?);
+        let commitment = *self.commitments.get(index)?;
+        let proofs = if self.version == 0 {
+            vec![*self.proofs.get(index)?]
+        } else {
+            self.proofs.chunks(CELLS_PER_EXT_BLOB).nth(index)?.to_vec()
+        };
+        Some((blob, commitment, proofs))
+    }
+
     /// Full blob bundle validation: structural checks + KZG cryptographic proof verification.
     #[cfg(feature = "c-kzg")]
     pub fn validate(
@@ -177,11 +191,20 @@ impl BlobsBundle {
             return Err(BlobsBundleError::MaxBlobsExceeded);
         }
 
+        // EIP-7594: a single transaction may carry at most MAX_BLOB_COUNT (6) blobs,
+        // independent of the higher per-block limit.
+        if fork >= Fork::Osaka && blob_count > MAX_BLOB_COUNT {
+            return Err(BlobsBundleError::MaxBlobsExceeded);
+        }
+
         if blob_count == 0 {
             return Err(BlobsBundleError::BlobBundleEmptyError);
         }
 
-        if (self.version == 0 && fork >= Fork::Osaka) || (self.version != 0 && fork < Fork::Osaka) {
+        // The wrapper version is fork-specific: 0 (blob proofs) before Osaka, 1 (cell
+        // proofs, EIP-7594) on Osaka+. Any other value is invalid.
+        let expected_version = if fork >= Fork::Osaka { 1 } else { 0 };
+        if self.version != expected_version {
             return Err(BlobsBundleError::InvalidBlobVersionForFork);
         }
 

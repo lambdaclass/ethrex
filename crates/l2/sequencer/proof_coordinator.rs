@@ -4,15 +4,20 @@ use crate::sequencer::setup::{prepare_quote_prerequisites, register_tdx_key};
 use crate::sequencer::utils::get_git_commit_hash;
 use bytes::Bytes;
 use ethrex_common::Address;
-use ethrex_l2_common::prover::{BatchProof, ProofData, ProofFormat, ProverInputData, ProverType};
+use ethrex_l2_common::prover::{ProofData, ProofFormat, ProverInputData, ProverOutput, ProverType};
 use ethrex_metrics::metrics;
 use ethrex_rpc::clients::eth::EthClient;
 use ethrex_storage_rollup::StoreRollup;
+use futures::stream;
 use secp256k1::SecretKey;
-use spawned_concurrency::messages::Unused;
-use spawned_concurrency::tasks::{CastResponse, GenServer, GenServerHandle};
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorStart as _, Context, Handler, spawn_listener},
+};
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::{
@@ -24,20 +29,17 @@ use tracing::{debug, error, info, warn};
 #[cfg(feature = "metrics")]
 use ethrex_metrics::l2::metrics::METRICS;
 
-#[derive(Clone)]
-pub enum ProofCordInMessage {
-    Listen { listener: Arc<TcpListener> },
-}
-
-#[derive(Clone, PartialEq)]
-pub enum ProofCordOutMessage {
-    Done,
+#[protocol]
+pub trait ProofCoordinatorProtocol: Send + Sync {
+    fn incoming_connection(
+        &self,
+        stream: Arc<TcpStream>,
+        addr: SocketAddr,
+    ) -> Result<(), ActorError>;
 }
 
 #[derive(Clone)]
 pub struct ProofCoordinator {
-    listen_ip: IpAddr,
-    port: u16,
     eth_client: EthClient,
     on_chain_proposer_address: Address,
     rollup_store: StoreRollup,
@@ -54,6 +56,7 @@ pub struct ProofCoordinator {
     prover_timeout: Duration,
 }
 
+#[actor(protocol = ProofCoordinatorProtocol)]
 impl ProofCoordinator {
     pub fn new(
         config: &SequencerConfig,
@@ -81,8 +84,6 @@ impl ProofCoordinator {
             .to_string();
 
         Ok(Self {
-            listen_ip: config.proof_coordinator.listen_ip,
-            port: config.proof_coordinator.listen_port,
             eth_client,
             on_chain_proposer_address,
             rollup_store,
@@ -102,40 +103,47 @@ impl ProofCoordinator {
         cfg: SequencerConfig,
         needed_proof_types: Vec<ProverType>,
     ) -> Result<(), ProofCoordinatorError> {
+        let listen_ip = cfg.proof_coordinator.listen_ip;
+        let port = cfg.proof_coordinator.listen_port;
         let state = Self::new(&cfg, rollup_store, needed_proof_types)?;
-        let listener =
-            Arc::new(TcpListener::bind(format!("{}:{}", state.listen_ip, state.port)).await?);
-        let mut proof_coordinator = ProofCoordinator::start(state);
-        let _ = proof_coordinator
-            .cast(ProofCordInMessage::Listen { listener })
-            .await;
+        let listener = TcpListener::bind(format!("{listen_ip}:{port}")).await?;
+        let actor_ref = state.start();
+
+        info!("Starting TCP server at {listen_ip}:{port}.");
+        let accept_stream = stream::unfold(listener, |listener| async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, addr)) => {
+                        return Some((
+                            proof_coordinator_protocol::IncomingConnection {
+                                stream: Arc::new(stream),
+                                addr,
+                            },
+                            listener,
+                        ));
+                    }
+                    Err(e) => {
+                        error!("Failed to accept connection: {e}");
+                    }
+                }
+            }
+        });
+        spawn_listener(actor_ref.context(), accept_stream);
+
         Ok(())
     }
 
-    async fn handle_listens(&self, listener: Arc<TcpListener>) {
-        info!("Starting TCP server at {}:{}.", self.listen_ip, self.port);
-        loop {
-            let res = listener.accept().await;
-            match res {
-                Ok((stream, addr)) => {
-                    // Cloning the ProofCoordinatorState structure to use the handle_connection() fn
-                    // in every spawned task.
-                    // The important fields are `Store` and `EthClient`
-                    // Both fields are wrapped with an Arc, making it possible to clone
-                    // the entire structure.
-                    let _ = ConnectionHandler::spawn(self.clone(), stream, addr)
-                        .await
-                        .inspect_err(|err| {
-                            error!("Error starting ConnectionHandler: {err}");
-                        });
-                }
-                Err(e) => {
-                    error!("Failed to accept connection: {e}");
-                }
-            }
-
-            debug!("Connection closed");
-        }
+    #[send_handler]
+    async fn handle_incoming_connection(
+        &mut self,
+        msg: proof_coordinator_protocol::IncomingConnection,
+        _ctx: &Context<Self>,
+    ) {
+        let _ = ConnectionHandler::spawn(self.clone(), msg.stream, msg.addr)
+            .await
+            .inspect_err(|err| {
+                error!("Error starting ConnectionHandler: {err}");
+            });
     }
 
     async fn next_batch_to_assign(
@@ -143,7 +151,7 @@ impl ProofCoordinator {
         commit_hash: &str,
         prover_type: ProverType,
     ) -> Result<Option<(u64, ProverInputData)>, ProofCoordinatorError> {
-        let base_batch = 1 + self.rollup_store.get_latest_sent_batch_proof().await?;
+        let base_batch = 1 + self.rollup_store.get_latest_verified_batch_proof().await?.0;
 
         loop {
             // Lock briefly to find and claim a candidate
@@ -212,7 +220,7 @@ impl ProofCoordinator {
         commit_hash: String,
         prover_type: ProverType,
     ) -> Result<(), ProofCoordinatorError> {
-        info!("BatchRequest received from {prover_type} prover");
+        info!("InputRequest received from {prover_type} prover");
 
         // Step 1: Check if this prover's type is one of the needed proof types.
         // If not, tell the prover immediately — there's no point assigning
@@ -235,8 +243,8 @@ impl ProofCoordinator {
                 send_response(stream, &ProofData::version_mismatch()).await?;
                 info!("VersionMismatch sent");
             } else {
-                send_response(stream, &ProofData::empty_batch_response()).await?;
-                info!("Empty BatchResponse sent (no work available)");
+                send_response(stream, &ProofData::empty_input_response()).await?;
+                info!("Empty InputResponse sent (no work available)");
             }
             return Ok(());
         };
@@ -246,9 +254,9 @@ impl ProofCoordinator {
         } else {
             ProofFormat::Groth16
         };
-        let response = ProofData::batch_response(batch_to_prove, input, format);
+        let response = ProofData::input_response(batch_to_prove, input, format);
         send_response(stream, &response).await?;
-        info!("BatchResponse sent for batch number: {batch_to_prove}");
+        info!("InputResponse sent for batch number: {batch_to_prove}");
 
         Ok(())
     }
@@ -257,12 +265,12 @@ impl ProofCoordinator {
         &self,
         stream: &mut TcpStream,
         batch_number: u64,
-        batch_proof: BatchProof,
+        proof_bytes: ProverOutput,
     ) -> Result<(), ProofCoordinatorError> {
         info!("ProofSubmit received for batch number: {batch_number}");
 
         // Check if we have a proof for this batch and prover type
-        let prover_type = batch_proof.prover_type();
+        let prover_type = proof_bytes.prover_type();
         if self
             .rollup_store
             .get_proof_by_batch_and_type(batch_number, prover_type)
@@ -286,9 +294,8 @@ impl ProofCoordinator {
                     })?;
                 METRICS.set_batch_proving_time(batch_number, proving_time)?;
             });
-            // If not, store it
             self.rollup_store
-                .store_proof_by_batch_and_type(batch_number, prover_type, batch_proof)
+                .store_proof_by_batch_and_type(batch_number, prover_type, proof_bytes)
                 .await?;
         }
 
@@ -353,24 +360,9 @@ impl ProofCoordinator {
     }
 }
 
-impl GenServer for ProofCoordinator {
-    type CallMsg = Unused;
-    type CastMsg = ProofCordInMessage;
-    type OutMsg = ProofCordOutMessage;
-    type Error = ProofCoordinatorError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            ProofCordInMessage::Listen { listener } => {
-                self.handle_listens(listener).await;
-            }
-        }
-        CastResponse::Stop
-    }
+#[protocol]
+pub trait ConnectionHandlerProtocol: Send + Sync {
+    fn connection(&self, stream: Arc<TcpStream>, addr: SocketAddr) -> Result<(), ActorError>;
 }
 
 #[derive(Clone)]
@@ -378,6 +370,7 @@ struct ConnectionHandler {
     proof_coordinator: ProofCoordinator,
 }
 
+#[actor(protocol = ConnectionHandlerProtocol)]
 impl ConnectionHandler {
     fn new(proof_coordinator: ProofCoordinator) -> Self {
         Self { proof_coordinator }
@@ -385,17 +378,28 @@ impl ConnectionHandler {
 
     async fn spawn(
         proof_coordinator: ProofCoordinator,
-        stream: TcpStream,
+        stream: Arc<TcpStream>,
         addr: SocketAddr,
     ) -> Result<(), ConnectionHandlerError> {
-        let mut connection_handler = Self::new(proof_coordinator).start();
-        connection_handler
-            .cast(ConnInMessage::Connection {
-                stream: Arc::new(stream),
-                addr,
-            })
-            .await
+        let connection_handler = Self::new(proof_coordinator);
+        let actor_ref = connection_handler.start();
+        actor_ref
+            .send(connection_handler_protocol::Connection { stream, addr })
             .map_err(ConnectionHandlerError::InternalError)
+    }
+
+    #[send_handler]
+    async fn handle_connection_msg(
+        &mut self,
+        msg: connection_handler_protocol::Connection,
+        ctx: &Context<Self>,
+    ) {
+        if let Err(err) = self.handle_connection(msg.stream).await {
+            error!("Error handling connection from {}: {err}", msg.addr);
+        } else {
+            debug!("Connection from {} handled successfully", msg.addr);
+        }
+        ctx.stop();
     }
 
     async fn handle_connection(
@@ -408,9 +412,9 @@ impl ConnectionHandler {
         if let Some(mut stream) = Arc::into_inner(stream) {
             stream.read_to_end(&mut buffer).await?;
 
-            let data: Result<ProofData, _> = serde_json::from_slice(&buffer);
+            let data: Result<ProofData<ProverInputData>, _> = serde_json::from_slice(&buffer);
             match data {
-                Ok(ProofData::BatchRequest {
+                Ok(ProofData::InputRequest {
                     commit_hash,
                     prover_type,
                 }) => {
@@ -419,16 +423,16 @@ impl ConnectionHandler {
                         .handle_request(&mut stream, commit_hash, prover_type)
                         .await
                     {
-                        error!("Failed to handle BatchRequest: {e}");
+                        error!("Failed to handle InputRequest: {e}");
                     }
                 }
                 Ok(ProofData::ProofSubmit {
-                    batch_number,
-                    batch_proof,
+                    id: batch_number,
+                    proof: proof_bytes,
                 }) => {
                     if let Err(e) = self
                         .proof_coordinator
-                        .handle_submit(&mut stream, batch_number, batch_proof)
+                        .handle_submit(&mut stream, batch_number, proof_bytes)
                         .await
                     {
                         error!("Failed to handle ProofSubmit: {e}");
@@ -461,46 +465,9 @@ impl ConnectionHandler {
     }
 }
 
-#[derive(Clone)]
-pub enum ConnInMessage {
-    Connection {
-        stream: Arc<TcpStream>,
-        addr: SocketAddr,
-    },
-}
-
-#[derive(Clone, PartialEq)]
-pub enum ConnOutMessage {
-    Done,
-}
-
-impl GenServer for ConnectionHandler {
-    type CallMsg = Unused;
-    type CastMsg = ConnInMessage;
-    type OutMsg = ConnOutMessage;
-    type Error = ProofCoordinatorError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            ConnInMessage::Connection { stream, addr } => {
-                if let Err(err) = self.handle_connection(stream).await {
-                    error!("Error handling connection from {addr}: {err}");
-                } else {
-                    debug!("Connection from {addr} handled successfully");
-                }
-            }
-        }
-        CastResponse::Stop
-    }
-}
-
 async fn send_response(
     stream: &mut TcpStream,
-    response: &ProofData,
+    response: &ProofData<ProverInputData>,
 ) -> Result<(), ProofCoordinatorError> {
     let buffer = serde_json::to_vec(response)?;
     stream

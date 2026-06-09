@@ -27,7 +27,6 @@ pub struct BlockProducerConfig {
     pub base_fee_vault_address: Option<Address>,
     pub operator_fee_vault_address: Option<Address>,
     pub elasticity_multiplier: u64,
-    pub block_gas_limit: u64,
 }
 
 #[derive(Clone, Debug)]
@@ -107,6 +106,8 @@ pub struct AlignedConfig {
     /// Starting L1 block number for the proof aggregation search.
     /// This helps avoid scanning blocks from before proofs were being sent.
     pub from_block: Option<u64>,
+    /// Timeout in seconds before resending a proof that hasn't been verified on-chain.
+    pub resubmission_timeout_secs: u64,
 }
 
 #[derive(Clone, Debug)]

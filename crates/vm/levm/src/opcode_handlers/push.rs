@@ -10,7 +10,7 @@ use crate::{
     opcode_handlers::OpcodeHandler,
     vm::VM,
 };
-use ethrex_common::U256;
+use ethrex_common::{U256, utils::u256_from_big_endian_const};
 
 /// Implementation for the `PUSH0` opcode.
 pub struct OpPush0Handler;
@@ -41,23 +41,22 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
 
-        #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
-        vm.current_call_frame.stack.push(
-            match vm
-                .current_call_frame
-                .bytecode
-                .bytecode
-                .get(literal_offset..)
-            {
-                Some(data) if data.len() >= N => U256::from_big_endian(&data[..N]),
-                Some(data) => {
-                    let mut bytes = [0; 32];
-                    bytes[..data.len()].copy_from_slice(data);
-                    U256::from_big_endian(&bytes)
-                }
-                None => U256::zero(),
-            },
-        )?;
+        let bytecode = &vm.current_call_frame.bytecode.bytecode;
+        let value = match bytecode.get(literal_offset..) {
+            #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
+            Some(data) if data.len() >= N => {
+                let mut buf = [0u8; N];
+                buf.copy_from_slice(&data[..N]);
+                u256_from_big_endian_const(buf)
+            }
+            Some(data) => {
+                let mut bytes = [0u8; N];
+                bytes[..data.len()].copy_from_slice(data);
+                u256_from_big_endian_const(bytes)
+            }
+            None => U256::zero(),
+        };
+        vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)
     }

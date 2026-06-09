@@ -1,29 +1,49 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use crate::{
     fork::Fork,
     types::{BlockChainExpectedException, BlockExpectedException, BlockWithRLP, TestUnit},
 };
 use ethrex_blockchain::{
-    Blockchain, BlockchainOptions,
+    Blockchain,
     error::{ChainError, InvalidBlockError},
     fork_choice::apply_fork_choice,
 };
+#[cfg(not(feature = "stateless"))]
+use ethrex_common::types::block_access_list::BlockAccessList;
+#[cfg(feature = "stateless")]
+use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
 use ethrex_common::{
-    constants::EMPTY_KECCACK_HASH,
+    constants::EMPTY_KECCAK_HASH,
     types::{
         Account as CoreAccount, Block as CoreBlock, BlockHeader as CoreBlockHeader,
-        InvalidBlockHeaderError, block_access_list::BlockAccessList,
+        InvalidBlockHeaderError,
     },
 };
 use ethrex_guest_program::input::ProgramInput;
 #[cfg(feature = "sp1")]
-use ethrex_prover_lib::Sp1Backend;
-use ethrex_prover_lib::{BackendType, ExecBackend, ProverBackend};
+use ethrex_prover::Sp1Backend;
+use ethrex_prover::{BackendType, ExecBackend, ProverBackend};
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_storage::{EngineType, Store};
 use ethrex_vm::EvmError;
 use regex::Regex;
+
+thread_local! {
+    /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
+    /// pattern used by `tooling/ef_tests/engine` so the ~10k+ blockchain tests
+    /// don't each spawn a fresh 17-thread rayon pool inside `Blockchain::new`.
+    /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
+    /// each pool may have only one concurrent `in_place_scope` caller; keying by
+    /// `thread_local!` makes the calling test-runner thread the natural
+    /// exclusive owner.
+    static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
+        const { std::cell::OnceCell::new() };
+}
+
+fn merkle_pool() -> Arc<rayon::ThreadPool> {
+    MERKLE_POOL.with(|cell| cell.get_or_init(Blockchain::build_merkle_pool).clone())
+}
 
 pub fn parse_and_execute(
     path: &Path,
@@ -83,7 +103,7 @@ pub async fn run_ef_test(
     check_prestate_against_db(test_key, test, &store);
 
     // Blockchain EF tests are meant for L1.
-    let blockchain = Blockchain::new(store.clone(), BlockchainOptions::default());
+    let blockchain = Blockchain::default_with_store_and_pool(store.clone(), merkle_pool());
 
     // Early return if the exception is in the rlp decoding of the block
     for bf in &test.blocks {
@@ -98,6 +118,11 @@ pub async fn run_ef_test(
     // Two-pass approach: pass 1 collects the BAL produced by sequential execution, pass 2
     // re-executes using that BAL to drive parallel (BAL-warmed) execution and verifies the
     // same final state is reached.
+    // Not exercised under `stateless`: the stateless harness runs the guest program directly
+    // and doesn't drive `add_block_pipeline`, and BAL-warmed parallel execution gives no
+    // benefit in single-threaded zkVM guest builds. The non-stateless runs are the right
+    // home for this check.
+    #[cfg(not(feature = "stateless"))]
     if test.network == Fork::Amsterdam {
         run_two_pass_parallel(test_key, test).await?;
     }
@@ -105,6 +130,20 @@ pub async fn run_ef_test(
     // Run stateless if backend was specified for this.
     // TODO: See if we can run stateless without needing a previous run. We can't easily do it for now. #4142
     if let Some(backend) = stateless_backend {
+        // Use the fixture's witness when present (either `executionWitness` or
+        // `statelessInputBytes`); otherwise regenerate by re-running execution.
+        #[cfg(feature = "stateless")]
+        {
+            let has_fixture_witness = test.blocks.iter().any(|bf| {
+                bf.block().is_some_and(|b| {
+                    b.execution_witness.is_some() || b.stateless_input_bytes.is_some()
+                })
+            });
+            if has_fixture_witness {
+                run_stateless_from_fixture(test, test_key, backend).await?;
+                return Ok(());
+            }
+        }
         re_run_stateless(blockchain, test, test_key, backend).await?;
     };
 
@@ -127,7 +166,7 @@ async fn run(
         let hash = block.hash();
 
         // Attempt to add the block as the head of the chain
-        let chain_result = blockchain.add_block_pipeline(block, None);
+        let chain_result = blockchain.add_block_pipeline(block.clone(), None);
 
         match chain_result {
             Err(error) => {
@@ -142,8 +181,12 @@ async fn run(
                         "Warning: Returned exception {error:?} does not match expected {expected_exception:?}",
                     );
                 }
-                // Expected exception matched — stop processing further blocks of this test.
-                break;
+                // Expected exception matched — block was rejected, but the test may
+                // still expect subsequent blocks to be processed (e.g. fork-transition
+                // tests where a block at the pre-fork timestamp fails and a block at
+                // the post-fork timestamp succeeds, both built on the same parent).
+                // Continue with the next block in the fixture.
+                continue;
             }
             Ok(_) => {
                 if expects_exception {
@@ -169,10 +212,11 @@ async fn run(
 /// BAL that each block produces.  Pass 2 (parallel): creates a fresh chain and re-runs every
 /// block passing the corresponding BAL so the BAL-warmed parallel path is exercised.  The final
 /// post-state of pass 2 must match the expected post-state.
+#[cfg(not(feature = "stateless"))]
 async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), String> {
     // ---- Pass 1: sequential, collect BALs ----
     let store1 = build_store_for_test(test).await;
-    let blockchain1 = Blockchain::new(store1.clone(), BlockchainOptions::default());
+    let blockchain1 = Blockchain::default_with_store_and_pool(store1.clone(), merkle_pool());
 
     let mut bals: Vec<BlockAccessList> = Vec::with_capacity(test.blocks.len());
 
@@ -204,7 +248,7 @@ async fn run_two_pass_parallel(test_key: &str, test: &TestUnit) -> Result<(), St
 
     // ---- Pass 2: parallel (BAL-driven), verify post-state ----
     let store2 = build_store_for_test(test).await;
-    let blockchain2 = Blockchain::new(store2.clone(), BlockchainOptions::default());
+    let blockchain2 = Blockchain::default_with_store_and_pool(store2.clone(), merkle_pool());
 
     for (block_fixture, bal) in test.blocks.iter().zip(bals.iter()) {
         let block: CoreBlock = block_fixture.block().unwrap().clone().into();
@@ -366,7 +410,7 @@ fn parse_json_file(path: &Path) -> HashMap<String, TestUnit> {
     serde_json::from_str(&s).expect("Unable to parse JSON")
 }
 
-/// Creats a new in-memory store and adds the genesis state
+/// Creates a new in-memory store and adds the genesis state.
 pub async fn build_store_for_test(test: &TestUnit) -> Store {
     let mut store =
         Store::new("store.db", EngineType::InMemory).expect("Failed to build DB for testing");
@@ -417,7 +461,7 @@ async fn check_poststate_against_db(test_key: &str, test: &TestUnit, db: &Store)
             );
             // Check code
             let code_hash = expected_account.info.code_hash;
-            if code_hash != *EMPTY_KECCACK_HASH {
+            if code_hash != *EMPTY_KECCAK_HASH {
                 // We don't want to get account code if there's no code.
                 let db_account_code = db
                     .get_account_code(code_hash)
@@ -504,4 +548,170 @@ async fn re_run_stateless(
         return Err(format!("Expected test: {test_key} to fail but succeeded"));
     }
     Ok(())
+}
+
+/// Run stateless execution using the execution witness provided directly in the
+/// zkevm fixture, instead of generating one from blockchain execution.
+///
+/// Each block in the fixture has its own `executionWitness` containing the state
+/// trie nodes, codes, and ancestor headers needed for that specific block.
+/// Following the spec, we execute each block
+/// independently with its own witness.
+#[cfg(feature = "stateless")]
+async fn run_stateless_from_fixture(
+    test: &TestUnit,
+    test_key: &str,
+    backend_type: BackendType,
+) -> Result<(), String> {
+    let chain_config = test.network.chain_config();
+
+    for block_fixture in test.blocks.iter() {
+        // Skip blocks that expect exceptions — those are already validated by the normal path.
+        if block_fixture.expect_exception.is_some() {
+            continue;
+        }
+
+        let Some(block_data) = block_fixture.block() else {
+            continue;
+        };
+
+        let block: CoreBlock = block_data.clone().into();
+        let block_number = block.header.number;
+
+        // Absent bytes means "expected to succeed"; malformed bytes are a hard error.
+        let expected_valid = match block_data.stateless_output_bytes.as_deref() {
+            None => true,
+            Some(bytes) => parse_expected_valid_flag(bytes).map_err(|e| {
+                format!("Malformed statelessOutputBytes for {test_key} block {block_number}: {e}")
+            })?,
+        };
+
+        // Prefer the canonical EIP-8025 wire path (production guest binary entry
+        // point) which exercises the public_keys / hash_tree_root checks the
+        // legacy `ProgramInput` route bypasses.
+        if let Some(input_hex) = block_data.stateless_input_bytes.as_deref() {
+            run_stateless_from_input_bytes(
+                test_key,
+                &test.network,
+                block_number,
+                input_hex,
+                expected_valid,
+            )?;
+            continue;
+        }
+
+        let Some(witness_json) = block_data.execution_witness.as_ref() else {
+            continue;
+        };
+
+        // Parse and conversion errors must always fail; only the execution outcome is
+        // matched against `expected_valid` so the (false, Err(_)) arm below cannot
+        // absorb regressions in deserialization or witness conversion.
+        let rpc_witness: RpcExecutionWitness = serde_json::from_value(witness_json.clone())
+            .map_err(|e| {
+                format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
+            })?;
+        let decoded_headers =
+            ethrex_common::types::block_execution_witness::decode_witness_headers(
+                &rpc_witness.headers,
+            )
+            .map_err(|e| {
+                format!("witness header decode failed for {test_key} block {block_number}: {e}")
+            })?;
+        let execution_witness = rpc_witness
+            .into_execution_witness(*chain_config, block_number, &decoded_headers)
+            .map_err(|e| {
+                format!("witness conversion failed for {test_key} block {block_number}: {e}")
+            })?;
+
+        let program_input = ProgramInput::new(vec![block], execution_witness);
+        let exec_result = match backend_type {
+            BackendType::Exec => ExecBackend::new().execute(program_input),
+            #[cfg(feature = "sp1")]
+            BackendType::SP1 => Sp1Backend::new().execute(program_input),
+        };
+
+        match (expected_valid, exec_result) {
+            (true, Ok(_)) | (false, Err(_)) => {}
+            (true, Err(e)) => {
+                return Err(format!(
+                    "Stateless execution from fixture failed for {test_key} block {block_number}: {e}"
+                ));
+            }
+            (false, Ok(_)) => {
+                return Err(format!(
+                    "Stateless execution from fixture succeeded for {test_key} block \
+                     {block_number} but fixture expected it to fail (invalid executionWitness)"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Run a fixture's `statelessInputBytes` (2-byte BE schema-id followed by
+/// SSZ-encoded `SszStatelessInput`) through the canonical-input path the
+/// production guest binary uses.
+#[cfg(feature = "stateless")]
+fn run_stateless_from_input_bytes(
+    test_key: &str,
+    test_network: &Fork,
+    block_number: u64,
+    input_hex: &str,
+    expected_valid: bool,
+) -> Result<(), String> {
+    use ethrex_guest_program::l1::{DecodedEip8025, decode_canonical_stateless_input_bytes};
+
+    let trimmed = input_hex.strip_prefix("0x").unwrap_or(input_hex);
+    let bytes = hex::decode(trimmed).map_err(|e| {
+        format!("statelessInputBytes hex decode failed for {test_key} block {block_number}: {e}")
+    })?;
+
+    // Decode failures count as the canonical-input rejection path: a negative
+    // fixture with malformed top-level SSZ should still match `expected_valid=false`.
+    let exec_result = match decode_canonical_stateless_input_bytes(&bytes) {
+        Ok(stateless_input) => {
+            let chain_config = *test_network.chain_config();
+            let program_input = ProgramInput::wire(DecodedEip8025::Canonical {
+                stateless_input,
+                chain_config,
+            });
+            ExecBackend::new().execute(program_input)
+        }
+        Err(e) => Err(ethrex_prover::BackendError::execution(format!(
+            "statelessInputBytes decode failed: {e}"
+        ))),
+    };
+    match (expected_valid, exec_result) {
+        (true, Ok(_)) | (false, Err(_)) => Ok(()),
+        (true, Err(e)) => Err(format!(
+            "Stateless execution failed for {test_key} block {block_number} but fixture expected it to succeed: {e}"
+        )),
+        (false, Ok(_)) => Err(format!(
+            "Stateless execution succeeded for {test_key} block {block_number} but fixture expected it to fail (invalid statelessInputBytes)"
+        )),
+    }
+}
+
+/// Decode the `valid` byte (index 32) from a zkevm-fixture `statelessOutputBytes` hex
+/// string, encoded as `new_payload_request_root (32 B) ++ valid (1 B) ++ padding`.
+#[cfg(feature = "stateless")]
+fn parse_expected_valid_flag(hex: &str) -> Result<bool, String> {
+    let trimmed = hex.strip_prefix("0x").unwrap_or(hex);
+    let byte_hex = trimmed.get(64..66).ok_or_else(|| {
+        format!(
+            "expected at least 33 bytes (66 hex chars), got {} hex chars",
+            trimmed.len()
+        )
+    })?;
+    let byte = u8::from_str_radix(byte_hex, 16)
+        .map_err(|e| format!("invalid hex at byte 32 ({byte_hex:?}): {e}"))?;
+    match byte {
+        0 => Ok(false),
+        1 => Ok(true),
+        n => Err(format!(
+            "invalid validity byte 0x{n:02x} (expected 0x00 or 0x01)"
+        )),
+    }
 }

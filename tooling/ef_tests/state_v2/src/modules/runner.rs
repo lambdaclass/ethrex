@@ -9,6 +9,7 @@ use ethrex_common::{
         LegacyTransaction, Transaction, TxKind,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_levm::{
     EVMConfig, Environment, tracing::LevmCallTracer, utils::get_base_fee_per_blob_gas, vm::VM,
     vm::VMType,
@@ -36,10 +37,16 @@ pub async fn run_tests(tests: Vec<Test>) -> Result<(), RunnerError> {
         vec!["eip-7594", "eip-7939", "eip-7918", "eip-7892", "eip-7883"];
 
     for test in tests {
-        let test_eip = test._info.clone().reference_spec.unwrap_or_default();
-
+        // Fusaka EIP allowlist only applies when `_info.reference_spec` is
+        // present. Fixtures without it (e.g. goevmlab-generated) bypass the
+        // filter so they aren't silently dropped just because we can't read
+        // the EIP list.
         if test.path.to_str().unwrap().contains("osaka")
-            && !fusaka_eips_to_test.iter().any(|eip| test_eip.contains(eip))
+            && let Some(spec) = test
+                ._info
+                .as_ref()
+                .and_then(|info| info.reference_spec.as_deref())
+            && !fusaka_eips_to_test.iter().any(|eip| spec.contains(eip))
         {
             continue;
         }
@@ -65,12 +72,12 @@ pub async fn run_test(
     for test_case in &test.test_cases {
         // Setup VM for transaction.
         let (mut db, initial_block_hash, storage, genesis) =
-            load_initial_state(test, &test_case.fork).await;
+            load_initial_state(test, &test_case.fork, true).await;
         let env = get_vm_env_for_test(test.env, test_case)?;
         let tx = get_tx_from_test_case(test_case).await?;
         let tracer = LevmCallTracer::disabled();
-        let mut vm =
-            VM::new(env, &mut db, &tx, tracer, VMType::L1).map_err(RunnerError::VMError)?;
+        let mut vm = VM::new(env, &mut db, &tx, tracer, VMType::L1, &NativeCrypto)
+            .map_err(RunnerError::VMError)?;
 
         // Execute transaction with VM.
         let execution_result = vm.execute();
@@ -149,6 +156,7 @@ pub fn get_vm_env_for_test(
         is_privileged: false,
         fee_token: None,
         disable_balance_check: false,
+        is_system_call: false,
     })
 }
 
@@ -180,8 +188,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
                 .collect(),
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas_limit: test_case.gas,
             ..Default::default()
         })
@@ -189,8 +201,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP4844Transaction(EIP4844Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas: test_case.gas,
             to: match to {
                 TxKind::Call(to) => to,
@@ -207,8 +223,12 @@ pub async fn get_tx_from_test_case(test_case: &TestCase) -> Result<Transaction, 
         Transaction::EIP1559Transaction(EIP1559Transaction {
             chain_id,
             nonce,
-            max_priority_fee_per_gas: test_case.max_priority_fee_per_gas.unwrap().as_u64(),
-            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().as_u64(),
+            max_priority_fee_per_gas: test_case
+                .max_priority_fee_per_gas
+                .unwrap()
+                .try_into()
+                .unwrap(),
+            max_fee_per_gas: test_case.max_fee_per_gas.unwrap().try_into().unwrap(),
             gas_limit: test_case.gas,
             to,
             value,

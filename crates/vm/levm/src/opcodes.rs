@@ -414,23 +414,35 @@ impl OpCodeFn {
 }
 
 impl<'a> VM<'a> {
-    /// Setups the opcode lookup function pointer table, configured according the given fork.
+    /// Returns the opcode lookup function-pointer table for the given fork.
     ///
-    /// This is faster than a conventional match.
+    /// The per-fork tables are `const`-evaluated once into process statics (the builders below
+    /// are all `const fn`), so this is a branch returning a shared `&'static` reference — no
+    /// per-tx rebuild or 2 KB copy into the VM. `fork` is constant within a block, so every tx
+    /// in a block resolves to the same table. This is faster than a conventional match.
     #[allow(clippy::as_conversions, clippy::indexing_slicing)]
-    pub(crate) fn build_opcode_table(fork: Fork) -> [OpCodeFn; 256] {
+    pub(crate) fn build_opcode_table(fork: Fork) -> &'static [OpCodeFn; 256] {
+        // Built once at compile time; immutable, so sharing across all VMs is trivially safe.
+        // Instantiated with `'static` so the initializers don't reference the impl's `'a`.
+        static HEGOTA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_hegota();
+        static AMSTERDAM: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_amsterdam();
+        static OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_osaka();
+        static PRE_OSAKA: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_osaka();
+        static PRE_CANCUN: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_cancun();
+        static PRE_SHANGHAI: [OpCodeFn; 256] = VM::<'static>::build_opcode_table_pre_shanghai();
+
         if fork >= Fork::Hegota {
-            Self::build_opcode_table_hegota()
+            &HEGOTA
         } else if fork >= Fork::Amsterdam {
-            Self::build_opcode_table_amsterdam()
+            &AMSTERDAM
         } else if fork >= Fork::Osaka {
-            Self::build_opcode_table_osaka()
+            &OSAKA
         } else if fork >= Fork::Cancun {
-            Self::build_opcode_table_pre_osaka()
+            &PRE_OSAKA
         } else if fork >= Fork::Shanghai {
-            Self::build_opcode_table_pre_cancun()
+            &PRE_CANCUN
         } else {
-            Self::build_opcode_table_pre_shanghai()
+            &PRE_SHANGHAI
         }
     }
 

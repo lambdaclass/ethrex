@@ -24,8 +24,8 @@ jobs:
     outputs:
       run_tests: ${{ steps.finish.outputs.run_tests }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -45,10 +45,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Nix
         uses: cachix/install-nix-action@v31
+        with:
+          # crates.io 403s any User-Agent containing "curl/", which is what Nix's
+          # fetchurl sends by default, breaking crate downloads during the image
+          # build. In multi-user (daemon) mode the FOD builds run under the
+          # nix-daemon and don't see the caller's environment, so override the
+          # User-Agent via impure-env (honored because the runner is a trusted
+          # user). Use curl's glued short option `-A<value>`: a single space-free
+          # token that survives impure-env's space-separated parsing and
+          # fetchurl's unquoted word-split (curl rejects the --user-agent=value form).
+          extra_nix_config: |
+            extra-experimental-features = configurable-impure-env
+            impure-env = NIX_CURL_FLAGS=-Aethrex-ci+https://github.com/lambdaclass/ethrex
 
       - name: Build image
         run: |

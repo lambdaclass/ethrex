@@ -3,7 +3,7 @@ use bytes::Bytes;
 use directories::ProjectDirs;
 use ethrex_common::types::{Block, Genesis};
 use ethrex_p2p::{
-    peer_table::PeerTable,
+    peer_table::{PeerTable, PeerTableServerProtocol as _},
     sync::SyncMode,
     types::{Node, NodeRecord},
 };
@@ -25,7 +25,7 @@ pub struct NodeConfigFile {
 }
 
 impl NodeConfigFile {
-    pub async fn new(mut peer_table: PeerTable, node_record: NodeRecord) -> Self {
+    pub async fn new(peer_table: PeerTable, node_record: NodeRecord) -> Self {
         let connected_peers = peer_table.get_connected_nodes().await.unwrap_or(Vec::new());
 
         NodeConfigFile {
@@ -68,6 +68,23 @@ pub fn generate_jwt_secret() -> String {
 pub fn read_chain_file(chain_rlp_path: &str) -> Vec<Block> {
     let chain_file = std::fs::File::open(chain_rlp_path).expect("Failed to open chain rlp file");
     decode::chain_file(chain_file).expect("Failed to decode chain rlp file")
+}
+
+pub fn parse_http_namespace(s: &str) -> eyre::Result<ethrex_rpc::RpcNamespace> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Err(eyre::eyre!("empty namespace in --http.api"));
+    }
+    if trimmed.eq_ignore_ascii_case("engine") {
+        return Err(eyre::eyre!(
+            "`engine` cannot be enabled on --http.api; it is served on the authenticated RPC port"
+        ));
+    }
+    ethrex_rpc::RpcNamespace::from_prefix(&trimmed.to_ascii_lowercase()).ok_or_else(|| {
+        eyre::eyre!(
+            "unknown RPC namespace {trimmed:?}; expected one of eth, net, web3, debug, admin, txpool"
+        )
+    })
 }
 
 pub fn parse_sync_mode(s: &str) -> eyre::Result<SyncMode> {

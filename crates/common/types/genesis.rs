@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, H256, U256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::{NativeCrypto, keccak::keccak_hash};
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_trie::Trie;
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
@@ -293,7 +293,6 @@ lazy_static::lazy_static! {
         HashMap::from([
             (1, "mainnet"),
             (11155111, "sepolia"),
-            (17000, "holesky"),
             (560048, "hoodi"),
             (9, "L1 local devnet"),
             (65536999, "L2 local devnet"),
@@ -538,35 +537,36 @@ impl ChainConfig {
     }
 
     pub fn next_fork(&self, block_timestamp: u64) -> Option<Fork> {
-        let next = if self.is_hegota_activated(block_timestamp) {
-            None
-        } else if self.is_amsterdam_activated(block_timestamp) && self.hegota_time.is_some() {
-            Some(Fork::Hegota)
-        } else if self.is_bpo5_activated(block_timestamp) && self.amsterdam_time.is_some() {
-            Some(Fork::Amsterdam)
-        } else if self.is_bpo4_activated(block_timestamp) && self.bpo5_time.is_some() {
-            Some(Fork::BPO5)
-        } else if self.is_bpo3_activated(block_timestamp) && self.bpo4_time.is_some() {
-            Some(Fork::BPO4)
-        } else if self.is_bpo2_activated(block_timestamp) && self.bpo3_time.is_some() {
-            Some(Fork::BPO3)
-        } else if self.is_bpo1_activated(block_timestamp) && self.bpo2_time.is_some() {
-            Some(Fork::BPO2)
-        } else if self.is_osaka_activated(block_timestamp) && self.bpo1_time.is_some() {
-            Some(Fork::BPO1)
-        } else if self.is_prague_activated(block_timestamp) && self.osaka_time.is_some() {
-            Some(Fork::Osaka)
-        } else if self.is_cancun_activated(block_timestamp) && self.prague_time.is_some() {
-            Some(Fork::Prague)
-        } else if self.is_shanghai_activated(block_timestamp) && self.cancun_time.is_some() {
-            Some(Fork::Cancun)
-        } else {
-            None
-        };
-        match next {
-            Some(fork) if fork > self.fork(block_timestamp) => next,
-            _ => None,
-        }
+        // Pick the scheduled fork with the smallest activation timestamp strictly
+        // greater than `block_timestamp`. Iterating all timestamp-based forks avoids
+        // bugs when intermediate forks (e.g. BPOs) are skipped in a network's schedule.
+        //
+        // NOTE: every timestamp-based fork MUST appear here in chronological order.
+        // Omitting a fork will silently cause `next_fork` to skip it; ties are
+        // broken by array position, so the order also encodes the canonical
+        // schedule independent of the `Fork` enum's discriminants.
+        [
+            Fork::Shanghai,
+            Fork::Cancun,
+            Fork::Prague,
+            Fork::Osaka,
+            Fork::BPO1,
+            Fork::BPO2,
+            Fork::BPO3,
+            Fork::BPO4,
+            Fork::BPO5,
+            Fork::Amsterdam,
+            Fork::Hegota,
+        ]
+        .into_iter()
+        .enumerate()
+        .filter_map(|(pos, fork)| {
+            self.get_activation_timestamp_for_fork(fork)
+                .filter(|&t| t > block_timestamp)
+                .map(|t| (fork, t, pos))
+        })
+        .min_by(|a, b| a.1.cmp(&b.1).then_with(|| a.2.cmp(&b.2)))
+        .map(|(fork, _, _)| fork)
     }
 
     pub fn get_last_scheduled_fork(&self) -> Fork {
@@ -739,7 +739,7 @@ impl Genesis {
         let withdrawals_root = self
             .config
             .is_shanghai_activated(self.timestamp)
-            .then_some(compute_withdrawals_root(&[]));
+            .then_some(compute_withdrawals_root(&[], &NativeCrypto));
 
         let parent_beacon_block_root = self
             .config
@@ -758,15 +758,19 @@ impl Genesis {
                 self.block_access_list_hash
                     .unwrap_or(*EMPTY_BLOCK_ACCESS_LIST_HASH),
             );
-        let slot_number = self.slot_number;
+
+        let slot_number = self
+            .config
+            .is_amsterdam_activated(self.timestamp)
+            .then_some(self.slot_number.unwrap_or(0));
 
         BlockHeader {
             parent_hash: H256::zero(),
             ommers_hash: *DEFAULT_OMMERS_HASH,
             coinbase: self.coinbase,
             state_root: self.compute_state_root(),
-            transactions_root: compute_transactions_root(&[]),
-            receipts_root: compute_receipts_root(&[]),
+            transactions_root: compute_transactions_root(&[], &NativeCrypto),
+            receipts_root: compute_receipts_root(&[], &NativeCrypto),
             logs_bloom: Bloom::zero(),
             difficulty: self.difficulty,
             number: 0,
@@ -803,7 +807,7 @@ impl Genesis {
                 AccountState::from(account).encode_to_vec(),
             )
         });
-        Trie::compute_hash_from_unsorted_iter(iter)
+        Trie::compute_hash_from_unsorted_iter(iter, &NativeCrypto)
     }
 }
 #[cfg(test)]
@@ -816,6 +820,50 @@ mod tests {
     use crate::types::INITIAL_BASE_FEE;
 
     use super::*;
+
+    #[test]
+    fn terminal_total_difficulty_accepts_number_or_hex_string() {
+        // geth/reth-style genesis files encode terminalTotalDifficulty as a
+        // bare decimal number that exceeds u64::MAX; ethrex must accept it as
+        // well as the 0x-hex-string form.
+        let dca = r#""depositContractAddress":"0x00000000219ab540356cbb839cbe05303d7705fa""#;
+
+        let from_number: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":58750000000000000000000,{dca}}}"#
+        ))
+        .expect("number-encoded TTD should parse");
+        // f64 cast is lossy above u64::MAX; assert the known, stable
+        // approximation so a regression to Some(0) can't silently pass.
+        assert_eq!(
+            from_number.terminal_total_difficulty,
+            Some(58749999999999996329984u128)
+        );
+
+        let from_hex: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":"0xc70d808a128d7380000",{dca}}}"#
+        ))
+        .expect("hex-string TTD should parse");
+        assert_eq!(
+            from_hex.terminal_total_difficulty,
+            Some(58750000000000000000000u128)
+        );
+
+        let small: ChainConfig = serde_json::from_str(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":17000000000000000,{dca}}}"#
+        ))
+        .expect("small number TTD should parse");
+        assert_eq!(small.terminal_total_difficulty, Some(17000000000000000u128));
+
+        // A negative bare number must error, not silently saturate to Some(0).
+        let negative = serde_json::from_str::<ChainConfig>(&format!(
+            r#"{{"chainId":1,"terminalTotalDifficulty":-1,{dca}}}"#
+        ));
+        let err = negative.expect_err("negative TTD must be rejected");
+        assert!(
+            err.to_string().contains("finite, non-negative"),
+            "error should name the sign/finiteness cause, got: {err}"
+        );
+    }
 
     #[test]
     fn deserialize_genesis_file() {
@@ -936,8 +984,14 @@ mod tests {
             H256::from_str("0x2dab6a1d6d638955507777aecea699e6728825524facbd446bd4e86d44fa5ecd")
                 .unwrap()
         );
-        assert_eq!(header.transactions_root, compute_transactions_root(&[]));
-        assert_eq!(header.receipts_root, compute_receipts_root(&[]));
+        assert_eq!(
+            header.transactions_root,
+            compute_transactions_root(&[], &NativeCrypto)
+        );
+        assert_eq!(
+            header.receipts_root,
+            compute_receipts_root(&[], &NativeCrypto)
+        );
         assert_eq!(header.logs_bloom, Bloom::default());
         assert_eq!(header.difficulty, U256::from(1));
         assert_eq!(header.gas_limit, 25_000_000);
@@ -950,7 +1004,10 @@ mod tests {
             header.base_fee_per_gas.unwrap_or(INITIAL_BASE_FEE),
             INITIAL_BASE_FEE
         );
-        assert_eq!(header.withdrawals_root, Some(compute_withdrawals_root(&[])));
+        assert_eq!(
+            header.withdrawals_root,
+            Some(compute_withdrawals_root(&[], &NativeCrypto))
+        );
         assert_eq!(header.blob_gas_used, Some(0));
         assert_eq!(header.excess_blob_gas, Some(0));
         assert_eq!(header.parent_beacon_block_root, Some(H256::zero()));
@@ -1248,5 +1305,48 @@ mod tests {
                 .unwrap_or_else(|e| panic!("alias {key} must deserialize: {e}"));
             assert_eq!(cfg.hegota_time, Some(1_700_000_000), "alias {key}");
         }
+    }
+
+    #[test]
+    fn next_fork_skips_unscheduled_intermediate_forks() {
+        // bal-devnet-7 layout: every post-merge fork up to Osaka at t=0, Amsterdam
+        // scheduled later, no BPOs scheduled. `next_fork` must return Amsterdam
+        // even though the BPO chain between Osaka and Amsterdam is empty.
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: Some(0),
+            amsterdam_time: Some(1_779_098_127),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(0), Some(Fork::Amsterdam));
+        assert_eq!(config.next_fork(1_779_098_126), Some(Fork::Amsterdam));
+        assert_eq!(config.next_fork(1_779_098_127), None);
+    }
+
+    #[test]
+    fn next_fork_picks_earliest_scheduled() {
+        // Contiguous schedule: at Cancun, next should be Prague (not Osaka).
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(100),
+            prague_time: Some(200),
+            osaka_time: Some(300),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(150), Some(Fork::Prague));
+        assert_eq!(config.next_fork(250), Some(Fork::Osaka));
+        assert_eq!(config.next_fork(300), None);
+    }
+
+    #[test]
+    fn next_fork_returns_none_when_at_last_scheduled() {
+        let config = ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(config.next_fork(0), None);
     }
 }

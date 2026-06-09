@@ -10,9 +10,8 @@ mod healing;
 mod snap_sync;
 
 use crate::metrics::METRICS;
-use crate::peer_handler::{PeerHandler, PeerHandlerError};
-use crate::peer_table::PeerTableError;
-use crate::snap::constants::EXECUTE_BATCH_SIZE_DEFAULT;
+use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
+use crate::snap::constants::{EXECUTE_BATCH_SIZE_DEFAULT, MIN_FULL_BLOCKS};
 use crate::utils::delete_leaves_folder;
 use ethrex_blockchain::{Blockchain, error::ChainError};
 use ethrex_common::H256;
@@ -20,6 +19,7 @@ use ethrex_rlp::error::RLPDecodeError;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
 use ethrex_trie::trie_sorted::TrieGenerationError;
+use spawned_concurrency::error::ActorError;
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{
@@ -29,7 +29,7 @@ use std::sync::{
 use tokio::sync::mpsc::error::SendError;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
@@ -53,6 +53,56 @@ pub enum SyncMode {
     Snap,
 }
 
+/// Diagnostic snapshot of the sync state, used by admin RPC endpoints.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct SyncDiagnostics {
+    pub sync_mode: String,
+    pub current_phase: String,
+    pub pivot_block_number: Option<u64>,
+    pub pivot_timestamp: Option<u64>,
+    pub pivot_age_seconds: Option<u64>,
+    pub staleness_threshold_seconds: u64,
+    pub phase_progress: std::collections::HashMap<String, u64>,
+    pub recent_pivot_changes: std::collections::VecDeque<PivotChangeEvent>,
+    pub recent_errors: std::collections::VecDeque<SyncErrorEvent>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PivotChangeEvent {
+    pub timestamp: u64,
+    pub old_pivot_number: u64,
+    pub new_pivot_number: u64,
+    pub outcome: String,
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SyncErrorEvent {
+    pub timestamp: u64,
+    pub error_type: String,
+    pub error_message: String,
+    pub recoverable: bool,
+}
+
+impl SyncDiagnostics {
+    const MAX_PIVOT_CHANGES: usize = 10;
+    const MAX_ERRORS: usize = 20;
+
+    pub fn push_pivot_change(&mut self, event: PivotChangeEvent) {
+        if self.recent_pivot_changes.len() >= Self::MAX_PIVOT_CHANGES {
+            self.recent_pivot_changes.pop_front();
+        }
+        self.recent_pivot_changes.push_back(event);
+    }
+
+    pub fn push_error(&mut self, event: SyncErrorEvent) {
+        if self.recent_errors.len() >= Self::MAX_ERRORS {
+            self.recent_errors.pop_front();
+        }
+        self.recent_errors.push_back(event);
+    }
+}
+
 /// Manager in charge the sync process
 #[derive(Debug)]
 pub struct Syncer {
@@ -66,6 +116,7 @@ pub struct Syncer {
     /// This string indicates a folder where the snap algorithm will store temporary files that are
     /// used during the syncing process
     datadir: PathBuf,
+    diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
 }
 
 impl Syncer {
@@ -75,6 +126,7 @@ impl Syncer {
         cancel_token: CancellationToken,
         blockchain: Arc<Blockchain>,
         datadir: PathBuf,
+        diagnostics: Arc<tokio::sync::RwLock<SyncDiagnostics>>,
     ) -> Self {
         Self {
             snap_enabled,
@@ -82,6 +134,7 @@ impl Syncer {
             cancel_token,
             blockchain,
             datadir,
+            diagnostics,
         }
     }
 
@@ -97,6 +150,7 @@ impl Syncer {
         let start_time = Instant::now();
         match self.sync_cycle(sync_head, store).await {
             Ok(()) => {
+                self.diagnostics.write().await.current_phase = "idle".to_string();
                 info!(
                     time_elapsed_s = start_time.elapsed().as_secs(),
                     %sync_head,
@@ -106,7 +160,24 @@ impl Syncer {
 
             // If the error is irrecoverable, we exit ethrex
             Err(error) => {
-                match error.is_recoverable() {
+                let recoverable = error.is_recoverable();
+                self.diagnostics.write().await.current_phase = "idle".to_string();
+                debug!(
+                    error_type = %error,
+                    recoverable = recoverable,
+                    action = if recoverable { "retry" } else { "exit" },
+                    "Sync cycle error classification"
+                );
+                self.diagnostics.write().await.push_error(SyncErrorEvent {
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    error_type: format!("{:?}", std::mem::discriminant(&error)),
+                    error_message: error.to_string(),
+                    recoverable,
+                });
+                match recoverable {
                     false => {
                         // We exit the node, as we can't recover this error
                         error!(
@@ -133,6 +204,38 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
+            // Probe the sync head's block number before committing to snap sync.
+            // On a fresh devnet the chain head may be only a few blocks deep; the
+            // existing in-loop `head_close_to_0` guard in `sync_cycle_snap`
+            // (snap_sync.rs, same `< MIN_FULL_BLOCKS` check) is only reached
+            // after a successful header batch, which can stall when peers are
+            // barely synced themselves. Pre-checking avoids that. The probe
+            // response is intentionally discarded; on the snap path the loop
+            // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
+            if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
+                && sync_head_number < MIN_FULL_BLOCKS
+            {
+                info!(
+                    sync_head_number,
+                    "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
+                );
+                self.snap_enabled.store(false, Ordering::Relaxed);
+                // Clear any stale snap checkpoint so the manager loop in
+                // `sync_manager.rs` doesn't keep re-entering this branch
+                // after the full sync completes. Mirrors the cleanup done
+                // when the manager auto-switches to full on startup.
+                if let Err(e) = store.clear_snap_state().await {
+                    warn!("Failed to clear stale snap state: {e}");
+                }
+                return full::sync_cycle_full(
+                    &mut self.peers,
+                    self.blockchain.clone(),
+                    self.cancel_token.clone(),
+                    sync_head,
+                    store,
+                )
+                .await;
+            }
             METRICS.enable().await;
             // We validate that we have the folders that are being used empty, as we currently assume
             // they are. If they are not empty we empty the folder
@@ -144,6 +247,7 @@ impl Syncer {
                 sync_head,
                 store,
                 &self.datadir,
+                &self.diagnostics,
             )
             .await;
             METRICS.disable().await;
@@ -159,6 +263,50 @@ impl Syncer {
             .await
         }
     }
+}
+
+/// Number of attempts to fetch the sync head's header for the snap-vs-full pre-check.
+const PROBE_SYNC_HEAD_ATTEMPTS: u32 = 3;
+/// Delay between probe attempts.
+const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Tries to fetch the block header for `sync_head` and return its number.
+///
+/// Returns `None` if peers don't respond with the requested header within
+/// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
+/// and fall through to the regular sync path.
+///
+/// Worst-case latency budget: `PROBE_SYNC_HEAD_ATTEMPTS` × `PEER_REPLY_TIMEOUT`
+/// (5s, from `snap/constants.rs`) + (`PROBE_SYNC_HEAD_ATTEMPTS` − 1) ×
+/// `PROBE_SYNC_HEAD_RETRY_DELAY` = ~19s on a peer-starved network before we
+/// fall through to the snap path. On a healthy network the first attempt
+/// usually returns in well under a second.
+async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Option<u64> {
+    for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
+        match peers
+            .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
+            .await
+        {
+            Ok(Some(headers)) => {
+                if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
+                    return Some(header.number);
+                }
+                debug!("Sync head probe: response did not contain target header");
+            }
+            Ok(None) => {
+                debug!(
+                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no peer response"
+                );
+            }
+            Err(e) => {
+                warn!("Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS} failed: {e}");
+            }
+        }
+        if attempt < PROBE_SYNC_HEAD_ATTEMPTS {
+            tokio::time::sleep(PROBE_SYNC_HEAD_RETRY_DELAY).await;
+        }
+    }
+    None
 }
 
 #[derive(Debug, Default)]
@@ -236,7 +384,7 @@ pub enum SyncError {
     #[error("Bytecode file error")]
     BytecodeFileError,
     #[error("Error in Peer Table: {0}")]
-    PeerTableError(#[from] PeerTableError),
+    PeerTableError(#[from] ActorError),
     #[error("Missing fullsync batch")]
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
@@ -245,6 +393,12 @@ pub enum SyncError {
 
 impl SyncError {
     pub fn is_recoverable(&self) -> bool {
+        // PeerHandler delegates to its own classification so that transient
+        // peer/network errors retry while structural errors (dead actor,
+        // local storage full) still exit.
+        if let SyncError::PeerHandler(e) = self {
+            return e.is_recoverable();
+        }
         match self {
             SyncError::SnapshotReadError(_, _)
             | SyncError::SnapshotDecodeError(_)
@@ -255,8 +409,6 @@ impl SyncError {
             | SyncError::AccountStoragesSnapshotsDirNotFound
             | SyncError::CodeHashesSnapshotsDirNotFound
             | SyncError::DifferentStateRoots(_, _, _)
-            | SyncError::NoBlockHeaders
-            | SyncError::PeerHandler(_)
             | SyncError::HealingQueueInconsistency(_, _)
             | SyncError::TrieGenerationError(_)
             | SyncError::AccountTempDBDirNotFound(_)
@@ -278,7 +430,10 @@ impl SyncError {
             | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
-            | SyncError::NoBlocks => true,
+            | SyncError::NoBlocks
+            | SyncError::NoBlockHeaders => true,
+            // PeerHandler handled above by delegation
+            SyncError::PeerHandler(_) => unreachable!(),
         }
     }
 }

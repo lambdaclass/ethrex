@@ -6,6 +6,12 @@
 
 .DEFAULT_GOAL := help
 
+# Image metadata baked into the compose-built images (consumed by
+# docker-compose.yaml build args). Mirrors the root Makefile's build-image.
+GIT_SHA    := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+VERSION    := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+
 # ==============================================================================
 # Top-Level Targets
 # ==============================================================================
@@ -237,8 +243,9 @@ integration-test: rm-db-l2 rm-db-l1 # We create an empty .env file simply becaus
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_L2_VALIDIUM=${ETHREX_L2_VALIDIUM} \
+	GIT_SHA=$(GIT_SHA) GIT_BRANCH=$(GIT_BRANCH) VERSION=$(VERSION) \
 	docker compose up --detach --build
-	RUST_LOG=info,ethrex_prover_lib=debug make init-prover-exec & \
+	RUST_LOG=info,ethrex_l2_prover=debug make init-prover-exec & \
 	ETHREX_WATCHER_BRIDGE_ADDRESS=$(shell make bridge-address) \
 	ETHREX_COMMITTER_ON_CHAIN_PROPOSER_ADDRESS=$(shell make on-chain-proposer-address) \
 	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
@@ -251,9 +258,10 @@ integration-test-gpu: rm-db-l2 rm-db-l1
 	docker compose down
 	DOCKER_ETHREX_WORKDIR=${DOCKER_ETHREX_WORKDIR} \
 	ETHREX_BLOCK_PRODUCER_BLOCK_TIME=${ETHREX_BLOCK_PRODUCER_BLOCK_TIME} \
+	GIT_SHA=$(GIT_SHA) GIT_BRANCH=$(GIT_BRANCH) VERSION=$(VERSION) \
 	docker compose up --detach --build
 
-	RUST_LOG=info,ethrex_prover_lib=debug GPU=true make init-prover-sp1 & \
+	RUST_LOG=info,ethrex_l2_prover=debug GPU=true make init-prover-sp1 & \
 	cargo test -p ethrex-test l2:: --release --features l2 -- --nocapture --test-threads=1
 	killall ethrex -s SIGINT # if sent a SIGTERM, SP1 does not shuts down the sp1-gpu container
 

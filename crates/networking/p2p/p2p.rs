@@ -62,7 +62,7 @@
 //! - **eth/68**: Block and transaction exchange
 //! - **snap/1**: State snapshot synchronization
 //!
-pub(crate) mod backend;
+pub mod backend;
 pub mod discovery;
 pub mod discv4;
 pub mod discv5;

@@ -10,6 +10,7 @@ use tracing::{debug, info, warn};
 
 use crate::{
     rpc::{RpcApiContext, RpcHandler},
+    subscription_manager::SubscriptionManagerProtocol,
     types::{
         fork_choice::{
             ForkChoiceResponse, ForkChoiceState, PayloadAttributesV3, PayloadAttributesV4,
@@ -80,8 +81,7 @@ impl RpcHandler for ForkChoiceUpdatedV2 {
             } else if chain_config.is_shanghai_activated(attributes.timestamp) {
                 validate_attributes_v2(attributes, &head_block)?;
             } else {
-                // Behave as a v1
-                validate_attributes_v1(attributes, &head_block)?;
+                validate_attributes_v2_pre_shanghai(attributes, &head_block)?;
             }
             let payload_id = build_payload(attributes, context, &self.fork_choice_state, 2).await?;
             response.set_id(payload_id);
@@ -221,7 +221,7 @@ async fn handle_forkchoice(
         version = %format!("v{}", version),
         head = %format!("{:#x}", fork_choice_state.head_block_hash),
         safe = %format!("{:#x}", fork_choice_state.safe_block_hash),
-        finalized = %format!("v{:#x}", fork_choice_state.finalized_block_hash),
+        finalized = %format!("{:#x}", fork_choice_state.finalized_block_hash),
         "New fork choice update",
     );
 
@@ -304,6 +304,11 @@ async fn handle_forkchoice(
                 }
             };
 
+            // Notify all eth_subscribe("newHeads") subscribers.
+            if let Some(ws) = &context.ws {
+                let _ = ws.subscription_manager.new_head(head.clone());
+            }
+
             Ok((
                 Some(head),
                 ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
@@ -313,9 +318,20 @@ async fn handle_forkchoice(
         }
         Err(forkchoice_error) => {
             let forkchoice_response = match forkchoice_error {
-                InvalidForkChoice::NewHeadAlreadyCanonical => ForkChoiceResponse::from(
-                    PayloadStatus::valid_with_hash(fork_choice_state.head_block_hash),
-                ),
+                InvalidForkChoice::NewHeadAlreadyCanonical => {
+                    // execution-apis PR 786: when head references a VALID ancestor of
+                    // the latest known finalized block, return VALID + null payloadId
+                    // and MUST NOT begin a payload build process. We return `None` for
+                    // the head header so the V3/V4 dispatch short-circuits the
+                    // build_payload call.
+                    context.blockchain.set_synced();
+                    return Ok((
+                        None,
+                        ForkChoiceResponse::from(PayloadStatus::valid_with_hash(
+                            fork_choice_state.head_block_hash,
+                        )),
+                    ));
+                }
                 InvalidForkChoice::Syncing => {
                     // Start sync
                     syncer.sync_to_head(fork_choice_state.head_block_hash);
@@ -329,6 +345,10 @@ async fn handle_forkchoice(
                 InvalidForkChoice::Disconnected(_, _) | InvalidForkChoice::ElementNotFound(_) => {
                     warn!("Invalid fork choice state. Reason: {:?}", forkchoice_error);
                     return Err(RpcErr::InvalidForkChoiceState(forkchoice_error.to_string()));
+                }
+                InvalidForkChoice::TooDeepReorg { .. } => {
+                    warn!("Rejecting fork choice update. Reason: {forkchoice_error}");
+                    return Err(RpcErr::TooDeepReorg(forkchoice_error.to_string()));
                 }
                 InvalidForkChoice::InvalidAncestor(last_valid_hash) => {
                     ForkChoiceResponse::from(PayloadStatus::invalid_with(
@@ -374,7 +394,17 @@ fn validate_attributes_v2(
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
     if attributes.withdrawals.is_none() {
-        return Err(RpcErr::WrongParam("withdrawals".to_string()));
+        return Err(RpcErr::InvalidPayloadAttributes("withdrawals".to_string()));
+    }
+    validate_timestamp(attributes, head_block)
+}
+
+fn validate_attributes_v2_pre_shanghai(
+    attributes: &PayloadAttributesV3,
+    head_block: &BlockHeader,
+) -> Result<(), RpcErr> {
+    if attributes.withdrawals.is_some() {
+        return Err(RpcErr::InvalidPayloadAttributes("withdrawals".to_string()));
     }
     validate_timestamp(attributes, head_block)
 }
@@ -554,4 +584,51 @@ async fn build_payload_v4(
         .initiate_payload_build(payload, payload_id)
         .await;
     Ok(payload_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_attributes_v2, validate_attributes_v2_pre_shanghai};
+    use crate::types::fork_choice::PayloadAttributesV3;
+    use ethrex_common::types::{BlockHeader, Withdrawal};
+
+    #[test]
+    fn forkchoice_updated_v2_returns_invalid_payload_attributes_when_withdrawals_missing() {
+        let attributes = PayloadAttributesV3 {
+            timestamp: 2,
+            withdrawals: None,
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1,
+            ..Default::default()
+        };
+
+        let err = validate_attributes_v2(&attributes, &head_block).unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
+    }
+
+    #[test]
+    fn forkchoice_updated_v2_returns_invalid_payload_attributes_pre_shanghai_with_withdrawals() {
+        let attributes = PayloadAttributesV3 {
+            timestamp: 2,
+            withdrawals: Some(Vec::<Withdrawal>::new()),
+            ..Default::default()
+        };
+        let head_block = BlockHeader {
+            timestamp: 1,
+            ..Default::default()
+        };
+
+        let err = validate_attributes_v2_pre_shanghai(&attributes, &head_block).unwrap_err();
+
+        assert!(matches!(
+            err,
+            crate::utils::RpcErr::InvalidPayloadAttributes(_)
+        ));
+    }
 }

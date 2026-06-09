@@ -84,8 +84,7 @@ pub fn apply_approve(
             let effective_gas_price = vm.env.gas_price;
             let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
                 &ctx.tx.blob_versioned_hashes,
-                vm.env.block_excess_blob_gas,
-                &vm.env.config,
+                vm.env.base_blob_fee_per_gas,
             )?;
             let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
             let sender = ctx.tx.sender;
@@ -139,8 +138,7 @@ pub fn apply_approve(
             let effective_gas_price = vm.env.gas_price;
             let blob_gas_cost = crate::utils::calculate_blob_gas_cost(
                 &ctx.tx.blob_versioned_hashes,
-                vm.env.block_excess_blob_gas,
-                &vm.env.config,
+                vm.env.base_blob_fee_per_gas,
             )?;
             let tx_cost = compute_tx_cost(ctx, effective_gas_price, blob_gas_cost)?;
             let sender = ctx.tx.sender;
@@ -209,7 +207,7 @@ impl OpcodeHandler for OpApproveHandler {
         // allowed_scope == 0 is APPROVE_SCOPE_NONE: no approval may be granted
         // in this frame at all (consistent with execute_default_verify).
         let allowed_scope = current_frame.scope_restriction();
-        let scope_val = scope.as_u64();
+        let scope_val = u64::try_from(scope).unwrap_or(u64::MAX);
         // requested scope must be a non-zero subset of a (necessarily non-zero) allowed_scope
         if scope_val == 0 || scope_val > 3 || (scope_val & u64::from(allowed_scope)) != scope_val {
             return Err(ExceptionalHalt::InvalidOpcode.into());
@@ -256,7 +254,8 @@ impl OpcodeHandler for OpTxParamHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let result = load_tx_param(ctx, param_id.as_u64())?;
+        let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = load_tx_param(ctx, param_id)?;
         vm.current_call_frame.stack.push(result)?;
 
         Ok(OpcodeResult::Continue)
@@ -279,7 +278,8 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(frame_index)?;
         let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         // Out-of-usize offsets are past-the-end: the word stays zero-filled.
@@ -339,7 +339,8 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
             return Ok(OpcodeResult::Continue);
         }
 
-        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(frame_index)?;
         let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let data = &frame.data;
@@ -377,10 +378,12 @@ impl OpcodeHandler for OpFrameParamHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let idx = index_to_usize(frame_index.as_u64())?;
+        let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(frame_index)?;
         let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let result: U256 = match param_id.as_u64() {
+        let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result: U256 = match param_id {
             0x00 => {
                 // target
                 address_to_u256(frame.target.unwrap_or(ctx.tx.sender))
@@ -452,14 +455,17 @@ impl OpcodeHandler for OpSigParamHandler {
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let idx = index_to_usize(signature_index.as_u64())?;
+        let signature_index =
+            u64::try_from(signature_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let idx = index_to_usize(signature_index)?;
         let sig = ctx
             .tx
             .signatures
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
-        let result = match param.as_u64() {
+        let param = u64::try_from(param).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
+        let result = match param {
             0x00 => address_to_u256(sig.signer), // effective signer
             0x01 => U256::from(sig.scheme),
             0x02 => {

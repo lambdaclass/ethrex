@@ -16,7 +16,7 @@ use ethrex_common::H256;
 use ethrex_common::{Address, U256};
 use ethrex_l2_sdk::calldata::encode_calldata;
 use ethrex_rpc::{
-    EthClient,
+    EthClient, SubscriptionManager, SubscriptionManagerProtocol,
     clients::{EthClientError, Overrides},
 };
 use ethrex_storage::Store;
@@ -25,13 +25,17 @@ use ethrex_vm::BlockExecutionResult;
 pub use payload_builder::build_payload;
 use reqwest::Url;
 use serde::Serialize;
-use spawned_concurrency::tasks::{
-    CallResponse, CastResponse, GenServer, GenServerHandle, send_after,
+use spawned_concurrency::{
+    actor,
+    error::ActorError,
+    protocol,
+    tasks::{Actor, ActorRef, ActorStart as _, Backend, Context, Handler, Response, send_after},
 };
 use tracing::{debug, error, info, warn};
 
 use crate::{BlockProducerConfig, SequencerConfig};
 use ethrex_l2_common::sequencer_state::{SequencerState, SequencerStatus};
+
 use std::str::FromStr;
 
 use super::errors::BlockProducerError;
@@ -40,21 +44,11 @@ use ethrex_metrics::metrics;
 #[cfg(feature = "metrics")]
 use ethrex_metrics::{blocks::METRICS_BLOCKS, transactions::METRICS_TX};
 
-#[derive(Clone)]
-pub enum CallMessage {
-    Health,
-}
-
-#[derive(Clone)]
-pub enum InMessage {
-    Produce,
-    Abort,
-}
-
-#[derive(Clone)]
-pub enum OutMessage {
-    Done,
-    Health(BlockProducerHealth),
+#[protocol]
+pub trait BlockProducerProtocol: Send + Sync {
+    fn produce(&self) -> Result<(), ActorError>;
+    fn abort(&self) -> Result<(), ActorError>;
+    fn health(&self) -> Response<BlockProducerHealth>;
 }
 
 pub struct BlockProducer {
@@ -70,6 +64,8 @@ pub struct BlockProducer {
     block_gas_limit: u64,
     eth_client: EthClient,
     router_address: Address,
+    /// Actor handle for sending new block headers to WS subscribers.
+    subscription_manager: Option<ActorRef<SubscriptionManager>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -81,6 +77,7 @@ pub struct BlockProducerHealth {
 }
 
 impl BlockProducer {
+    #[expect(clippy::too_many_arguments)]
     pub fn new(
         config: &BlockProducerConfig,
         l1_rpc_url: Vec<Url>,
@@ -89,6 +86,8 @@ impl BlockProducer {
         blockchain: Arc<Blockchain>,
         sequencer_state: SequencerState,
         router_address: Address,
+        l2_gas_limit: u64,
+        subscription_manager: Option<ActorRef<SubscriptionManager>>,
     ) -> Result<Self, EthClientError> {
         let BlockProducerConfig {
             block_time_ms,
@@ -96,7 +95,6 @@ impl BlockProducer {
             base_fee_vault_address,
             operator_fee_vault_address,
             elasticity_multiplier,
-            block_gas_limit,
         } = config;
 
         let eth_client = EthClient::new_with_multiple_urls(l1_rpc_url)?;
@@ -125,35 +123,11 @@ impl BlockProducer {
             rollup_store,
             // FIXME: Initialize properly to the last privileged nonce in the chain
             privileged_nonces: std::collections::HashMap::new(),
-            block_gas_limit: *block_gas_limit,
+            block_gas_limit: l2_gas_limit,
             eth_client,
             router_address,
+            subscription_manager,
         })
-    }
-
-    pub async fn spawn(
-        store: Store,
-        rollup_store: StoreRollup,
-        blockchain: Arc<Blockchain>,
-        cfg: SequencerConfig,
-        sequencer_state: SequencerState,
-        router_address: Address,
-    ) -> Result<GenServerHandle<BlockProducer>, BlockProducerError> {
-        let mut block_producer = Self::new(
-            &cfg.block_producer,
-            cfg.eth.rpc_url,
-            store,
-            rollup_store,
-            blockchain,
-            sequencer_state,
-            router_address,
-        )?
-        .start_blocking();
-        block_producer
-            .cast(InMessage::Produce)
-            .await
-            .map_err(BlockProducerError::InternalError)?;
-        Ok(block_producer)
     }
 
     pub async fn produce_block(&mut self) -> Result<(), BlockProducerError> {
@@ -222,6 +196,7 @@ impl BlockProducer {
             requests: Vec::new(),
             // Use the block header's gas_used which was set during payload building
             block_gas_used: block.header.gas_used,
+            tx_gas_breakdowns: Vec::new(),
         };
 
         let account_updates_list = self
@@ -232,6 +207,8 @@ impl BlockProducer {
         let transactions_count = block.body.transactions.len();
         let block_number = block.header.number;
         let block_hash = block.hash();
+        // Save the header for newHeads notifications before block is moved into store_block.
+        let block_header = block.header.clone();
         self.store_fee_config_by_block(block.header.number).await?;
         self.blockchain
             .store_block(block, account_updates_list, execution_result)?;
@@ -247,6 +224,11 @@ impl BlockProducer {
 
         // Make the new head be part of the canonical chain
         apply_fork_choice(&self.store, block_hash, block_hash, block_hash).await?;
+
+        // Notify all eth_subscribe("newHeads") subscribers.
+        if let Some(ref manager) = self.subscription_manager {
+            let _ = manager.new_head(block_header);
+        }
 
         metrics!(
             METRICS_BLOCKS.set_block_number(block_number);
@@ -320,52 +302,76 @@ impl BlockProducer {
     }
 }
 
-impl GenServer for BlockProducer {
-    type CallMsg = CallMessage;
-    type CastMsg = InMessage;
-    type OutMsg = OutMessage;
-    type Error = BlockProducerError;
-
-    async fn handle_cast(
-        &mut self,
-        message: Self::CastMsg,
-        handle: &GenServerHandle<Self>,
-    ) -> CastResponse {
-        match message {
-            InMessage::Produce => {
-                if let SequencerStatus::Sequencing = self.sequencer_state.status() {
-                    let _ = self
-                        .produce_block()
-                        .await
-                        .inspect_err(|e| error!("Block Producer Error: {e}"));
-                }
-                send_after(
-                    Duration::from_millis(self.block_time_ms),
-                    handle.clone(),
-                    Self::CastMsg::Produce,
-                );
-                CastResponse::NoReply
-            }
-            InMessage::Abort => {
-                // start_blocking keeps this GenServer alive even if the JoinSet aborts the task.
-                // Returning CastResponse::Stop is how the blocking runner actually shuts down.
-                CastResponse::Stop
-            }
-        }
+#[actor(protocol = BlockProducerProtocol)]
+impl BlockProducer {
+    #[expect(clippy::too_many_arguments)]
+    pub async fn spawn(
+        store: Store,
+        rollup_store: StoreRollup,
+        blockchain: Arc<Blockchain>,
+        cfg: SequencerConfig,
+        sequencer_state: SequencerState,
+        router_address: Address,
+        l2_gas_limit: u64,
+        subscription_manager: Option<ActorRef<SubscriptionManager>>,
+    ) -> Result<ActorRef<BlockProducer>, BlockProducerError> {
+        let block_producer = Self::new(
+            &cfg.block_producer,
+            cfg.eth.rpc_url,
+            store,
+            rollup_store,
+            blockchain,
+            sequencer_state,
+            router_address,
+            l2_gas_limit,
+            subscription_manager,
+        )?;
+        let actor_ref = block_producer.start_with_backend(Backend::Blocking);
+        Ok(actor_ref)
     }
 
-    async fn handle_call(
+    #[started]
+    async fn started(&mut self, ctx: &Context<Self>) {
+        let _ = ctx
+            .send(block_producer_protocol::Produce)
+            .inspect_err(|e| error!("Failed to send initial Produce: {e}"));
+    }
+
+    #[send_handler]
+    async fn handle_produce(
         &mut self,
-        message: Self::CallMsg,
-        _handle: &GenServerHandle<Self>,
-    ) -> CallResponse<Self> {
-        match message {
-            CallMessage::Health => CallResponse::Reply(OutMessage::Health(BlockProducerHealth {
-                sequencer_state: format!("{:?}", self.sequencer_state.status()),
-                block_time_ms: self.block_time_ms,
-                coinbase_address: self.coinbase_address,
-                elasticity_multiplier: self.elasticity_multiplier,
-            })),
+        _msg: block_producer_protocol::Produce,
+        ctx: &Context<Self>,
+    ) {
+        if let SequencerStatus::Sequencing = self.sequencer_state.status() {
+            let _ = self
+                .produce_block()
+                .await
+                .inspect_err(|e| error!("Block Producer Error: {e}"));
+        }
+        send_after(
+            Duration::from_millis(self.block_time_ms),
+            ctx.clone(),
+            block_producer_protocol::Produce,
+        );
+    }
+
+    #[send_handler]
+    async fn handle_abort(&mut self, _msg: block_producer_protocol::Abort, ctx: &Context<Self>) {
+        ctx.stop();
+    }
+
+    #[request_handler]
+    async fn handle_health(
+        &mut self,
+        _msg: block_producer_protocol::Health,
+        _ctx: &Context<Self>,
+    ) -> BlockProducerHealth {
+        BlockProducerHealth {
+            sequencer_state: format!("{:?}", self.sequencer_state.status()),
+            block_time_ms: self.block_time_ms,
+            coinbase_address: self.coinbase_address,
+            elasticity_multiplier: self.elasticity_multiplier,
         }
     }
 }

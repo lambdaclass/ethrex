@@ -7,7 +7,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
-use ethrex_common::{U256, types::Fork};
+use ethrex_common::{U256, types::Fork, types::tx_fields::AccessList};
 use malachite::base::num::logic::traits::*;
 use malachite::{Natural, base::num::basic::traits::Zero as _};
 
@@ -182,6 +182,22 @@ pub const INIT_CODE_WORD_COST: u64 = 2;
 pub const CODE_DEPOSIT_COST: u64 = 200;
 pub const CREATE_BASE_COST: u64 = 32000;
 
+// EIP-8037: Multidimensional gas for state creation (Amsterdam only)
+pub const STATE_BYTES_PER_NEW_ACCOUNT: u64 = 120;
+pub const STATE_BYTES_PER_STORAGE_SET: u64 = 64;
+pub const STATE_BYTES_PER_AUTH_BASE: u64 = 23; // 23-byte delegation indicator slot
+pub const STATE_BYTES_PER_AUTH_TOTAL: u64 = 143; // 120 account + 23 auth-specific
+
+/// EIP-8037 cost_per_state_byte. Pinned to the fixed value 1530.
+/// The dynamic formula derived from the block gas limit
+/// is not active.
+pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
+    1530
+}
+
+pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam
+pub const CODE_DEPOSIT_REGULAR_COST_PER_WORD: u64 = 6; // keccak hash cost per 32-byte word
+
 // Calldata costs
 pub const CALLDATA_COST_ZERO_BYTE: u64 = 4;
 pub const CALLDATA_COST_NON_ZERO_BYTE: u64 = 16;
@@ -206,6 +222,18 @@ pub const P256_VERIFY_COST: u64 = 6900;
 
 // Floor cost per token, specified in https://eips.ethereum.org/EIPS/eip-7623
 pub const TOTAL_COST_FLOOR_PER_TOKEN: u64 = 10;
+// EIP-7976 (Amsterdam+): raised floor
+pub const TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM: u64 = 16;
+
+/// Returns the floor cost per token for the given fork.
+/// EIP-7976 raises this from 10 (EIP-7623) to 16 starting at Amsterdam.
+pub fn total_cost_floor_per_token(fork: Fork) -> u64 {
+    if fork >= Fork::Amsterdam {
+        TOTAL_COST_FLOOR_PER_TOKEN_AMSTERDAM
+    } else {
+        TOTAL_COST_FLOOR_PER_TOKEN
+    }
+}
 
 pub const SHA2_256_STATIC_COST: u64 = 60;
 pub const SHA2_256_DYNAMIC_BASE: u64 = 12;
@@ -430,6 +458,7 @@ pub fn sstore(
     current_value: U256,
     new_value: U256,
     storage_slot_was_cold: bool,
+    fork: Fork,
 ) -> Result<u64, VMError> {
     let static_gas = SSTORE_STATIC;
 
@@ -437,7 +466,13 @@ pub fn sstore(
         SSTORE_DEFAULT_DYNAMIC
     } else if current_value == original_value {
         if original_value.is_zero() {
-            SSTORE_STORAGE_CREATION
+            // For Amsterdam+, new slot creation uses MODIFICATION cost in regular gas;
+            // the state cost (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte) is charged separately.
+            if fork >= Fork::Amsterdam {
+                SSTORE_STORAGE_MODIFICATION
+            } else {
+                SSTORE_STORAGE_CREATION
+            }
         } else {
             SSTORE_STORAGE_MODIFICATION
         }
@@ -545,10 +580,16 @@ fn compute_gas_create(
         0
     };
 
+    let create_base_cost = if fork >= Fork::Amsterdam {
+        REGULAR_GAS_CREATE
+    } else {
+        CREATE_BASE_COST
+    };
+
     let gas_create_cost = memory_expansion_cost
         .checked_add(init_code_cost)
         .ok_or(OutOfGas)?
-        .checked_add(CREATE_BASE_COST)
+        .checked_add(create_base_cost)
         .ok_or(OutOfGas)?
         .checked_add(hash_cost)
         .ok_or(OutOfGas)?;
@@ -574,6 +615,7 @@ pub fn selfdestruct(
     address_was_cold: bool,
     account_is_empty: bool,
     balance_to_transfer: U256,
+    fork: Fork,
 ) -> Result<u64, VMError> {
     let mut dynamic_cost = if address_was_cold {
         COLD_ADDRESS_ACCESS_COST
@@ -581,8 +623,9 @@ pub fn selfdestruct(
         0
     };
 
-    // If a positive balance is sent to an empty account, the dynamic gas is 25000
-    if account_is_empty && balance_to_transfer > U256::zero() {
+    // If a positive balance is sent to an empty account, the dynamic gas is 25000.
+    // For Amsterdam+, this cost is moved to state gas (charged separately).
+    if account_is_empty && balance_to_transfer > U256::zero() && fork < Fork::Amsterdam {
         dynamic_cost = dynamic_cost
             .checked_add(SELFDESTRUCT_DYNAMIC)
             .ok_or(OutOfGas)?;
@@ -595,20 +638,43 @@ pub fn selfdestruct(
 
 pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
     // This cost applies both for call and create
-    // 4 gas for each zero byte in the transaction data 16 gas for each non-zero byte in the transaction.
-    let mut calldata_cost: u64 = 0;
-    for byte in calldata {
-        calldata_cost = if *byte != 0 {
-            calldata_cost
-                .checked_add(CALLDATA_COST_NON_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        } else {
-            calldata_cost
-                .checked_add(CALLDATA_COST_ZERO_BYTE)
-                .ok_or(OutOfGas)?
-        }
+    // 4 gas for each zero byte in the transaction data, 16 gas for each non-zero byte.
+    // Counting non-zero bytes in a single pass autovectorizes; the previous per-byte
+    // branch + `checked_add` did not. Byte-identical to the loop (and to the same
+    // overflow → OutOfGas behavior), since:
+    //   non_zero * 16 + zero * 4  ==  sum over bytes of (16 if non-zero else 4).
+    let len = u64::try_from(calldata.len()).map_err(|_| InternalError::TypeConversion)?;
+    let non_zero_bytes = u64::try_from(calldata.iter().filter(|&&byte| byte != 0).count())
+        .map_err(|_| InternalError::TypeConversion)?;
+    // non_zero_bytes <= len, so this never underflows.
+    let zero_bytes = len.saturating_sub(non_zero_bytes);
+
+    let non_zero_cost = non_zero_bytes
+        .checked_mul(CALLDATA_COST_NON_ZERO_BYTE)
+        .ok_or(OutOfGas)?;
+    let zero_cost = zero_bytes
+        .checked_mul(CALLDATA_COST_ZERO_BYTE)
+        .ok_or(OutOfGas)?;
+
+    non_zero_cost.checked_add(zero_cost).ok_or(OutOfGas.into())
+}
+
+/// Returns the total byte-size of an access list:
+/// 20 bytes per address entry + 32 bytes per storage key.
+pub fn access_list_bytes(access_list: &AccessList) -> u64 {
+    let mut bytes: u64 = 0;
+    for (_addr, keys) in access_list {
+        bytes = bytes.saturating_add(20);
+        let keys_len = u64::try_from(keys.len()).unwrap_or(u64::MAX);
+        bytes = bytes.saturating_add(32_u64.saturating_mul(keys_len));
     }
-    Ok(calldata_cost)
+    bytes
+}
+
+/// EIP-7981: floor_tokens_in_access_list = access_list_bytes * STANDARD_TOKEN_COST (4).
+/// Used in the floor-gas computation for Amsterdam+.
+pub fn floor_tokens_in_access_list(access_list: &AccessList) -> u64 {
+    access_list_bytes(access_list).saturating_mul(STANDARD_TOKEN_COST)
 }
 
 fn address_access_cost(
@@ -687,6 +753,7 @@ pub fn call(
     value_to_transfer: U256,
     gas_from_stack: U256,
     gas_left: u64,
+    fork: Fork,
 ) -> Result<(u64, u64), VMError> {
     let memory_expansion_cost = memory::expansion_cost(new_memory_size, current_memory_size)?;
 
@@ -702,11 +769,13 @@ pub fn call(
         0
     };
 
-    let value_to_empty_account = if address_is_empty && !value_to_transfer.is_zero() {
-        CALL_TO_EMPTY_ACCOUNT
-    } else {
-        0
-    };
+    // For Amsterdam+, the new-account cost is moved to state gas (charged separately).
+    let value_to_empty_account =
+        if address_is_empty && !value_to_transfer.is_zero() && fork < Fork::Amsterdam {
+            CALL_TO_EMPTY_ACCOUNT
+        } else {
+            0
+        };
 
     let call_gas_costs = memory_expansion_cost
         .checked_add(address_access_cost)

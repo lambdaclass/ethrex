@@ -13,15 +13,13 @@
 
 use crate::{
     call_frame::CallFrame,
-    constants::{FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
+    constants::{AMSTERDAM_INIT_CODE_MAX_SIZE, FAIL, INIT_CODE_MAX_SIZE, SUCCESS},
     errors::{ContextResult, ExceptionalHalt, InternalError, OpcodeResult, TxResult, VMError},
     gas_cost,
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
-    utils::{
-        address_to_word, create_eth_transfer_log, create_selfdestruct_log, word_to_address, *,
-    },
+    utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
@@ -50,27 +48,39 @@ impl OpcodeHandler for OpCallHandler {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, callee)?;
-
-        // Process gas usage.
-        let (new_memory_size, address_is_empty, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, callee)?;
-
-        // Record addresses for BAL per EIP-7928.
-        // gas_remaining has NOT been reduced by eip7702_gas_consumed yet,
-        // matching the EELS reference where BAL recording sees pre-eip7702 gas.
         let value_cost = if !value.is_zero() {
             gas_cost::CALL_POSITIVE_VALUE
         } else {
             0
         };
-        let create_cost = if address_is_empty && !value.is_zero() {
+        let (new_memory_size, address_was_cold, static_cost) = vm.check_call_static_gas(
+            args_offset,
+            args_len,
+            return_offset,
+            return_len,
+            callee,
+            value_cost,
+        )?;
+
+        vm.substate.add_accessed_address(callee);
+        // `address_is_empty` only feeds gates that also require `value != 0`,
+        // so skip the read entirely when value is zero (matches EELS' gating
+        // of `is_account_alive` on `value != 0`).
+        let address_is_empty = if value.is_zero() {
+            false
+        } else {
+            vm.db.get_account(callee)?.is_empty()
+        };
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
+            eip7702_get_code(vm.db, &mut vm.substate, callee)?;
+        let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
             0
         };
+
+        // BAL touches the target before the delegation gas check, so a failed
+        // delegate-access check still leaves the target recorded.
         vm.record_bal_call_touch(
             callee,
             code_address,
@@ -83,11 +93,45 @@ impl OpcodeHandler for OpCallHandler {
             create_cost,
         );
 
+        // `create_cost` is EIP-8037 state gas (charged via `increase_state_gas`
+        // below) and must not appear in the regular-gas check.
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
+
+        let fork = vm.env.config.fork;
+
         // Compute gas_left after eip7702 consumption (without modifying gas_remaining yet).
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
             .checked_sub(eip7702_gas_consumed)
             .ok_or(ExceptionalHalt::OutOfGas)?;
+
+        // EIP-8037 (Amsterdam+): account for state gas spill in child gas computation,
+        // but charge state gas AFTER regular gas per EIPs#11421.
+        // Regular gas OOG must not consume state gas that would inflate the parent's
+        // reservoir on frame failure.
+        let needs_state_gas = fork >= Fork::Amsterdam && address_is_empty;
+        let gas_left = if needs_state_gas {
+            let state_gas_new_account = vm.state_gas_new_account;
+            let from_reservoir = vm.state_gas_reservoir.min(state_gas_new_account);
+            // Safe: from_reservoir = min(reservoir, state_gas_new_account) <= state_gas_new_account
+            #[expect(
+                clippy::arithmetic_side_effects,
+                reason = "from_reservoir <= state_gas_new_account"
+            )]
+            let spill = state_gas_new_account - from_reservoir;
+            gas_left
+                .checked_sub(spill)
+                .ok_or(ExceptionalHalt::OutOfGas)?
+        } else {
+            gas_left
+        };
+
         let (gas_cost, gas_limit) = gas_cost::call(
             new_memory_size,
             vm.current_call_frame.memory.len(),
@@ -96,12 +140,30 @@ impl OpcodeHandler for OpCallHandler {
             value,
             gas,
             gas_left,
+            fork,
         )?;
+
+        // Charge regular gas first (before state gas, per EIPs#11421).
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
                 .checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+
+        // Then charge state gas for new account creation.
+        if needs_state_gas {
+            vm.increase_state_gas(vm.state_gas_new_account)?;
+        }
+
+        // Struct-log: record the geth-compatible CALL gasCost.
+        // Geth's gasCost for CALL family = intrinsic_overhead + callGasTemp (forwarded gas
+        // WITHOUT stipend). LEVM's `gas_cost` already equals `call_gas_costs + gas_forwarded`,
+        // i.e. `intrinsic + callGasTemp`. Stipend is added later inside the child frame, after
+        // the tracer fires, so it is NOT part of the reported gasCost.
+        if vm.opcode_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
@@ -155,20 +217,25 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address)?;
-
-        // Process gas usage.
-        let (new_memory_size, _, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
-
-        // Record addresses for BAL per EIP-7928.
         let value_cost = if !value.is_zero() {
             gas_cost::CALLCODE_POSITIVE_VALUE
         } else {
             0
         };
+        let (new_memory_size, address_was_cold, static_cost) = vm.check_call_static_gas(
+            args_offset,
+            args_len,
+            return_offset,
+            return_len,
+            address,
+            value_cost,
+        )?;
+
+        vm.substate.add_accessed_address(address);
+        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
+            eip7702_get_code(vm.db, &mut vm.substate, address)?;
+
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -180,6 +247,14 @@ impl OpcodeHandler for OpCallCodeHandler {
             value_cost,
             0,
         );
+
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -198,6 +273,12 @@ impl OpcodeHandler for OpCallCodeHandler {
                 .checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+
+        // Struct-log: geth-compatible CALLCODE gasCost (intrinsic + forwarded, no stipend).
+        if vm.opcode_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
@@ -250,15 +331,14 @@ impl OpcodeHandler for OpDelegateCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
+        let (new_memory_size, address_was_cold, static_cost) =
+            vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
+
+        vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Process gas usage.
-        let (new_memory_size, _, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
-
-        // Record addresses for BAL per EIP-7928.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -270,6 +350,14 @@ impl OpcodeHandler for OpDelegateCallHandler {
             0,
             0,
         );
+
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -288,10 +376,16 @@ impl OpcodeHandler for OpDelegateCallHandler {
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
 
+        // Struct-log: geth-compatible DELEGATECALL gasCost (intrinsic + forwarded).
+        if vm.opcode_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
+
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
         //   - When there is return data, preallocate it because it won't be possible while the next
-        //     call frame is active.
+        //     call frame is available.
         vm.current_call_frame.memory.resize(new_memory_size)?;
 
         // Trace CALL operation.
@@ -341,15 +435,14 @@ impl OpcodeHandler for OpStaticCallHandler {
         let (args_len, args_offset) = size_offset_to_usize(args_len, args_offset)?;
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
-        // Check EIP-7702 delegation (gas is NOT charged yet, deferred to after BAL recording).
+        let (new_memory_size, address_was_cold, static_cost) =
+            vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
+
+        vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
             eip7702_get_code(vm.db, &mut vm.substate, address)?;
 
-        // Process gas usage.
-        let (new_memory_size, _, address_was_cold) =
-            vm.get_call_gas_params(args_offset, args_len, return_offset, return_len, address)?;
-
-        // Record addresses for BAL per EIP-7928.
+        // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
             address,
             code_address,
@@ -361,6 +454,14 @@ impl OpcodeHandler for OpStaticCallHandler {
             0,
             0,
         );
+
+        if is_delegation_7702 {
+            vm.current_call_frame.check_gas(
+                static_cost
+                    .checked_add(eip7702_gas_consumed)
+                    .ok_or(ExceptionalHalt::OutOfGas)?,
+            )?;
+        }
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -378,6 +479,12 @@ impl OpcodeHandler for OpStaticCallHandler {
                 .checked_add(eip7702_gas_consumed)
                 .ok_or(ExceptionalHalt::OutOfGas)?,
         )?;
+
+        // Struct-log: geth-compatible STATICCALL gasCost (intrinsic + forwarded).
+        if vm.opcode_tracer.active {
+            let geth_cost = gas_cost.saturating_add(eip7702_gas_consumed);
+            vm.opcode_tracer.last_opcode_gas_cost = Some(geth_cost);
+        }
 
         // Resize memory: this is necessary for multiple reasons:
         //   - Make sure the memory is expanded.
@@ -439,16 +546,27 @@ pub struct OpCreateHandler;
 impl OpcodeHandler for OpCreateHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // EIP-8037 (Amsterdam+): is_static check before stack pops and gas charging,
+        // consistent with SSTORE, CALL, and SELFDESTRUCT.
+        if vm.env.config.fork >= Fork::Amsterdam && vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
         let [value_in_wei, code_offset, code_len] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::create(
-                calculate_memory_size(code_offset, code_len)?,
-                vm.current_call_frame.memory.len(),
-                code_len,
-                vm.env.config.fork,
-            )?)?;
+        let create_gas = gas_cost::create(
+            calculate_memory_size(code_offset, code_len)?,
+            vm.current_call_frame.memory.len(),
+            code_len,
+            vm.env.config.fork,
+        )?;
+        vm.current_call_frame.increase_consumed_gas(create_gas)?;
+
+        // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
+        if vm.opcode_tracer.active {
+            vm.opcode_tracer.last_opcode_gas_cost = Some(create_gas);
+        }
 
         vm.generic_create(value_in_wei, code_offset, code_len, None)
     }
@@ -458,16 +576,27 @@ pub struct OpCreate2Handler;
 impl OpcodeHandler for OpCreate2Handler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // EIP-8037 (Amsterdam+): is_static check before stack pops and gas charging,
+        // consistent with SSTORE, CALL, and SELFDESTRUCT.
+        if vm.env.config.fork >= Fork::Amsterdam && vm.current_call_frame.is_static {
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
+
         let [value_in_wei, code_offset, code_len, salt] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
-        vm.current_call_frame
-            .increase_consumed_gas(gas_cost::create_2(
-                calculate_memory_size(code_offset, code_len)?,
-                vm.current_call_frame.memory.len(),
-                code_len,
-                vm.env.config.fork,
-            )?)?;
+        let create2_gas = gas_cost::create_2(
+            calculate_memory_size(code_offset, code_len)?,
+            vm.current_call_frame.memory.len(),
+            code_len,
+            vm.env.config.fork,
+        )?;
+        vm.current_call_frame.increase_consumed_gas(create2_gas)?;
+
+        // Struct-log: record the opcode-level gas before generic_create charges forwarded gas.
+        if vm.opcode_tracer.active {
+            vm.opcode_tracer.last_opcode_gas_cost = Some(create2_gas);
+        }
 
         vm.generic_create(value_in_wei, code_offset, code_len, Some(salt))
     }
@@ -515,19 +644,26 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 }
             }
 
-            // Phase 2: Charge the full cost (base + NEW_ACCOUNT if applicable)
+            // Phase 2: Charge the full cost (base only for Amsterdam+; NEW_ACCOUNT moved to state gas)
             vm.current_call_frame
                 .increase_consumed_gas(gas_cost::selfdestruct(
                     target_account_is_cold,
                     target_account_is_empty,
                     balance,
+                    vm.env.config.fork,
                 )?)?;
+
+            // EIP-8037 (Amsterdam+): charge state gas for new account creation via SELFDESTRUCT
+            if target_account_is_empty && balance > U256::zero() {
+                vm.increase_state_gas(vm.state_gas_new_account)?;
+            }
         } else {
             vm.current_call_frame
                 .increase_consumed_gas(gas_cost::selfdestruct(
                     target_account_is_cold,
                     target_account_is_empty,
                     balance,
+                    vm.env.config.fork,
                 )?)?;
 
             // Record beneficiary and destroyed account for BAL per EIP-7928
@@ -570,7 +706,7 @@ impl OpcodeHandler for OpSelfDestructHandler {
                 } else if vm.substate.is_account_created(&to) {
                     // Selfdestruct-to-self: only emit log when created in same tx (burns ETH)
                     // Pre-existing contracts selfdestructing to self emit NO log
-                    let log = create_selfdestruct_log(to, balance);
+                    let log = create_burn_log(to, balance);
                     vm.substate.add_log(log);
                 }
             }
@@ -584,16 +720,6 @@ impl OpcodeHandler for OpSelfDestructHandler {
             }
 
             vm.substate.add_selfdestruct(to);
-
-            // EIP-7708: Emit appropriate log for ETH movement
-            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
-                let log = if to != beneficiary {
-                    create_eth_transfer_log(to, beneficiary, balance)
-                } else {
-                    create_selfdestruct_log(to, balance)
-                };
-                vm.substate.add_log(log);
-            }
         }
 
         vm.tracer.enter(
@@ -640,15 +766,26 @@ impl<'a> VM<'a> {
         code_size_in_memory: usize,
         salt: Option<U256>,
     ) -> Result<OpcodeResult, VMError> {
-        // Validations that can cause out of gas.
-        // 1. [EIP-3860] - Cant exceed init code max size
-        if code_size_in_memory > INIT_CODE_MAX_SIZE && self.env.config.fork >= Fork::Shanghai {
+        // [EIP-3860] / [EIP-7954] - Cant exceed init code max size
+        let init_code_max = if self.env.config.fork >= Fork::Amsterdam {
+            AMSTERDAM_INIT_CODE_MAX_SIZE
+        } else {
+            INIT_CODE_MAX_SIZE
+        };
+        if code_size_in_memory > init_code_max && self.env.config.fork >= Fork::Shanghai {
             return Err(ExceptionalHalt::OutOfGas.into());
         }
 
+        // EIP-8037 (Amsterdam+): charge state gas for new account creation AFTER
+        // initcode size validation, so oversized CREATE doesn't burn state gas.
+        if self.env.config.fork >= Fork::Amsterdam {
+            self.increase_state_gas(self.state_gas_new_account)?;
+        }
+
         let current_call_frame = &mut self.current_call_frame;
-        // 2. CREATE can't be called in a static context
-        if current_call_frame.is_static {
+
+        // Pre-Amsterdam: is_static check happens here, before gas reservation
+        if self.env.config.fork < Fork::Amsterdam && current_call_frame.is_static {
             return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
         }
 
@@ -704,6 +841,12 @@ impl<'a> VM<'a> {
         ];
         for (condition, reason) in checks {
             if condition {
+                // EIP-8037: no account created on early failure — refund the CREATE
+                // account state gas charged at the top of this function, per EELS
+                // `credit_state_gas_refund(evm, create_account_state_gas)`.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                }
                 self.early_revert_message_call(gas_limit, reason.to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -723,6 +866,11 @@ impl<'a> VM<'a> {
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
         if new_account.create_would_collide() {
+            // Per EELS: on collision, regular gas stays consumed (not returned)
+            // but the CREATE account state gas IS refunded — no account was created.
+            if self.env.config.fork >= Fork::Amsterdam {
+                self.credit_state_gas_refund(self.state_gas_new_account)?;
+            }
             self.current_call_frame.stack.push(FAIL)?;
             self.tracer
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
@@ -757,6 +905,10 @@ impl<'a> VM<'a> {
         );
         // Store BAL checkpoint in the call frame's backup for restoration on revert
         new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+        // Snapshot AFTER the CREATE account state-gas charge has landed in
+        // `vm.state_gas_used`, so the revert restore in `handle_return_create`
+        // keeps the parent's pre-CREATE intrinsic without re-refunding it.
+        new_call_frame.state_gas_used_at_entry = self.state_gas_used;
 
         self.add_callframe(new_call_frame);
 
@@ -775,6 +927,39 @@ impl<'a> VM<'a> {
         }
 
         Ok(OpcodeResult::Continue)
+    }
+
+    /// Static gas prelude for CALL/CALLCODE/DELEGATECALL/STATICCALL: compute
+    /// `(new_memory_size, address_was_cold, static_cost)` and `check_gas` it
+    /// before any state read, mirroring EELS' `# check static gas before state
+    /// access`. `value_cost` is the per-opcode positive-value cost (0 when
+    /// none).
+    fn check_call_static_gas(
+        &mut self,
+        args_offset: usize,
+        args_len: usize,
+        return_offset: usize,
+        return_len: usize,
+        address: Address,
+        value_cost: u64,
+    ) -> Result<(usize, bool, u64), VMError> {
+        let new_memory_size = calculate_memory_size(args_offset, args_len)?
+            .max(calculate_memory_size(return_offset, return_len)?);
+        let address_was_cold = !self.substate.is_address_accessed(&address);
+        let memory_expansion_cost =
+            memory::expansion_cost(new_memory_size, self.current_call_frame.memory.len())?;
+        let access_gas_cost = if address_was_cold {
+            gas_cost::COLD_ADDRESS_ACCESS_COST
+        } else {
+            gas_cost::WARM_ADDRESS_ACCESS_COST
+        };
+        let static_cost = memory_expansion_cost
+            .checked_add(access_gas_cost)
+            .ok_or(ExceptionalHalt::OutOfGas)?
+            .checked_add(value_cost)
+            .ok_or(ExceptionalHalt::OutOfGas)?;
+        self.current_call_frame.check_gas(static_cost)?;
+        Ok((new_memory_size, address_was_cold, static_cost))
     }
 
     /// Record BAL touched addresses for CALL-family opcodes per EIP-7928.
@@ -892,6 +1077,7 @@ impl<'a> VM<'a> {
                 &mut gas_remaining,
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
+                self.crypto,
             )?;
 
             let call_frame = &mut self.current_call_frame;
@@ -970,6 +1156,7 @@ impl<'a> VM<'a> {
             );
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
+            new_call_frame.state_gas_used_at_entry = self.state_gas_used;
 
             self.add_callframe(new_call_frame);
 
@@ -997,12 +1184,26 @@ impl<'a> VM<'a> {
     }
 
     /// Pop backup from stack and restore substate and cache if transaction reverted.
-    pub fn handle_state_backup(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
+    ///
+    /// `consume_backup` lets the caller move the frame's backup out (no clone) on the
+    /// revert path when nothing reads it afterward; see [`VM::restore_cache_state_consuming`].
+    /// The top-level call passes `true` for normal L1 execution and `false` when a
+    /// `BackupHook` is installed (L2 / stateless), since that hook reads the backup in
+    /// `finalize_execution` (gated on `VM::preserve_top_level_backup`).
+    pub fn handle_state_backup(
+        &mut self,
+        ctx_result: &ContextResult,
+        consume_backup: bool,
+    ) -> Result<(), VMError> {
         if ctx_result.is_success() {
             self.substate.commit_backup();
         } else {
             self.substate.revert_backup();
-            self.restore_cache_state()?;
+            if consume_backup {
+                self.restore_cache_state_consuming()?;
+            } else {
+                self.restore_cache_state()?;
+            }
         }
 
         Ok(())
@@ -1012,7 +1213,9 @@ impl<'a> VM<'a> {
     ///
     /// Returns the pc increment.
     pub fn handle_return(&mut self, ctx_result: &ContextResult) -> Result<(), VMError> {
-        self.handle_state_backup(ctx_result)?;
+        // The frame is popped immediately below and its backup is not read again on
+        // the revert path, so move it out instead of cloning.
+        self.handle_state_backup(ctx_result, true)?;
         let executed_call_frame = self.pop_call_frame()?;
 
         // Here happens the interaction between child (executed) and parent (caller) callframe.
@@ -1036,10 +1239,17 @@ impl<'a> VM<'a> {
             ret_offset,
             ret_size,
             memory: old_callframe_memory,
+            state_gas_used_at_entry,
+            call_frame_backup,
+            stack,
             ..
         } = executed_call_frame;
 
+        #[cfg(not(target_arch = "riscv64"))]
         old_callframe_memory.clean_from_base();
+
+        #[cfg(target_arch = "riscv64")]
+        old_callframe_memory.truncate_to_base();
 
         let parent_call_frame = &mut self.current_call_frame;
 
@@ -1071,16 +1281,20 @@ impl<'a> VM<'a> {
         match &ctx_result.result {
             TxResult::Success => {
                 self.current_call_frame.stack.push(SUCCESS)?;
-                self.merge_call_frame_backup_with_parent(&executed_call_frame.call_frame_backup)?;
+                self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                // EIP-8037: on success, child's state_gas_used is already
+                // accumulated into the VM-level field (signed sum handles refunds).
+                // No pending flush needed — credits were applied inline.
             }
             TxResult::Revert(_) => {
+                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };
 
         self.tracer.exit_context(ctx_result, false)?;
 
-        let mut stack = executed_call_frame.stack;
+        let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
 
@@ -1098,18 +1312,23 @@ impl<'a> VM<'a> {
             to,
             call_frame_backup,
             memory: old_callframe_memory,
+            state_gas_used_at_entry,
+            stack,
             ..
         } = executed_call_frame;
 
+        #[cfg(not(target_arch = "riscv64"))]
         old_callframe_memory.clean_from_base();
 
-        let parent_call_frame = &mut self.current_call_frame;
+        #[cfg(target_arch = "riscv64")]
+        old_callframe_memory.truncate_to_base();
 
         // Return unused gas
         let unused_gas = gas_limit
             .checked_sub(ctx_result.gas_used)
             .ok_or(InternalError::Underflow)?;
-        parent_call_frame.gas_remaining = parent_call_frame
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
             .gas_remaining
             .checked_add(unused_gas as i64)
             .ok_or(InternalError::Overflow)?;
@@ -1117,48 +1336,38 @@ impl<'a> VM<'a> {
         // What to do, depending on TxResult
         match ctx_result.result.clone() {
             TxResult::Success => {
-                parent_call_frame.stack.push(address_to_word(to))?;
+                self.current_call_frame.stack.push(address_to_word(to))?;
                 self.merge_call_frame_backup_with_parent(&call_frame_backup)?;
+                // EIP-8037: on success, child's state_gas_used is already
+                // accumulated into the VM-level field (signed sum handles refunds).
+                // No pending flush needed — credits were applied inline.
             }
             TxResult::Revert(err) => {
-                // If revert we have to copy the return_data
-                if err.is_revert_opcode() {
-                    parent_call_frame.sub_return_data = ctx_result.output.clone();
+                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
+
+                // EIP-8037: CREATE's account state gas was charged in the parent before
+                // the child frame began; no account was created, so refund it per EELS
+                // `credit_state_gas_refund(evm, create_account_state_gas)`.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    self.credit_state_gas_refund(self.state_gas_new_account)?;
                 }
 
-                parent_call_frame.stack.push(FAIL)?;
+                // Return data is only propagated on REVERT opcode, not on ExceptionalHalt.
+                if err.is_revert_opcode() {
+                    self.current_call_frame.sub_return_data = ctx_result.output.clone();
+                }
+
+                self.current_call_frame.stack.push(FAIL)?;
             }
         };
 
         self.tracer.exit_context(ctx_result, false)?;
 
-        let mut stack = executed_call_frame.stack;
+        let mut stack = stack;
         stack.clear();
         self.stack_pool.push(stack);
 
         Ok(())
-    }
-
-    /// Obtains the values needed for CALL, CALLCODE, DELEGATECALL and STATICCALL opcodes to calculate total gas cost
-    fn get_call_gas_params(
-        &mut self,
-        args_offset: usize,
-        args_size: usize,
-        return_data_offset: usize,
-        return_data_size: usize,
-        address: Address,
-    ) -> Result<(usize, bool, bool), VMError> {
-        // Creation of previously empty accounts and cold addresses have higher gas cost
-        let address_was_cold = self.substate.add_accessed_address(address);
-        let account_is_empty = self.db.get_account(address)?.is_empty();
-
-        // Calculated here for memory expansion gas cost
-        let new_memory_size_for_args = calculate_memory_size(args_offset, args_size)?;
-        let new_memory_size_for_return_data =
-            calculate_memory_size(return_data_offset, return_data_size)?;
-        let new_memory_size = new_memory_size_for_args.max(new_memory_size_for_return_data);
-
-        Ok((new_memory_size, account_is_empty, address_was_cold))
     }
 
     fn get_calldata(&mut self, offset: usize, size: usize) -> Result<Bytes, VMError> {

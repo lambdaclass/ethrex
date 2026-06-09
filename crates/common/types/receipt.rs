@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use ethereum_types::{Address, Bloom, BloomInput, H256};
-use ethrex_crypto::keccak::keccak_hash;
+use ethrex_crypto::Crypto;
 use ethrex_rlp::{
     decode::{RLPDecode, get_rlp_bytes_item_payload, is_encoded_as_bytes},
     encode::RLPEncode,
@@ -172,7 +172,14 @@ impl Receipt {
         })
     }
 
-    pub fn encode_inner_with_bloom(&self) -> Vec<u8> {
+    pub fn encode_inner_with_bloom(&self, crypto: &dyn Crypto) -> Vec<u8> {
+        self.encode_inner_with_precomputed_bloom(bloom_from_logs(&self.logs, crypto))
+    }
+
+    /// Like [`Self::encode_inner_with_bloom`] but takes an already-computed bloom, so
+    /// callers that also need the bloom for other purposes (e.g. the aggregate header
+    /// `logs_bloom`) don't recompute it.
+    pub fn encode_inner_with_precomputed_bloom(&self, bloom: Bloom) -> Vec<u8> {
         // Bloom is already 256 bytes, so we preallocate at least that much plus some,
         // to avoid multiple small allocations.
         let mut encode_buf = Vec::with_capacity(512);
@@ -194,7 +201,6 @@ impl Receipt {
                 )
                 .finish();
         } else {
-            let bloom = bloom_from_logs(&self.logs);
             Encoder::new(&mut encode_buf)
                 .encode_field(&self.succeeded)
                 .encode_field(&self.cumulative_gas_used)
@@ -286,13 +292,13 @@ impl Receipt {
     }
 }
 
-pub fn bloom_from_logs(logs: &[Log]) -> Bloom {
+pub fn bloom_from_logs(logs: &[Log], crypto: &dyn Crypto) -> Bloom {
     let mut bloom = Bloom::zero();
     for log in logs {
-        let address_hash = keccak_hash(log.address);
+        let address_hash = crypto.keccak256(log.address.as_bytes());
         bloom.accrue(BloomInput::Hash(&address_hash));
         for topic in log.topics.iter() {
-            let topic_hash = keccak_hash(*topic);
+            let topic_hash = crypto.keccak256(topic.as_bytes());
             bloom.accrue(BloomInput::Hash(&topic_hash));
         }
     }
@@ -382,7 +388,7 @@ impl ReceiptWithBloom {
             tx_type,
             succeeded,
             cumulative_gas_used,
-            bloom: bloom_from_logs(&logs),
+            bloom: bloom_from_logs(&logs, &ethrex_crypto::NativeCrypto),
             logs,
         }
     }
@@ -538,7 +544,7 @@ impl From<&Receipt> for ReceiptWithBloom {
             tx_type: receipt.tx_type,
             succeeded: receipt.succeeded,
             cumulative_gas_used: receipt.cumulative_gas_used,
-            bloom: bloom_from_logs(&receipt.logs),
+            bloom: bloom_from_logs(&receipt.logs, &ethrex_crypto::NativeCrypto),
             logs: receipt.logs.clone(),
         }
     }
@@ -704,7 +710,7 @@ mod test {
             payer: None,
             frame_receipts: None,
         };
-        let encoded_receipt = receipt.encode_inner_with_bloom();
+        let encoded_receipt = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
 
         let correct_bloom = {
             let mut bloom = Bloom::zero();
@@ -896,7 +902,7 @@ mod test {
                 logs: Vec::new(),
             }]),
         };
-        let encoded = receipt.encode_inner_with_bloom();
+        let encoded = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         // EIP-2718 type prefix
         assert_eq!(encoded[0], 0x06);
         // Spec ReceiptPayload: [cumulative_gas_used, payer, [frame_receipt, ...]]
@@ -928,7 +934,7 @@ mod test {
             payer: None,
             frame_receipts: None,
         };
-        let encoded = receipt.encode_inner_with_bloom();
+        let encoded = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         let (decoded, rest) = Receipt::decode_inner_with_bloom(&encoded).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded, receipt);
@@ -944,7 +950,7 @@ mod test {
             payer: None,
             frame_receipts: None,
         };
-        let encoded = receipt.encode_inner_with_bloom();
+        let encoded = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         let (decoded, rest) = Receipt::decode_inner_with_bloom(&encoded).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded, receipt);
@@ -977,7 +983,7 @@ mod test {
                 },
             ]),
         };
-        let encoded = receipt.encode_inner_with_bloom();
+        let encoded = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         let (decoded, rest) = Receipt::decode_inner_with_bloom(&encoded).unwrap();
         assert!(rest.is_empty());
         assert_eq!(decoded.tx_type, TxType::Frame);
@@ -1004,7 +1010,7 @@ mod test {
                 logs: vec![],
             }]),
         };
-        let encoded = receipt.encode_inner_with_bloom();
+        let encoded = receipt.encode_inner_with_bloom(&ethrex_crypto::NativeCrypto);
         let (decoded, _) = Receipt::decode_inner_with_bloom(&encoded).unwrap();
         assert_eq!(decoded.payer, None);
         assert_eq!(decoded, receipt);

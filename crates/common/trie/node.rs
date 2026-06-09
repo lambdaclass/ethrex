@@ -2,7 +2,133 @@ mod branch;
 mod extension;
 mod leaf;
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
+use std::sync::OnceLock;
+
+/// `OnceLock` replacement for zkVM guest gated on `eip-8025` feature
+///
+/// `std::sync::OnceLock` atomics are pure overhead in zkVM guest.
+/// This struct copies the methods from `once_cell::unsync::OnceCell` and uses unsafe
+/// to get around the Sync requirement.
+///
+/// This code is only sound because the guest is guaranteed to be single-threaded.
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+pub struct OnceLock<T>(core::cell::UnsafeCell<Option<T>>);
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+unsafe impl<T: Sync> Sync for OnceLock<T> {}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T> OnceLock<T> {
+    #[inline]
+    fn new() -> Self {
+        Self(core::cell::UnsafeCell::new(None))
+    }
+
+    #[inline]
+    fn get(&self) -> Option<&T> {
+        unsafe { &*self.0.get() }.as_ref()
+    }
+
+    #[inline]
+    fn get_or_init(&self, f: impl FnOnce() -> T) -> &T {
+        match self.get_or_try_init(|| Ok::<T, core::convert::Infallible>(f())) {
+            Ok(val) => val,
+            Err(e) => match e {},
+        }
+    }
+
+    #[inline]
+    fn get_or_try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        if let Some(val) = self.get() {
+            return Ok(val);
+        }
+        self.try_init(f)
+    }
+
+    #[inline]
+    fn set(&self, value: T) -> Result<(), T> {
+        match self.try_insert(value) {
+            Ok(_) => Ok(()),
+            Err((_, value)) => Err(value),
+        }
+    }
+
+    #[inline]
+    fn try_insert(&self, value: T) -> Result<&T, (&T, T)> {
+        if let Some(old) = self.get() {
+            return Err((old, value));
+        }
+        let slot = unsafe { &mut *self.0.get() };
+        Ok(slot.insert(value))
+    }
+
+    #[inline]
+    fn try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        let val = f()?;
+        let slot = unsafe { &mut *self.0.get() };
+        debug_assert!(slot.is_none());
+        Ok(slot.insert(val))
+    }
+
+    #[inline]
+    fn take(&mut self) -> Option<T> {
+        self.0.get_mut().take()
+    }
+}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T: PartialEq> PartialEq for OnceLock<T> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T> Default for OnceLock<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T: Eq> Eq for OnceLock<T> {}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T: Clone> Clone for OnceLock<T> {
+    #[inline]
+    fn clone(&self) -> OnceLock<T> {
+        match self.get() {
+            Some(value) => OnceLock::from(value.clone()),
+            None => OnceLock::new(),
+        }
+    }
+}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T: std::fmt::Debug> std::fmt::Debug for OnceLock<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut d = f.debug_tuple("OnceLock");
+        match self.get() {
+            Some(v) => d.field(v),
+            None => d.field(&format_args!("<uninit>")),
+        };
+        d.finish()
+    }
+}
+
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+impl<T> From<T> for OnceLock<T> {
+    #[inline]
+    fn from(value: T) -> Self {
+        OnceLock {
+            0: core::cell::UnsafeCell::new(Some(value)),
+        }
+    }
+}
 
 pub use branch::BranchNode;
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -15,6 +141,8 @@ use rkyv::{
     validation::{ArchiveContext, SharedContext},
     with::Skip,
 };
+
+use ethrex_crypto::{Crypto, NativeCrypto};
 
 use crate::{NodeRLP, TrieDB, error::TrieError, nibbles::Nibbles};
 
@@ -66,8 +194,13 @@ impl NodeRef {
         }
     }
 
-    /// Gets a shared reference to the inner node, checking it's hash.
+    /// Gets a shared reference to the inner node, checking its hash.
     /// Returns `Ok(None)` if the hash is invalid.
+    ///
+    /// Uses `NativeCrypto` directly because this function is only reachable from
+    /// native storage/sync paths (`get_root_node`, `get_proof`, `validate`,
+    /// `verify_range`, trie iterator) — never from the guest program path, which
+    /// traverses via `Node::get()`.
     pub fn get_node_checked(
         &self,
         db: &dyn TrieDB,
@@ -78,14 +211,16 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .and_then(|rlp| match Node::decode(&rlp) {
-                    Ok(node) => (node.compute_hash() == *hash).then_some(Ok(Arc::new(node))),
-                    Err(err) => Some(Err(TrieError::RLPDecode(err))),
-                })
-                .transpose(),
+            NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
+                db.get(path)?
+                    .filter(|rlp| !rlp.is_empty())
+                    .and_then(|rlp| match Node::decode(&rlp) {
+                        Ok(node) => (node.compute_hash(&NativeCrypto) == *hash)
+                            .then_some(Ok(Arc::new(node))),
+                        Err(err) => Some(Err(TrieError::RLPDecode(err))),
+                    })
+                    .transpose()
+            }
         }
     }
 
@@ -129,7 +264,12 @@ impl NodeRef {
         }
     }
 
-    pub fn commit(&mut self, path: Nibbles, acc: &mut Vec<(Nibbles, Vec<u8>)>) -> NodeHash {
+    pub fn commit(
+        &mut self,
+        path: Nibbles,
+        acc: &mut Vec<(Nibbles, Vec<u8>)>,
+        crypto: &dyn Crypto,
+    ) -> NodeHash {
         match *self {
             NodeRef::Node(ref mut node, ref mut hash) => {
                 if let Some(hash) = hash.get() {
@@ -138,17 +278,17 @@ impl NodeRef {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc);
+                            node.commit(path.append_new(choice as u8), acc, crypto);
                         }
                     }
                     Node::Extension(node) => {
-                        node.child.commit(path.concat(&node.prefix), acc);
+                        node.child.commit(path.concat(&node.prefix), acc, crypto);
                     }
                     Node::Leaf(_) => {}
                 }
                 let mut buf = Vec::new();
                 node.encode(&mut buf);
-                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf));
+                let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf, crypto));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
                 }
@@ -160,30 +300,32 @@ impl NodeRef {
         }
     }
 
-    pub fn compute_hash(&self) -> NodeHash {
-        *self.compute_hash_ref()
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
+        *self.compute_hash_ref(crypto)
     }
 
-    pub fn compute_hash_ref(&self) -> &NodeHash {
+    pub fn compute_hash_ref(&self, crypto: &dyn Crypto) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash()),
+            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash(crypto)),
             NodeRef::Hash(hash) => hash,
         }
     }
 
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> &NodeHash {
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> &NodeHash {
         match self {
-            NodeRef::Node(node, hash) => hash.get_or_init(|| node.compute_hash_no_alloc(buf)),
+            NodeRef::Node(node, hash) => {
+                hash.get_or_init(|| node.compute_hash_no_alloc(buf, crypto))
+            }
             NodeRef::Hash(hash) => hash,
         }
     }
 
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
         if let NodeRef::Node(node, hash) = &self
             && hash.get().is_none()
         {
-            node.memoize_hashes(buf);
-            let _ = hash.set(node.compute_hash_no_alloc(buf));
+            node.memoize_hashes(buf, crypto);
+            let _ = hash.set(node.compute_hash_no_alloc(buf, crypto));
         }
     }
 
@@ -225,7 +367,8 @@ impl From<Arc<Node>> for NodeRef {
 impl PartialEq for NodeRef {
     fn eq(&self, other: &Self) -> bool {
         let mut buf = Vec::new();
-        self.compute_hash_no_alloc(&mut buf) == other.compute_hash_no_alloc(&mut buf)
+        self.compute_hash_no_alloc(&mut buf, &NativeCrypto)
+            == other.compute_hash_no_alloc(&mut buf, &NativeCrypto)
     }
 }
 
@@ -365,36 +508,36 @@ impl Node {
     }
 
     /// Computes the node's hash
-    pub fn compute_hash(&self) -> NodeHash {
+    pub fn compute_hash(&self, crypto: &dyn Crypto) -> NodeHash {
         let mut buf = Vec::new();
-        self.memoize_hashes(&mut buf);
+        self.memoize_hashes(&mut buf, crypto);
         match self {
-            Node::Branch(n) => n.compute_hash_no_alloc(&mut buf),
-            Node::Extension(n) => n.compute_hash_no_alloc(&mut buf),
-            Node::Leaf(n) => n.compute_hash_no_alloc(&mut buf),
+            Node::Branch(n) => n.compute_hash_no_alloc(&mut buf, crypto),
+            Node::Extension(n) => n.compute_hash_no_alloc(&mut buf, crypto),
+            Node::Leaf(n) => n.compute_hash_no_alloc(&mut buf, crypto),
         }
     }
 
     /// Computes the node's hash
-    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>) -> NodeHash {
-        self.memoize_hashes(buf);
+    pub fn compute_hash_no_alloc(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) -> NodeHash {
+        self.memoize_hashes(buf, crypto);
         match self {
-            Node::Branch(n) => n.compute_hash_no_alloc(buf),
-            Node::Extension(n) => n.compute_hash_no_alloc(buf),
-            Node::Leaf(n) => n.compute_hash_no_alloc(buf),
+            Node::Branch(n) => n.compute_hash_no_alloc(buf, crypto),
+            Node::Extension(n) => n.compute_hash_no_alloc(buf, crypto),
+            Node::Leaf(n) => n.compute_hash_no_alloc(buf, crypto),
         }
     }
 
     /// Recursively memoizes the hashes of all nodes of the subtrie that has
     /// `self` as root (post-order traversal)
-    pub fn memoize_hashes(&self, buf: &mut Vec<u8>) {
+    pub fn memoize_hashes(&self, buf: &mut Vec<u8>, crypto: &dyn Crypto) {
         match self {
             Node::Branch(n) => {
                 for child in &n.choices {
-                    child.memoize_hashes(buf);
+                    child.memoize_hashes(buf, crypto);
                 }
             }
-            Node::Extension(n) => n.child.memoize_hashes(buf),
+            Node::Extension(n) => n.child.memoize_hashes(buf, crypto),
             _ => {}
         }
     }
