@@ -47,6 +47,7 @@ pub enum CryptoError {
 ///
 /// - [`secp256k1_ecrecover`](Crypto::secp256k1_ecrecover) — uses `libsecp256k1` C library
 /// - [`recover_signer`](Crypto::recover_signer) — uses `libsecp256k1` C library
+/// - [`verify_signature`](Crypto::verify_signature) — uses `libsecp256k1` C library
 /// - [`bn254_g1_add`](Crypto::bn254_g1_add), [`bn254_g1_mul`](Crypto::bn254_g1_mul),
 ///   [`bn254_pairing_check`](Crypto::bn254_pairing_check) — use `ark-bn254`
 /// - [`bls12_381_g1_add`](Crypto::bls12_381_g1_add), [`bls12_381_g2_add`](Crypto::bls12_381_g2_add),
@@ -255,8 +256,11 @@ pub trait Crypto: Send + Sync + core::fmt::Debug {
         if bool::from(big_r.is_identity()) {
             return false;
         }
-        let rx = <Scalar as Reduce<k256::U256>>::reduce_bytes(&big_r.x());
-        if rx != r {
+        // Compare R'.x to r as field bytes, without reducing mod n. A nonce point
+        // with x = r + n (possible only when r < p - n) must be rejected to match
+        // ecrecover, which reconstructs R from x = r exactly; reducing mod n here
+        // would accept that aliasing and diverge from canonical recovery.
+        if big_r.x().as_slice() != &sig[..32] {
             return false;
         }
         bool::from(big_r.y_is_odd()) == (sig[64] == 1)

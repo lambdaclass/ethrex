@@ -1314,6 +1314,12 @@ impl Transaction {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return Ok(tx.from);
         }
+        // Require the canonical uncompressed SEC1 prefix (0x04). Without this the
+        // native secp256k1 backend also accepts hybrid (0x06/0x07) encodings that
+        // the k256 backend rejects, which would diverge across prover backends.
+        if public_key[0] != 0x04 {
+            return Err(CryptoError::InvalidSignature);
+        }
         let (sig, msg) = self
             .get_signature_message()
             .ok_or(CryptoError::InvalidSignature)?;
