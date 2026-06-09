@@ -70,6 +70,8 @@ use super::eip8025_cell::OnceCell;
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
 #[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
+#[cfg(all(not(feature = "eip-8025"), feature = "rayon"))]
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
 // a tag indicating the variant type. This means that Serde will serialize the enum's variants
@@ -1701,6 +1703,47 @@ mod canonic_encoding {
             }
         }
 
+        /// Decodes a batch of transactions in canonical format (see
+        /// [`Transaction::decode_canonical`]), in parallel when the `rayon`
+        /// feature is enabled. On failure, the error of the first undecodable
+        /// transaction is returned, matching sequential iteration.
+        ///
+        /// Wire bytes are not guaranteed to be canonical (e.g. 0x00-prefixed
+        /// legacy encodings are accepted), so the canonical encoding cache of
+        /// each transaction is filled here by re-encoding the decoded
+        /// transaction. Consumers that need the canonical bytes right after
+        /// decoding (such as the transactions root computation) then reuse the
+        /// cached encoding instead of re-encoding serially.
+        pub fn decode_canonical_batch<T: AsRef<[u8]> + Sync>(
+            encoded_txs: &[T],
+        ) -> Result<Vec<Self>, RLPDecodeError> {
+            let decode_one = |bytes: &T| -> Result<Self, RLPDecodeError> {
+                let tx = Self::decode_canonical(bytes.as_ref())?;
+                if let Some(cell) = tx.cached_canonical_cell() {
+                    cell.get_or_init(|| {
+                        let mut buf = Vec::new();
+                        tx.encode_canonical(&mut buf);
+                        buf
+                    });
+                }
+                Ok(tx)
+            };
+
+            // Decoding and re-encoding are CPU-bound; processing transactions
+            // in parallel reduces the time spent before payload execution can
+            // start. In eip-8025 builds, use sequential iteration
+            #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+            return encoded_txs
+                .par_iter()
+                .map(decode_one)
+                .collect::<Vec<Result<Self, RLPDecodeError>>>()
+                .into_iter()
+                .collect();
+
+            #[cfg(any(feature = "eip-8025", not(feature = "rayon")))]
+            encoded_txs.iter().map(decode_one).collect()
+        }
+
         /// Encodes a transaction in canonical format
         /// Based on [EIP-2718]
         /// Transactions can be encoded in the following formats:
@@ -3261,6 +3304,45 @@ mod tests {
         let expected_root =
             hex!("056b23fbba480696b65fe5a59b8f2148a1299103c4f57df839233af2cf4ca2d2");
         assert_eq!(result, expected_root.into());
+    }
+
+    #[test]
+    fn test_decode_canonical_batch() {
+        let legacy_rlp = hex::decode("f86d80843baa0c4082f618946177843db3138ae69679a54b95cf345ed759450d870aa87bee538000808360306ba0151ccc02146b9b11adf516e6787b59acae3e76544fdcd75e77e67c6b598ce65da064c5dd5aae2fbb535830ebbdad0234975cd7ece3562013b63ea18cc0df6c97d4").unwrap();
+        // Non-canonical legacy encoding (0x00 type prefix) accepted by the decoder
+        let mut prefixed_legacy_rlp = vec![0x00];
+        prefixed_legacy_rlp.extend_from_slice(&legacy_rlp);
+
+        let typed_tx = Transaction::EIP2930Transaction(EIP2930Transaction {
+            nonce: 7,
+            ..Default::default()
+        });
+        let typed_bytes = typed_tx.encode_canonical_to_vec();
+
+        let batch = [typed_bytes.clone(), legacy_rlp.clone(), prefixed_legacy_rlp];
+        let decoded = Transaction::decode_canonical_batch(&batch).unwrap();
+        assert_eq!(decoded.len(), 3);
+        // Typed txs get their canonical encoding cache filled during batch decode
+        assert_eq!(
+            decoded[0]
+                .cached_canonical_cell()
+                .and_then(|cell| cell.get()),
+            Some(&typed_bytes)
+        );
+        assert_eq!(decoded[1].encode_canonical_to_vec(), legacy_rlp);
+        // The canonical encoding must come from the decoded tx, not the wire bytes
+        assert_eq!(decoded[2].encode_canonical_to_vec(), legacy_rlp);
+
+        // The first decode error in batch order is the one reported
+        let unknown_type = vec![0x05];
+        let truncated = vec![0x01];
+        let err =
+            Transaction::decode_canonical_batch(&[typed_bytes, unknown_type.clone(), truncated])
+                .unwrap_err();
+        assert_eq!(
+            err,
+            Transaction::decode_canonical(&unknown_type).unwrap_err()
+        );
     }
 
     #[test]

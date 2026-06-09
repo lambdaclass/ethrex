@@ -91,16 +91,14 @@ impl Serialize for EncodedTransaction {
 }
 
 impl EncodedTransaction {
-    /// Based on [EIP-2718]
-    /// Transactions can be encoded in the following formats:
-    /// A) `TransactionType || Transaction` (Where Transaction type is an 8-bit number between 0 and 0x7f, and Transaction is an rlp encoded transaction of type TransactionType)
-    /// B) `LegacyTransaction` (An rlp encoded LegacyTransaction)
-    fn decode(&self) -> Result<Transaction, RLPDecodeError> {
-        Transaction::decode_canonical(self.0.as_ref())
-    }
-
     fn encode(tx: &Transaction) -> Self {
         Self(Bytes::from(tx.encode_canonical_to_vec()))
+    }
+}
+
+impl AsRef<[u8]> for EncodedTransaction {
+    fn as_ref(&self) -> &[u8] {
+        self.0.as_ref()
     }
 }
 
@@ -114,11 +112,10 @@ impl ExecutionPayload {
         block_access_list_hash: Option<H256>,
     ) -> Result<Block, RLPDecodeError> {
         let body = BlockBody {
-            transactions: self
-                .transactions
-                .iter()
-                .map(|encoded_tx| encoded_tx.decode())
-                .collect::<Result<Vec<_>, RLPDecodeError>>()?,
+            // Decoding (and the canonical re-encode used by the transactions
+            // root below) is CPU-bound, so it is batched to run in parallel
+            // when ethrex-common's `rayon` feature is enabled.
+            transactions: Transaction::decode_canonical_batch(&self.transactions)?,
             ommers: vec![],
             withdrawals: self.withdrawals,
         };
