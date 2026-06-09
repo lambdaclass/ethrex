@@ -410,12 +410,14 @@ impl DiscoveryServer {
             discv5.cleanup_stale_entries();
         }
         if let Some(ip) = self.ip_predictor.check_timeout() {
-            self.apply_predicted_ip(ip);
+            self.apply_predicted_ip(ip, "timeout");
         }
         Ok(())
     }
 
-    pub fn apply_predicted_ip(&mut self, winning_ip: IpAddr) {
+    /// `source` names the protocol/path that produced the winning vote
+    /// ("discv4", "discv5", or "timeout"), purely for the convergence log line.
+    pub fn apply_predicted_ip(&mut self, winning_ip: IpAddr, source: &str) {
         // `winning_ip` is already routability-filtered upstream: `record_ip_vote`
         // drops only unroutable addresses (loopback/link-local/unspecified) via
         // `is_unroutable_ip`. RFC1918 / IPv6 unique-local are intentionally kept
@@ -438,6 +440,7 @@ impl DiscoveryServer {
             return;
         }
         info!(
+            source,
             old_ip = %self.local_node.ip,
             new_ip = %winning_ip,
             "External IP detected via PONG voting, updating local ENR"
@@ -582,7 +585,7 @@ mod tests {
         let mut server = make_server(unspecified, false).await;
         let original_seq = server.local_node_record.seq;
 
-        server.apply_predicted_ip(public_ip);
+        server.apply_predicted_ip(public_ip, "test");
 
         assert_eq!(
             server.local_node.ip, public_ip,
@@ -613,7 +616,7 @@ mod tests {
         let mut server = make_server(unspecified, true).await;
         let original_seq = server.local_node_record.seq;
 
-        server.apply_predicted_ip(public_ip);
+        server.apply_predicted_ip(public_ip, "test");
 
         assert_eq!(
             server.local_node.ip, unspecified,
