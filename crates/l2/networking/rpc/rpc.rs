@@ -16,8 +16,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_common::types::Transaction;
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
-use ethrex_p2p::types::Node;
-use ethrex_p2p::types::NodeRecord;
+use ethrex_p2p::types::SharedLocalNode;
 use ethrex_rpc::RpcHandler as L1RpcHandler;
 use ethrex_rpc::RpcNamespace as L1RpcNamespace;
 use ethrex_rpc::debug::execution_witness::ExecutionWitnessRequest;
@@ -83,8 +82,7 @@ pub async fn start_api(
     storage: Store,
     blockchain: Arc<Blockchain>,
     jwt_secret: Bytes,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     syncer: Option<Arc<SyncManager>>,
     peer_handler: Option<PeerHandler>,
     client_version: ClientVersion,
@@ -116,8 +114,7 @@ pub async fn start_api(
             peer_handler,
             node_data: NodeData {
                 jwt_secret,
-                local_p2p_node,
-                local_node_record,
+                shared_local_node,
                 client_version,
                 extra_data: Bytes::new(),
             },
