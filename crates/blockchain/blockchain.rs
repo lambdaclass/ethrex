@@ -2443,6 +2443,7 @@ impl Blockchain {
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
+        bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
@@ -2570,6 +2571,22 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // EIP-8159: persist the per-block BAL fetched during sync so peers can
+        // later request it over eth/71 without re-execution (the batch path
+        // doesn't record BALs, so without this they'd fall back to regenerating
+        // against possibly-pruned parent state). Only persist a BAL that matches
+        // its header commitment; a wrong/empty peer BAL is dropped here, and the
+        // serve path guards again. Captured before `blocks` is moved below.
+        let bals_to_store: Vec<(BlockHash, BlockAccessList)> = blocks
+            .iter()
+            .zip(bals.iter())
+            .filter_map(|(block, bal)| {
+                let bal = bal.as_ref()?;
+                bal.matches_commitment(block.header.block_access_list_hash)
+                    .then(|| (block.hash(), bal.clone()))
+            })
+            .collect();
+
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
@@ -2582,6 +2599,14 @@ impl Blockchain {
         self.storage
             .store_block_updates(update_batch)
             .map_err(|e| (e.into(), None))?;
+
+        for (block_hash, bal) in &bals_to_store {
+            if let Err(err) = self.storage.store_block_access_list(*block_hash, bal) {
+                warn!(
+                    "Failed to persist block access list for {block_hash} during batch sync: {err}"
+                );
+            }
+        }
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
