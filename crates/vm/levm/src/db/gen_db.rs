@@ -837,13 +837,16 @@ impl<'a> VM<'a> {
 
     */
     pub fn get_account_mut(&mut self, address: Address) -> Result<&mut LevmAccount, InternalError> {
+        // Load once and split-borrow: `db` and `current_call_frame` are disjoint VM fields,
+        // so the backup can read the loaded account while its `&mut` stays live. This avoids
+        // re-probing the cache via a second load on the hottest state-write path (SSTORE,
+        // balance transfers, nonce bumps).
+        let account = self.db.load_account(address)?;
         // Backup must be taken before mark_modified flips `exists` to true.
-        let account = self.db.get_account(address)?;
         self.current_call_frame
             .call_frame_backup
             .backup_account_info(address, account)?;
-
-        let account = self.db.get_account_mut(address)?;
+        account.mark_modified();
         Ok(account)
     }
 
