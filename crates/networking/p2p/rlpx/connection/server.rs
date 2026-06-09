@@ -1312,12 +1312,19 @@ async fn handle_incoming_message(
                 // than served as a wrong BAL, which receiving peers would reject.
                 let bal = match state.storage.get_block_access_list(*hash) {
                     Ok(Some(bal)) => {
-                        let commitment = state
-                            .storage
-                            .get_block_header_by_hash(*hash)
-                            .ok()
-                            .flatten()
-                            .and_then(|header| header.block_access_list_hash);
+                        let commitment = match state.storage.get_block_header_by_hash(*hash) {
+                            Ok(Some(header)) => header.block_access_list_hash,
+                            Ok(None) => None,
+                            Err(err) => {
+                                // Don't serve an unverified BAL: degrade to 0x80
+                                // (unavailable), but log so an operator can tell a
+                                // committed BAL was refused due to a DB error.
+                                warn!(
+                                    "Failed to read header for BAL commitment check (hash {hash:#x}): {err}; reporting BAL unavailable"
+                                );
+                                None
+                            }
+                        };
                         bal.matches_commitment(commitment).then_some(bal)
                     }
                     Ok(None) => None,

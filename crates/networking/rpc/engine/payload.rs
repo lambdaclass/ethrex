@@ -800,7 +800,14 @@ fn bal_for_block(
     // Only persist/serve a regenerated BAL if it matches the header commitment.
     // Regeneration re-executes against the parent state; if that state is gone
     // or stale the result can be empty/wrong, so guard before writing it back.
+    let regenerated = generated.is_some();
     let Some(bal) = generated.filter(|bal| bal.matches_commitment(commitment)) else {
+        // A successful regeneration whose hash doesn't match the commitment means
+        // the block was re-executed against wrong/incomplete state; don't serve or
+        // persist it. (Absent regeneration just means the state is unavailable.)
+        if regenerated {
+            warn!("Regenerated BAL for {block_hash} does not match header commitment; discarding");
+        }
         return Ok(None);
     };
     // Write back so subsequent requests for this block are served from the
