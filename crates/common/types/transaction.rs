@@ -29,6 +29,25 @@ pub static GLOBAL_SIGNER_CACHE: LazyLock<Mutex<LruCache<H256, Address>>> = LazyL
         NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES).expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
     ))
 });
+
+/// Key for [`GLOBAL_AUTHORITY_CACHE`]: (signing hash, r || s || y_parity).
+/// It must commit to the signature as well as the message: the signing hash covers
+/// only (chain_id, address, nonce), so the same message signed by different
+/// authorities would otherwise collide.
+pub type AuthorityCacheKey = (H256, [u8; 65]);
+
+/// Global cache mapping EIP-7702 authorization tuple → recovered authority address.
+/// The key is exactly the ecrecover inputs (see [`AuthorityCacheKey`]), so each
+/// entry is safe to reuse. Shared between the speculative block warmer and the
+/// serial executor so each tuple's ecrecover runs once per process instead of once
+/// per execution pass. Same locking caveats as [`GLOBAL_SIGNER_CACHE`].
+pub static GLOBAL_AUTHORITY_CACHE: LazyLock<Mutex<LruCache<AuthorityCacheKey, Address>>> =
+    LazyLock::new(|| {
+        Mutex::new(LruCache::new(
+            NonZeroUsize::new(MAX_SIGNER_CACHE_ENTRIES)
+                .expect("MAX_SIGNER_CACHE_ENTRIES is non-zero"),
+        ))
+    });
 use rkyv::{Archive, Deserialize as RDeserialize, Serialize as RSerialize};
 use serde::{Serialize, ser::SerializeStruct};
 pub use serde_impl::{

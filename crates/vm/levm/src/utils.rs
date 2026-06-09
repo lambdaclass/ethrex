@@ -16,7 +16,7 @@ use crate::{
 use ExceptionalHalt::OutOfGas;
 use bytes::Bytes;
 use ethrex_common::constants::SYSTEM_ADDRESS;
-use ethrex_common::types::Log;
+use ethrex_common::types::{Log, transaction::GLOBAL_AUTHORITY_CACHE};
 use ethrex_common::{
     Address, H256, U256,
     evm::calculate_create_address,
@@ -231,8 +231,30 @@ pub fn eip7702_recover_address(
     sig[32..64].copy_from_slice(&auth_tuple.s_signature.to_big_endian());
     sig[64] = y_parity;
 
+    // Both the speculative block warmer and the serial executor recover every
+    // tuple; the shared cache makes the second pass a lookup instead of a
+    // keccak + ecrecover. The key commits to message AND signature (see
+    // `GLOBAL_AUTHORITY_CACHE` docs).
+    let cache_key = (H256(msg), sig);
+    if let Some(&address) = GLOBAL_AUTHORITY_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&cache_key)
+    {
+        return Ok(Some(address));
+    }
+
     match crypto.recover_signer(&sig, &msg) {
-        Ok(address) => Ok(Some(address)),
+        Ok(address) => {
+            GLOBAL_AUTHORITY_CACHE
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .put(cache_key, address);
+            Ok(Some(address))
+        }
+        // Failures are not cached: an invalid tuple is skipped (never fatal),
+        // is rare, and re-deriving the failure keeps cache entries to known-good
+        // recoveries only.
         Err(_) => Ok(None),
     }
 }
@@ -943,5 +965,56 @@ pub fn create_burn_log(address: Address, amount: U256) -> Log {
         address: SYSTEM_ADDRESS,
         topics: vec![BURN_EVENT_TOPIC, H256::from(address_topic)],
         data: Bytes::from(data.to_vec()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_crypto::NativeCrypto;
+
+    /// x-coordinate of the secp256k1 generator point; using it as `r` guarantees
+    /// the signature's R point is on the curve, so recovery succeeds for any message.
+    const GENERATOR_X: [u8; 32] = [
+        0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87, 0x0b,
+        0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16, 0xf8,
+        0x17, 0x98,
+    ];
+
+    #[test]
+    fn authority_cache_key_commits_to_signature() {
+        // Two tuples with the same signed message (chain_id, address, nonce) but
+        // different signatures recover to different authorities. A cache keyed
+        // only by the signing hash would make the second recovery wrongly return
+        // the first tuple's authority.
+        let tuple_a = AuthorizationTuple {
+            chain_id: U256::one(),
+            address: Address::from_low_u64_be(0xAA),
+            nonce: 7,
+            y_parity: U256::zero(),
+            r_signature: u256_from_big_endian_const(GENERATOR_X),
+            s_signature: U256::one(),
+        };
+        let tuple_b = AuthorizationTuple {
+            y_parity: U256::one(),
+            ..tuple_a
+        };
+
+        let authority_a = eip7702_recover_address(&tuple_a, &NativeCrypto);
+        let authority_b = eip7702_recover_address(&tuple_b, &NativeCrypto);
+
+        assert!(matches!(authority_a, Ok(Some(_))));
+        assert!(matches!(authority_b, Ok(Some(_))));
+        assert_ne!(authority_a, authority_b);
+
+        // Cache hits must return the same address as the original recovery.
+        assert_eq!(
+            eip7702_recover_address(&tuple_a, &NativeCrypto),
+            authority_a
+        );
+        assert_eq!(
+            eip7702_recover_address(&tuple_b, &NativeCrypto),
+            authority_b
+        );
     }
 }
