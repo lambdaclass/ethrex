@@ -123,10 +123,10 @@ impl BuildPayloadArgs {
         // Scoped to V4: for V1/V2/V3 gas_ceil is always the static
         // --builder.gas-limit (no collision to disambiguate), so hashing it
         // there would change those IDs without fixing anything.
-        if let Some(slot_number) = self.slot_number {
-            hasher.update(slot_number.to_be_bytes());
-        }
         if self.version >= 4 {
+            if let Some(slot_number) = self.slot_number {
+                hasher.update(slot_number.to_be_bytes());
+            }
             hasher.update(self.gas_ceil.to_be_bytes());
         }
         let res = &mut hasher.finalize()[..8];
