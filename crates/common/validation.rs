@@ -66,7 +66,9 @@ pub fn validate_block_pre_execution(
     // Privileged (L2) transactions are exempt: their sender comes from an unsigned `from`
     // field, so chain id is not a signature-binding scalar for them, and on L2 it may name
     // a different source chain (cross-chain deposits). On L1 they are rejected outright as
-    // an unsupported transaction type, so this exemption opens no L1 gap.
+    // an unsupported transaction type, so this exemption opens no L1 gap. The other L2-only
+    // type, `FeeTokenTransaction` (0x7d), is signature-recovered and therefore stays
+    // checked — on L2 it carries the L2 chain id; on L1 it is rejected as unsupported.
     for tx in &block.body.transactions {
         if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
             continue;

@@ -1530,11 +1530,11 @@ impl Transaction {
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
     let v = u64::try_from(v).ok()?;
-    if v == 27 || v == 28 {
-        None
-    } else {
-        Some((v - 35) / 2)
-    }
+    // EIP-155 encodes the chain id in `v` as `chain_id * 2 + 35` (or `+ 36`). Values below
+    // 35 — including the pre-EIP-155 `27`/`28` — carry no chain id; `v` is decoded from RLP
+    // unvalidated, so returning None here (instead of computing `v - 35`) avoids an
+    // underflow panic on malformed input.
+    if v < 35 { None } else { Some((v - 35) / 2) }
 }
 
 impl TxType {
@@ -3164,6 +3164,29 @@ mod tests {
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
     use std::str::FromStr;
+
+    #[test]
+    fn legacy_chain_id_handles_out_of_range_v_without_underflow() {
+        // A legacy transaction decodes `v` as an arbitrary U256, so a malformed tx can
+        // carry any value. `derive_legacy_chain_id` must return None for the pre-EIP-155
+        // values (27/28) and any v < 35 rather than underflowing `v - 35`, which panics
+        // in debug and wraps to a bogus chain id in release. This is reachable on the
+        // block-import path (every tx's chain id is now checked pre-execution).
+        let legacy_chain_id = |v: u64| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v: U256::from(v),
+                ..Default::default()
+            })
+            .chain_id()
+        };
+        for v in [0u64, 1, 26, 27, 28, 34] {
+            assert_eq!(legacy_chain_id(v), None, "v={v} must yield no chain id");
+        }
+        // EIP-155 values (v = chain_id * 2 + 35/36) still derive correctly.
+        assert_eq!(legacy_chain_id(35), Some(0));
+        assert_eq!(legacy_chain_id(36), Some(0));
+        assert_eq!(legacy_chain_id(37), Some(1));
+    }
 
     #[test]
     fn test_compute_transactions_root() {
