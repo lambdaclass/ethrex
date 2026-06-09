@@ -2452,6 +2452,16 @@ impl Blockchain {
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
 
+        // `bals` is either empty (no BALs available) or index-aligned with `blocks`.
+        // Guard the contract so a wrong-length slice can't silently drop/ignore BALs
+        // via the `zip` in the persistence step below.
+        debug_assert!(
+            bals.is_empty() || bals.len() == blocks.len(),
+            "bals must be empty or aligned with blocks (bals={}, blocks={})",
+            bals.len(),
+            blocks.len(),
+        );
+
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
             return Err((ChainError::Custom("First block not found".into()), None));
         };
