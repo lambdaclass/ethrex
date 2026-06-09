@@ -278,7 +278,14 @@ impl NodeRef {
                 match Arc::make_mut(node) {
                     Node::Branch(node) => {
                         for (choice, node) in &mut node.choices.iter_mut().enumerate() {
-                            node.commit(path.append_new(choice as u8), acc, crypto);
+                            // Only dirty embedded children recurse and use the extended path;
+                            // hash refs and memoized nodes are no-ops in `commit`, so skip
+                            // them before allocating the extended path.
+                            if let NodeRef::Node(_, child_hash) = node
+                                && child_hash.get().is_none()
+                            {
+                                node.commit(path.append_new(choice as u8), acc, crypto);
+                            }
                         }
                     }
                     Node::Extension(node) => {
@@ -286,8 +293,24 @@ impl NodeRef {
                     }
                     Node::Leaf(_) => {}
                 }
-                let mut buf = Vec::new();
-                node.encode(&mut buf);
+                let buf = match node.as_ref() {
+                    // `BranchNode::encode_to_vec` pre-sizes from the exact payload length.
+                    Node::Branch(branch) => branch.encode_to_vec(),
+                    Node::Extension(extension) => {
+                        // Upper bound: compact prefix + child hash (<= 33 bytes) + RLP headers.
+                        let mut buf = Vec::with_capacity(extension.prefix.as_ref().len() / 2 + 40);
+                        extension.encode(&mut buf);
+                        buf
+                    }
+                    Node::Leaf(leaf) => {
+                        // Upper bound: compact partial + value + RLP headers.
+                        let mut buf = Vec::with_capacity(
+                            leaf.partial.as_ref().len() / 2 + leaf.value.len() + 20,
+                        );
+                        leaf.encode(&mut buf);
+                        buf
+                    }
+                };
                 let hash = *hash.get_or_init(|| NodeHash::from_encoded(&buf, crypto));
                 if let Node::Leaf(leaf) = node.as_ref() {
                     acc.push((path.concat(&leaf.partial), leaf.value.clone()));
@@ -574,4 +597,52 @@ impl Node {
 pub enum NodeRemoveResult {
     Mutated,
     New(Node),
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::{InMemoryTrieDB, Trie};
+    use std::{collections::BTreeMap, sync::Mutex};
+
+    #[test]
+    fn commit_after_partial_update_stores_all_dirty_nodes() {
+        let data = Arc::new(Mutex::new(BTreeMap::new()));
+        let mut trie = Trie::new(Box::new(InMemoryTrieDB::new(data.clone())));
+
+        // Keys diverging at the first nibble so the root branch has several
+        // children, most of which stay clean after the second insert.
+        let initial_keys: [[u8; 4]; 4] = [
+            [0x00, 1, 2, 3],
+            [0x10, 1, 2, 3],
+            [0x20, 1, 2, 3],
+            [0x30, 1, 2, 3],
+        ];
+        for (i, key) in initial_keys.iter().enumerate() {
+            trie.insert(key.to_vec(), vec![i as u8 + 1]).unwrap();
+        }
+        trie.hash(&NativeCrypto).unwrap();
+
+        // Dirty a single branch child; the remaining children keep their
+        // memoized hashes and are skipped during commit.
+        let new_key = [0x11, 1, 2, 3];
+        trie.insert(new_key.to_vec(), vec![0xff]).unwrap();
+        let root = trie.hash(&NativeCrypto).unwrap();
+
+        // A trie built in a single batch must produce the same root.
+        let mut reference = Trie::new_temp();
+        for (i, key) in initial_keys.iter().enumerate() {
+            reference.insert(key.to_vec(), vec![i as u8 + 1]).unwrap();
+        }
+        reference.insert(new_key.to_vec(), vec![0xff]).unwrap();
+        assert_eq!(root, reference.hash(&NativeCrypto).unwrap());
+
+        // Reading through a freshly opened trie traverses the committed nodes
+        // by path, so it fails if any required node was not stored.
+        let reopened = Trie::open(Box::new(InMemoryTrieDB::new(data)), root);
+        for (i, key) in initial_keys.iter().enumerate() {
+            assert_eq!(reopened.get(key).unwrap(), Some(vec![i as u8 + 1]));
+        }
+        assert_eq!(reopened.get(&new_key).unwrap(), Some(vec![0xff]));
+    }
 }
