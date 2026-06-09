@@ -47,10 +47,6 @@ fn header_committing_to(bal: &BlockAccessList) -> BlockHeader {
 // longer wire-compatible.
 #[tokio::test]
 async fn eth_get_block_access_list_matches_spec_example() {
-    let block_hash =
-        H256::from_str("0x1111111111111111111111111111111111111111111111111111111111111111")
-            .unwrap();
-
     let address = Address::from_str("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap();
     let slot = U256::zero();
     let slot_changes = vec![
@@ -68,6 +64,14 @@ async fn eth_get_block_access_list_matches_spec_example() {
     let bal = BlockAccessList::from_accounts(vec![account]);
 
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    // The endpoint validates the stored BAL against the header commitment, so the
+    // block's header must commit to this BAL's hash.
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
     storage
         .store_block_access_list(block_hash, &bal)
         .expect("store BAL");
