@@ -1528,6 +1528,7 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, crate::utils::RpcErr::UnsupportedFork(_)));
+    }
 
     fn header(number: u64) -> BlockHeader {
         BlockHeader {
