@@ -4203,7 +4203,7 @@ dependencies = [
 [[package]]
 name = "ethrex-monitor"
 version = "4.0.0"
-source = "git+https://github.com/lambdaclass/ethrex-tooling?rev=69c0c0ba6513e4bc12538d199f7985a98fc852e7#69c0c0ba6513e4bc12538d199f7985a98fc852e7"
+source = "git+https://github.com/lambdaclass/ethrex-tooling?rev=f71d05dce22a4d301689b8a30df2be80cbd2f66d#f71d05dce22a4d301689b8a30df2be80cbd2f66d"
 dependencies = [
  "bytes",
  "chrono",
@@ -4311,7 +4311,7 @@ dependencies = [
 [[package]]
 name = "ethrex-repl"
 version = "4.0.0"
-source = "git+https://github.com/lambdaclass/ethrex-tooling?rev=69c0c0ba6513e4bc12538d199f7985a98fc852e7#69c0c0ba6513e4bc12538d199f7985a98fc852e7"
+source = "git+https://github.com/lambdaclass/ethrex-tooling?rev=f71d05dce22a4d301689b8a30df2be80cbd2f66d#f71d05dce22a4d301689b8a30df2be80cbd2f66d"
 dependencies = [
  "clap",
  "colored 2.2.0",

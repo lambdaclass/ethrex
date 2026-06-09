@@ -13,7 +13,7 @@ concurrency:
 
 env:
   # ethrex-tooling commit; keep in sync with the Cargo.toml rev (docs/updating-ethrex-tooling.md)
-  TOOLING_REV: 69c0c0ba6513e4bc12538d199f7985a98fc852e7
+  TOOLING_REV: f71d05dce22a4d301689b8a30df2be80cbd2f66d
 
 jobs:
   upgradeability:
