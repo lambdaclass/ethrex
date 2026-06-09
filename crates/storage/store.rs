@@ -247,6 +247,25 @@ impl Drop for ThreadList {
     }
 }
 
+/// Shared trie read machinery captured once via [`Store::trie_read_context`]
+/// and reused across many state reads (e.g. all cold reads of one block's
+/// execution), avoiding the per-read lock acquisitions and read-view
+/// allocations otherwise paid on every trie open.
+///
+/// The captured components stay valid for reads at a state root that was
+/// already resolvable at capture time: diff-layers are written to disk before
+/// being removed from the layer cache (so a stale cache snapshot plus the read
+/// view still resolve every node), and a stale FlatKeyValue marker only
+/// under-claims coverage, falling back to a trie walk.
+///
+/// Cheap to clone: two `Arc`s plus a small marker buffer.
+#[derive(Clone)]
+pub struct TrieReadContext {
+    read_view: Arc<dyn StorageReadView>,
+    cache: Arc<TrieLayerCache>,
+    last_written: Vec<u8>,
+}
+
 /// Storage trie nodes grouped by account address hash.
 ///
 /// Each entry contains the hashed account address and the trie nodes
@@ -2465,14 +2484,9 @@ impl Store {
         let account_hash = hash_address_fixed(&address);
 
         // Pre-acquire shared resources once for both trie opens
-        let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        let ctx = self.trie_read_context()?;
+        let use_fkv =
+            Self::flatkeyvalue_computed_with_last_written(account_hash, &ctx.last_written);
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2480,9 +2494,9 @@ impl Store {
         } else {
             let state_trie = self.open_state_trie_shared(
                 state_root,
-                read_view.clone(),
-                cache.clone(),
-                last_written.clone(),
+                ctx.read_view.clone(),
+                ctx.cache.clone(),
+                ctx.last_written.clone(),
             )?;
             let Some(encoded_account) = state_trie.get(account_hash.as_bytes())? else {
                 return Ok(None);
@@ -2494,9 +2508,9 @@ impl Store {
             account_hash,
             state_root,
             storage_root,
-            read_view,
-            cache,
-            last_written,
+            ctx.read_view,
+            ctx.cache,
+            ctx.last_written,
         )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
@@ -2517,18 +2531,32 @@ impl Store {
         storage_root: H256,
         storage_key: H256,
     ) -> Result<Option<U256>, StoreError> {
-        let read_view = self.backend.begin_read()?;
-        let cache = self
-            .trie_cache
-            .read()
-            .map_err(|_| StoreError::LockError)?
-            .clone();
-        let last_written = self.last_written()?;
+        let ctx = self.trie_read_context()?;
+        self.get_storage_at_root_with_context(
+            &ctx,
+            state_root,
+            account_hash,
+            storage_root,
+            storage_key,
+        )
+    }
+
+    /// Same as [`Self::get_storage_at_root_with_known_storage_root`], but reuses
+    /// a previously captured [`TrieReadContext`] instead of re-acquiring the
+    /// shared read machinery on every call.
+    pub fn get_storage_at_root_with_context(
+        &self,
+        ctx: &TrieReadContext,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
         // so open_storage_trie_shared falls through to the FKV path.
         let storage_root =
-            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
+            if Self::flatkeyvalue_computed_with_last_written(account_hash, &ctx.last_written) {
                 *EMPTY_TRIE_HASH
             } else {
                 storage_root
@@ -2537,9 +2565,9 @@ impl Store {
             account_hash,
             state_root,
             storage_root,
-            read_view,
-            cache,
-            last_written,
+            ctx.read_view.clone(),
+            ctx.cache.clone(),
+            ctx.last_written.clone(),
         )?;
 
         let hashed_key = hash_key_fixed(&storage_key);
@@ -2657,6 +2685,24 @@ impl Store {
         address: Address,
     ) -> Result<Option<AccountState>, StoreError> {
         let state_trie = self.open_state_trie(state_root)?;
+        self.get_account_state_from_trie(&state_trie, address)
+    }
+
+    /// Same as [`Self::get_account_state_by_root`], but reuses a previously
+    /// captured [`TrieReadContext`] instead of re-acquiring the shared read
+    /// machinery on every call.
+    pub fn get_account_state_by_root_with_context(
+        &self,
+        ctx: &TrieReadContext,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            ctx.read_view.clone(),
+            ctx.cache.clone(),
+            ctx.last_written.clone(),
+        )?;
         self.get_account_state_from_trie(&state_trie, address)
     }
 
@@ -2950,6 +2996,31 @@ impl Store {
             Some(account_hash),
         );
         Ok(Trie::open(Box::new(trie_db), storage_root))
+    }
+
+    /// Captures the shared trie read machinery once, for reuse across many
+    /// reads via the `_with_context` read methods.
+    ///
+    /// The capture order is load-bearing for backends whose read view is a
+    /// point-in-time snapshot (in-memory): the layer cache and FlatKeyValue
+    /// marker must be captured BEFORE the read view. Diff-layers are flushed
+    /// to disk before being removed from the cache, and the FlatKeyValue
+    /// marker only advances after its entries are committed, so anything
+    /// missing from the earlier snapshots is guaranteed visible through the
+    /// later read view.
+    pub fn trie_read_context(&self) -> Result<TrieReadContext, StoreError> {
+        let cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+        let last_written = self.last_written()?;
+        let read_view = self.backend.begin_read()?;
+        Ok(TrieReadContext {
+            read_view,
+            cache,
+            last_written,
+        })
     }
 
     /// Open a state trie using pre-acquired shared resources.
@@ -3800,5 +3871,141 @@ mod merge_tests {
         let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
         let out = tx_locations_merge(None, vec![p3]).unwrap();
         assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod trie_read_context_tests {
+    use super::*;
+    use rustc_hash::FxHashMap;
+
+    /// A context captured at a given root must keep serving that root with the
+    /// values it had at capture time, agreeing with the direct (per-call
+    /// acquisition) read paths, even after later blocks add new diff-layers.
+    #[tokio::test]
+    async fn stale_context_still_reads_captured_root() {
+        let mut store = Store::new("", EngineType::InMemory).unwrap();
+        let address = Address::from_low_u64_be(0x42);
+        let slot = H256::from_low_u64_be(1);
+        let genesis = Genesis {
+            alloc: BTreeMap::from([(
+                address,
+                GenesisAccount {
+                    code: Bytes::new(),
+                    storage: BTreeMap::from([(U256::one(), U256::from(0xdead))]),
+                    balance: U256::from(1000),
+                    nonce: 1,
+                },
+            )]),
+            ..Default::default()
+        };
+        store.add_initial_state(genesis).await.unwrap();
+        let genesis_header = store.get_block_header(0).unwrap().unwrap();
+        let genesis_root = genesis_header.state_root;
+        let genesis_hash = genesis_header.hash();
+        let account_hash = hash_address_fixed(&address);
+
+        // Capture the context, then verify it agrees with the direct read paths.
+        let ctx = store.trie_read_context().unwrap();
+        let direct = store
+            .get_account_state_by_root(genesis_root, address)
+            .unwrap()
+            .unwrap();
+        let via_ctx = store
+            .get_account_state_by_root_with_context(&ctx, genesis_root, address)
+            .unwrap()
+            .unwrap();
+        assert_eq!(direct, via_ctx);
+        let direct_slot = store
+            .get_storage_at_root_with_known_storage_root(
+                genesis_root,
+                account_hash,
+                direct.storage_root,
+                slot,
+            )
+            .unwrap();
+        let ctx_slot = store
+            .get_storage_at_root_with_context(
+                &ctx,
+                genesis_root,
+                account_hash,
+                direct.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(direct_slot, ctx_slot);
+        assert_eq!(ctx_slot, Some(U256::from(0xdead)));
+
+        // Land a new block's trie diff-layer after the capture.
+        let mut added_storage = FxHashMap::default();
+        added_storage.insert(slot, U256::from(0xbeef));
+        let update = AccountUpdate {
+            address,
+            info: Some(AccountInfo {
+                code_hash: direct.code_hash,
+                balance: U256::from(2000),
+                nonce: 2,
+            }),
+            added_storage,
+            ..Default::default()
+        };
+        let updates_list = store
+            .apply_account_updates_batch(genesis_hash, &[update])
+            .unwrap()
+            .unwrap();
+        let child_header = BlockHeader {
+            parent_hash: genesis_hash,
+            number: 1,
+            state_root: updates_list.state_trie_hash,
+            ..Default::default()
+        };
+        let child_root = child_header.state_root;
+        store
+            .store_block_updates(UpdateBatch {
+                account_updates: updates_list.state_updates,
+                storage_updates: updates_list.storage_updates,
+                blocks: vec![Block::new(child_header, BlockBody::default())],
+                receipts: vec![],
+                code_updates: updates_list.code_updates,
+                batch_mode: false,
+            })
+            .unwrap();
+
+        // Sanity: the new root sees the new values.
+        let new_state = store
+            .get_account_state_by_root(child_root, address)
+            .unwrap()
+            .unwrap();
+        assert_eq!(new_state.balance, U256::from(2000));
+
+        // The stale context must keep serving the captured root unchanged.
+        let stale_state = store
+            .get_account_state_by_root_with_context(&ctx, genesis_root, address)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stale_state, direct);
+        let stale_slot = store
+            .get_storage_at_root_with_context(
+                &ctx,
+                genesis_root,
+                account_hash,
+                direct.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(stale_slot, Some(U256::from(0xdead)));
+
+        // A fresh context resolves the new root with the new values.
+        let fresh_ctx = store.trie_read_context().unwrap();
+        let fresh_slot = store
+            .get_storage_at_root_with_context(
+                &fresh_ctx,
+                child_root,
+                account_hash,
+                new_state.storage_root,
+                slot,
+            )
+            .unwrap();
+        assert_eq!(fresh_slot, Some(U256::from(0xbeef)));
     }
 }

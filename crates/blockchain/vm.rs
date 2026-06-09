@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_storage::Store;
+use ethrex_storage::{Store, TrieReadContext};
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
@@ -34,6 +34,11 @@ pub struct StoreVmDatabase {
     /// This avoids repeated state-trie account decodes when reading many slots
     /// from the same account during execution.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
+    /// Trie read machinery captured once at construction and reused by every
+    /// cold state read, avoiding per-read lock acquisitions and read-view
+    /// allocations. Valid for the lifetime of this database because all reads
+    /// go through the fixed `state_root` captured below.
+    trie_read_ctx: TrieReadContext,
     pub state_root: H256,
 }
 
@@ -49,11 +54,18 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
+        // Captured after the state-root check: anything resolvable then stays
+        // resolvable through the context (layers are disk-flushed before
+        // being dropped from the cache).
+        let trie_read_ctx = store
+            .trie_read_context()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            trie_read_ctx,
             state_root: block_header.state_root,
         })
     }
@@ -70,11 +82,15 @@ impl StoreVmDatabase {
         {
             return Err(EvmError::DB("state root missing".to_string()));
         }
+        let trie_read_ctx = store
+            .trie_read_context()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
+            trie_read_ctx,
             state_root: block_header.state_root,
         })
     }
@@ -95,7 +111,7 @@ impl StoreVmDatabase {
 
         let loaded = self
             .store
-            .get_account_state_by_root(self.state_root, address)
+            .get_account_state_by_root_with_context(&self.trie_read_ctx, self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))?;
         let cached = loaded.map(|state| AccountStateCacheEntry {
             state,
@@ -133,7 +149,8 @@ impl VmDatabase for StoreVmDatabase {
             return Ok(None);
         };
         self.store
-            .get_storage_at_root_with_known_storage_root(
+            .get_storage_at_root_with_context(
+                &self.trie_read_ctx,
                 self.state_root,
                 entry.hashed_address,
                 entry.state.storage_root,
