@@ -210,6 +210,48 @@ async fn payload_bodies_by_range_v2_serves_stored_bal() {
     assert_eq!(got, expected);
 }
 
+// Regression for glamsterdam-devnet-5 block 8501: a stored BAL whose hash does
+// not match the header commitment must NOT be served. Here the header commits
+// to `sample_bal()` but an empty BAL is stored under the block hash; the guard
+// must drop it (and regeneration short-circuits to None for this block), so the
+// body carries no BAL rather than a wrong one.
+#[tokio::test]
+async fn payload_bodies_by_hash_v2_drops_bal_not_matching_commitment() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    let bal = sample_bal();
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    // Store a BAL that does NOT match the header commitment (the 8501 bug).
+    storage
+        .store_block_access_list(block_hash, &BlockAccessList::from_accounts(vec![]))
+        .expect("store BAL");
+
+    let context = default_context_with_storage(storage).await;
+    let request = GetPayloadBodiesByHashV2Request {
+        hashes: vec![block_hash],
+    };
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                None
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(
+        got, expected,
+        "a stored BAL not matching the header commitment must not be served"
+    );
+}
+
 // Fallback path: when no BAL is stored, the handler must not re-execute a block
 // whose parent state is unavailable. For a pre-Amsterdam block, regeneration
 // short-circuits to None, so a None-carrying body proves the response was

@@ -2440,6 +2440,10 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
+    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned
+    /// by index with `blocks`. Pass an empty slice when no BALs are available
+    /// (e.g. block import from RLP); the persistence step then stores none. Only
+    /// BALs matching their block's header commitment are persisted.
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
