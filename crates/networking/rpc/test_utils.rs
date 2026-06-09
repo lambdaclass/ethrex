@@ -55,8 +55,15 @@ thread_local! {
     /// 17-thread rayon pool inside `Blockchain::new` (which exhausts the macOS
     /// runner's thread limit and panics with `EAGAIN` under parallel test runs).
     /// The merkle protocol's 16 worker jobs cross-communicate via channels, so
-    /// each pool may have only one concurrent `in_place_scope` caller; keying by
-    /// `thread_local!` makes the calling test thread the natural exclusive owner.
+    /// each pool may have only one concurrent `in_place_scope` caller (two would
+    /// deadlock). The caller is not the test thread: `default_with_store_and_pool`
+    /// contexts run block execution on a dedicated `block_executor` thread (see
+    /// `start_block_executor`). Sharing this pool is safe only because tests run
+    /// sequentially per OS thread, each builds one context, and that context's
+    /// executor processes blocks serially -> at most one live `in_place_scope` at
+    /// a time. LATENT RISK: a single test that drives block execution on two
+    /// contexts built on this thread concurrently would share this pool and
+    /// deadlock; give such a test its own pool via `Blockchain::build_merkle_pool`.
     static MERKLE_POOL: std::cell::OnceCell<Arc<rayon::ThreadPool>> =
         const { std::cell::OnceCell::new() };
 }
