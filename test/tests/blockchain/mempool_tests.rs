@@ -726,6 +726,48 @@ fn blob_eviction_keeps_includable_low_nonce_tx() {
     );
 }
 
+#[test]
+fn blob_eviction_offset_is_per_sender_not_cross_sender() {
+    // Regression: eviction ranks by nonce offset *within a sender*, not by raw
+    // cross-sender nonce. A high-throughput sender (e.g. a rollup sequencer)
+    // accumulates large on-wire nonces while staying perfectly includable; a
+    // raw cross-sender comparison would evict its txs first. The deepest-in-its-
+    // own-queue blob must be dropped instead.
+    let blob_cap = 4;
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST).with_max_blob_mempool_size(blob_cap);
+
+    // Sequencer: a single blob at a very high nonce (offset 0 from its own min).
+    let sequencer = H160::random();
+    let seq_tx = add_blob_tx_with_sender(&mempool, sequencer, 1_000_000);
+
+    // A backlogged sender with a deep, contiguous queue (offsets 0..=4).
+    let backlogged = H160::random();
+    let deep: Vec<H256> = (0..=4)
+        .map(|n| add_blob_tx_with_sender(&mempool, backlogged, n))
+        .collect();
+
+    // 6 blobs, cap 4 ⇒ 2 backlogged blobs evicted. The sequencer's high-nonce
+    // tx must survive: under the old cross-sender nonce key it had the globally
+    // highest nonce and would have been the first evicted.
+    assert!(
+        mempool.contains_tx(seq_tx).unwrap(),
+        "high-nonce sequencer blob was wrongly evicted by cross-sender nonce"
+    );
+    // Its lowest-offset (nonce 0) blob is the most includable and must stay.
+    assert!(
+        mempool.contains_tx(deep[0]).unwrap(),
+        "includable nonce-0 blob must stay"
+    );
+    let present_deep = deep
+        .iter()
+        .filter(|h| mempool.contains_tx(**h).unwrap())
+        .count();
+    assert_eq!(
+        present_deep, 3,
+        "two of the backlogged sender's blobs evicted"
+    );
+}
+
 mod alternates {
     use super::*;
     use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;
