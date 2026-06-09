@@ -393,49 +393,50 @@ async fn test_ip_vote_cleanup() {
 }
 
 #[tokio::test]
-async fn test_ip_voting_ignores_private_ips() {
+async fn test_ip_voting_ignores_unroutable_but_keeps_private() {
     let mut server = test_server(None).await;
-
     let voter1 = H256::from_low_u64_be(1);
-    let voter2 = H256::from_low_u64_be(2);
-    let voter3 = H256::from_low_u64_be(3);
 
-    let private_ip: IpAddr = "192.168.1.100".parse().unwrap();
-    server.ip_predictor.record_ip_vote(private_ip, voter1);
-    server.ip_predictor.record_ip_vote(private_ip, voter2);
-    server.ip_predictor.record_ip_vote(private_ip, voter3);
-    assert!(server.ip_predictor.ip_votes.is_empty());
+    // Unroutable addresses can never be a valid externally-advertised endpoint
+    // and must be dropped: loopback, link-local, unspecified (v4 and v6). Each
+    // is ignored, so `ip_votes` stays empty (and no round ever starts).
+    for unroutable in [
+        "127.0.0.1",
+        "169.254.1.1",
+        "0.0.0.0",
+        "::1",
+        "fe80::1",
+        "::",
+    ] {
+        let ip: IpAddr = unroutable.parse().unwrap();
+        server.ip_predictor.record_ip_vote(ip, voter1);
+        assert!(
+            server.ip_predictor.ip_votes.is_empty(),
+            "unroutable {unroutable} must not be recorded as a vote"
+        );
+    }
 
-    let loopback: IpAddr = "127.0.0.1".parse().unwrap();
-    server.ip_predictor.record_ip_vote(loopback, voter1);
-    assert!(server.ip_predictor.ip_votes.is_empty());
-
-    let link_local: IpAddr = "169.254.1.1".parse().unwrap();
-    server.ip_predictor.record_ip_vote(link_local, voter1);
-    assert!(server.ip_predictor.ip_votes.is_empty());
-
-    let ipv6_loopback: IpAddr = "::1".parse().unwrap();
-    server.ip_predictor.record_ip_vote(ipv6_loopback, voter1);
-    assert!(server.ip_predictor.ip_votes.is_empty());
-
-    let ipv6_link_local: IpAddr = "fe80::1".parse().unwrap();
-    server.ip_predictor.record_ip_vote(ipv6_link_local, voter1);
-    assert!(server.ip_predictor.ip_votes.is_empty());
-
-    let ipv6_unique_local: IpAddr = "fd12::1".parse().unwrap();
-    server
-        .ip_predictor
-        .record_ip_vote(ipv6_unique_local, voter1);
-    assert!(server.ip_predictor.ip_votes.is_empty());
-
-    let public_ip: IpAddr = "203.0.113.50".parse().unwrap();
-    server.ip_predictor.record_ip_vote(public_ip, voter1);
+    // RFC1918 (IPv4 private) and IPv6 unique-local are *kept* as candidates: on
+    // a flat private network they are the address peers actually reach us at (a
+    // public IP still wins if one reaches quorum). Single votes stay below
+    // IP_VOTE_THRESHOLD so the round doesn't finalize and clear the map.
+    let private_v4: IpAddr = "192.168.1.100".parse().unwrap();
+    server.ip_predictor.record_ip_vote(private_v4, voter1);
     assert_eq!(
         server
             .ip_predictor
             .ip_votes
-            .get(&public_ip)
+            .get(&private_v4)
             .map(|v| v.len()),
-        Some(1)
+        Some(1),
+        "RFC1918 private IPv4 must remain a valid vote candidate"
+    );
+
+    let ula_v6: IpAddr = "fd12::1".parse().unwrap();
+    server.ip_predictor.record_ip_vote(ula_v6, voter1);
+    assert_eq!(
+        server.ip_predictor.ip_votes.get(&ula_v6).map(|v| v.len()),
+        Some(1),
+        "IPv6 unique-local must remain a valid vote candidate"
     );
 }

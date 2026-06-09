@@ -416,6 +416,13 @@ impl DiscoveryServer {
     }
 
     pub fn apply_predicted_ip(&mut self, winning_ip: IpAddr) {
+        // `winning_ip` is already routability-filtered upstream: `record_ip_vote`
+        // drops only unroutable addresses (loopback/link-local/unspecified) via
+        // `is_unroutable_ip`. RFC1918 / IPv6 unique-local are intentionally kept
+        // and may be advertised — on a flat private network (e.g. a kurtosis
+        // enclave) the private IP is the address peers actually reach us at, and
+        // a public winner still takes precedence when one reaches quorum (see
+        // a49c779cc). Do not add an `is_private_ip` guard here.
         if self.ip_override_locked {
             return;
         }
