@@ -32,6 +32,14 @@ tikv-jemallocator = { version = "0.6.0", optional = true, features = [
   "stats",
   "unprefixed_malloc_on_supported_platforms",
 ] }
+# mimalloc allocator. The `override` feature compiles mimalloc's unprefixed C
+# malloc override (alloc-override.c) into the single static.c object, so
+# statically-linked C/C++ deps (RocksDB, c-kzg, secp256k1, openssl) allocate
+# through mimalloc too — jemalloc parity. Plain C via the cc crate (no CMake);
+# works on Linux and macOS (zone interposition).
+mimalloc = { version = "0.1.52", optional = true, default-features = false, features = [
+  "override",
+] }
 bytes.workspace = true
 hex.workspace = true
 tracing.workspace = true
@@ -80,7 +88,7 @@ path = "./lib.rs"
 
 [features]
 debug = ["ethrex-vm/debug"]
-default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "jemalloc", "dev"]
+default = ["rocksdb", "c-kzg", "secp256k1", "metrics", "mimalloc", "dev"]
 dev = ["dep:ethrex-dev"]
 secp256k1 = [
   "ethrex-vm/secp256k1",
@@ -96,6 +104,12 @@ c-kzg = [
 ]
 metrics = ["ethrex-blockchain/metrics", "ethrex-l2?/metrics", "ethrex-p2p/metrics"]
 rocksdb = ["ethrex-storage/rocksdb", "ethrex-p2p/rocksdb", "ethrex-l2?/rocksdb"]
+mimalloc = ["dep:mimalloc"]
+# jemalloc is kept as an opt-in alternative (needed for heap profiling, which
+# mimalloc does not support). It is mutually exclusive with mimalloc — both
+# define the unprefixed C malloc symbols — so to use jemalloc build with
+# `--no-default-features --features rocksdb,c-kzg,secp256k1,metrics,dev,jemalloc`.
+# A compile_error in ethrex.rs guards against enabling both at once.
 jemalloc = ["dep:tikv-jemallocator"]
 jemalloc_profiling = [
   "jemalloc",

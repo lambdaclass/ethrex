@@ -13,6 +13,23 @@ use tracing::info;
 
 const LATEST_VERSION_URL: &str = "https://api.github.com/repos/lambdaclass/ethrex/releases/latest";
 
+// Global allocator. mimalloc is the default (see Cargo.toml); its `override`
+// feature also routes the C deps (RocksDB/c-kzg/etc.) through mimalloc. jemalloc
+// is an opt-in alternative (needed for heap profiling, which mimalloc lacks).
+// The two are mutually exclusive — both define the unprefixed C malloc symbols,
+// so enabling both would be a duplicate-symbol link error. Select jemalloc with
+// `--no-default-features --features ...,jemalloc`.
+#[cfg(all(feature = "mimalloc", feature = "jemalloc"))]
+compile_error!(
+    "`mimalloc` and `jemalloc` are mutually exclusive global allocators; \
+     build with `--no-default-features` and select exactly one \
+     (e.g. `--features rocksdb,c-kzg,secp256k1,metrics,dev,jemalloc`)."
+);
+
+#[cfg(all(feature = "mimalloc", not(feature = "jemalloc")))]
+#[global_allocator]
+static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[global_allocator]
 static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
@@ -20,6 +37,8 @@ static ALLOC: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 fn log_global_allocator() {
     if cfg!(all(feature = "jemalloc", not(target_env = "msvc"))) {
         tracing::info!("Global allocator: jemalloc (tikv-jemallocator)");
+    } else if cfg!(all(feature = "mimalloc", not(feature = "jemalloc"))) {
+        tracing::info!("Global allocator: mimalloc (mimalloc-rs)");
     } else {
         tracing::info!("Global allocator: system (std::alloc::System)");
     }
