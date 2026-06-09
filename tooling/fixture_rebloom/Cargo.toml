@@ -1,0 +1,17 @@
+[package]
+name = "fixture_rebloom"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+documentation.workspace = true
+license.workspace = true
+
+[dependencies]
+ethrex.workspace = true
+ethrex-blockchain.workspace = true
+ethrex-common.workspace = true
+ethrex-crypto.workspace = true
+ethrex-rlp.workspace = true
+tokio = { workspace = true, features = ["full"] }
+serde_json.workspace = true
+eyre.workspace = true

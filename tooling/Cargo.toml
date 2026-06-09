@@ -5,6 +5,7 @@ members = [
   "ef_tests/engine",
   "ef_tests/state",
   "ef_tests/state_v2",
+  "fixture_rebloom",
   "hive_report",
   "load_test",
   "loc",

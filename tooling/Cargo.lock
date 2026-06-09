@@ -4065,6 +4065,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fixture_rebloom"
+version = "4.0.0"
+dependencies = [
+ "ethrex",
+ "ethrex-blockchain",
+ "ethrex-common 15.0.0",
+ "ethrex-crypto",
+ "ethrex-rlp 15.0.0",
+ "eyre",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "float-cmp"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
