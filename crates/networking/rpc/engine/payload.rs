@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use ethrex_blockchain::BodyValidation;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
@@ -1167,15 +1168,20 @@ fn validate_block_hash(payload: &ExecutionPayload, block: &Block) -> Result<(), 
     Ok(())
 }
 
+/// Queues a block on the block executor worker and awaits its result.
+///
+/// `body_validation` states the block's provenance; see
+/// [`crate::rpc::start_block_executor`] for the contract senders must uphold.
 pub async fn add_block(
     ctx: &RpcApiContext,
     block: Block,
     bal: Option<BlockAccessList>,
     make_witness: bool,
+    body_validation: BodyValidation,
 ) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal, make_witness))
+        .send((notify_send, block, bal, make_witness, body_validation))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1229,7 +1235,20 @@ async fn try_execute_payload(
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
-    match add_block(context, block, bal, make_witness).await {
+    // The body is already proven to match the header roots: every newPayload
+    // version builds the block via ExecutionPayload::into_block, which derives
+    // the header's transactions/withdrawals roots from the payload body itself,
+    // and validate_block_hash then enforced the CL-provided block hash against
+    // that header. The pipeline can therefore skip recomputing the roots.
+    match add_block(
+        context,
+        block,
+        bal,
+        make_witness,
+        BodyValidation::AlreadyValidated,
+    )
+    .await
+    {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);

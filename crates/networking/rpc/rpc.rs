@@ -182,11 +182,15 @@ pub enum RpcRequestWrapper {
 }
 
 /// Channel message type for the block executor worker thread.
+///
+/// The [`BodyValidation`] states the block's provenance; see
+/// [`start_block_executor`] for the contract senders must uphold.
 type BlockWorkerMessage = (
     oneshot::Sender<Result<Option<ExecutionWitness>, ChainError>>,
     Block,
     Option<BlockAccessList>,
     bool,
+    BodyValidation,
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -440,7 +444,13 @@ pub const FILTER_DURATION: Duration = {
 /// # Returns
 ///
 /// An unbounded channel sender for submitting blocks. Each submission includes
-/// a oneshot channel for receiving the execution result.
+/// a oneshot channel for receiving the execution result and the
+/// [`BodyValidation`] the import pipeline will run with.
+///
+/// Senders must pass [`BodyValidation::Validate`] unless the block's header
+/// transactions/withdrawals roots were derived from the body itself (e.g. via
+/// `ExecutionPayload::into_block`) AND the block hash was validated against
+/// that header; only then is [`BodyValidation::AlreadyValidated`] sound.
 ///
 /// # Panics
 ///
@@ -450,25 +460,22 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
-                // Blocks only reach this worker through engine_newPayload, which
-                // reconstructs the header's transactions/withdrawals roots from the
-                // payload body itself and then enforces the CL-provided block hash
-                // against that header, so the body is already proven to match the
-                // header roots and the pipeline can skip recomputing them.
+            while let Some((notify, block, bal, make_witness, body_validation)) =
+                block_receiver.blocking_recv()
+            {
                 let result = (|| {
                     if make_witness {
                         let witness = blockchain.add_block_pipeline_with_witness(
                             block,
                             bal.as_ref(),
-                            BodyValidation::AlreadyValidated,
+                            body_validation,
                         )?;
                         Ok(Some(witness))
                     } else {
                         blockchain.add_block_pipeline_with_body_validation(
                             block,
                             bal.as_ref(),
-                            BodyValidation::AlreadyValidated,
+                            body_validation,
                         )?;
                         Ok(None)
                     }

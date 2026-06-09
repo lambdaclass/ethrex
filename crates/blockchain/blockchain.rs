@@ -68,8 +68,8 @@ use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
 use ethrex_common::types::{
     AccountInfo, AccountState, AccountUpdate, BalSynthesisItem, Block, BlockHash, BlockHeader,
-    BlockNumber, ChainConfig, Code, InvalidBlockBodyError, Receipt, Transaction,
-    WrappedEIP4844Transaction, synthesize_bal_updates, validate_block_body,
+    BlockNumber, ChainConfig, Code, Receipt, Transaction, WrappedEIP4844Transaction,
+    synthesize_bal_updates, validate_block_body, validate_block_body_structure,
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
@@ -559,13 +559,10 @@ impl Blockchain {
                     .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
             }
             // The caller already proved the body matches the header roots (see
-            // [`BodyValidation`]); only the cheap structural check remains.
+            // [`BodyValidation`]); only the cheap structural checks remain.
             BodyValidation::AlreadyValidated => {
-                if !block.body.ommers.is_empty() {
-                    return Err(ChainError::InvalidBlock(InvalidBlockError::InvalidBody(
-                        InvalidBlockBodyError::OmmersIsNotEmpty,
-                    )));
-                }
+                validate_block_body_structure(&block.body)
+                    .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
             }
         }
         let block_validated_instant = Instant::now();

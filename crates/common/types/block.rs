@@ -749,9 +749,7 @@ pub fn validate_block_body(
         return Err(InvalidBlockBodyError::TransactionsRootNotMatch);
     }
 
-    if !block_body.ommers.is_empty() {
-        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
-    }
+    validate_block_body_structure(block_body)?;
 
     match (block_header.withdrawals_root, &block_body.withdrawals) {
         (Some(withdrawals_root), Some(withdrawals)) => {
@@ -767,6 +765,20 @@ pub fn validate_block_body(
         }
         (None, None) => {}
         _ => return Err(InvalidBlockBodyError::WithdrawalsRootNotMatch),
+    }
+
+    Ok(())
+}
+
+/// Structural body checks that don't require recomputing the header roots.
+///
+/// Shared by [`validate_block_body`] and by import paths that have already
+/// proven the body matches the header roots, so the structural rules cannot
+/// drift between the two.
+pub fn validate_block_body_structure(block_body: &BlockBody) -> Result<(), InvalidBlockBodyError> {
+    // Ommers must be empty -> https://eips.ethereum.org/EIPS/eip-3675
+    if !block_body.ommers.is_empty() {
+        return Err(InvalidBlockBodyError::OmmersIsNotEmpty);
     }
 
     Ok(())
