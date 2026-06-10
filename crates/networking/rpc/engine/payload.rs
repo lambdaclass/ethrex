@@ -783,23 +783,39 @@ fn bal_for_block(
     block: &Block,
 ) -> Result<Option<BlockAccessList>, RpcErr> {
     let block_hash = block.hash();
+    let commitment = block.header.block_access_list_hash;
     if let Some(bal) = context.storage.get_block_access_list(block_hash)? {
-        return Ok(Some(bal));
+        // EIP-8159: never serve a BAL that doesn't match the header commitment.
+        // A stale/empty entry (e.g. from a prior regeneration against state that
+        // was later pruned) must degrade to "unavailable" rather than a wrong BAL.
+        if bal.matches_commitment(commitment) {
+            return Ok(Some(bal));
+        }
+        warn!("Stored BAL for {block_hash} does not match header commitment; ignoring it");
     }
     let generated = context
         .blockchain
         .generate_bal_for_block(block)
         .map_err(|e| RpcErr::Internal(e.to_string()))?;
+    // Only persist/serve a regenerated BAL if it matches the header commitment.
+    // Regeneration re-executes against the parent state; if that state is gone
+    // or stale the result can be empty/wrong, so guard before writing it back.
+    let regenerated = generated.is_some();
+    let Some(bal) = generated.filter(|bal| bal.matches_commitment(commitment)) else {
+        // A successful regeneration whose hash doesn't match the commitment means
+        // the block was re-executed against wrong/incomplete state; don't serve or
+        // persist it. (Absent regeneration just means the state is unavailable.)
+        if regenerated {
+            warn!("Regenerated BAL for {block_hash} does not match header commitment; discarding");
+        }
+        return Ok(None);
+    };
     // Write back so subsequent requests for this block are served from the
-    // store instead of re-executing every time. Regeneration only succeeds
-    // while the parent state is still in the retained window; the block has
-    // long been accepted, so the regenerated BAL is authoritative for serving.
-    if let Some(bal) = &generated
-        && let Err(err) = context.storage.store_block_access_list(block_hash, bal)
-    {
+    // store instead of re-executing every time.
+    if let Err(err) = context.storage.store_block_access_list(block_hash, &bal) {
         warn!("Failed to persist regenerated block access list for {block_hash}: {err}");
     }
-    Ok(generated)
+    Ok(Some(bal))
 }
 
 // ==================== V2 Body Methods (EIP-7928) ====================
