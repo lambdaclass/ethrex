@@ -1,12 +1,26 @@
 //! Differential tests for the P256VERIFY (secp256r1) precompile backend.
 //!
 //! `NativeCrypto` overrides `secp256r1_verify` with the native aws-lc-rs path
-//! (when the `aws-lc-rs` feature is on, which it is by default). A `Crypto` impl
-//! with no overrides resolves to the portable pure-Rust `p256` trait default.
-//! The two must agree byte-for-byte on every input.
+//! when the `aws-lc-rs` feature is on. In this test build it is always on, pulled
+//! in transitively via the `ethrex` dev-dependency (`cmd/ethrex` enables
+//! `ethrex-crypto`'s default features); `native_backend_is_active` guards that.
+//! A `Crypto` impl with no overrides resolves to the portable pure-Rust `p256`
+//! trait default. The two must agree byte-for-byte on every input.
 
-use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_crypto::{Crypto, NATIVE_P256_BACKEND, NativeCrypto};
 use p256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
+
+/// Guard: without the native aws-lc-rs backend, `NativeCrypto` resolves to the
+/// same pure-Rust trait default as `PureRust`, so every differential assertion
+/// below compares a backend against itself and passes vacuously. Fail loudly
+/// rather than let the suite silently verify nothing.
+#[test]
+fn native_backend_is_active() {
+    assert!(
+        NATIVE_P256_BACKEND,
+        "aws-lc-rs feature is off; the P256VERIFY differential tests are vacuous"
+    );
+}
 
 /// secp256r1 group order n.
 const P256_N: [u8; 32] =
@@ -153,11 +167,17 @@ fn adversarial_cases_agree() {
     bad_pk[..32].copy_from_slice(&p_minus_1);
     cases.push((good_sig, bad_pk));
 
+    // The first four cases (r=0, s=0, r=n, s=n) carry out-of-range scalars and
+    // must be unconditionally rejected per EIP-7951, regardless of the backend.
     for (i, (sig, pk)) in cases.iter().enumerate() {
+        let awslc = awslc_verify(&msg, sig, pk);
         assert_eq!(
-            awslc_verify(&msg, sig, pk),
+            awslc,
             ref_verify(&msg, sig, pk),
             "backends disagree on adversarial case #{i}"
         );
+        if i < 4 {
+            assert!(!awslc, "out-of-range scalar case #{i} was not rejected");
+        }
     }
 }

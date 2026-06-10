@@ -30,7 +30,12 @@ const P256_N: [u8; 32] =
 pub fn secp256r1_verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
     // EIP-7951: reject r, s == 0 or >= n up front. Cheap and keeps the scalar
     // range semantics locally auditable rather than implicit in the backend.
-    if !scalar_in_range(&sig[..32]) || !scalar_in_range(&sig[32..]) {
+    let (r, s) = sig.split_at(32);
+    let (r, s): (&[u8; 32], &[u8; 32]) = (
+        r.try_into().expect("sig[..32] is 32 bytes"),
+        s.try_into().expect("sig[32..] is 32 bytes"),
+    );
+    if !scalar_in_range(r) || !scalar_in_range(s) {
         return false;
     }
 
@@ -51,11 +56,12 @@ pub fn secp256r1_verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
 }
 
 /// True iff `bytes` (32-byte big-endian) encodes a scalar strictly in `(0, n)`.
-/// For equal-length big-endian slices, lexicographic order matches numeric
-/// order, so the slice comparison against `n` is an exact `< n` test.
-fn scalar_in_range(bytes: &[u8]) -> bool {
+/// The fixed `[u8; 32]` length makes the comparison contract part of the type:
+/// for equal-length big-endian arrays, lexicographic order matches numeric
+/// order, so the comparison against `n` is an exact `< n` test.
+fn scalar_in_range(bytes: &[u8; 32]) -> bool {
     if bytes.iter().all(|&b| b == 0) {
         return false;
     }
-    bytes < &P256_N[..]
+    bytes < &P256_N
 }
