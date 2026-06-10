@@ -98,6 +98,7 @@
 
 - [Getting started](./developers/README.md)
 - [Building](./developers/installing.md)
+  - [Updating ethrex tooling](./updating-ethrex-tooling.md)
 - [L1](./developers/l1/introduction.md)
   - [Ethrex as a local development node](./developers/l1/dev-mode.md)
   - [Importing blocks from a file](./developers/l1/importing-blocks.md)
