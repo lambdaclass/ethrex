@@ -1530,10 +1530,10 @@ impl Transaction {
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
     let v = u64::try_from(v).ok()?;
-    // EIP-155 encodes the chain id in `v` as `chain_id * 2 + 35` (or `+ 36`). Values below
-    // 35 — including the pre-EIP-155 `27`/`28` — carry no chain id; `v` is decoded from RLP
-    // unvalidated, so returning None here (instead of computing `v - 35`) avoids an
-    // underflow panic on malformed input.
+    // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
+    // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
+    // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
+    // carry a chain id. Guard the subtraction to avoid an underflow panic.
     if v < 35 { None } else { Some((v - 35) / 2) }
 }
 
