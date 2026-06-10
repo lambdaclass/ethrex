@@ -29,7 +29,7 @@ use std::{
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, trace};
 
 // Re-export constants from snap::constants for backward compatibility
 pub use crate::snap::constants::{
@@ -380,13 +380,15 @@ impl PeerHandler {
                     debug!("All downloaded headers are unique");
                 }
                 std::cmp::Ordering::Greater => {
-                    warn!(
+                    debug!(
                         "Downloaded headers contain duplicates, {} duplicates found",
                         downloaded_headers - unique_headers.len()
                     );
                 }
                 std::cmp::Ordering::Less => {
-                    warn!("Downloaded headers are less than unique headers, something went wrong");
+                    debug!(
+                        "Downloaded headers are less than unique headers, this should not happen"
+                    );
                 }
             }
         }
@@ -425,9 +427,7 @@ impl PeerHandler {
                 {
                     if block_headers.is_empty() {
                         // Empty response is valid per eth spec (peer may not have these blocks)
-                        debug!(
-                            "[SYNCING] Received empty headers from peer {peer_id}, trying another"
-                        );
+                        debug!("Received empty headers from peer {peer_id}, trying another");
                         let _ = self.peer_table.set_disposable(peer_id);
                         return Ok(None);
                     }
@@ -436,16 +436,14 @@ impl PeerHandler {
                         return Ok(Some(block_headers));
                     }
                     // Non-empty but unchained headers is a protocol violation
-                    warn!(
-                        "[SYNCING] Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
+                    debug!(
+                        "Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
                     self.peer_table.record_failure(peer_id)?;
                     return Ok(None);
                 }
                 // Timeout or invalid response - mark peer as disposable
-                warn!(
-                    "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
-                );
+                debug!("Didn't receive block headers from peer, penalizing peer {peer_id}");
                 self.peer_table.record_failure(peer_id)?;
                 Ok(None)
             }
@@ -483,7 +481,7 @@ impl PeerHandler {
             if are_block_headers_chained(&block_headers, &BlockRequestOrder::OldToNew) {
                 Ok(block_headers)
             } else {
-                warn!("[SYNCING] Received invalid headers from peer: {peer_id}");
+                debug!("Received invalid headers from peer: {peer_id}");
                 Err(PeerHandlerError::InvalidHeaders)
             }
         } else {
@@ -523,9 +521,7 @@ impl PeerHandler {
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
-                warn!(
-                    "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
-                );
+                debug!("Didn't receive block bodies from peer, penalizing peer {peer_id}");
                 self.peer_table.record_failure(peer_id)?;
                 let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
@@ -554,9 +550,7 @@ impl PeerHandler {
             let mut validation_success = true;
             for (header, body) in block_headers[..block_bodies.len()].iter().zip(block_bodies) {
                 if let Err(e) = validate_block_body(header, &body, &NativeCrypto) {
-                    warn!(
-                        "Invalid block body error {e}, discarding peer {peer_id} and retrying..."
-                    );
+                    debug!("Invalid block body error {e}, discarding peer {peer_id} and retrying");
                     validation_success = false;
                     self.peer_table.record_critical_failure(peer_id)?;
                     break;
@@ -600,7 +594,7 @@ impl PeerHandler {
                         Ok(Some(block_access_lists))
                     }
                     _ => {
-                        warn!("[SYNCING] Didn't receive block access lists from peer {peer_id}");
+                        debug!("Didn't receive block access lists from peer {peer_id}");
                         self.peer_table.record_failure(peer_id)?;
                         Ok(None)
                     }
@@ -674,7 +668,7 @@ impl PeerHandler {
             // TODO: we need to check, this seems a scenario where the peer channel does teardown
             // after we sent the backend message
             Err(_) => {
-                warn!("The RLPxConnection closed the backend channel");
+                debug!("Peer connection closed while waiting for response");
             }
         }
 
