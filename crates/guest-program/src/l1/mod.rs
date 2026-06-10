@@ -14,4 +14,4 @@ pub use input::{ProgramInputDecodeError, ProgramInputEncodeError};
 pub use output::ProgramOutput;
 #[cfg(feature = "eip-8025")]
 pub use program::execute_decoded;
-pub use program::execution_program;
+pub use program::{execute_l1_blocks, execution_program};

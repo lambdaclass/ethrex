@@ -2,6 +2,7 @@ mod blockchain;
 mod cmd;
 mod common;
 mod crypto;
+mod guest_program;
 mod l2;
 mod levm;
 mod p2p;
