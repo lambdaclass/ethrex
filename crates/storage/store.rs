@@ -234,7 +234,8 @@ pub struct Store {
     background_threads: Arc<ThreadList>,
 }
 
-/// Counts of rows deleted during a single [`Store::prune_block_height`] call.
+/// Counts of rows deleted by one [`Store::prune_block_heights`] call,
+/// accumulated over the whole `[start, start + count)` range.
 /// Returned so callers (e.g., the pruner) can update Prometheus counters.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct PruneHeightCounts {
@@ -597,6 +598,10 @@ impl Store {
             txn.delete(BODIES, &hash_key)?;
             txn.delete(HEADERS, &hash_key)?;
             txn.delete(BLOCK_NUMBERS, &hash_key)?;
+            txn.delete(
+                BLOCK_HASHES_BY_NUMBER,
+                &block_hashes_by_number_key(block_number, hash),
+            )?;
             txn.commit()
         })
         .await
@@ -622,7 +627,8 @@ impl Store {
     ///   - For non-canonical hashes only: also delete headers and block_numbers.
     ///   - Drop the `BLOCK_HASHES_BY_NUMBER` slice for `[start, end)` via a
     ///     single `DeleteRange` (the CF is keyed `block_number_BE || hash`).
-    ///   - Advance `EarliestBlockNumber` to `start + count`.
+    ///   - Advance `EarliestBlockNumber` to `start + count` (skipped if
+    ///     another writer already advanced it past that).
     ///
     /// The gather phase fans out across rayon threads (one read txn per
     /// height). All writes land in a single `WriteBatch`; the pass is
@@ -747,6 +753,13 @@ impl Store {
             // Each tx_hash's location Vec is read once, entries pointing at a
             // pruned block are dropped, and the remainder is re-put (or the
             // key deleted outright if no locations survive).
+            //
+            // Known race: this read-modify-write is not serialized against
+            // block imports, which append locations via `merge`. A merge for
+            // one of these tx hashes committed between the read below and
+            // this batch's commit is overwritten by the re-put. Reaching
+            // that window requires a tx whose only prior inclusions are
+            // orphans old enough to be pruned getting re-included mid-pass.
             if !tx_location_removals.is_empty() {
                 let rtxn = backend.begin_read()?;
                 for (tx_hash, removed_block_hashes) in &tx_location_removals {
@@ -780,8 +793,24 @@ impl Store {
             let range_end = end.to_be_bytes();
             wtxn.delete_range(BLOCK_HASHES_BY_NUMBER, &range_start, &range_end)?;
 
+            // Advance EarliestBlockNumber — unless another writer (snap-sync
+            // completion setting it to the pivot) moved it past `end` while
+            // this pass ran. A blind put would regress the pointer and force
+            // a long re-sweep of bodyless heights.
             let earliest_key = chain_data_key(ChainDataIndex::EarliestBlockNumber);
-            wtxn.put(CHAIN_DATA, &earliest_key, &end.to_le_bytes())?;
+            let stored_earliest = backend
+                .begin_read()?
+                .get(CHAIN_DATA, &earliest_key)?
+                .map(|bytes| -> Result<u64, StoreError> {
+                    let array: [u8; 8] = bytes
+                        .try_into()
+                        .map_err(|_| StoreError::Custom("Invalid BlockNumber bytes".to_string()))?;
+                    Ok(u64::from_le_bytes(array))
+                })
+                .transpose()?;
+            if stored_earliest.is_none_or(|current| end > current) {
+                wtxn.put(CHAIN_DATA, &earliest_key, &end.to_le_bytes())?;
+            }
             wtxn.commit()?;
 
             Ok(counts)

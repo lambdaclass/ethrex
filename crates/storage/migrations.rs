@@ -143,10 +143,18 @@ fn migrate_3_to_4_with_batch_size(
     Ok(())
 }
 
-/// Restores the invariant `EarliestBlockNumber = lowest canonical block
-/// with a body` on snap-synced DBs (where it was never written and sits
-/// at `0` despite a body gap below the pivot). Full-sync nodes (body at
-/// block 0) are left alone. Idempotent.
+/// Restores the invariant "`EarliestBlockNumber` = start of the contiguous
+/// body suffix" on snap-synced DBs, where it was never corrected and sits
+/// at `0` despite a body gap below the pivot.
+///
+/// The genesis body can't be used to tell full-sync and snap-sync nodes
+/// apart: `add_initial_state` stores the full genesis block on every
+/// datadir, so block 0 has a body even on snap-synced nodes. Instead,
+/// binary-search `[1, latest]` for the lowest block with a body — within
+/// that range bodies form a contiguous suffix, starting at the pivot on
+/// snap-synced nodes and at 1 on full-sync nodes — and only rewrite
+/// `EarliestBlockNumber` when the suffix doesn't connect back to genesis.
+/// Idempotent.
 fn fix_earliest_block_number(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     let txn = backend.begin_read()?;
 
@@ -158,11 +166,6 @@ fn fix_earliest_block_number(backend: &dyn StorageBackend) -> Result<(), StoreEr
         let hash = H256::decode(hash_bytes.as_slice()).map_err(StoreError::from)?;
         Ok(txn.get(BODIES, &hash.encode_to_vec())?.is_some())
     };
-
-    // Full-sync node — nothing to do.
-    if body_exists(0)? {
-        return Ok(());
-    }
 
     let latest_bytes = match txn.get(
         CHAIN_DATA,
@@ -177,14 +180,19 @@ fn fix_earliest_block_number(backend: &dyn StorageBackend) -> Result<(), StoreEr
         .map_err(|_| StoreError::Custom("invalid LatestBlockNumber bytes".into()))?;
     let latest = u64::from_le_bytes(latest_array);
 
-    let mut lo = 0u64;
+    // Genesis-only DB — nothing to fix.
+    if latest == 0 {
+        return Ok(());
+    }
+
+    let mut lo = 1u64;
     let mut hi = latest;
     let mut floor: Option<u64> = None;
     while lo <= hi {
         let mid = lo + (hi - lo) / 2;
         if body_exists(mid)? {
             floor = Some(mid);
-            if mid == 0 {
+            if mid == 1 {
                 break;
             }
             hi = mid - 1;
@@ -198,17 +206,26 @@ fn fix_earliest_block_number(backend: &dyn StorageBackend) -> Result<(), StoreEr
 
     drop(txn);
 
-    if let Some(n) = floor {
-        let mut wtxn = backend.begin_write()?;
-        wtxn.put(
-            CHAIN_DATA,
-            &chain_data_key(ChainDataIndex::EarliestBlockNumber),
-            &n.to_le_bytes(),
-        )?;
-        wtxn.commit()?;
+    match floor {
+        // Bodies reach back to block 1: contiguous with genesis, so the node
+        // is fully synced and the legacy EarliestBlockNumber (0) is already
+        // right.
+        Some(1) => Ok(()),
+        Some(n) => {
+            let mut wtxn = backend.begin_write()?;
+            wtxn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+                &n.to_le_bytes(),
+            )?;
+            wtxn.commit()?;
+            Ok(())
+        }
+        // No bodies above genesis (e.g. snap sync still in flight at
+        // migration time) — leave the pointer alone; snap-sync completion
+        // writes the pivot itself.
+        None => Ok(()),
     }
-
-    Ok(())
 }
 
 /// A migration function that upgrades the database schema by one version.
@@ -583,7 +600,9 @@ mod tests {
         // Build a simulated snap-synced state:
         //  - Canonical hashes 0..=10 all set.
         //  - Headers stored for all 10 (so the index backfill picks them up).
-        //  - Bodies stored ONLY for 5..=10 (simulates pivot = 5).
+        //  - Bodies stored for 0 (the genesis body, which `add_initial_state`
+        //    writes on EVERY datadir, snap-synced or not) and 5..=10
+        //    (simulates pivot = 5).
         //  - EarliestBlockNumber NOT written (legacy default).
         //  - LatestBlockNumber = 10 (read by the migration's binary search upper bound).
         let headers: Vec<BlockHeader> = (0u64..=10)
@@ -601,7 +620,7 @@ mod tests {
                 txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
                 txn.put(CANONICAL_BLOCK_HASHES, &h.number.to_le_bytes(), &hash_key)
                     .unwrap();
-                if h.number >= 5 {
+                if h.number >= 5 || h.number == 0 {
                     let body_rlp = BlockBodyRLP::from_bytes(BlockBody::default().encode_to_vec());
                     txn.put(BODIES, &hash_key, body_rlp.bytes()).unwrap();
                 }
@@ -632,6 +651,64 @@ mod tests {
         assert_eq!(
             earliest, 5,
             "migration should set EarliestBlockNumber to pivot"
+        );
+    }
+
+    #[test]
+    fn migrate_3_to_4_leaves_earliest_unset_when_only_genesis_body() {
+        // Snap sync still in flight at migration time: headers and canonical
+        // hashes exist, but the only body on disk is the genesis one written
+        // at init. The migration must not touch EarliestBlockNumber —
+        // snap-sync completion writes the pivot itself.
+        use crate::api::tables::{BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA, HEADERS};
+        use crate::rlp::{BlockBodyRLP, BlockHeaderRLP};
+        use crate::utils::{ChainDataIndex, chain_data_key};
+        use ethrex_common::types::{BlockBody, BlockHeader};
+        use ethrex_rlp::encode::RLPEncode;
+
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        let headers: Vec<BlockHeader> = (0u64..=10)
+            .map(|n| BlockHeader {
+                number: n,
+                ..BlockHeader::default()
+            })
+            .collect();
+        {
+            let mut txn = backend.begin_write().unwrap();
+            for h in &headers {
+                let hash = h.hash();
+                let hash_key = hash.encode_to_vec();
+                let header_rlp = BlockHeaderRLP::from(h.clone()).into_vec();
+                txn.put(HEADERS, &hash_key, &header_rlp).unwrap();
+                txn.put(CANONICAL_BLOCK_HASHES, &h.number.to_le_bytes(), &hash_key)
+                    .unwrap();
+                if h.number == 0 {
+                    let body_rlp = BlockBodyRLP::from_bytes(BlockBody::default().encode_to_vec());
+                    txn.put(BODIES, &hash_key, body_rlp.bytes()).unwrap();
+                }
+            }
+            txn.put(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::LatestBlockNumber),
+                &10u64.to_le_bytes(),
+            )
+            .unwrap();
+            txn.commit().unwrap();
+        }
+
+        super::migrate_3_to_4(&backend).unwrap();
+
+        let txn = backend.begin_read().unwrap();
+        let earliest_bytes = txn
+            .get(
+                CHAIN_DATA,
+                &chain_data_key(ChainDataIndex::EarliestBlockNumber),
+            )
+            .unwrap();
+        assert!(
+            earliest_bytes.is_none(),
+            "EarliestBlockNumber must stay unset when no bodies exist above genesis"
         );
     }
 

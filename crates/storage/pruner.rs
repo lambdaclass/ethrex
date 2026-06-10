@@ -1,8 +1,6 @@
 //! History pruner task: deletes block bodies, receipts, transaction
 //! locations, and non-canonical block data for heights older than the
 //! configured retention window.
-//!
-//! See docs/superpowers/specs/2026-05-12-history-pruning-design.md.
 
 use crate::store::Store;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -18,6 +16,12 @@ const PRUNE_PASS_TIMEOUT_MS: u64 = 2_000;
 // ones can fall behind block sync. 4096 is the largest value we've seen
 // stay healthy on BSC mainnet.
 const PRUNE_BATCH_SIZE: usize = 4_096;
+// Heights per `prune_block_heights` call within a pass. Each call holds the
+// decoded bodies for its whole chunk in memory during the gather phase, so
+// this bounds peak heap (4096 at once would reach hundreds of MB to GBs on
+// large-block chains) and gives the pass deadline a chunk boundary to fire
+// at.
+const PRUNE_CHUNK_SIZE: usize = 256;
 // Used as the prune floor when no `FinalizedBlockNumber` is set (chains
 // without engine-API finality, or a node before its first FCU). Covers
 // reorg depths far beyond mainnet norms while letting the pruner do
@@ -97,14 +101,16 @@ impl HistoryPruner {
         let deadline = start + Duration::from_millis(PRUNE_PASS_TIMEOUT_MS);
         let mut processed: usize = 0;
 
-        // One parallel batch per loop iteration: gather phase fans out across
-        // rayon threads, then a single write txn commits all deletes for that
-        // chunk. Loop is still capped by PRUNE_BATCH_SIZE and the per-pass
-        // deadline.
+        // One PRUNE_CHUNK_SIZE chunk per loop iteration: gather fans out
+        // across rayon threads, then a single write txn commits that chunk's
+        // deletes (including its EarliestBlockNumber advance, so a pass cut
+        // short by the deadline resumes where it stopped). The pass ends when
+        // the target is reached, PRUNE_BATCH_SIZE heights have been
+        // processed, or the deadline elapses between chunks.
         while earliest <= target && processed < PRUNE_BATCH_SIZE && Instant::now() < deadline {
             let remaining_budget = PRUNE_BATCH_SIZE - processed;
             let remaining_target = (target + 1 - earliest) as usize;
-            let chunk = remaining_budget.min(remaining_target);
+            let chunk = PRUNE_CHUNK_SIZE.min(remaining_budget).min(remaining_target);
             if chunk == 0 {
                 break;
             }
