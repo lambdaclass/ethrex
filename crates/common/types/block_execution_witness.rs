@@ -6,7 +6,7 @@ use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
 use crate::types::{Block, Code, CodeMetadata};
 use crate::{
-    constants::EMPTY_KECCACK_HASH,
+    constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
     utils::keccak,
 };
@@ -631,7 +631,7 @@ impl GuestProgramState {
     /// include every byte of code the VM reads, and EIP-8025 stateless
     /// validation requires the same.
     pub fn get_account_code(&self, code_hash: H256) -> Result<Code, GuestProgramStateError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Code::default());
         }
         self.codes_hashed
@@ -646,7 +646,7 @@ impl GuestProgramState {
         &self,
         code_hash: H256,
     ) -> Result<CodeMetadata, GuestProgramStateError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
         self.codes_hashed

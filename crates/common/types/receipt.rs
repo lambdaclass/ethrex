@@ -47,13 +47,19 @@ impl Receipt {
     }
 
     pub fn encode_inner_with_bloom(&self, crypto: &dyn Crypto) -> Vec<u8> {
+        self.encode_inner_with_precomputed_bloom(bloom_from_logs(&self.logs, crypto))
+    }
+
+    /// Like [`Self::encode_inner_with_bloom`] but takes an already-computed bloom, so
+    /// callers that also need the bloom for other purposes (e.g. the aggregate header
+    /// `logs_bloom`) don't recompute it.
+    pub fn encode_inner_with_precomputed_bloom(&self, bloom: Bloom) -> Vec<u8> {
         // Bloom is already 256 bytes, so we preallocate at least that much plus some,
         // to avoid multiple small allocations.
         let mut encode_buf = Vec::with_capacity(512);
         if self.tx_type != TxType::Legacy {
             encode_buf.push(self.tx_type as u8);
         }
-        let bloom = bloom_from_logs(&self.logs, crypto);
         Encoder::new(&mut encode_buf)
             .encode_field(&self.succeeded)
             .encode_field(&self.cumulative_gas_used)

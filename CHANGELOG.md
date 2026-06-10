@@ -2,15 +2,23 @@
 
 ## Observability
 
+### 2026-06-03
+
+- Reduce allocations and clones [#6782](https://github.com/lambdaclass/ethrex/pull/6782)
+
 ### 2026-05-27
 
 - Add BAL (EIP-7928) Prometheus instruments (`bal_blocks_total`, `bal_size_bytes`, `bal_size_bytes_histogram`, `bal_account_count`, `bal_slot_count`) and a BAL row in the `ethrex_l1_perf` Grafana dashboard [#6678](https://github.com/lambdaclass/ethrex/pull/6678)
 
 ## Perf
 
-### 2026-06-01
+### 2026-06-10
 
 - Optimize trie building in snap sync insertion: parallelize state trie build across 16 nibble ranges, eliminate redundant code-hash iteration, and reuse buffers (~700M alloc reduction on mainnet) [#6410](https://github.com/lambdaclass/ethrex/pull/6410)
+
+### 2026-06-03
+
+- Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
 
 ### 2026-05-27
 
@@ -91,6 +99,7 @@
 
 ### 2026-01-23
 
+- Compute base blob fee once per block [#6006](https://github.com/lambdaclass/ethrex/pull/6006)
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
 
 ### 2026-01-21
