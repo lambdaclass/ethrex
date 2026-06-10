@@ -38,7 +38,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 #[cfg(not(feature = "l2"))]
@@ -685,6 +685,8 @@ pub async fn init_l1(
     )
     .await;
 
+    tracker.spawn(run_bloombits_indexer(store.clone(), cancel_token.clone()));
+
     if opts.metrics_enabled {
         init_metrics(&opts, &network, tracker.clone());
     }
@@ -713,6 +715,45 @@ pub async fn init_l1(
         peer_handler.peer_table,
         local_node_record,
     ))
+}
+
+/// Background service that keeps the bloombits log index (used by
+/// `eth_getLogs`) up to date. It periodically transposes the header blooms of
+/// any newly-buried block sections into the index.
+///
+/// On first run after upgrading it walks the whole chain (backfill); in steady
+/// state it indexes one section at a time as the head advances. Only sections
+/// buried beyond the reorg window are indexed, so its writes are append-only and
+/// never need invalidation. The actual indexing runs on a blocking thread to
+/// avoid stalling the async runtime.
+async fn run_bloombits_indexer(store: Store, cancel_token: CancellationToken) {
+    // Poll cadence; indexing only does work once a fresh section is buried.
+    const POLL_INTERVAL: Duration = Duration::from_secs(12);
+    // Stay well clear of the 128-block reorg depth limit so indexed sections are
+    // immutable.
+    const CONFIRMATION_DEPTH: u64 = 256;
+
+    let mut interval = tokio::time::interval(POLL_INTERVAL);
+    loop {
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = interval.tick() => {
+                let store = store.clone();
+                match tokio::task::spawn_blocking(move || {
+                    store.index_pending_bloombits_sections(CONFIRMATION_DEPTH)
+                })
+                .await
+                {
+                    Ok(Ok(indexed)) if indexed > 0 => {
+                        info!("bloombits: indexed {indexed} new log-index section(s)");
+                    }
+                    Ok(Ok(_)) => {}
+                    Ok(Err(err)) => warn!("bloombits indexer error: {err}"),
+                    Err(err) => warn!("bloombits indexer task failed: {err}"),
+                }
+            }
+        }
+    }
 }
 
 /// Migrates data from a pre-suffix datadir layout to the new network-specific

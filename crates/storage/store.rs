@@ -1494,6 +1494,47 @@ impl Store {
         txn.commit()
     }
 
+    /// Indexes every section that is complete and buried at least
+    /// `confirmation_depth` blocks behind the latest block, transposing each
+    /// section's header blooms into the bloombits index. Returns how many new
+    /// sections were indexed.
+    ///
+    /// Only sections deeper than the reorg depth limit are eligible, so a stored
+    /// section is immutable — this is why the index never needs reorg
+    /// invalidation. Runs blocking reads; callers should invoke it off the async
+    /// runtime (e.g. via `spawn_blocking`). On first run after upgrade it walks
+    /// the whole chain (backfill); in steady state it indexes one section at a
+    /// time as the head advances.
+    pub fn index_pending_bloombits_sections(
+        &self,
+        confirmation_depth: u64,
+    ) -> Result<u64, StoreError> {
+        let latest = self.latest_block_header.get().number;
+        let mut section = self.get_indexed_bloombits_sections()?;
+        let mut newly_indexed = 0;
+        loop {
+            let last_block = (section + 1) * SECTION_SIZE - 1;
+            // Stop before any section that a reorg could still rewrite.
+            if last_block + confirmation_depth > latest {
+                break;
+            }
+            let mut blooms = Vec::with_capacity(SECTION_SIZE as usize);
+            for block_number in section * SECTION_SIZE..=last_block {
+                let header = self.get_block_header(block_number)?.ok_or_else(|| {
+                    StoreError::Custom(format!(
+                        "bloombits: missing canonical header for block {block_number}"
+                    ))
+                })?;
+                blooms.push(header.logs_bloom);
+            }
+            let rows = bloombits::transpose_section(&blooms);
+            self.store_bloombits_section(section, &rows)?;
+            section += 1;
+            newly_indexed += 1;
+        }
+        Ok(newly_indexed)
+    }
+
     /// Number of contiguous bloombits sections (from section 0) that are fully
     /// indexed. Blocks below `count * SECTION_SIZE` can be served from the index;
     /// everything above must be scanned directly.
@@ -3899,6 +3940,39 @@ mod bloombits_store_tests {
         assert_eq!(store.get_indexed_bloombits_sections().unwrap(), 0);
         index_section(&store, 0, |_| bloom_for(&[addr(1).as_bytes()]));
         assert_eq!(store.get_indexed_bloombits_sections().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn catch_up_respects_confirmation_depth() {
+        let store = store();
+        // Two full sections of headers plus a short, recent tail.
+        let head = 2 * SECTION_SIZE + 10;
+        let mut headers = Vec::new();
+        let mut canonical = Vec::new();
+        for block_number in 0..=head {
+            let mut header = BlockHeader::default();
+            header.number = block_number;
+            header.logs_bloom = bloom_for(&[addr(1).as_bytes()]);
+            canonical.push((block_number, header.hash()));
+            headers.push(header);
+        }
+        let head_hash = canonical[head as usize].1;
+        store.add_block_headers(headers).await.unwrap();
+        // Mark the chain canonical so `get_block_header`/latest resolve.
+        store
+            .forkchoice_update(canonical, head, head_hash, None, None)
+            .await
+            .unwrap();
+
+        // With a 128-block confirmation depth, section 0 (ends at 4095, buried
+        // by ~4106) is eligible; section 1 (ends at 8191) is only ~10 deep, so
+        // it stays unindexed.
+        let indexed = store.index_pending_bloombits_sections(128).unwrap();
+        assert_eq!(indexed, 1);
+        assert_eq!(store.get_indexed_bloombits_sections().unwrap(), 1);
+
+        // Idempotent: nothing new to index on a second pass.
+        assert_eq!(store.index_pending_bloombits_sections(128).unwrap(), 0);
     }
 }
 
