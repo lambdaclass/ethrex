@@ -12,9 +12,7 @@ use ethrex_common::{
 use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::rlpx::snap::{GetAccountRange, GetStorageRanges};
 use ethrex_p2p::snap::constants::MAX_RESPONSE_BYTES;
-use ethrex_p2p::snap::{
-    SnapError, process_account_range_request, process_storage_ranges_request,
-};
+use ethrex_p2p::snap::{SnapError, process_account_range_request, process_storage_ranges_request};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
@@ -868,6 +866,12 @@ async fn account_range_clamps_response_bytes() -> Result<(), SnapError> {
     };
     let res = process_account_range_request(request, store).await.unwrap();
 
+    // Guard against a broken fixture silently passing the upper-bound check.
+    assert!(
+        res.accounts.len() > 1000,
+        "fixture produced too few accounts ({}); the clamp is not being exercised",
+        res.accounts.len()
+    );
     // Pre-fix this walked the whole trie and returned all N accounts.
     assert!(
         (res.accounts.len() as u32) < N,
@@ -881,8 +885,11 @@ async fn account_range_clamps_response_bytes() -> Result<(), SnapError> {
         .iter()
         .map(|unit| 32 + AccountStateSlimCodec(unit.account.clone()).length() as u64)
         .sum();
-    let max_account_bytes =
-        32 + AccountStateSlimCodec(res.accounts[0].account.clone()).length() as u64;
+    let max_account_bytes = res
+        .accounts
+        .first()
+        .map(|unit| 32 + AccountStateSlimCodec(unit.account.clone()).length() as u64)
+        .unwrap_or(0);
     assert!(
         bytes_used <= MAX_RESPONSE_BYTES + max_account_bytes,
         "response of {bytes_used} bytes exceeds the clamp of {MAX_RESPONSE_BYTES} (+overshoot)"
@@ -935,7 +942,9 @@ async fn storage_ranges_clamps_response_bytes() -> Result<(), SnapError> {
         limit_hash: *HASH_MAX,
         response_bytes: u64::MAX,
     };
-    let res = process_storage_ranges_request(request, store).await.unwrap();
+    let res = process_storage_ranges_request(request, store)
+        .await
+        .unwrap();
 
     let slots_returned: u32 = res.slots.iter().map(|s| s.len() as u32).sum();
     // Guard against a broken fixture silently passing the upper-bound check.
