@@ -27,12 +27,10 @@ use crate::common::BatchExecutionResult;
 
 /// Execute L1 blocks statelessly.
 ///
-/// Rejects L2-only transaction types before execution, mirroring
-/// `Blockchain::validate_l1_transaction_types` on full nodes. Without this
-/// check the stateless verifier diverges from full nodes: a `Privileged`
-/// (0x7e) transaction takes its sender from an unsigned, caller-chosen `from`,
-/// so a proof could accept a block that forges a sender while every L1 full
-/// node rejects it.
+/// Rejects L2-only transaction types first (see
+/// [`validate_l1_transaction_types`] for the rationale), so the stateless
+/// verifier enforces the same rule as L1 full nodes, then runs the shared
+/// [`execute_blocks`] with the L1 VM factory.
 fn execute_l1_blocks(
     blocks: &[Block],
     execution_witness: ExecutionWitness,
@@ -645,7 +643,8 @@ mod l1_transaction_type_tests {
     use ethrex_common::InvalidBlockError;
     use ethrex_common::types::block_execution_witness::ExecutionWitness;
     use ethrex_common::types::{
-        Block, BlockBody, BlockHeader, PrivilegedL2Transaction, Transaction,
+        Block, BlockBody, BlockHeader, EIP1559Transaction, FeeTokenTransaction,
+        PrivilegedL2Transaction, Transaction,
     };
 
     use crate::common::ExecutionError;
@@ -653,36 +652,70 @@ mod l1_transaction_type_tests {
 
     use super::execute_l1_blocks;
 
+    fn run(transactions: Vec<Transaction>) -> Result<(), ExecutionError> {
+        let block = Block::new(
+            BlockHeader::default(),
+            BlockBody {
+                transactions,
+                ..Default::default()
+            },
+        );
+        execute_l1_blocks(
+            &[block],
+            ExecutionWitness::default(),
+            Arc::new(NativeCrypto),
+        )
+        .map(|_| ())
+    }
+
+    fn assert_rejects_with_type(transactions: Vec<Transaction>, expected_type: u8) {
+        match run(transactions) {
+            Err(ExecutionError::BlockValidation(
+                InvalidBlockError::UnsupportedTransactionType(tx_type),
+            )) if tx_type == expected_type => {}
+            other => {
+                panic!("expected UnsupportedTransactionType({expected_type:#x}), got {other:?}")
+            }
+        }
+    }
+
     /// A privileged (0x7e) transaction must be rejected before execution: its
     /// sender is an unsigned, caller-chosen `from`, and full L1 nodes reject
     /// the type outright, so accepting it here would split the stateless
     /// verifier from the network.
     #[test]
-    fn execute_l1_blocks_rejects_privileged_transactions() {
-        let block = Block::new(
-            BlockHeader::default(),
-            BlockBody {
-                transactions: vec![Transaction::PrivilegedL2Transaction(
-                    PrivilegedL2Transaction::default(),
-                )],
-                ..Default::default()
-            },
+    fn rejects_privileged_transactions() {
+        assert_rejects_with_type(
+            vec![
+                Transaction::EIP1559Transaction(EIP1559Transaction::default()),
+                Transaction::PrivilegedL2Transaction(PrivilegedL2Transaction::default()),
+            ],
+            0x7e,
         );
+    }
 
-        let err = match execute_l1_blocks(
-            &[block],
-            ExecutionWitness::default(),
-            Arc::new(NativeCrypto),
-        ) {
-            Ok(_) => panic!("expected privileged transaction to be rejected on L1"),
-            Err(err) => err,
-        };
+    #[test]
+    fn rejects_fee_token_transactions() {
+        assert_rejects_with_type(
+            vec![Transaction::FeeTokenTransaction(
+                FeeTokenTransaction::default(),
+            )],
+            0x7d,
+        );
+    }
 
-        match err {
-            ExecutionError::BlockValidation(InvalidBlockError::UnsupportedTransactionType(
-                0x7e,
-            )) => {}
-            other => panic!("expected UnsupportedTransactionType(0x7e), got {other:?}"),
-        }
+    /// L1 transaction types must pass the type check. The empty test witness
+    /// makes execution fail later, but never with the tx-type rejection.
+    #[test]
+    fn accepts_l1_transaction_types() {
+        let result = run(vec![Transaction::EIP1559Transaction(
+            EIP1559Transaction::default(),
+        )]);
+        assert!(!matches!(
+            result,
+            Err(ExecutionError::BlockValidation(
+                InvalidBlockError::UnsupportedTransactionType(_)
+            ))
+        ));
     }
 }
