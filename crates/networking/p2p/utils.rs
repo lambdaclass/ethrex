@@ -160,7 +160,7 @@ pub fn dump_accounts_to_file(
 ) -> Result<(), DumpError> {
     #[cfg(feature = "rocksdb")]
     return dump_accounts_to_rocks_db(path, accounts)
-        .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+        .inspect_err(|err| error!("RocksDB SST write error: {err:?}"))
         .map_err(|_| DumpError {
             path: path.to_path_buf(),
             error: std::io::ErrorKind::Other,
@@ -202,7 +202,7 @@ pub fn dump_storages_to_file(
             .flatten()
             .collect::<Vec<_>>(),
     )
-    .inspect_err(|err| error!("Rocksdb writing stt error {err:?}"))
+    .inspect_err(|err| error!("RocksDB SST write error: {err:?}"))
     .map_err(|_| DumpError {
         path: path.to_path_buf(),
         error: std::io::ErrorKind::Other,
