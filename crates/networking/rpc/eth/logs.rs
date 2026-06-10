@@ -143,12 +143,29 @@ pub(crate) async fn fetch_logs_with_filter(
         None => HashSet::new(),
     };
 
+    // Ask the bloombits log index which blocks in the range might match. When it
+    // can help we only visit those candidates (plus the still-unindexed recent
+    // tail, returned in full); otherwise we fall back to scanning the whole range
+    // and rely on the per-block header-bloom prefilter below. Either way every
+    // visited block is exact-filtered, so false positives are harmless.
+    let addresses: Vec<H160> = filter
+        .address_filters
+        .as_ref()
+        .map(|filters| filters.as_ref().to_vec())
+        .unwrap_or_default();
+    let topic_positions = index_topic_positions(&filter.topics);
+    let block_numbers: Box<dyn Iterator<Item = u64> + Send> =
+        match storage.get_candidate_blocks(&addresses, &topic_positions, from, to)? {
+            Some(candidates) => Box::new(candidates.into_iter()),
+            None => Box::new(from..=to),
+        };
+
     let mut logs: Vec<RpcLog> = Vec::new();
     // The idea here is to fetch every log and filter by address, if given.
     // For that, we'll need each block in range, and its transactions,
     // and for each transaction, we'll need its receipts, which
     // contain the actual logs we want.
-    for block_num in from..=to {
+    for block_num in block_numbers {
         // The block header carries a bloom filter over every (address, topic)
         // pair logged in the block. If it can't possibly contain a log matching
         // this filter, skip the block without loading its body or receipts.
@@ -236,6 +253,27 @@ pub(crate) async fn fetch_logs_with_filter(
     };
 
     Ok(filtered_logs)
+}
+
+/// Reduces a filter's topic positions to the concrete topics the bloombits index
+/// should constrain on, mirroring [`block_bloom_matches`]: a wildcard position
+/// (`null`, an empty alternatives list, or a list containing any `null`) yields
+/// an empty set, which the index treats as "no constraint" for that position.
+fn index_topic_positions(topics: &[TopicFilter]) -> Vec<Vec<H256>> {
+    topics
+        .iter()
+        .map(|topic_filter| match topic_filter {
+            TopicFilter::Topic(Some(topic)) => vec![*topic],
+            TopicFilter::Topic(None) => Vec::new(),
+            TopicFilter::Topics(sub_topics) => {
+                if sub_topics.iter().any(Option::is_none) {
+                    Vec::new()
+                } else {
+                    sub_topics.iter().flatten().copied().collect()
+                }
+            }
+        })
+        .collect()
 }
 
 /// Necessary-condition check: returns `true` if the block's header bloom could
@@ -474,5 +512,89 @@ mod tests {
             &addr_set(&[addr(1)]),
             &[TopicFilter::Topic(Some(topic(2)))]
         ));
+    }
+
+    /// End-to-end: with the bloombits index populated, `fetch_logs_with_filter`
+    /// must return exactly the matching logs — proving the candidate-block path
+    /// agrees with a full scan (no dropped logs, false positives filtered out).
+    #[tokio::test]
+    async fn fetch_logs_via_index_returns_matching_logs() {
+        use ethrex_common::types::{
+            Block, BlockBody, BlockHeader, LegacyTransaction, Log, Receipt, Transaction, TxType,
+        };
+        use ethrex_storage::{EngineType, Store, bloombits};
+
+        let storage = Store::new("", EngineType::InMemory).unwrap();
+        let target = H160::from_low_u64_be(0xABCD);
+        let other = H160::from_low_u64_be(0x1111);
+        let topic_a = H256::from_low_u64_be(0xAA);
+
+        let tx = Transaction::LegacyTransaction(LegacyTransaction::default());
+        let mut canonical = Vec::new();
+        let mut section_blooms = vec![Bloom::zero(); bloombits::SECTION_SIZE as usize];
+
+        // Blocks 0..=6; only blocks 3 and 5 log `target`.
+        for number in 0..=6u64 {
+            let address = if number == 3 || number == 5 {
+                target
+            } else {
+                other
+            };
+            let log = Log {
+                address,
+                topics: vec![topic_a],
+                data: Default::default(),
+            };
+            let mut bloom = Bloom::zero();
+            bloom.accrue(BloomInput::Raw(address.as_bytes()));
+            bloom.accrue(BloomInput::Raw(topic_a.as_bytes()));
+
+            let header = BlockHeader {
+                number,
+                logs_bloom: bloom,
+                ..Default::default()
+            };
+            let body = BlockBody {
+                transactions: vec![tx.clone()],
+                ..Default::default()
+            };
+            let block = Block { header, body };
+            let hash = block.hash();
+            section_blooms[number as usize] = block.header.logs_bloom;
+            canonical.push((number, hash));
+            storage.add_block(block).await.unwrap();
+            storage
+                .add_receipts(
+                    hash,
+                    vec![Receipt {
+                        tx_type: TxType::Legacy,
+                        succeeded: true,
+                        cumulative_gas_used: 0,
+                        logs: vec![log],
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+        let head_hash = canonical[6].1;
+        storage
+            .forkchoice_update(canonical, 6, head_hash, None, None)
+            .await
+            .unwrap();
+
+        // Populate the index for section 0 so the query takes the indexed path.
+        let rows = bloombits::transpose_section(&section_blooms);
+        storage.store_bloombits_section(0, &rows).unwrap();
+        assert_eq!(storage.get_indexed_bloombits_sections().unwrap(), 1);
+
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(0),
+            to_block: BlockIdentifier::Number(6),
+            address_filters: Some(AddressFilter::Single(target)),
+            topics: vec![TopicFilter::Topic(Some(topic_a))],
+        };
+        let logs = fetch_logs_with_filter(&filter, storage).await.unwrap();
+        let matched_blocks: Vec<u64> = logs.iter().map(|log| log.block_number).collect();
+        assert_eq!(matched_blocks, vec![3, 5]);
     }
 }
