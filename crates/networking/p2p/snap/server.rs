@@ -118,6 +118,10 @@ pub async fn process_byte_codes_request(
     store: Store,
 ) -> Result<ByteCodes, SnapError> {
     tokio::task::spawn_blocking(move || {
+        // Clamp the peer-supplied budget: `hashes` can be a large (or snappy-inflated,
+        // repeated) list, so an unbounded `bytes` would let one request buffer many large
+        // bytecodes into memory.
+        let bytes = request.bytes.min(MAX_RESPONSE_BYTES);
         let mut codes = vec![];
         let mut bytes_used = 0;
         for code_hash in request.hashes {
@@ -125,7 +129,7 @@ pub async fn process_byte_codes_request(
                 bytes_used += code.len() as u64;
                 codes.push(code);
             }
-            if bytes_used >= request.bytes {
+            if bytes_used >= bytes {
                 break;
             }
         }
@@ -144,7 +148,9 @@ pub async fn process_trie_nodes_request(
 ) -> Result<TrieNodes, SnapError> {
     tokio::task::spawn_blocking(move || {
         let mut nodes = vec![];
-        let mut remaining_bytes = request.bytes;
+        // Clamp the peer-supplied budget so a single request cannot pull an unbounded
+        // number of trie nodes into memory.
+        let mut remaining_bytes = request.bytes.min(MAX_RESPONSE_BYTES);
         for paths in request.paths {
             if paths.is_empty() {
                 return Err(SnapError::BadRequest(

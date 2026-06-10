@@ -5,14 +5,18 @@
 
 use std::str::FromStr;
 
+use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
-    types::{AccountState, AccountStateSlimCodec},
+    types::{AccountState, AccountStateSlimCodec, Code},
 };
 use ethrex_crypto::NativeCrypto;
-use ethrex_p2p::rlpx::snap::{GetAccountRange, GetStorageRanges};
+use ethrex_p2p::rlpx::snap::{GetAccountRange, GetByteCodes, GetStorageRanges};
 use ethrex_p2p::snap::constants::MAX_RESPONSE_BYTES;
-use ethrex_p2p::snap::{SnapError, process_account_range_request, process_storage_ranges_request};
+use ethrex_p2p::snap::{
+    SnapError, process_account_range_request, process_byte_codes_request,
+    process_storage_ranges_request,
+};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
@@ -964,3 +968,50 @@ async fn storage_ranges_clamps_response_bytes() -> Result<(), SnapError> {
     );
     Ok(())
 }
+
+/// `GetByteCodes` with `bytes = u64::MAX` over many large bytecodes must return a bounded
+/// set, not every requested code. (`hashes` is peer-supplied and snappy-compresses well
+/// when repeated, so an unclamped budget lets a tiny request pull GBs of code.)
+#[tokio::test]
+async fn byte_codes_clamps_response_bytes() -> Result<(), SnapError> {
+    const M: usize = 30;
+    const CODE_LEN: usize = 40 * 1024; // 30 * 40 KiB = 1.2 MiB > MAX_RESPONSE_BYTES (512 KiB)
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let mut hashes = Vec::with_capacity(M);
+    for i in 0..M {
+        let bytecode = Bytes::from(vec![i as u8; CODE_LEN]);
+        let code = Code::from_bytecode(bytecode, &NativeCrypto);
+        hashes.push(code.hash);
+        store.add_account_code(code).await.unwrap();
+    }
+
+    let request = GetByteCodes {
+        id: 0,
+        hashes,
+        bytes: u64::MAX,
+    };
+    let res = process_byte_codes_request(request, store).await.unwrap();
+
+    assert!(
+        res.codes.len() > 1,
+        "fixture produced too few codes ({}); the clamp is not being exercised",
+        res.codes.len()
+    );
+    // Pre-fix this returned all M codes (1.2 MiB).
+    assert!(
+        res.codes.len() < M,
+        "expected a bounded response, but got all {M} codes (unclamped)"
+    );
+    let bytes_used: u64 = res.codes.iter().map(|c| c.len() as u64).sum();
+    assert!(
+        bytes_used <= MAX_RESPONSE_BYTES + CODE_LEN as u64,
+        "response of {bytes_used} bytes exceeds the clamp of {MAX_RESPONSE_BYTES} (+overshoot)"
+    );
+    Ok(())
+}
+
+// NOTE: `process_trie_nodes_request` receives the same `request.bytes.min(MAX_RESPONSE_BYTES)`
+// clamp (see `snap/server.rs`), but is not given a dedicated regression test here: exercising
+// it requires a committed state trie readable through `get_trie_nodes`' `open_state_trie`
+// path, which the direct-write test fixtures don't populate. The clamp is mechanically
+// identical to the three handlers covered above.
