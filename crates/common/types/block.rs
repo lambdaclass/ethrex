@@ -30,6 +30,9 @@ use std::cmp::{Ordering, max};
 pub type BlockNumber = u64;
 pub type BlockHash = H256;
 
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+use super::eip8025_cell::OnceCell;
+#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 #[derive(
@@ -361,6 +364,27 @@ pub fn compute_receipts_root(receipts: &[Receipt], crypto: &dyn Crypto) -> H256 
     Trie::compute_hash_from_unsorted_iter(iter, crypto)
 }
 
+/// Computes the receipts root and the aggregate header `logs_bloom` in a single pass,
+/// hashing each receipt's bloom only once (it feeds both the receipts trie and the
+/// OR-ed header bloom). Validation paths need both, so this avoids the duplicate
+/// `bloom_from_logs` keccak work — relevant in the zkVM guest where it is cycle-counted.
+pub fn compute_receipts_root_and_logs_bloom(
+    receipts: &[Receipt],
+    crypto: &dyn Crypto,
+) -> (H256, Bloom) {
+    let mut logs_bloom = Bloom::zero();
+    let iter = receipts.iter().enumerate().map(|(idx, receipt)| {
+        let bloom = crate::types::bloom_from_logs(&receipt.logs, crypto);
+        logs_bloom |= bloom;
+        (
+            idx.encode_to_vec(),
+            receipt.encode_inner_with_precomputed_bloom(bloom),
+        )
+    });
+    let receipts_root = Trie::compute_hash_from_unsorted_iter(iter, crypto);
+    (receipts_root, logs_bloom)
+}
+
 // See [EIP-4895](https://eips.ethereum.org/EIPS/eip-4895)
 pub fn compute_withdrawals_root(withdrawals: &[Withdrawal], crypto: &dyn Crypto) -> H256 {
     let iter = withdrawals
@@ -471,6 +495,7 @@ pub fn calculate_base_fee_per_blob_gas(parent_excess_blob_gas: u64, update_fract
     if update_fraction == 0 {
         return U256::zero();
     }
+
     fake_exponential(
         U256::from(MIN_BASE_FEE_PER_BLOB_GAS),
         U256::from(parent_excess_blob_gas),

@@ -2,6 +2,10 @@
 
 ## Observability
 
+### 2026-06-03
+
+- Reduce allocations and clones [#6782](https://github.com/lambdaclass/ethrex/pull/6782)
+
 ### 2026-05-27
 
 - Add BAL (EIP-7928) Prometheus instruments (`bal_blocks_total`, `bal_size_bytes`, `bal_size_bytes_histogram`, `bal_account_count`, `bal_slot_count`) and a BAL row in the `ethrex_l1_perf` Grafana dashboard [#6678](https://github.com/lambdaclass/ethrex/pull/6678)
@@ -91,6 +95,7 @@
 
 ### 2026-01-23
 
+- Compute base blob fee once per block [#6006](https://github.com/lambdaclass/ethrex/pull/6006)
 - Reuse cache in prewarm workers [#5999](https://github.com/lambdaclass/ethrex/pull/5999)
 
 ### 2026-01-21
