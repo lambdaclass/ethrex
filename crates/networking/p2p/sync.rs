@@ -33,8 +33,8 @@ use tracing::{debug, error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
-    SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, refresh_stale_pivot,
-    update_pivot, validate_bytecodes, validate_state_root, validate_storage_root,
+    SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, update_pivot,
+    validate_bytecodes, validate_state_root, validate_storage_root,
 };
 
 #[cfg(feature = "sync-test")]
