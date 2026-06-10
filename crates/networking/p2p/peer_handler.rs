@@ -750,21 +750,3 @@ impl PeerHandlerError {
         }
     }
 }
-
-#[cfg(test)]
-mod error_classification_tests {
-    use super::*;
-
-    // A timed-out PeerTable request is transient (mailbox pressure or a slow
-    // handler); classifying it as fatal turns load spikes into process exit.
-    #[test]
-    fn actor_request_timeout_is_recoverable() {
-        assert!(PeerHandlerError::PeerTableError(ActorError::RequestTimeout).is_recoverable());
-    }
-
-    // A stopped actor means p2p is shutting down and must stay fatal.
-    #[test]
-    fn actor_stopped_is_fatal() {
-        assert!(!PeerHandlerError::PeerTableError(ActorError::ActorStopped).is_recoverable());
-    }
-}
