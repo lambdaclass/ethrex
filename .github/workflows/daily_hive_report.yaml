@@ -168,6 +168,15 @@ jobs:
         with:
           simulator: ${{ matrix.test.simulation }}
           client: ethrex
+          # Pin hive to ethereum/hive#1530's merge commit, which fixes the
+          # clients/ethrex/mapper.jq depositContractAddress bug from #1507:
+          # #1524 wrapped the `//` value in parens (the unparenthesized form was
+          # a jq syntax error that stopped the client from starting), and #1530
+          # restored the mainnet deposit contract address as the fallback (the
+          # zero-address default made every eip6110 deposit / eip7685 request
+          # test fail). Also gives the daily report a reproducible hive version
+          # instead of floating on the action's default.
+          hive_version: 7c4c99ebb79955f23e1952fb0282a0dadcb6e181
           extra_flags: ${{ steps.hive-flags.outputs.flags }}
           workflow_artifact_upload: true
           workflow_artifact_prefix: ${{ matrix.test.file_name }}_daily
