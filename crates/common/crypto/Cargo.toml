@@ -33,17 +33,23 @@ num-bigint = { version = "0.4.6", default-features = false }
 # std-only deps (faster alternatives used when available)
 secp256k1 = { workspace = true, optional = true }
 malachite = { version = "0.6.1", optional = true }
+# assembly-optimized P-256 (secp256r1) backend for the native (non-zkVM) path
+aws-lc-rs = { version = "1.17", optional = true }
 
 #[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = ["std", "kzg-rs", "secp256k1"]
+default = ["std", "kzg-rs", "secp256k1", "aws-lc-rs"]
 std = [
     "dep:malachite",
     "ark-ff/asm",
     "thiserror/std",
 ]
+# Route NativeCrypto's P-256 (secp256r1) verify through aws-lc-rs (AWS-LC asm).
+# Native-only (requires std); zkVM guest builds omit it and use the portable
+# p256 trait default.
+aws-lc-rs = ["dep:aws-lc-rs", "std"]
 secp256k1 = ["dep:secp256k1", "std"]
 c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
 openvm-kzg = ["dep:openvm-kzg"]
