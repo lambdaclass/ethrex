@@ -2,7 +2,8 @@ use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
     metrics::{CurrentStepValue, METRICS},
     peer_table::{
-        PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _, RequestPermit,
+        PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _, RequestOutcome,
+        RequestPermit,
     },
     rlpx::{
         connection::server::PeerConnection,
@@ -414,9 +415,11 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
+                let started = std::time::Instant::now();
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
+                let latency_ms = started.elapsed().as_millis() as u64;
                 drop(permit);
                 if let Ok(RLPxMessage::BlockHeaders(BlockHeaders {
                     id: _,
@@ -429,24 +432,63 @@ impl PeerHandler {
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
                         let _ = self.peer_table.set_disposable(peer_id);
+                        self.peer_table.record_request_outcome(
+                            peer_id,
+                            RequestOutcome::Empty,
+                            latency_ms,
+                        )?;
+                        #[cfg(feature = "metrics")]
+                        {
+                            use ethrex_metrics::sync::METRICS_SYNC;
+                            METRICS_SYNC.inc_block_request("headers", "empty");
+                        }
                         return Ok(None);
                     }
                     if are_block_headers_chained(&block_headers, &order) {
-                        self.peer_table.record_success(peer_id)?;
+                        self.peer_table.record_request_outcome(
+                            peer_id,
+                            RequestOutcome::Served,
+                            latency_ms,
+                        )?;
+                        #[cfg(feature = "metrics")]
+                        {
+                            use ethrex_metrics::sync::METRICS_SYNC;
+                            METRICS_SYNC.inc_block_request("headers", "served");
+                            METRICS_SYNC
+                                .observe_block_request_latency("headers", latency_ms as f64);
+                        }
                         return Ok(Some(block_headers));
                     }
                     // Non-empty but unchained headers is a protocol violation
                     warn!(
                         "[SYNCING] Received invalid (unchained) headers from peer, penalizing peer {peer_id}"
                     );
-                    self.peer_table.record_failure(peer_id)?;
+                    self.peer_table.record_request_outcome(
+                        peer_id,
+                        RequestOutcome::Invalid,
+                        latency_ms,
+                    )?;
+                    #[cfg(feature = "metrics")]
+                    {
+                        use ethrex_metrics::sync::METRICS_SYNC;
+                        METRICS_SYNC.inc_block_request("headers", "invalid");
+                    }
                     return Ok(None);
                 }
                 // Timeout or invalid response - mark peer as disposable
                 warn!(
                     "[SYNCING] Didn't receive block headers from peer, penalizing peer {peer_id}..."
                 );
-                self.peer_table.record_failure(peer_id)?;
+                self.peer_table.record_request_outcome(
+                    peer_id,
+                    RequestOutcome::Timeout,
+                    latency_ms,
+                )?;
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::sync::METRICS_SYNC;
+                    METRICS_SYNC.inc_block_request("headers", "timeout");
+                }
                 Ok(None)
             }
         }
@@ -508,9 +550,11 @@ impl PeerHandler {
         match self.get_random_peer(&SUPPORTED_ETH_CAPABILITIES).await? {
             None => Ok(None),
             Some((peer_id, mut connection, permit)) => {
+                let started = std::time::Instant::now();
                 let response = connection
                     .outgoing_request(request, PEER_REPLY_TIMEOUT)
                     .await;
+                let latency_ms = started.elapsed().as_millis() as u64;
                 drop(permit);
                 if let Ok(RLPxMessage::BlockBodies(BlockBodies {
                     id: _,
@@ -519,14 +563,33 @@ impl PeerHandler {
                 {
                     // Check that the response is not empty and does not contain more bodies than the ones requested
                     if !block_bodies.is_empty() && block_bodies.len() <= block_hashes_len {
-                        self.peer_table.record_success(peer_id)?;
+                        self.peer_table.record_request_outcome(
+                            peer_id,
+                            RequestOutcome::Served,
+                            latency_ms,
+                        )?;
+                        #[cfg(feature = "metrics")]
+                        {
+                            use ethrex_metrics::sync::METRICS_SYNC;
+                            METRICS_SYNC.inc_block_request("bodies", "served");
+                            METRICS_SYNC.observe_block_request_latency("bodies", latency_ms as f64);
+                        }
                         return Ok(Some((block_bodies, peer_id)));
                     }
                 }
                 warn!(
                     "[SYNCING] Didn't receive block bodies from peer, penalizing peer {peer_id}..."
                 );
-                self.peer_table.record_failure(peer_id)?;
+                self.peer_table.record_request_outcome(
+                    peer_id,
+                    RequestOutcome::Timeout,
+                    latency_ms,
+                )?;
+                #[cfg(feature = "metrics")]
+                {
+                    use ethrex_metrics::sync::METRICS_SYNC;
+                    METRICS_SYNC.inc_block_request("bodies", "timeout");
+                }
                 let _ = self.peer_table.set_disposable(peer_id);
                 Ok(None)
             }
