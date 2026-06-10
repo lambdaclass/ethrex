@@ -528,7 +528,7 @@ async fn run_blocks_pipeline(
         for (block, bal) in blocks.into_iter().zip(bals.into_iter()) {
             let block_hash = block.hash();
             blockchain
-                .add_block_pipeline(block, bal.as_ref())
+                .add_block_pipeline(block, bal.map(Arc::new))
                 .map_err(|e| {
                     (
                         e,
