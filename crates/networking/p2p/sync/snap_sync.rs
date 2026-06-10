@@ -544,6 +544,8 @@ pub async fn snap_sync(
                         // it matches even when storage leaves are still missing on disk. Heal those
                         // exactly as the snap/1 path does before declaring healing complete; otherwise
                         // the node passes its state-root check yet cannot serve those storage slots.
+                        // When the download left no incomplete storage (`storage_accounts` empty),
+                        // this is a no-op: the work queue is empty and it returns immediately.
                         healing_done = heal_storage_trie(
                             pivot_header.state_root,
                             &storage_accounts,
