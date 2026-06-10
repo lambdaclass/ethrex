@@ -66,6 +66,7 @@
 
 pub mod api;
 pub mod backend;
+pub mod bloombits;
 pub mod error;
 mod layering;
 pub mod migrations;
