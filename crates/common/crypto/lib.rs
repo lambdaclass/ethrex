@@ -9,6 +9,8 @@ mod bls_blst;
 pub mod keccak;
 pub mod kzg;
 pub mod native;
+#[cfg(feature = "aws-lc-rs")]
+mod p256_awslc;
 pub mod provider;
 pub use native::NativeCrypto;
 pub use provider::{Crypto, CryptoError};
