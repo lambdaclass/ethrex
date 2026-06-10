@@ -57,26 +57,8 @@ echo "$RES" | jq '{
 echo ">> debug_setHead(0x0)"
 rpc debug_setHead '["0x0"]' | jq '{err: .error, result: .result}'
 
-# Transaction-level coverage: submit signed txs to the mempool, then build a
-# non-empty block from them via testing_buildBlockV1 (transactions: null).
-# Set SKIP_TX=1 to skip (avoids needing the prebuilt example binary).
-SENDER_BIN="${SENDER_BIN:-$ROOT/target/debug/examples/send_to_mempool}"
-RICH_KEY="${RICH_KEY:-0x941e103320615d394a55708be13e45994c7d93b932b064dbcb2b511fe3254e2e}"
-if [ "${SKIP_TX:-0}" != "1" ] && [ -x "$SENDER_BIN" ]; then
-  echo ">> submitting 2 txs to mempool"
-  "$SENDER_BIN" "$RPC" "$RICH_KEY" 2
-  echo ">> testing_buildBlockV1 (transactions:null -> include mempool txs)"
-  rpc testing_buildBlockV1 "[\"$GENESIS_HASH\", $ATTRS, null]" | jq '{
-    err: .error,
-    number: .result.executionPayload.blockNumber,
-    txs: (.result.executionPayload.transactions | length),
-    gasUsed: .result.executionPayload.gasUsed,
-    stateRoot: .result.executionPayload.stateRoot,
-    balBytes: (.result.executionPayload.blockAccessList | length),
-    blockValue: .result.blockValue
-  }'
-else
-  echo ">> skipping tx phase (build with: cargo build -p ethrex-sdk --example send_to_mempool)"
-fi
+# For transaction-level coverage, run the hive build-block simulator
+# (make run-hive-build-block) — it drives txs via the fixtures. To fill the
+# mempool here for a manual check, point tooling/load_test at $RPC.
 
 echo ">> done. ethrex log: /tmp/ethrex-bb.log"
