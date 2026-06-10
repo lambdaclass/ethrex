@@ -62,8 +62,11 @@ fn main() {
     println!("Opening database at: {db_path}");
     let rss_before = get_rss_mb();
 
-    let backend = ethrex_storage::backend::rocksdb::RocksDBBackend::open(db_path)
-        .expect("Failed to open RocksDB");
+    let backend = ethrex_storage::backend::rocksdb::RocksDBBackend::open(
+        db_path,
+        ethrex_storage::DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES,
+    )
+    .expect("Failed to open RocksDB");
 
     let rss_after_open = get_rss_mb();
     println!(

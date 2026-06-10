@@ -23,6 +23,7 @@ rkyv.workspace = true
 
 [features]
 default = []
+eip-8025 = []
 
 [lib]
 path = "./trie.rs"

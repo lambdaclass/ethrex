@@ -28,12 +28,12 @@ Options:
 Node options:
       --network <GENESIS_FILE_PATH>
           Alternatively, the name of a known network can be provided instead to use its preset genesis file and include its preset bootnodes. The networks currently supported include sepolia, hoodi and mainnet. If not specified, defaults to mainnet.
-
+          
           [env: ETHREX_NETWORK=]
 
       --datadir <DATABASE_DIRECTORY>
           Base directory for the database. For public networks a subdirectory named after the network is appended (e.g. ~/.local/share/ethrex/mainnet). If the value is `memory`, the InMemory Engine is used instead.
-
+          
           [env: ETHREX_DATADIR=]
           [default: /home/runner/.local/share/ethrex]
 
@@ -50,61 +50,81 @@ Node options:
 
       --metrics
           Enable metrics collection and exposition
-
+          
           [env: ETHREX_METRICS=]
 
       --dev
           If set it will be considered as `true`. If `--network` is not specified, it will default to a custom local devnet. The Binary has to be built with the `dev` feature enabled.
-
+          
           [env: ETHREX_DEV=]
 
       --log.level <LOG_LEVEL>
           Possible values: info, debug, trace, warn, error
-
+          
           [env: ETHREX_LOG_LEVEL=]
           [default: INFO]
 
       --log.color <LOG_COLOR>
           Possible values: auto, always, never
-
+          
           [env: ETHREX_LOG_COLOR=]
           [default: auto]
 
       --no-migrate
           Do not migrate an existing database to the network-specific subdirectory.
-
+          
           [env: ETHREX_NO_MIGRATE=]
+
+      --skip-genesis-validation
+          Trust a pre-existing datadir's genesis instead of recomputing the genesis state root from the genesis alloc. Use only when booting against a database produced out-of-band (e.g. by a state generator) whose state root you vouch for; has no effect on a fresh datadir.
+          
+          [env: ETHREX_SKIP_GENESIS_VALIDATION=]
 
       --no-precompile-cache
           Disable the per-block precompile result cache (benchmarking only).
           
           [env: ETHREX_NO_PRECOMPILE_CACHE=]
 
+      --no-bal-parallel-exec
+          Disable BAL-driven parallel transaction execution on Amsterdam+ blocks (falls back to sequential).
+          
+          [env: ETHREX_NO_BAL_PARALLEL_EXEC=]
+
+      --no-bal-prefetch
+          Disable the BAL-driven state prefetch warmer thread on Amsterdam+ blocks.
+          
+          [env: ETHREX_NO_BAL_PREFETCH=]
+
+      --no-bal-parallel-trie
+          Disable BAL-driven optimistic trie merkleization on Amsterdam+ blocks (falls back to streaming AccountUpdates from the executor).
+          
+          [env: ETHREX_NO_BAL_PARALLEL_TRIE=]
+
       --log.dir <LOG_DIR>
           Directory to store log files.
-
+          
           [env: ETHREX_LOG_DIR=]
 
       --mempool.maxsize <MEMPOOL_MAX_SIZE>
           Maximum size of the mempool in number of transactions
-
+          
           [env: ETHREX_MEMPOOL_MAX_SIZE=]
           [default: 10000]
 
       --precompute-witnesses
           Once synced, computes execution witnesses upon receiving newPayload messages and stores them in local storage
-
+          
           [env: ETHREX_PRECOMPUTE_WITNESSES=]
 
 P2P options:
       --bootnodes <BOOTNODE_LIST>...
           Comma separated enode URLs for P2P discovery bootstrap.
-
+          
           [env: ETHREX_BOOTNODES=]
 
       --syncmode <SYNC_MODE>
           Can be either "full" or "snap" with "snap" as default value.
-
+          
           [env: ETHREX_SYNCMODE=]
           [default: snap]
 
@@ -113,126 +133,137 @@ P2P options:
 
       --p2p.addr <ADDRESS>
           The address to bind P2P sockets to. Defaults to the local IP. Use 0.0.0.0 (IPv4) or :: (IPv6) to listen on all interfaces. See also --nat.extip to announce a different external address.
-
+          
           [env: ETHREX_P2P_ADDR=]
 
       --nat.extip <IP>
           The IP address advertised to other nodes via discovery and ENR. Use this when the node is behind NAT and --p2p.addr is a private/unspecified address. Defaults to the value of --p2p.addr (or the auto-detected local IP if neither is set).
-
+          
           [env: ETHREX_P2P_NAT_EXTIP=]
 
       --p2p.port <PORT>
           TCP port for the P2P protocol.
-
+          
           [env: ETHREX_P2P_PORT=]
           [default: 30303]
 
       --discovery.port <PORT>
           UDP port for P2P discovery.
-
+          
           [env: ETHREX_P2P_DISCOVERY_PORT=]
           [default: 30303]
 
       --p2p.discv4 <DISCV4_ENABLED>
           Enable discv4 discovery.
-
+          
           [default: true]
           [possible values: true, false]
 
       --p2p.discv5 <DISCV5_ENABLED>
           Enable discv5 discovery.
-
+          
           [default: true]
           [possible values: true, false]
 
       --p2p.tx-broadcasting-interval <INTERVAL_MS>
           Transaction Broadcasting Time Interval (ms) for batching transactions before broadcasting them.
-
+          
           [env: ETHREX_P2P_TX_BROADCASTING_INTERVAL=]
           [default: 1000]
 
       --p2p.target-peers <MAX_PEERS>
           Max amount of connected peers.
-
+          
           [env: ETHREX_P2P_TARGET_PEERS=]
           [default: 100]
 
       --p2p.lookup-interval <INITIAL_LOOKUP_INTERVAL>
           Initial Lookup Time Interval (ms) to trigger each Discovery lookup message and RLPx connection attempt.
-
+          
           [env: ETHREX_P2P_LOOKUP_INTERVAL=]
           [default: 100]
+
+Storage options:
+      --rocksdb.block-cache-size <BYTES>
+          RocksDB shared block cache size in bytes. With cache_index_and_filter_blocks enabled it holds data blocks plus the per-SST index and bloom-filter blocks, so it is the effective ceiling on RocksDB's resident memory.
+          
+          Default 12 GiB keeps the filter/index working set resident plus hot EVM state. A sweep on a synced mainnet node (32 GiB cap) found 8-16 GiB all keep up with head-following (filters resident, disk near-idle, no slow blocks); larger gives no gain because the OS page cache backstops the uncompressed state CFs, and ~8 GiB is the floor where the filter set starts to thrash.
+          
+          Lower only on memory-constrained hosts, accepting reduced throughput. ETHREX_ROCKSDB_BLOCK_CACHE_SIZE sets the same value.
+          
+          [env: ETHREX_ROCKSDB_BLOCK_CACHE_SIZE=]
+          [default: 12884901888]
 
 RPC options:
       --http.addr <ADDRESS>
           Listening address for the HTTP JSON-RPC server. Defaults to 127.0.0.1 so the endpoint is only reachable from localhost; pass 0.0.0.0 to bind on all interfaces (only recommended when the node sits behind a trusted firewall or reverse proxy).
-
+          
           [env: ETHREX_HTTP_ADDR=]
           [default: 127.0.0.1]
 
       --http.port <PORT>
           Listening port for the http rpc server.
-
+          
           [env: ETHREX_HTTP_PORT=]
           [default: 8545]
 
       --http.api <NAMESPACES>
           Comma-separated list of JSON-RPC namespaces exposed on the public HTTP and WebSocket endpoints. Defaults to `eth,net,web3`. Enable `admin`, `debug` or `txpool` only when needed; the `engine` namespace is served on the authenticated RPC port and cannot be toggled here.
-
+          
           [env: ETHREX_HTTP_API=]
           [default: eth,net,web3]
 
       --ws.enabled
           Enable websocket rpc server. Disabled by default.
-
+          
           [env: ETHREX_ENABLE_WS=]
 
       --ws.addr <ADDRESS>
           Listening address for the websocket rpc server.
-
+          
           [env: ETHREX_WS_ADDR=]
           [default: 0.0.0.0]
 
       --ws.port <PORT>
           Listening port for the websocket rpc server.
-
+          
           [env: ETHREX_WS_PORT=]
           [default: 8546]
 
       --authrpc.addr <ADDRESS>
           Listening address for the authenticated rpc server.
-
+          
           [env: ETHREX_AUTHRPC_ADDR=]
           [default: 127.0.0.1]
 
       --authrpc.port <PORT>
           Listening port for the authenticated rpc server.
-
+          
           [env: ETHREX_AUTHRPC_PORT=]
           [default: 8551]
 
       --authrpc.jwtsecret <JWTSECRET_PATH>
           Receives the jwt secret used for authenticated rpc requests.
-
+          
           [env: ETHREX_AUTHRPC_JWTSECRET_PATH=]
           [default: jwt.hex]
 
 Block building options:
       --builder.extra-data <EXTRA_DATA>
           Block extra data message.
-
+          
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 13.0.0"]
+          [default: "ethrex 15.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.
-
+          
           [env: ETHREX_BUILDER_GAS_LIMIT=]
           [default: 60000000]
 
       --builder.max-blobs <MAX_BLOBS>
           EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.
-
+          
           [env: ETHREX_BUILDER_MAX_BLOBS=]
 ```
 
@@ -432,7 +463,7 @@ Block building options:
           Block extra data message.
 
           [env: ETHREX_BUILDER_EXTRA_DATA=]
-          [default: "ethrex 13.0.0"]
+          [default: "ethrex 15.0.0"]
 
       --builder.gas-limit <GAS_LIMIT>
           Target block gas limit.

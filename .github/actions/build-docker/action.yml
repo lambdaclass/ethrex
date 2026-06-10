@@ -116,7 +116,11 @@ runs:
           type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-${{ steps.cache-config.outputs.cache_scope }}-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }}
           type=registry,ref=${{ inputs.registry }}/${{ github.repository }}:cache-main-${{ inputs.variant }}-${{ steps.cache-config.outputs.platform_safe }}
         cache-to: ${{ inputs.cache_write == 'true' && format('type=registry,ref={0}/{1}:cache-{2}-{3}-{4},mode=max', inputs.registry, github.repository, steps.cache-config.outputs.cache_scope, inputs.variant, steps.cache-config.outputs.platform_safe) || format('type=gha,mode=max,scope={0}-{1}-{2}', steps.cache-config.outputs.cache_scope, inputs.variant, steps.cache-config.outputs.platform_safe) }}
-        build-args: ${{ inputs.build_args }}
+        build-args: |
+          ${{ inputs.build_args }}
+          GIT_SHA=${{ github.sha }}
+          GIT_BRANCH=${{ github.head_ref || github.ref_name }}
+          VERSION=${{ github.ref_type == 'tag' && github.ref_name || format('dev-{0}', github.sha) }}
         platforms: ${{ inputs.platforms }}
 
     # Since we're exporting the image as a tar, we need to load it manually as well
