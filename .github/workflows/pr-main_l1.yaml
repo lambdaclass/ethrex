@@ -172,6 +172,13 @@ jobs:
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
+
       - name: Run Engine EF tests
         run: make -C tooling/ef_tests/engine test
 
