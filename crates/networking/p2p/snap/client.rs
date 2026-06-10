@@ -244,6 +244,9 @@ pub async fn request_account_range(
 
         if block_is_stale(pivot_header) {
             info!("request_account_range became stale, updating pivot");
+            // A pivot we couldn't refresh is a transient peer condition: map
+            // it to the one snap error the sync cycle retries instead of
+            // treating as fatal (this used to be an .expect that panicked).
             *pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
@@ -252,7 +255,10 @@ pub async fn request_account_range(
                 diagnostics,
             )
             .await
-            .expect("Should be able to update pivot")
+            .map_err(|e| {
+                error!("Failed to update stale pivot during account range download: {e}");
+                SnapError::PivotUpdateFailed
+            })?;
         }
 
         tokio::spawn(request_account_range_worker(

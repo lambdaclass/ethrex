@@ -90,6 +90,12 @@ pub enum SnapError {
     /// Hash mismatch in received data
     #[error("Hash mismatch in received data")]
     InvalidHash,
+
+    /// Could not refresh a stale pivot (peers exhausted or unavailable).
+    /// A transient peer condition: unlike other snap errors, the sync cycle
+    /// must retry it rather than treat it as fatal.
+    #[error("Failed to update stale pivot")]
+    PivotUpdateFailed,
 }
 
 impl SnapError {

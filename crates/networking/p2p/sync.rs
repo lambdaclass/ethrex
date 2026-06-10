@@ -418,8 +418,11 @@ impl SyncError {
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
-            | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A stale pivot we couldn't refresh is a transient peer
+            // condition; every other snap error stays fatal.
+            SyncError::Snap(crate::snap::SnapError::PivotUpdateFailed) => true,
+            SyncError::Snap(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
