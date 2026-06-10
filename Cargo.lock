@@ -4461,6 +4461,7 @@ dependencies = [
  "hex-literal 0.4.1",
  "lazy_static",
  "once_cell",
+ "p256",
  "proptest",
  "rand 0.8.5",
  "reqwest 0.12.28",
