@@ -406,6 +406,11 @@ pub enum SyncError {
     /// This indicates a deeper invariant violation (DB inconsistency).
     #[error("Missing header for BAL replay: {0:?}")]
     MissingHeaderForBal(H256),
+    /// The canonical chain has no block hash recorded at a number we just walked
+    /// through, while loading the BAL-replay header range. A real DB inconsistency;
+    /// reporting the number (not a zero hash) is what makes it debuggable.
+    #[error("Missing canonical block at number {0} during BAL replay")]
+    MissingCanonicalBlock(u64),
     /// During BAL replay, a block's `parent_hash` did not match the expected
     /// hash of the previously-applied block. The local chain view differs from
     /// the peer's. Not recoverable by retrying with the same peer — caller must
@@ -452,6 +457,7 @@ impl SyncError {
             SyncError::StateRootMismatch(_, _) => true,
             // DB inconsistency — not recoverable by switching peers.
             SyncError::MissingHeaderForBal(_) => false,
+            SyncError::MissingCanonicalBlock(_) => false,
             // Local chain view differs from peer's; same peer will keep
             // returning the same BAL. Fall back to snap/1 healing.
             SyncError::ChainReorgDetected { .. } => false,

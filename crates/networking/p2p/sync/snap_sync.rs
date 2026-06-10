@@ -537,8 +537,23 @@ pub async fn snap_sync(
                         .get_block_header_by_hash(latest_head_hash)?
                         .ok_or(SyncError::CorruptDB)?;
                     if new_root == final_header.state_root {
-                        // BAL replay succeeded — skip snap/1 trie healing and storage healing.
-                        healing_done = true;
+                        // BAL replay reached the head state root, so the state (account) trie is
+                        // complete. But storage tries of accounts not touched by any replayed BAL
+                        // keep whatever (possibly incomplete) storage they had from the snap download
+                        // phase: the state root only commits each account's storage_root *hash*, so
+                        // it matches even when storage leaves are still missing on disk. Heal those
+                        // exactly as the snap/1 path does before declaring healing complete; otherwise
+                        // the node passes its state-root check yet cannot serve those storage slots.
+                        healing_done = heal_storage_trie(
+                            pivot_header.state_root,
+                            &storage_accounts,
+                            peers,
+                            store.clone(),
+                            HashMap::new(),
+                            staleness_ts,
+                            &mut global_storage_leafs_healed,
+                        )
+                        .await?;
                     } else {
                         // Partial progress: heal the remainder via snap/1.
                         // The local trie is wherever BAL replay left it; heal_state_trie_wrap

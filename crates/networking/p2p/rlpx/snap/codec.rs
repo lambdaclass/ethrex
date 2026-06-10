@@ -373,6 +373,10 @@ impl RLPEncode for Snap2OptionalBal {
 
 impl RLPDecode for Snap2OptionalBal {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        // INVARIANT: a `BlockAccessList` always encodes as an RLP list (first byte >= 0xc0),
+        // so the short-string byte 0x80 is unambiguously the `None` sentinel (§50/§58). If
+        // `BlockAccessList` is ever refactored into a type whose RLP could collapse into a
+        // short string, this peek would mis-decode and must be revisited.
         if rlp.first() == Some(&0x80) {
             return Ok((Snap2OptionalBal(None), &rlp[1..]));
         }
@@ -381,12 +385,37 @@ impl RLPDecode for Snap2OptionalBal {
     }
 }
 
+/// Borrowing counterpart of [`Snap2OptionalBal`] for the encode path. Lets the server
+/// serialize `Option<&BlockAccessList>` without deep-cloning each (kilobyte-scale) BAL into
+/// an owned wrapper purely to encode it. Same wire format as [`Snap2OptionalBal`].
+struct Snap2OptionalBalRef<'a>(Option<&'a BlockAccessList>);
+
+impl RLPEncode for Snap2OptionalBalRef<'_> {
+    fn encode(&self, buf: &mut dyn BufMut) {
+        match self.0 {
+            None => buf.put_u8(0x80), // RLP empty string per EIP-8189 §50,§58
+            Some(bal) => bal.encode(buf),
+        }
+    }
+
+    fn length(&self) -> usize {
+        match self.0 {
+            None => 1,
+            Some(bal) => bal.length(),
+        }
+    }
+}
+
 impl RLPxMessage for Snap2BlockAccessLists {
     const CODE: u8 = codes::SNAP2_BLOCK_ACCESS_LISTS;
 
     fn encode(&self, buf: &mut dyn BufMut) -> Result<(), RLPEncodeError> {
         let mut encoded_data = vec![];
-        let bals: Vec<Snap2OptionalBal> = self.bals.iter().cloned().map(Snap2OptionalBal).collect();
+        let bals: Vec<Snap2OptionalBalRef<'_>> = self
+            .bals
+            .iter()
+            .map(|b| Snap2OptionalBalRef(b.as_ref()))
+            .collect();
         Encoder::new(&mut encoded_data)
             .encode_field(&self.id)
             .encode_field(&bals)

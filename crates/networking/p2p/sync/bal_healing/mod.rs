@@ -316,7 +316,7 @@ pub(super) async fn load_headers_range(
         let hash = store
             .get_canonical_block_hash(number)
             .await?
-            .ok_or(SyncError::MissingHeaderForBal(H256::zero()))?;
+            .ok_or(SyncError::MissingCanonicalBlock(number))?;
         let header = store
             .get_block_header_by_hash(hash)?
             .ok_or(SyncError::MissingHeaderForBal(hash))?;

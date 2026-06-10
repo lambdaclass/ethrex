@@ -49,8 +49,17 @@ pub fn apply_bal(
     bal: &BlockAccessList,
     block_header: &BlockHeader,
 ) -> Result<H256, SyncError> {
-    // Empty BAL: state root unchanged.
+    // Empty BAL: the block made no state changes, so its state root must equal the parent's.
+    // The non-empty path enforces this via the per-block check below; do the same here so the
+    // contract holds for any caller that bypasses `try_apply_bal_block`'s BAL-hash guard
+    // (future direct callers, or tests passing a mismatched header).
     if bal.is_empty() {
+        if parent_state_root != block_header.state_root {
+            return Err(SyncError::StateRootMismatch(
+                block_header.state_root,
+                parent_state_root,
+            ));
+        }
         return Ok(parent_state_root);
     }
 
