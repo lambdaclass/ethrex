@@ -728,8 +728,9 @@ pub enum PeerHandlerError {
 
 impl PeerHandlerError {
     /// Transient errors caused by individual peer interactions (bad/slow/absent
-    /// responses) that should trigger a retry. Actor/storage/snap failures
-    /// indicate a more fundamental problem and should be surfaced as fatal.
+    /// responses) or actor-request timeouts that should trigger a retry.
+    /// Storage/snap failures and stopped actors indicate a more fundamental
+    /// problem and should be surfaced as fatal.
     pub fn is_recoverable(&self) -> bool {
         match self {
             PeerHandlerError::SendMessageToPeer(_)
@@ -740,9 +741,30 @@ impl PeerHandlerError {
             | PeerHandlerError::ReceiveMessageFromPeerTimeout(_)
             | PeerHandlerError::InvalidHeaders
             | PeerHandlerError::NoResponseFromPeer => true,
-            PeerHandlerError::StorageFull
-            | PeerHandlerError::PeerTableError(_)
-            | PeerHandlerError::Snap(_) => false,
+            // A timed-out actor request is transient (mailbox pressure or a
+            // slow handler — the protocol macro hardwires a 5s timeout); a
+            // stopped actor means p2p is shutting down and must stay fatal.
+            PeerHandlerError::PeerTableError(ActorError::RequestTimeout) => true,
+            PeerHandlerError::PeerTableError(ActorError::ActorStopped) => false,
+            PeerHandlerError::StorageFull | PeerHandlerError::Snap(_) => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod error_classification_tests {
+    use super::*;
+
+    // A timed-out PeerTable request is transient (mailbox pressure or a slow
+    // handler); classifying it as fatal turns load spikes into process exit.
+    #[test]
+    fn actor_request_timeout_is_recoverable() {
+        assert!(PeerHandlerError::PeerTableError(ActorError::RequestTimeout).is_recoverable());
+    }
+
+    // A stopped actor means p2p is shutting down and must stay fatal.
+    #[test]
+    fn actor_stopped_is_fatal() {
+        assert!(!PeerHandlerError::PeerTableError(ActorError::ActorStopped).is_recoverable());
     }
 }

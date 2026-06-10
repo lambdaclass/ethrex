@@ -416,10 +416,14 @@ impl SyncError {
             | SyncError::RocksDBError(_)
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
-            | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A timed-out actor request is transient (mailbox pressure or a
+            // slow handler — the protocol macro hardwires a 5s timeout); a
+            // stopped actor means p2p is shutting down and must stay fatal.
+            SyncError::PeerTableError(ActorError::RequestTimeout) => true,
+            SyncError::PeerTableError(ActorError::ActorStopped) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)
@@ -441,5 +445,42 @@ impl SyncError {
 impl<T> From<SendError<T>> for SyncError {
     fn from(value: SendError<T>) -> Self {
         Self::Send(value.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A timed-out PeerTable request is transient (mailbox pressure or a slow
+    // handler); classifying it as fatal turns load spikes into process exit.
+    #[test]
+    fn actor_request_timeout_is_recoverable() {
+        assert!(SyncError::PeerTableError(ActorError::RequestTimeout).is_recoverable());
+    }
+
+    // A stopped actor means p2p is shutting down; retrying the sync cycle
+    // would loop against dead actors instead of letting the node exit.
+    #[test]
+    fn actor_stopped_is_fatal() {
+        assert!(!SyncError::PeerTableError(ActorError::ActorStopped).is_recoverable());
+    }
+
+    // The same actor errors also reach sync wrapped in PeerHandlerError; the
+    // delegated classification must agree with the direct one.
+    #[test]
+    fn delegated_actor_request_timeout_is_recoverable() {
+        assert!(
+            SyncError::PeerHandler(PeerHandlerError::PeerTableError(ActorError::RequestTimeout))
+                .is_recoverable()
+        );
+    }
+
+    #[test]
+    fn delegated_actor_stopped_is_fatal() {
+        assert!(
+            !SyncError::PeerHandler(PeerHandlerError::PeerTableError(ActorError::ActorStopped))
+                .is_recoverable()
+        );
     }
 }
