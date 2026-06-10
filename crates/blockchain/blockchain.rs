@@ -411,24 +411,15 @@ impl Blockchain {
         }
     }
 
-    /// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
-    /// `Privileged` 0x7e). Both are L2-only types unknown to other L1 clients, so
-    /// accepting one on L1 diverges consensus. `Privileged` additionally takes its
-    /// sender from an unsigned, caller-chosen `from` (no signature recovery), so it
-    /// would also let a block forge a sender. On L2 these types are valid, so this
-    /// check only applies to L1.
+    /// Rejects L2-only transaction types when running as an L1 node.
+    /// See [`ethrex_common::validation::validate_l1_transaction_types`] for the
+    /// rationale; on L2 these types are valid, so this check only applies to L1.
     fn validate_l1_transaction_types(&self, block: &Block) -> Result<(), ChainError> {
         if !matches!(self.options.r#type, BlockchainType::L1) {
             return Ok(());
         }
-        for tx in &block.body.transactions {
-            if tx.tx_type().is_l2_only() {
-                return Err(ChainError::InvalidBlock(
-                    InvalidBlockError::UnsupportedTransactionType(tx.tx_type() as u8),
-                ));
-            }
-        }
-        Ok(())
+        ethrex_common::validation::validate_l1_transaction_types(block)
+            .map_err(ChainError::InvalidBlock)
     }
 
     /// Executes a block withing a new vm instance and state

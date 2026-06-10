@@ -15,14 +15,40 @@ use crate::l1::input::{
 };
 use crate::l1::output::ProgramOutput;
 
-use ethrex_common::types::ELASTICITY_MULTIPLIER;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
+use ethrex_common::types::{Block, ELASTICITY_MULTIPLIER};
+use ethrex_common::validate_l1_transaction_types;
 use ethrex_vm::Evm;
 
 #[cfg(feature = "eip-8025")]
 use libssz_merkle::Sha256Hasher;
 
-#[cfg(not(feature = "eip-8025"))]
 use crate::common::BatchExecutionResult;
+
+/// Execute L1 blocks statelessly.
+///
+/// Rejects L2-only transaction types before execution, mirroring
+/// `Blockchain::validate_l1_transaction_types` on full nodes. Without this
+/// check the stateless verifier diverges from full nodes: a `Privileged`
+/// (0x7e) transaction takes its sender from an unsigned, caller-chosen `from`,
+/// so a proof could accept a block that forges a sender while every L1 full
+/// node rejects it.
+fn execute_l1_blocks(
+    blocks: &[Block],
+    execution_witness: ExecutionWitness,
+    crypto: Arc<dyn Crypto>,
+) -> Result<BatchExecutionResult, ExecutionError> {
+    for block in blocks {
+        validate_l1_transaction_types(block).map_err(ExecutionError::BlockValidation)?;
+    }
+    execute_blocks(
+        blocks,
+        execution_witness,
+        ELASTICITY_MULTIPLIER,
+        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
+        crypto.clone(),
+    )
+}
 
 /// Execute the L1 stateless validation program.
 ///
@@ -45,16 +71,7 @@ pub fn execution_program(
         last_block_hash,
         non_privileged_count,
         chain_id,
-    } = execute_blocks(
-        &blocks,
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| {
-            // L1 VM factory - simple creation without fee configs
-            Ok(Evm::new_for_l1(db.clone(), crypto.clone()))
-        },
-        crypto.clone(),
-    )?;
+    } = execute_l1_blocks(&blocks, execution_witness, crypto)?;
 
     Ok(ProgramOutput {
         initial_state_hash,
@@ -114,13 +131,7 @@ pub fn execute_decoded(
             execution_witness,
         } => {
             let chain_id = execution_witness.chain_config.chain_id;
-            execute_blocks(
-                &blocks,
-                execution_witness,
-                ELASTICITY_MULTIPLIER,
-                |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-                crypto.clone(),
-            )?;
+            execute_l1_blocks(&blocks, execution_witness, crypto)?;
             Ok(ProgramOutput {
                 new_payload_request_root: [0u8; 32],
                 valid: true,
@@ -555,13 +566,7 @@ fn validate_eip8025_execution(
     validate_versioned_hashes(&block, new_payload_request.versioned_hashes.iter())?;
 
     // Execute statelessly — reuse the common `execute_blocks` infrastructure
-    let _result = execute_blocks(
-        &[block],
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-        crypto.clone(),
-    )?;
+    let _result = execute_l1_blocks(&[block], execution_witness, crypto)?;
 
     Ok(())
 }
@@ -606,13 +611,7 @@ fn validate_eip8025_amsterdam_execution(
         }
     }
 
-    let _result = execute_blocks(
-        &[block],
-        execution_witness,
-        ELASTICITY_MULTIPLIER,
-        |db, _| Ok(Evm::new_for_l1(db.clone(), crypto.clone())),
-        crypto.clone(),
-    )?;
+    let _result = execute_l1_blocks(&[block], execution_witness, crypto)?;
 
     Ok(())
 }
@@ -635,6 +634,55 @@ mod tests {
                 assert_eq!(msg, "failed to decode EIP-8025 input: input too short");
             }
             other => panic!("expected internal decode error, got {other:?}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod l1_transaction_type_tests {
+    use std::sync::Arc;
+
+    use ethrex_common::InvalidBlockError;
+    use ethrex_common::types::block_execution_witness::ExecutionWitness;
+    use ethrex_common::types::{
+        Block, BlockBody, BlockHeader, PrivilegedL2Transaction, Transaction,
+    };
+
+    use crate::common::ExecutionError;
+    use crate::crypto::NativeCrypto;
+
+    use super::execute_l1_blocks;
+
+    /// A privileged (0x7e) transaction must be rejected before execution: its
+    /// sender is an unsigned, caller-chosen `from`, and full L1 nodes reject
+    /// the type outright, so accepting it here would split the stateless
+    /// verifier from the network.
+    #[test]
+    fn execute_l1_blocks_rejects_privileged_transactions() {
+        let block = Block::new(
+            BlockHeader::default(),
+            BlockBody {
+                transactions: vec![Transaction::PrivilegedL2Transaction(
+                    PrivilegedL2Transaction::default(),
+                )],
+                ..Default::default()
+            },
+        );
+
+        let err = match execute_l1_blocks(
+            &[block],
+            ExecutionWitness::default(),
+            Arc::new(NativeCrypto),
+        ) {
+            Ok(_) => panic!("expected privileged transaction to be rejected on L1"),
+            Err(err) => err,
+        };
+
+        match err {
+            ExecutionError::BlockValidation(InvalidBlockError::UnsupportedTransactionType(
+                0x7e,
+            )) => {}
+            other => panic!("expected UnsupportedTransactionType(0x7e), got {other:?}"),
         }
     }
 }

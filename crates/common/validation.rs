@@ -60,6 +60,23 @@ pub fn validate_block_pre_execution(
     Ok(())
 }
 
+/// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
+/// `Privileged` 0x7e). Both are unknown to other L1 clients, so accepting one
+/// on L1 diverges consensus. `Privileged` additionally takes its sender from an
+/// unsigned, caller-chosen `from` (no signature recovery), so it would also let
+/// a block forge a sender. On L2 these types are valid — only callers validating
+/// L1 blocks should use this.
+pub fn validate_l1_transaction_types(block: &Block) -> Result<(), InvalidBlockError> {
+    for tx in &block.body.transactions {
+        if tx.tx_type().is_l2_only() {
+            return Err(InvalidBlockError::UnsupportedTransactionType(
+                tx.tx_type() as u8
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Validates that the block gas used matches the block header.
 /// For Amsterdam+ (EIP-7778), block_gas_used is PRE-REFUND and differs from
 /// receipt cumulative_gas_used which is POST-REFUND.
