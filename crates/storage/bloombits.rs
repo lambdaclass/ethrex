@@ -218,6 +218,26 @@ fn or_into(acc: &mut [u8], other: &[u8]) {
     }
 }
 
+/// Composite `LOG_BLOOM_BITS` key for one transposed row:
+/// `section (u64 BE) || bloom_bit (u16 BE)`. Section-major so a whole section's
+/// rows sort contiguously and can be range-scanned by [`section_prefix`].
+pub fn row_key(section: u64, bit: u16) -> Vec<u8> {
+    let mut key = Vec::with_capacity(10);
+    key.extend_from_slice(&section.to_be_bytes());
+    key.extend_from_slice(&bit.to_be_bytes());
+    key
+}
+
+/// Key prefix matching every row of `section`.
+pub fn section_prefix(section: u64) -> [u8; 8] {
+    section.to_be_bytes()
+}
+
+/// The section a block number falls in.
+pub fn section_of(block_number: u64) -> u64 {
+    block_number / SECTION_SIZE
+}
+
 /// Iterates the in-section block offsets whose bit is set in `bitmap`.
 pub fn set_offsets(bitmap: &[u8]) -> impl Iterator<Item = usize> + '_ {
     bitmap.iter().enumerate().flat_map(|(byte_pos, &byte)| {

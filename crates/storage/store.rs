@@ -7,13 +7,14 @@ use crate::{
         tables::{
             ACCOUNT_CODE_METADATA, ACCOUNT_CODES, ACCOUNT_FLATKEYVALUE, ACCOUNT_TRIE_NODES,
             BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
-            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, MISC_VALUES,
-            PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE, STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, LOG_BLOOM_BITS,
+            MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
     backend::in_memory::InMemoryBackend,
+    bloombits::{self, BloomQuery, SECTION_SIZE},
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
@@ -117,6 +118,10 @@ enum FKVGeneratorControlMessage {
 
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+
+/// `MISC_VALUES` key holding the count of contiguous fully-indexed bloombits
+/// sections (`u64` LE).
+const BLOOMBITS_SECTIONS_KEY: &[u8] = b"bloombits_sections";
 
 #[derive(Debug)]
 struct CodeCache {
@@ -1487,6 +1492,112 @@ impl Store {
         let mut txn = backend.begin_write()?;
         txn.put_batch(table, batch_ops)?;
         txn.commit()
+    }
+
+    /// Number of contiguous bloombits sections (from section 0) that are fully
+    /// indexed. Blocks below `count * SECTION_SIZE` can be served from the index;
+    /// everything above must be scanned directly.
+    pub fn get_indexed_bloombits_sections(&self) -> Result<u64, StoreError> {
+        Ok(self
+            .read(MISC_VALUES, BLOOMBITS_SECTIONS_KEY.to_vec())?
+            .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes))
+            .unwrap_or(0))
+    }
+
+    fn set_indexed_bloombits_sections(&self, count: u64) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            BLOOMBITS_SECTIONS_KEY.to_vec(),
+            count.to_le_bytes().to_vec(),
+        )
+    }
+
+    /// Persists the transposed rows of a finalized section and advances the
+    /// indexed-section count. `rows` must be ordered by bloom bit (index `b` is
+    /// the row for bloom bit `b`); all-zero rows are skipped. The caller must
+    /// only finalize sections that are buried beyond the reorg depth limit, so a
+    /// stored section is immutable.
+    pub fn store_bloombits_section(
+        &self,
+        section: u64,
+        rows: &[Vec<u8>],
+    ) -> Result<(), StoreError> {
+        let batch: Vec<(Vec<u8>, Vec<u8>)> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.iter().any(|&b| b != 0))
+            .map(|(bit, row)| (bloombits::row_key(section, bit as u16), row.clone()))
+            .collect();
+        self.write_batch(LOG_BLOOM_BITS, batch)?;
+        if section + 1 > self.get_indexed_bloombits_sections()? {
+            self.set_indexed_bloombits_sections(section + 1)?;
+        }
+        Ok(())
+    }
+
+    fn get_bloombits_row(&self, section: u64, bit: u16) -> Result<Vec<u8>, StoreError> {
+        Ok(self
+            .read(LOG_BLOOM_BITS, bloombits::row_key(section, bit))?
+            .unwrap_or_default())
+    }
+
+    /// Returns the candidate block numbers in `[from, to]` that may contain a log
+    /// matching the filter, or `None` if the index can't help (no constraints, or
+    /// the range starts beyond what's indexed) and the caller should scan.
+    ///
+    /// The indexed portion is narrowed via the bloombits index; any tail of the
+    /// range not yet indexed (the recent, reorg-reachable blocks) is returned in
+    /// full so the caller still scans it. False positives are fine — the caller
+    /// exact-filters every returned block.
+    pub fn get_candidate_blocks(
+        &self,
+        addresses: &[Address],
+        topics: &[Vec<H256>],
+        from: BlockNumber,
+        to: BlockNumber,
+    ) -> Result<Option<Vec<BlockNumber>>, StoreError> {
+        let address_items: Vec<&[u8]> = addresses.iter().map(|a| a.as_bytes()).collect();
+        let topic_items: Vec<Vec<&[u8]>> = topics
+            .iter()
+            .map(|position| position.iter().map(|t| t.as_bytes()).collect())
+            .collect();
+        let topic_refs: Vec<&[&[u8]]> = topic_items.iter().map(Vec::as_slice).collect();
+        let query = BloomQuery::new(address_items.iter().copied(), topic_refs.iter().copied());
+
+        let indexed_sections = self.get_indexed_bloombits_sections()?;
+        let indexed_until = indexed_sections.saturating_mul(SECTION_SIZE);
+        // Index can't narrow an unconstrained query, and gives nothing if the
+        // range lies entirely in the unindexed tail.
+        if query.is_unconstrained() || from >= indexed_until {
+            return Ok(None);
+        }
+
+        let mut candidates = Vec::new();
+        let indexed_to = to.min(indexed_until - 1);
+        for section in bloombits::section_of(from)..=bloombits::section_of(indexed_to) {
+            // Finalized sections are always full.
+            let section_start = section * SECTION_SIZE;
+            let mut rows: HashMap<u16, Vec<u8>> = HashMap::new();
+            for bit in query.required_bits() {
+                if let Entry::Vacant(entry) = rows.entry(bit as u16) {
+                    entry.insert(self.get_bloombits_row(section, bit as u16)?);
+                }
+            }
+            let bitmap = query.run_section(SECTION_SIZE as usize, |bit| {
+                rows.get(&(bit as u16)).cloned().unwrap_or_default()
+            });
+            for offset in bloombits::set_offsets(&bitmap) {
+                let block_number = section_start + offset as u64;
+                if (from..=indexed_to).contains(&block_number) {
+                    candidates.push(block_number);
+                }
+            }
+        }
+        // Unindexed tail of the range: include every block so it gets scanned.
+        if to >= indexed_until {
+            candidates.extend(from.max(indexed_until)..=to);
+        }
+        Ok(Some(candidates))
     }
 
     pub async fn add_fullsync_batch(&self, headers: Vec<BlockHeader>) -> Result<(), StoreError> {
@@ -3679,6 +3790,115 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
     {
         let _ = path;
         None
+    }
+}
+
+#[cfg(test)]
+mod bloombits_store_tests {
+    use super::*;
+    use crate::EngineType;
+    use ethrex_common::{Address, Bloom, BloomInput};
+
+    fn store() -> Store {
+        Store::new("", EngineType::InMemory).expect("in-memory store")
+    }
+
+    fn bloom_for(items: &[&[u8]]) -> Bloom {
+        let mut bloom = Bloom::zero();
+        for item in items {
+            bloom.accrue(BloomInput::Raw(item));
+        }
+        bloom
+    }
+
+    fn addr(n: u64) -> Address {
+        Address::from_low_u64_be(n)
+    }
+
+    // Builds and stores a section of `SECTION_SIZE` blocks, each block's bloom
+    // produced by `bloom_at(block_offset)`.
+    fn index_section(store: &Store, section: u64, bloom_at: impl Fn(usize) -> Bloom) {
+        let blooms: Vec<Bloom> = (0..SECTION_SIZE as usize).map(&bloom_at).collect();
+        let rows = bloombits::transpose_section(&blooms);
+        store.store_bloombits_section(section, &rows).unwrap();
+    }
+
+    #[test]
+    fn candidate_blocks_narrows_to_matching_blocks() {
+        let store = store();
+        // Section 0: only blocks 5 and 9 log addr(7); the rest log addr(1).
+        index_section(&store, 0, |offset| {
+            if offset == 5 || offset == 9 {
+                bloom_for(&[addr(7).as_bytes()])
+            } else {
+                bloom_for(&[addr(1).as_bytes()])
+            }
+        });
+
+        let candidates = store
+            .get_candidate_blocks(&[addr(7)], &[], 0, SECTION_SIZE - 1)
+            .unwrap()
+            .expect("range is indexed");
+        assert_eq!(candidates, vec![5, 9]);
+    }
+
+    #[test]
+    fn unconstrained_query_returns_none() {
+        let store = store();
+        index_section(&store, 0, |_| bloom_for(&[addr(1).as_bytes()]));
+        assert!(
+            store
+                .get_candidate_blocks(&[], &[], 0, 10)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn range_beyond_index_returns_none() {
+        let store = store();
+        index_section(&store, 0, |_| bloom_for(&[addr(1).as_bytes()]));
+        // from is past the single indexed section → fall back to scan.
+        let from = SECTION_SIZE;
+        assert!(
+            store
+                .get_candidate_blocks(&[addr(1)], &[], from, from + 10)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn unindexed_tail_is_returned_in_full() {
+        let store = store();
+        // Index section 0 only; block 5 matches addr(7).
+        index_section(&store, 0, |offset| {
+            if offset == 5 {
+                bloom_for(&[addr(7).as_bytes()])
+            } else {
+                bloom_for(&[addr(1).as_bytes()])
+            }
+        });
+
+        // Query spans the indexed section and 3 blocks into the unindexed tail.
+        let to = SECTION_SIZE + 2;
+        let candidates = store
+            .get_candidate_blocks(&[addr(7)], &[], 0, to)
+            .unwrap()
+            .expect("partially indexed");
+        // Block 5 from the index, plus the whole unindexed tail scanned.
+        assert_eq!(
+            candidates,
+            vec![5, SECTION_SIZE, SECTION_SIZE + 1, SECTION_SIZE + 2]
+        );
+    }
+
+    #[test]
+    fn indexed_section_count_advances() {
+        let store = store();
+        assert_eq!(store.get_indexed_bloombits_sections().unwrap(), 0);
+        index_section(&store, 0, |_| bloom_for(&[addr(1).as_bytes()]));
+        assert_eq!(store.get_indexed_bloombits_sections().unwrap(), 1);
     }
 }
 

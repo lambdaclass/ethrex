@@ -113,7 +113,15 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
 pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 
-pub const TABLES: [&str; 20] = [
+/// Bloombits log index column family: [`Vec<u8>`] => [`Vec<u8>`]
+/// - [`Vec<u8>`] = Composite key `section (u64 BE) || bloom_bit (u16 BE)`
+///   (section-major so a section's rows are contiguous and prunable by prefix)
+/// - [`Vec<u8>`] = transposed bit-vector for that `(section, bloom_bit)`:
+///   bit `j` set ⇔ the j-th block of the section has that bloom bit set.
+///   All-zero rows are not stored (absence reads back as zero).
+pub const LOG_BLOOM_BITS: &str = "log_bloom_bits";
+
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -134,4 +142,5 @@ pub const TABLES: [&str; 20] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     BLOCK_ACCESS_LISTS,
+    LOG_BLOOM_BITS,
 ];
