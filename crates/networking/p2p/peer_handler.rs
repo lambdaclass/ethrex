@@ -16,6 +16,7 @@ use crate::{
         },
         message::Message as RLPxMessage,
         p2p::{Capability, SUPPORTED_ETH_CAPABILITIES},
+        snap::{Snap2BlockAccessLists, Snap2GetBlockAccessLists},
     },
 };
 use ethrex_common::{
@@ -33,9 +34,9 @@ use tracing::{debug, error, trace, warn};
 
 // Re-export constants from snap::constants for backward compatibility
 pub use crate::snap::constants::{
-    HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK, MAX_RESPONSE_BYTES,
-    PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE, REQUEST_RETRY_ATTEMPTS,
-    SNAP_LIMIT,
+    BAL_RESPONSE_SOFT_CAP_BYTES, HASH_MAX, MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_CHUNK,
+    MAX_RESPONSE_BYTES, PEER_REPLY_TIMEOUT, PEER_SELECT_RETRY_ATTEMPTS, RANGE_FILE_CHUNK_SIZE,
+    REQUEST_RETRY_ATTEMPTS, SNAP_LIMIT,
 };
 
 // Re-export snap client types for backward compatibility
@@ -660,6 +661,50 @@ impl PeerHandler {
                         Ok(None)
                     }
                 }
+            }
+        }
+    }
+
+    /// Request block access lists via snap/2 (`GetBlockAccessLists`/`BlockAccessLists`).
+    ///
+    /// Returns `None` when no snap/2 peer is available. On success returns
+    /// `(bals, peer_id)` where `peer_id` identifies the responding peer so
+    /// callers can call `record_failure` on the right peer.
+    ///
+    /// B2: uses `Message::Snap2GetBlockAccessLists` to send and
+    /// `Message::Snap2BlockAccessLists` to receive — NOT the eth/71 variants.
+    pub async fn request_snap2_bals(
+        &mut self,
+        block_hashes: &[H256],
+    ) -> Result<Option<(Vec<Option<BlockAccessList>>, H256)>, PeerHandlerError> {
+        let request_id: u64 = rand::random();
+        let request = RLPxMessage::Snap2GetBlockAccessLists(Snap2GetBlockAccessLists {
+            id: request_id,
+            block_hashes: block_hashes.to_vec(),
+            response_bytes: BAL_RESPONSE_SOFT_CAP_BYTES,
+        });
+        let Some((peer_id, mut connection, permit)) = self
+            .peer_table
+            .get_best_peer(vec![Capability::snap(2)])
+            .await?
+        else {
+            return Ok(None);
+        };
+        let response = connection
+            .outgoing_request(request, PEER_REPLY_TIMEOUT)
+            .await;
+        drop(permit);
+        match response {
+            Ok(RLPxMessage::Snap2BlockAccessLists(Snap2BlockAccessLists { id, bals }))
+                if id == request_id =>
+            {
+                self.peer_table.record_success(peer_id)?;
+                Ok(Some((bals, peer_id)))
+            }
+            _ => {
+                warn!("[SYNCING] didn't receive snap/2 BALs from peer {peer_id}");
+                self.peer_table.record_failure(peer_id)?;
+                Ok(None)
             }
         }
     }

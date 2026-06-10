@@ -4,6 +4,7 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+pub mod bal_healing;
 mod code_collector;
 mod full;
 mod healing;
@@ -76,6 +77,14 @@ pub struct SyncDiagnostics {
     pub phase_progress: std::collections::HashMap<String, u64>,
     pub recent_pivot_changes: std::collections::VecDeque<PivotChangeEvent>,
     pub recent_errors: std::collections::VecDeque<SyncErrorEvent>,
+    /// Number of snap/2 `GetBlockAccessLists` requests sent.
+    pub snap2_bal_requests_sent: u64,
+    /// Number of blocks whose BAL was successfully applied.
+    pub snap2_blocks_replayed: u64,
+    /// Number of BAL validation failures (hash mismatch or state-root mismatch).
+    pub snap2_validation_failures: u64,
+    /// Number of snap/2 peer-level failures.
+    pub snap2_peer_failures: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -403,6 +412,30 @@ pub enum SyncError {
     MissingFullsyncBatch,
     #[error("Snap error: {0}")]
     Snap(#[from] crate::snap::SnapError),
+    /// The state root produced by BAL replay differs from the block header's state root.
+    /// A peer switch may recover this (the peer sent a bad BAL).
+    #[error("State root mismatch: expected {0:?}, got {1:?}")]
+    StateRootMismatch(H256, H256),
+    /// A block header required for BAL replay could not be found in local storage.
+    /// This indicates a deeper invariant violation (DB inconsistency).
+    #[error("Missing header for BAL replay: {0:?}")]
+    MissingHeaderForBal(H256),
+    /// The canonical chain has no block hash recorded at a number we just walked
+    /// through, while loading the BAL-replay header range. A real DB inconsistency;
+    /// reporting the number (not a zero hash) is what makes it debuggable.
+    #[error("Missing canonical block at number {0} during BAL replay")]
+    MissingCanonicalBlock(u64),
+    /// During BAL replay, a block's `parent_hash` did not match the expected
+    /// hash of the previously-applied block. The local chain view differs from
+    /// the peer's. Not recoverable by retrying with the same peer — caller must
+    /// fall back to snap/1 healing (which is what `snap_sync.rs` does).
+    #[error(
+        "Chain reorg detected during BAL replay: actual parent {actual_parent:?} != expected {expected_parent:?}"
+    )]
+    ChainReorgDetected {
+        expected_parent: H256,
+        actual_parent: H256,
+    },
 }
 
 impl SyncError {
@@ -434,6 +467,14 @@ impl SyncError {
             | SyncError::MissingFullsyncBatch
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A peer switch may resolve this (the BAL was wrong).
+            SyncError::StateRootMismatch(_, _) => true,
+            // DB inconsistency — not recoverable by switching peers.
+            SyncError::MissingHeaderForBal(_) => false,
+            SyncError::MissingCanonicalBlock(_) => false,
+            // Local chain view differs from peer's; same peer will keep
+            // returning the same BAL. Fall back to snap/1 healing.
+            SyncError::ChainReorgDetected { .. } => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

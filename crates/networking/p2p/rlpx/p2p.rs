@@ -20,7 +20,12 @@ pub const SUPPORTED_ETH_CAPABILITIES: [Capability; 4] = [
     Capability::eth(70),
     Capability::eth(71),
 ];
-pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
+pub const SUPPORTED_SNAP_CAPABILITIES: [Capability; 2] = [Capability::snap(1), Capability::snap(2)];
+
+/// Peers usable for `GetTrieNodes`-based healing. snap/2 (EIP-8189) removes
+/// `GetTrieNodes` / `TrieNodes`, so trie-node healing must restrict peer
+/// selection to snap/1 capability.
+pub const SNAP1_ONLY_CAPABILITIES: [Capability; 1] = [Capability::snap(1)];
 
 /// The version of the base P2P protocol we support.
 /// This is sent at the start of the Hello message instead of the capabilities list.
