@@ -22,6 +22,9 @@ pub struct BuildBlockV1Request {
     pub transactions: Option<Vec<Transaction>>,
     /// Override for the block's `extraData`. Defaults to empty when omitted.
     pub extra_data: Bytes,
+    /// `slotNumber` from the payload attributes (EIP-7843). `None` when omitted;
+    /// only applied to the built header when Amsterdam is active.
+    pub slot_number: Option<u64>,
 }
 
 /// Decodes a `0x`-prefixed hex string JSON value into raw bytes.
@@ -33,6 +36,14 @@ fn decode_hex_value(value: &Value) -> Result<Bytes, RpcErr> {
     hex::decode(str_data)
         .map(Bytes::from)
         .map_err(|err| RpcErr::BadParams(err.to_string()))
+}
+
+/// Decodes a `0x`-prefixed hex string JSON value into a `u64`.
+fn decode_hex_u64(value: &Value) -> Result<u64, RpcErr> {
+    let str_data = serde_json::from_value::<String>(value.clone())?;
+    let str_data = str_data.strip_prefix("0x").unwrap_or(&str_data);
+    u64::from_str_radix(str_data, 16)
+        .map_err(|err| RpcErr::BadParams(format!("invalid slotNumber: {err}")))
 }
 
 fn decode_transactions(value: &Value) -> Result<Option<Vec<Transaction>>, RpcErr> {
@@ -73,12 +84,19 @@ impl RpcHandler for BuildBlockV1Request {
             Some(value) if !value.is_null() => decode_hex_value(value)?,
             _ => Bytes::new(),
         };
+        // `PayloadAttributesV3` has no `slotNumber`, so read it from the raw
+        // attributes object (EIP-7843, present from Amsterdam onwards).
+        let slot_number = match params[1].get("slotNumber") {
+            Some(value) if !value.is_null() => Some(decode_hex_u64(value)?),
+            _ => None,
+        };
 
         Ok(Self {
             parent_block_hash,
             attributes,
             transactions,
             extra_data,
+            slot_number,
         })
     }
 
@@ -107,6 +125,14 @@ impl RpcHandler for BuildBlockV1Request {
             ));
         }
 
+        let chain_config = context.storage.get_chain_config();
+        // EIP-7843 requires the block header to carry a `slot_number` from
+        // Amsterdam onwards; mirror genesis behaviour by defaulting to 0 when
+        // the attribute is absent. Pre-Amsterdam blocks leave it unset.
+        let slot_number = chain_config
+            .is_amsterdam_activated(self.attributes.timestamp)
+            .then(|| self.slot_number.unwrap_or(0));
+
         let args = BuildPayloadArgs {
             parent: self.parent_block_hash,
             timestamp: self.attributes.timestamp,
@@ -114,7 +140,7 @@ impl RpcHandler for BuildBlockV1Request {
             random: self.attributes.prev_randao,
             withdrawals: self.attributes.withdrawals.clone(),
             beacon_root: self.attributes.parent_beacon_block_root,
-            slot_number: None,
+            slot_number,
             version: 3,
             elasticity_multiplier: ELASTICITY_MULTIPLIER,
             gas_ceil: context.gas_ceil,
@@ -134,7 +160,6 @@ impl RpcHandler for BuildBlockV1Request {
         }
         .map_err(|err| RpcErr::Internal(err.to_string()))?;
 
-        let chain_config = context.storage.get_chain_config();
         let timestamp = result.payload.header.timestamp;
 
         let block_access_list = chain_config
@@ -207,6 +232,15 @@ mod tests {
         let empty_req = BuildBlockV1Request::parse(&build_params(parent, 0x10, json!([]))).unwrap();
         assert_eq!(empty_req.transactions.as_ref().unwrap().len(), 0);
         assert!(empty_req.extra_data.is_empty());
+        assert!(empty_req.slot_number.is_none());
+    }
+
+    #[test]
+    fn parse_reads_slot_number_from_attributes() {
+        let mut params = build_params(H256::zero(), 0x10, json!([])).unwrap();
+        params[1]["slotNumber"] = json!("0x2a");
+        let req = BuildBlockV1Request::parse(&Some(params)).unwrap();
+        assert_eq!(req.slot_number, Some(0x2a));
     }
 
     #[tokio::test]
