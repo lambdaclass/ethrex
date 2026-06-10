@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-10
+
+- Route the native P256VERIFY (secp256r1, RIP-7212/EIP-7951) precompile through the `aws-lc-rs` (AWS-LC) backend, replacing the pure-Rust `p256` path on `NativeCrypto`; zkVM guest builds keep the portable backend [#6828](https://github.com/lambdaclass/ethrex/pull/6828)
+
 ### 2026-06-03
 
 - Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
