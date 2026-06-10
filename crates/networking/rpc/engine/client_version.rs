@@ -29,8 +29,9 @@ pub struct ClientVersionV1 {
 impl ClientVersionV1 {
     /// Creates a new ClientVersionV1 for the ethrex client from the ClientVersion struct.
     pub fn from_client_version(cv: &ClientVersion) -> Self {
-        // Take first 8 characters (4 bytes) of the full commit hash
-        let commit = cv.commit[..8].to_string();
+        // Take up to the first 8 characters (4 bytes) of the full commit hash.
+        // Using chars().take() avoids panicking if the commit string is shorter.
+        let commit = cv.commit.chars().take(8).collect::<String>();
 
         Self {
             code: "EX".to_string(),
