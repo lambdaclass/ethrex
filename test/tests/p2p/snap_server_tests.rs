@@ -5,10 +5,16 @@
 
 use std::str::FromStr;
 
-use ethrex_common::{BigEndianHash, H256, types::AccountStateSlimCodec};
+use ethrex_common::{
+    BigEndianHash, H256, U256,
+    types::{AccountState, AccountStateSlimCodec},
+};
 use ethrex_crypto::NativeCrypto;
-use ethrex_p2p::rlpx::snap::GetAccountRange;
-use ethrex_p2p::snap::{SnapError, process_account_range_request};
+use ethrex_p2p::rlpx::snap::{GetAccountRange, GetStorageRanges};
+use ethrex_p2p::snap::constants::MAX_RESPONSE_BYTES;
+use ethrex_p2p::snap::{
+    SnapError, process_account_range_request, process_storage_ranges_request,
+};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_storage::{EngineType, Store};
 use ethrex_trie::EMPTY_TRIE_HASH;
@@ -822,4 +828,130 @@ fn setup_initial_state() -> Result<(Store, H256), SnapError> {
             .unwrap();
     }
     Ok((store, state_trie.hash(&NativeCrypto).unwrap()))
+}
+
+/// Builds a state with `n` accounts (one small account replicated under `n` distinct,
+/// spread-out keys) — enough total encoded size to exceed `MAX_RESPONSE_BYTES`, so an
+/// unclamped `GetAccountRange` walk would buffer far more than the server budget.
+fn setup_large_state(n: u32) -> Result<(Store, H256), SnapError> {
+    let account_bytes: Vec<u8> = vec![196, 128, 1, 128, 128];
+    let AccountStateSlimCodec(account) = RLPDecode::decode(&account_bytes).unwrap();
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    for i in 1..=n {
+        // Put `i` in the high bytes so keys spread across the hash space (avoids a
+        // pathologically deep trie) while staying distinct and ascending.
+        let mut key = [0u8; 32];
+        key[..4].copy_from_slice(&i.to_be_bytes());
+        state_trie
+            .insert(H256(key).as_bytes().to_vec(), account.encode_to_vec())
+            .unwrap();
+    }
+    Ok((store, state_trie.hash(&NativeCrypto).unwrap()))
+}
+
+/// A peer setting `response_bytes = u64::MAX` and `limit_hash = HASH_MAX` must not make
+/// the server walk the entire state trie into memory: the budget is clamped to
+/// `MAX_RESPONSE_BYTES`, so the response is bounded regardless of the requested size.
+/// (Without the clamp, this returns all `N` accounts — the full-trie-walk OOM vector.)
+#[tokio::test]
+async fn account_range_clamps_response_bytes() -> Result<(), SnapError> {
+    const N: u32 = 20_000;
+    let (store, root) = setup_large_state(N)?;
+
+    let request = GetAccountRange {
+        id: 0,
+        root_hash: root,
+        starting_hash: *HASH_MIN,
+        limit_hash: *HASH_MAX,
+        response_bytes: u64::MAX,
+    };
+    let res = process_account_range_request(request, store).await.unwrap();
+
+    // Pre-fix this walked the whole trie and returned all N accounts.
+    assert!(
+        (res.accounts.len() as u32) < N,
+        "expected a bounded response, but got all {N} accounts (unclamped full-trie walk)"
+    );
+
+    // The returned set must fit the server budget. The loop pushes one account before
+    // checking the bound, so allow a single account of overshoot.
+    let bytes_used: u64 = res
+        .accounts
+        .iter()
+        .map(|unit| 32 + AccountStateSlimCodec(unit.account.clone()).length() as u64)
+        .sum();
+    let max_account_bytes =
+        32 + AccountStateSlimCodec(res.accounts[0].account.clone()).length() as u64;
+    assert!(
+        bytes_used <= MAX_RESPONSE_BYTES + max_account_bytes,
+        "response of {bytes_used} bytes exceeds the clamp of {MAX_RESPONSE_BYTES} (+overshoot)"
+    );
+    Ok(())
+}
+
+/// Builds a state with a single account whose storage trie holds `n` slots — enough to
+/// exceed `MAX_RESPONSE_BYTES` (the handler charges a fixed 64 bytes per slot), so an
+/// unclamped `GetStorageRanges` walk would buffer the whole storage trie.
+fn setup_large_storage_state(account_hash: H256, n: u32) -> Result<(Store, H256), SnapError> {
+    let store = Store::new("null", EngineType::InMemory).unwrap();
+
+    let mut storage_trie = store.open_direct_storage_trie(account_hash, *EMPTY_TRIE_HASH)?;
+    for i in 1..=n {
+        let mut slot_key = [0u8; 32];
+        slot_key[..4].copy_from_slice(&i.to_be_bytes());
+        storage_trie
+            .insert(slot_key.to_vec(), U256::from(i).encode_to_vec())
+            .unwrap();
+    }
+    let storage_root = storage_trie.hash(&NativeCrypto).unwrap();
+
+    let account = AccountState {
+        nonce: 0,
+        balance: U256::zero(),
+        storage_root,
+        code_hash: H256::zero(),
+    };
+    let mut state_trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
+    state_trie
+        .insert(account_hash.as_bytes().to_vec(), account.encode_to_vec())
+        .unwrap();
+    Ok((store, state_trie.hash(&NativeCrypto).unwrap()))
+}
+
+/// Same clamp for the storage-range handler: `response_bytes = u64::MAX` over a large
+/// storage trie must return a bounded set of slots, not the whole trie.
+#[tokio::test]
+async fn storage_ranges_clamps_response_bytes() -> Result<(), SnapError> {
+    const N: u32 = 12_000; // 12_000 * 64 B > MAX_RESPONSE_BYTES (512 KiB)
+    let account_hash = H256::from_low_u64_be(0xabcd);
+    let (store, root) = setup_large_storage_state(account_hash, N)?;
+
+    let request = GetStorageRanges {
+        id: 0,
+        root_hash: root,
+        account_hashes: vec![account_hash],
+        starting_hash: *HASH_MIN,
+        limit_hash: *HASH_MAX,
+        response_bytes: u64::MAX,
+    };
+    let res = process_storage_ranges_request(request, store).await.unwrap();
+
+    let slots_returned: u32 = res.slots.iter().map(|s| s.len() as u32).sum();
+    // Guard against a broken fixture silently passing the upper-bound check.
+    assert!(
+        slots_returned > 1000,
+        "fixture produced too few slots ({slots_returned}); the clamp is not being exercised"
+    );
+    // Pre-fix this walked the whole storage trie and returned all N slots.
+    assert!(
+        slots_returned < N,
+        "expected a bounded storage response, but got all {N} slots (unclamped full-trie walk)"
+    );
+    // 64 bytes are charged per slot; allow one slot of overshoot past the clamp.
+    assert!(
+        u64::from(slots_returned) * 64 <= MAX_RESPONSE_BYTES + 64,
+        "storage response of {slots_returned} slots exceeds the clamp"
+    );
+    Ok(())
 }
