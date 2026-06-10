@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-10
+
+- Add a geth-style bloombits log index so `eth_getLogs` queries only candidate blocks instead of scanning the whole range; built from header blooms by a background indexer (full historical coverage on snap-synced nodes), with a scan fallback [#6835](https://github.com/lambdaclass/ethrex/pull/6835)
+
 ### 2026-06-09
 
 - Skip non-matching blocks in `eth_getLogs` using the per-block header bloom, avoiding body/receipt loads for blocks that provably cannot match [#6813](https://github.com/lambdaclass/ethrex/pull/6813)
