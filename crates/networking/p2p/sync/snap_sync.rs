@@ -691,6 +691,35 @@ pub async fn store_block_bodies(
     Ok(())
 }
 
+/// Refreshes the pivot in place if it became stale, for use inside download
+/// dispatchers. Failure is a transient peer condition and must propagate as
+/// a recoverable error so the sync cycle retries: the account-range
+/// dispatcher used to panic here, while the equivalent sync-cycle call
+/// sites retry.
+pub async fn refresh_stale_pivot(
+    pivot_header: &mut BlockHeader,
+    peers: &mut PeerHandler,
+    block_sync_state: &mut SnapBlockSyncState,
+    diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<(), crate::snap::SnapError> {
+    if block_is_stale(pivot_header) {
+        info!("Download pivot became stale, updating pivot");
+        *pivot_header = update_pivot(
+            pivot_header.number,
+            pivot_header.timestamp,
+            peers,
+            block_sync_state,
+            diagnostics,
+        )
+        .await
+        .map_err(|e| {
+            error!("Failed to update stale pivot: {e}");
+            crate::snap::SnapError::PivotUpdateFailed
+        })?;
+    }
+    Ok(())
+}
+
 pub async fn update_pivot(
     block_number: u64,
     block_timestamp: u64,
@@ -1393,6 +1422,33 @@ mod unbounded_wait_tests {
             Err(_) => panic!("update_pivot still waiting after a virtual hour with no peers"),
             Ok(Ok(_)) => panic!("update_pivot cannot succeed with no peers"),
             Ok(Err(e)) => assert!(e.is_recoverable(), "expected a recoverable error, got: {e}"),
+        }
+    }
+
+    // The download dispatchers refresh the pivot in-loop when it goes stale.
+    // A failed refresh must surface as a recoverable error so the sync cycle
+    // retries; the account-range dispatcher used to panic on it, and a naive
+    // error conversion would land in the fatal SyncError::Snap arm instead.
+    #[tokio::test(start_paused = true)]
+    async fn failed_pivot_refresh_is_recoverable() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let mut peers = PeerHandler::new_for_test(store.clone());
+        let mut state = SnapBlockSyncState::new(store.clone());
+        let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
+        // timestamp 0 makes the pivot stale by the clock-based check.
+        let mut pivot = BlockHeader::default();
+        let res = tokio::time::timeout(
+            Duration::from_secs(3600),
+            refresh_stale_pivot(&mut pivot, &mut peers, &mut state, &diagnostics),
+        )
+        .await;
+        match res {
+            Err(_) => panic!("refresh_stale_pivot still waiting after a virtual hour"),
+            Ok(Ok(())) => panic!("refresh cannot succeed with no peers"),
+            Ok(Err(e)) => {
+                let e = SyncError::from(e);
+                assert!(e.is_recoverable(), "expected a recoverable error, got: {e}");
+            }
         }
     }
 }

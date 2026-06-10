@@ -33,8 +33,8 @@ use tracing::{debug, error, info, warn};
 
 // Re-export types used by submodules
 pub use snap_sync::{
-    SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, update_pivot,
-    validate_bytecodes, validate_state_root, validate_storage_root,
+    SnapBlockSyncState, block_is_stale, calculate_staleness_timestamp, refresh_stale_pivot,
+    update_pivot, validate_bytecodes, validate_state_root, validate_storage_root,
 };
 
 #[cfg(feature = "sync-test")]
@@ -418,8 +418,11 @@ impl SyncError {
             | SyncError::NoLatestCanonical
             | SyncError::PeerTableError(_)
             | SyncError::MissingFullsyncBatch
-            | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
+            // A stale pivot we couldn't refresh is a transient peer
+            // condition; every other snap error stays fatal.
+            SyncError::Snap(crate::snap::SnapError::PivotUpdateFailed) => true,
+            SyncError::Snap(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

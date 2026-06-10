@@ -17,7 +17,7 @@ use crate::{
         },
     },
     snap::{async_fs, constants::*, encodable_to_proof, error::SnapError},
-    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, update_pivot},
+    sync::{AccountStorageRoots, SnapBlockSyncState, block_is_stale, refresh_stale_pivot},
     utils::{
         AccountsWithStorage, dump_accounts_to_file, dump_storages_to_file,
         get_account_state_snapshot_file, get_account_storages_snapshot_file,
@@ -242,18 +242,7 @@ pub async fn request_account_range(
 
         let tx = task_sender.clone();
 
-        if block_is_stale(pivot_header) {
-            info!("request_account_range became stale, updating pivot");
-            *pivot_header = update_pivot(
-                pivot_header.number,
-                pivot_header.timestamp,
-                peers,
-                block_sync_state,
-                diagnostics,
-            )
-            .await
-            .expect("Should be able to update pivot")
-        }
+        refresh_stale_pivot(pivot_header, peers, block_sync_state, diagnostics).await?;
 
         tokio::spawn(request_account_range_worker(
             peer_id,
