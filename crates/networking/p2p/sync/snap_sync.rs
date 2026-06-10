@@ -652,9 +652,16 @@ pub async fn store_block_bodies(
     mut peers: PeerHandler,
     store: Store,
 ) -> Result<(), SyncError> {
+    // Bodies near the head are served by any honest peer; if this many
+    // consecutive attempts return nothing (e.g. an empty peer table), give
+    // up with a recoverable error so the sync cycle retries with a fresh
+    // pivot instead of spinning forever.
+    const MAX_EMPTY_BODY_ATTEMPTS: u32 = 10;
+    let mut empty_attempts: u32 = 0;
     loop {
         debug!("Requesting Block Bodies ");
         if let Some(block_bodies) = peers.request_block_bodies(&block_headers).await? {
+            empty_attempts = 0;
             debug!(" Received {} Block Bodies", block_bodies.len());
             // Track which bodies we have already fetched
             let current_block_headers = block_headers.drain(..block_bodies.len());
@@ -670,6 +677,15 @@ pub async fn store_block_bodies(
             if block_headers.is_empty() {
                 break;
             }
+        } else {
+            empty_attempts += 1;
+            if empty_attempts >= MAX_EMPTY_BODY_ATTEMPTS {
+                warn!(
+                    "No peer served block bodies after {MAX_EMPTY_BODY_ATTEMPTS} attempts, aborting the cycle"
+                );
+                return Err(SyncError::BodiesNotFound);
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
     Ok(())
@@ -698,7 +714,13 @@ pub async fn update_pivot(
         block_number, block_timestamp, new_pivot_block_number
     );
 
+    // The no-peer wait branches below don't advance rotations (there is no
+    // peer to try), so they need their own bound: an empty peer table must
+    // not stall the sync cycle forever.
+    const MAX_NO_PEER_WAITS: u64 = 120;
+
     let mut rotation_count: u64 = 0;
+    let mut no_peer_waits: u64 = 0;
     // Track peers that already failed this rotation so we try every eligible
     // peer once before retrying any. When the rotation is exhausted, clear
     // and start a new one.
@@ -747,16 +769,7 @@ pub async fn update_pivot(
                 .has_eligible_peer(SUPPORTED_ETH_CAPABILITIES.to_vec())
                 .await?;
 
-            if !any_eligible {
-                debug!("update_pivot: no eligible peers available, waiting");
-                #[cfg(feature = "metrics")]
-                ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("no_peers");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            } else if excluded_peers.is_empty() {
-                // Peers exist but none match — shouldn't happen in practice
-                debug!("update_pivot: peers exist but none selectable, retrying");
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            } else {
+            if any_eligible && !excluded_peers.is_empty() {
                 // All non-excluded peers were already tried — rotation done
                 debug!(
                     "update_pivot: rotation {rotation_count} complete ({} peers tried), starting next",
@@ -764,9 +777,40 @@ pub async fn update_pivot(
                 );
                 excluded_peers.clear();
                 rotation_count = rotation_count.saturating_add(1);
+                continue;
             }
+            if !any_eligible {
+                debug!("update_pivot: no eligible peers available, waiting");
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("no_peers");
+            } else {
+                // Peers exist but none match — shouldn't happen in practice
+                debug!("update_pivot: peers exist but none selectable, retrying");
+            }
+            no_peer_waits += 1;
+            if no_peer_waits >= MAX_NO_PEER_WAITS {
+                #[cfg(feature = "metrics")]
+                ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("no_peers_timeout");
+                diagnostics
+                    .write()
+                    .await
+                    .push_pivot_change(super::PivotChangeEvent {
+                        timestamp: current_unix_time(),
+                        old_pivot_number: block_number,
+                        new_pivot_number: new_pivot_block_number,
+                        outcome: "no_peers_timeout".to_string(),
+                        failure_reason: Some(format!(
+                            "No eligible peer for {MAX_NO_PEER_WAITS} consecutive waits"
+                        )),
+                    });
+                return Err(SyncError::PeerHandler(
+                    crate::peer_handler::PeerHandlerError::BlockHeaders,
+                ));
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
             continue;
         };
+        no_peer_waits = 0;
 
         let peer_score = peers.peer_table.get_score(peer_id).await?;
         let diag = peers.read_peer_diagnostics().await;
@@ -1304,4 +1348,51 @@ async fn insert_storages(
     async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod unbounded_wait_tests {
+    use super::*;
+    use crate::peer_handler::PeerHandler;
+    use crate::sync::SyncDiagnostics;
+    use ethrex_storage::EngineType;
+
+    // The pivot-body fetch has no retry cap: with no peer serving the body it
+    // must give up with a recoverable error instead of spinning forever.
+    #[tokio::test]
+    async fn store_block_bodies_with_no_peers_fails_recoverably() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let peers = PeerHandler::new_for_test(store.clone());
+        let res = tokio::time::timeout(
+            Duration::from_secs(30),
+            store_block_bodies(vec![BlockHeader::default()], peers, store),
+        )
+        .await;
+        match res {
+            Err(_) => panic!("store_block_bodies still looping after 30s with no peers"),
+            Ok(Ok(())) => panic!("store_block_bodies cannot succeed with no peers"),
+            Ok(Err(e)) => assert!(e.is_recoverable(), "expected a recoverable error, got: {e}"),
+        }
+    }
+
+    // With no eligible peers, update_pivot's wait branches never advance the
+    // rotation counter: it must still give up with a recoverable error
+    // instead of waiting forever. Paused time makes the waits instant.
+    #[tokio::test(start_paused = true)]
+    async fn update_pivot_with_no_peers_fails_recoverably() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let mut peers = PeerHandler::new_for_test(store.clone());
+        let mut state = SnapBlockSyncState::new(store.clone());
+        let diagnostics = Arc::new(tokio::sync::RwLock::new(SyncDiagnostics::default()));
+        let res = tokio::time::timeout(
+            Duration::from_secs(3600),
+            update_pivot(1, 0, &mut peers, &mut state, &diagnostics),
+        )
+        .await;
+        match res {
+            Err(_) => panic!("update_pivot still waiting after a virtual hour with no peers"),
+            Ok(Ok(_)) => panic!("update_pivot cannot succeed with no peers"),
+            Ok(Err(e)) => assert!(e.is_recoverable(), "expected a recoverable error, got: {e}"),
+        }
+    }
 }
