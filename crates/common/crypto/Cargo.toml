@@ -57,5 +57,13 @@ kzg-rs = ["dep:kzg-rs"]
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
 openvm = ["openvm-kzg"]
 
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+blst = "0.3.16"
+
+[[bench]]
+name = "bls_single_op"
+harness = false
+
 [lints]
 workspace = true

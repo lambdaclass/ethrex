@@ -16,12 +16,13 @@
 use blst::{
     blst_bendian_from_fp, blst_final_exp, blst_fp, blst_fp_from_bendian, blst_fp2, blst_fp12,
     blst_fp12_is_one, blst_fp12_mul, blst_map_to_g1, blst_map_to_g2, blst_miller_loop, blst_p1,
-    blst_p1_add_or_double_affine, blst_p1_affine, blst_p1_affine_in_g1, blst_p1_affine_on_curve,
-    blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine, blst_p1s_mult_pippenger,
-    blst_p1s_mult_pippenger_scratch_sizeof, blst_p2, blst_p2_add_or_double_affine, blst_p2_affine,
-    blst_p2_affine_in_g2, blst_p2_affine_on_curve, blst_p2_from_affine, blst_p2_mult,
-    blst_p2_to_affine, blst_p2s_mult_pippenger, blst_p2s_mult_pippenger_scratch_sizeof,
-    blst_scalar, blst_scalar_from_bendian,
+    blst_p1_add_or_double_affine, blst_p1_affine, blst_p1_affine_in_g1, blst_p1_affine_is_inf,
+    blst_p1_affine_on_curve, blst_p1_from_affine, blst_p1_mult, blst_p1_to_affine,
+    blst_p1s_mult_pippenger, blst_p1s_mult_pippenger_scratch_sizeof, blst_p2,
+    blst_p2_add_or_double_affine, blst_p2_affine, blst_p2_affine_in_g2, blst_p2_affine_is_inf,
+    blst_p2_affine_on_curve, blst_p2_from_affine, blst_p2_mult, blst_p2_to_affine,
+    blst_p2s_mult_pippenger, blst_p2s_mult_pippenger_scratch_sizeof, blst_scalar,
+    blst_scalar_from_bendian,
 };
 
 use crate::provider::CryptoError;
@@ -316,15 +317,30 @@ pub fn g2_add(
     Ok(encode_g2(&p2_add_affine(&pa, &pb)))
 }
 
-/// G1 multi-scalar multiplication. Each point is subgroup-checked; zero scalars
-/// are skipped after validation.
+/// G1 multi-scalar multiplication. Each point is subgroup-checked; terms that
+/// contribute nothing to the sum (zero scalar, or a point at infinity) are
+/// skipped after validation rather than fed through a full scalar multiplication.
 #[allow(clippy::type_complexity)]
 pub fn g1_msm(pairs: &[(([u8; 48], [u8; 48]), [u8; 32])]) -> Result<[u8; 96], CryptoError> {
     let mut points = Vec::with_capacity(pairs.len());
     let mut scalars = Vec::with_capacity(pairs.len());
 
     for ((x, y), scalar_bytes) in pairs {
-        let point = read_g1_subgroup(x, y)?;
+        let point = decode_g1_on_curve(x, y)?;
+        // A point at infinity is the identity: it lies in every subgroup and
+        // contributes nothing to the sum, so skip it — and its subgroup check,
+        // which it would trivially pass — avoiding a full 255-bit scalar mul.
+        // SAFETY: `point` is initialized and on-curve.
+        if unsafe { blst_p1_affine_is_inf(&point) } {
+            continue;
+        }
+        // Every other point must lie in the prime-order subgroup, even when
+        // paired with a zero scalar (EIP-2537 input validation is unconditional).
+        // SAFETY: `point` is initialized and on-curve.
+        if unsafe { !blst_p1_affine_in_g1(&point) } {
+            return Err(CryptoError::InvalidPoint("G1 point not in subgroup"));
+        }
+        // A zero scalar contributes the identity; skip the scalar multiplication.
         if is_zero(scalar_bytes) {
             continue;
         }
@@ -344,8 +360,9 @@ pub fn g1_msm(pairs: &[(([u8; 48], [u8; 48]), [u8; 32])]) -> Result<[u8; 96], Cr
     Ok(encode_g1(&result))
 }
 
-/// G2 multi-scalar multiplication. Each point is subgroup-checked; zero scalars
-/// are skipped after validation.
+/// G2 multi-scalar multiplication. Each point is subgroup-checked; terms that
+/// contribute nothing to the sum (zero scalar, or a point at infinity) are
+/// skipped after validation rather than fed through a full scalar multiplication.
 #[allow(clippy::type_complexity)]
 pub fn g2_msm(
     pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
@@ -354,7 +371,21 @@ pub fn g2_msm(
     let mut scalars = Vec::with_capacity(pairs.len());
 
     for ((x0, x1, y0, y1), scalar_bytes) in pairs {
-        let point = read_g2_subgroup(x0, x1, y0, y1)?;
+        let point = decode_g2_on_curve(x0, x1, y0, y1)?;
+        // A point at infinity is the identity: it lies in every subgroup and
+        // contributes nothing to the sum, so skip it — and its subgroup check,
+        // which it would trivially pass — avoiding a full 255-bit scalar mul.
+        // SAFETY: `point` is initialized and on-curve.
+        if unsafe { blst_p2_affine_is_inf(&point) } {
+            continue;
+        }
+        // Every other point must lie in the prime-order subgroup, even when
+        // paired with a zero scalar (EIP-2537 input validation is unconditional).
+        // SAFETY: `point` is initialized and on-curve.
+        if unsafe { !blst_p2_affine_in_g2(&point) } {
+            return Err(CryptoError::InvalidPoint("G2 point not in subgroup"));
+        }
+        // A zero scalar contributes the identity; skip the scalar multiplication.
         if is_zero(scalar_bytes) {
             continue;
         }
@@ -450,4 +481,77 @@ pub fn fp2_to_g2(fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
     // SAFETY: `p` and `fp2` are valid blst values; the optional aug argument is null.
     unsafe { blst_map_to_g2(&mut p, &fp2, core::ptr::null()) };
     Ok(encode_g2(&p2_to_affine(&p)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use blst::{blst_p1_generator, blst_p2_generator};
+
+    fn scalar_bytes(seed: u64) -> [u8; 32] {
+        let mut s = [0u8; 32];
+        s[24..].copy_from_slice(&(seed | 1).to_be_bytes());
+        s
+    }
+
+    fn g1_xy(seed: u64) -> ([u8; 48], [u8; 48]) {
+        let g = p1_to_affine(unsafe { &*blst_p1_generator() });
+        let p = p1_scalar_mul(&g, &read_scalar(&scalar_bytes(seed)));
+        let enc = encode_g1(&p);
+        (
+            enc[0..48].try_into().unwrap(),
+            enc[48..96].try_into().unwrap(),
+        )
+    }
+
+    fn g2_xy(seed: u64) -> ([u8; 48], [u8; 48], [u8; 48], [u8; 48]) {
+        let g = p2_to_affine(unsafe { &*blst_p2_generator() });
+        let p = p2_scalar_mul(&g, &read_scalar(&scalar_bytes(seed)));
+        let e = encode_g2(&p);
+        (
+            e[0..48].try_into().unwrap(),
+            e[48..96].try_into().unwrap(),
+            e[96..144].try_into().unwrap(),
+            e[144..192].try_into().unwrap(),
+        )
+    }
+
+    // Skipping an infinity point must not change the MSM result, and an all-zero
+    // (infinity-only) MSM must return the identity.
+    #[test]
+    fn g1_msm_skips_infinity() {
+        let p = g1_xy(3);
+        let inf = ([0u8; 48], [0u8; 48]);
+        let with_inf = g1_msm(&[(p, scalar_bytes(5)), (inf, scalar_bytes(9))]).unwrap();
+        let without = g1_msm(&[(p, scalar_bytes(5))]).unwrap();
+        assert_eq!(with_inf, without, "infinity term must contribute nothing");
+        assert_eq!(g1_msm(&[(inf, scalar_bytes(9))]).unwrap(), [0u8; 96]);
+    }
+
+    #[test]
+    fn g2_msm_skips_infinity() {
+        let p = g2_xy(3);
+        let inf = ([0u8; 48], [0u8; 48], [0u8; 48], [0u8; 48]);
+        let with_inf = g2_msm(&[(p, scalar_bytes(5)), (inf, scalar_bytes(9))]).unwrap();
+        let without = g2_msm(&[(p, scalar_bytes(5))]).unwrap();
+        assert_eq!(with_inf, without, "infinity term must contribute nothing");
+        assert_eq!(g2_msm(&[(inf, scalar_bytes(9))]).unwrap(), [0u8; 192]);
+    }
+
+    // A point multiplied by the subgroup order r is the identity; with the
+    // output fed back (the uncachable pattern) the next input is infinity, which
+    // must be handled correctly (returns identity, not an error).
+    #[test]
+    fn g1_msm_point_times_order_is_identity_then_infinity() {
+        const R: [u8; 32] = [
+            0x73, 0xed, 0xa7, 0x53, 0x29, 0x9d, 0x7d, 0x48, 0x33, 0x39, 0xd8, 0x08, 0x09, 0xa1,
+            0xd8, 0x05, 0x53, 0xbd, 0xa4, 0x02, 0xff, 0xfe, 0x5b, 0xfe, 0xff, 0xff, 0xff, 0xff,
+            0x00, 0x00, 0x00, 0x01,
+        ];
+        let out = g1_msm(&[(g1_xy(3), R)]).unwrap();
+        assert_eq!(out, [0u8; 96], "P * r == identity");
+        // feed identity back as the next point
+        let inf = ([0u8; 48], [0u8; 48]);
+        assert_eq!(g1_msm(&[(inf, R)]).unwrap(), [0u8; 96]);
+    }
 }
