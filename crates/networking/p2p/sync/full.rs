@@ -166,6 +166,54 @@ pub async fn sync_cycle_full(
         pending_blocks.insert(0, block);
     }
 
+    // If the gap to the forkchoice head is entirely covered by pending blocks (delivered
+    // via engine_newPayload), the rewound sync_head is already a resume point — canonical
+    // with its post-state on disk — so no peer data is needed. Skip the header/body download
+    // and execute the pending blocks directly. Without this, a node that receives every block
+    // through newPayload stalls behind head whenever peers don't serve headers: the
+    // header-fetch abort below returns without executing `pending_blocks`, each retry runs
+    // against a head that has moved further ahead, and the node trails the chain indefinitely,
+    // never reporting synced and answering every newPayload with SYNCING.
+    //
+    // The resume-point check (canonical AND stateful, not just canonical) is required for the
+    // same reason it gates the walk-back below: an FCU can canonicalize a head before its state
+    // is computed, and building on such a canonical-but-stateless parent fails forever with
+    // `state root missing`. If the parent is canonical but stateless, the short-circuit does not
+    // trigger and the existing peer-based path runs unchanged.
+    if !pending_blocks.is_empty() {
+        let parent_is_resume_point = match store.get_block_header_by_hash(sync_head)? {
+            Some(parent) => is_resume_point(&store, &parent)?,
+            None => false,
+        };
+        if parent_is_resume_point {
+            info!(
+                "Executing {} pending blocks for full sync (gap fully covered by blocks from the consensus client, no peer download needed). First block hash: {:#?} Last block hash: {:#?}",
+                pending_blocks.len(),
+                pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+            );
+            let new_state_head = pending_blocks
+                .last()
+                .ok_or(SyncError::NoBlocks)?
+                .header
+                .number;
+            add_blocks_in_batch(
+                blockchain.clone(),
+                cancel_token.clone(),
+                pending_blocks,
+                true,
+                store.clone(),
+                peers,
+            )
+            .await?;
+            // Record the new executed/state head so `eth_syncing` reports real progress,
+            // mirroring the walk-back path that sets this from its resume point.
+            diagnostics.write().await.executed_head = new_state_head;
+            store.clear_fullsync_headers().await?;
+            return Ok(());
+        }
+    }
+
     // The consensus-provided forkchoice head, captured before `sync_head` is rewound
     // over the pending blocks above. Used for sync-target diagnostics so we report the
     // actual head rather than the rewound ancestor we end up requesting headers from.
