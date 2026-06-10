@@ -1293,13 +1293,35 @@ async fn handle_incoming_message(
             let mut block_access_lists =
                 Vec::with_capacity(block_hashes.len().min(BLOCK_ACCESS_LIST_LIMIT));
             for hash in &block_hashes {
-                match state.storage.get_block_access_list(*hash) {
-                    Ok(bal) => block_access_lists.push(bal),
+                // EIP-8159: only serve a BAL that matches the block header's
+                // commitment. A stored BAL that doesn't hash to the header's
+                // `block_access_list_hash` (e.g. a stale/empty entry from a prior
+                // regeneration) must be reported as unavailable (`0x80`) rather
+                // than served as a wrong BAL, which receiving peers would reject.
+                let bal = match state.storage.get_block_access_list(*hash) {
+                    Ok(Some(bal)) => {
+                        let commitment = match state.storage.get_block_header_by_hash(*hash) {
+                            Ok(Some(header)) => header.block_access_list_hash,
+                            Ok(None) => None,
+                            Err(err) => {
+                                // Don't serve an unverified BAL: degrade to 0x80
+                                // (unavailable), but log so an operator can tell a
+                                // committed BAL was refused due to a DB error.
+                                warn!(
+                                    "Failed to read header for BAL commitment check (hash {hash:#x}): {err}; reporting BAL unavailable"
+                                );
+                                None
+                            }
+                        };
+                        bal.matches_commitment(commitment).then_some(bal)
+                    }
+                    Ok(None) => None,
                     Err(err) => {
                         error!("Error accessing DB while building BAL response for peer: {err}");
-                        block_access_lists.push(None);
+                        None
                     }
-                }
+                };
+                block_access_lists.push(bal);
                 if block_access_lists.len() >= BLOCK_ACCESS_LIST_LIMIT {
                     break;
                 }
