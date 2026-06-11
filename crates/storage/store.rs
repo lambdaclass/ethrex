@@ -321,7 +321,7 @@ impl Store {
                 tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
                 for (index, transaction) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = transaction.hash();
+                    let tx_hash = transaction.hash(&NativeCrypto);
                     // Key: tx_hash + block_hash
                     let mut composite_key = Vec::with_capacity(64);
                     composite_key.extend_from_slice(tx_hash.as_bytes());
@@ -1481,7 +1481,7 @@ impl Store {
             tx.put(BLOCK_NUMBERS, &hash_key, &block_number.to_le_bytes())?;
 
             for (index, transaction) in block.body.transactions.iter().enumerate() {
-                let tx_hash = transaction.hash();
+                let tx_hash = transaction.hash(&NativeCrypto);
                 // Key: tx_hash + block_hash
                 let mut composite_key = Vec::with_capacity(64);
                 composite_key.extend_from_slice(tx_hash.as_bytes());

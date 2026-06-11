@@ -11,7 +11,7 @@ use crate::types::{
     validate_block_header, validate_cancun_header_fields, validate_prague_header_fields,
     validate_pre_cancun_header_fields,
 };
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::encode::RLPEncode;
 
 /// Performs pre-execution validation of the block's header values in reference to the parent_header.
@@ -313,7 +313,7 @@ fn verify_transaction_max_gas_limit(block: &Block) -> Result<(), InvalidBlockErr
         if transaction.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP {
             return Err(InvalidBlockError::InvalidTransaction(format!(
                 "Transaction gas limit exceeds maximum. Transaction hash: {}, transaction gas limit: {}",
-                transaction.hash(),
+                transaction.hash(&NativeCrypto),
                 transaction.gas_limit()
             )));
         }

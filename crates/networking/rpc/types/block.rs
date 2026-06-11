@@ -3,6 +3,7 @@ use ethrex_common::{
     H256, serde_utils,
     types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Withdrawal},
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::utils::RpcErr;
@@ -77,7 +78,7 @@ impl RpcBlock {
             BlockBodyWrapper::Full(FullBlockBody::from_body(body, header.number, hash)?)
         } else {
             BlockBodyWrapper::OnlyHashes(OnlyHashesBlockBody {
-                transactions: body.transactions.iter().map(|t| t.hash()).collect(),
+                transactions: body.transactions.iter().map(|t| t.hash(&NativeCrypto)).collect(),
                 uncles: body.ommers.iter().map(|ommer| ommer.hash()).collect(),
                 withdrawals: body.withdrawals.unwrap_or_default(),
             })

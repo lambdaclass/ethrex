@@ -41,6 +41,7 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
+use ethrex_crypto::NativeCrypto;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
@@ -838,7 +839,7 @@ async fn send_all_pooled_tx_hashes(
         state
             .tx_broadcaster
             .add_txs(
-                txs.iter().map(|tx| tx.hash()).collect(),
+                txs.iter().map(|tx| tx.hash(&NativeCrypto)).collect(),
                 state.node.node_id(),
             )
             .map_err(|e| PeerConnectionError::BroadcastError(e.to_string()))?;
@@ -1234,7 +1235,7 @@ async fn handle_incoming_message(
                 state.received_txs_from_peer = true;
             }
             if state.blockchain.is_synced() {
-                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash()).collect();
+                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash(&NativeCrypto)).collect();
 
                 // Offload pool insertion to a background task so we don't block
                 // the ConnectionServer (validation + signature recovery are expensive).

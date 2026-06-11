@@ -43,7 +43,7 @@ impl Hook for DefaultHook {
             {
                 return Err(VMError::TxValidation(
                     TxValidationError::TxMaxGasLimitExceeded {
-                        tx_hash: vm.tx.hash(),
+                        tx_hash: vm.tx.hash(vm.crypto),
                         tx_gas_limit: vm.tx.gas_limit(),
                     },
                 ));

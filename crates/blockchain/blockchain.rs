@@ -2545,7 +2545,7 @@ impl Blockchain {
         let fork = self.current_fork().await?;
 
         let transaction = Transaction::EIP4844Transaction(transaction);
-        let hash = transaction.hash();
+        let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -2605,7 +2605,7 @@ impl Blockchain {
                 limit: MAX_TX_SIZE,
             });
         }
-        let hash = transaction.hash();
+        let hash = transaction.hash(&NativeCrypto);
         if self.mempool.contains_tx(hash)? {
             return Ok(hash);
         }
@@ -2630,7 +2630,7 @@ impl Blockchain {
     /// Remove all transactions in the executed block from the pool (if we have them)
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
-            self.mempool.remove_transaction(&tx.hash())?;
+            self.mempool.remove_transaction(&tx.hash(&NativeCrypto))?;
         }
         Ok(())
     }
@@ -2719,7 +2719,7 @@ impl Blockchain {
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
-                tx.hash(),
+                tx.hash(&NativeCrypto),
                 tx.gas_limit(),
             ));
         }

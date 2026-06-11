@@ -22,6 +22,7 @@ use ethrex_common::{
         kzg_commitment_to_versioned_hash,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_storage::error::StoreError;
 use ethrex_vm::{intrinsic_gas_dimensions, intrinsic_gas_floor};
 use tracing::warn;
@@ -586,7 +587,7 @@ impl Mempool {
         nonce: u64,
         tx: &Transaction,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash())? else {
+        let Some(tx_in_pool) = self.contains_sender_nonce(sender, nonce, tx.hash(&NativeCrypto))? else {
             return Ok(None);
         };
         let is_a_replacement_tx = {
@@ -623,7 +624,7 @@ impl Mempool {
             return Err(MempoolError::UnderpricedReplacement);
         }
 
-        Ok(Some(tx_in_pool.hash()))
+        Ok(Some(tx_in_pool.hash(&NativeCrypto)))
     }
 }
 

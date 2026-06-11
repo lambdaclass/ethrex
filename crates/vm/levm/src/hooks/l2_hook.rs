@@ -586,7 +586,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
         if vm.env.config.fork < Fork::Amsterdam && vm.tx.gas_limit() > TX_MAX_GAS_LIMIT_AMSTERDAM {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
-                    tx_hash: vm.tx.hash(),
+                    tx_hash: vm.tx.hash(vm.crypto),
                     tx_gas_limit: vm.tx.gas_limit(),
                 },
             ));
@@ -597,7 +597,7 @@ fn prepare_execution_fee_token(vm: &mut VM<'_>) -> Result<U256, crate::errors::V
         {
             return Err(VMError::TxValidation(
                 TxValidationError::TxMaxGasLimitExceeded {
-                    tx_hash: vm.tx.hash(),
+                    tx_hash: vm.tx.hash(vm.crypto),
                     tx_gas_limit: vm.tx.gas_limit(),
                 },
             ));

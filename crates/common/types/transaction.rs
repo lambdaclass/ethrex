@@ -1131,7 +1131,7 @@ impl Transaction {
         };
         sender_cache
             .get_or_try_init(|| {
-                let tx_hash = self.hash();
+                let tx_hash = self.hash(crypto);
                 // Fast path: check process-level signer cache
                 let mut cache = GLOBAL_SIGNER_CACHE
                     .lock()
@@ -1465,14 +1465,14 @@ impl Transaction {
         }
     }
 
-    pub fn compute_hash(&self, crypto: &dyn Crypto) -> H256 {
+    fn compute_hash(&self, crypto: &dyn Crypto) -> H256 {
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return tx.get_privileged_hash().unwrap_or_default();
         }
         H256(crypto.keccak256(&self.encode_canonical_to_vec()))
     }
 
-    pub fn hash(&self) -> H256 {
+    pub fn hash(&self, crypto: &dyn Crypto) -> H256 {
         let inner_hash = match self {
             Transaction::LegacyTransaction(tx) => &tx.inner_hash,
             Transaction::EIP2930Transaction(tx) => &tx.inner_hash,
@@ -1483,7 +1483,7 @@ impl Transaction {
             Transaction::FeeTokenTransaction(tx) => &tx.inner_hash,
         };
 
-        *inner_hash.get_or_init(|| self.compute_hash(&NativeCrypto))
+        *inner_hash.get_or_init(|| self.compute_hash(crypto))
     }
 
     pub fn gas_tip_cap(&self) -> U256 {

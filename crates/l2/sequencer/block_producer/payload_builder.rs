@@ -20,6 +20,7 @@ use ethrex_metrics::{
     blocks::METRICS_BLOCKS,
     transactions::{METRICS_TX, MetricsTxType},
 };
+use ethrex_common::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::check_2d_gas_allowance;
@@ -155,7 +156,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash(&NativeCrypto));
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
@@ -163,7 +164,7 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction within the configured block_gas_limit
         if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash());
+            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash(&NativeCrypto));
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
@@ -195,7 +196,7 @@ pub async fn fill_transactions(
         }
 
         // TODO: maybe fetch hash too when filtering mempool so we don't have to compute it here (we can do this in the same refactor as adding timestamp)
-        let tx_hash = head_tx.tx.hash();
+        let tx_hash = head_tx.tx.hash(&NativeCrypto);
 
         // Check whether the tx is replay-protected
         if head_tx.tx.protected() && !chain_config.is_eip155_activated(context.block_number()) {
@@ -332,7 +333,7 @@ pub async fn fill_transactions(
 
         txs.shift()?;
         // Pull transaction from the mempool
-        blockchain.remove_transaction_from_pool(&head_tx.tx.hash())?;
+        blockchain.remove_transaction_from_pool(&head_tx.tx.hash(&NativeCrypto))?;
 
         // Add transaction to block
         context.payload.body.transactions.push(tx);
@@ -360,7 +361,7 @@ fn fetch_mempool_transactions(
 ) -> Result<TransactionQueue, BlockProducerError> {
     let (plain_txs, mut blob_txs) = blockchain.fetch_mempool_transactions(context)?;
     while let Some(blob_tx) = blob_txs.peek() {
-        let tx_hash = blob_tx.hash();
+        let tx_hash = blob_tx.hash(&NativeCrypto);
         blockchain.remove_transaction_from_pool(&tx_hash)?;
         blob_txs.pop();
     }
