@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-11
+
+- Parallelize single-account storage-trie merkleization: shard a hot account's (>=2048 slot updates) storage-root computation across 16 nibble-keyed workers, so one bloated contract no longer serializes its trie inserts on a single thread [#6845](https://github.com/lambdaclass/ethrex/pull/6845)
+
 ### 2026-06-05
 
 - Route the native BLS12-381 (EIP-2537) precompiles through the `blst` backend, replacing the pure-Rust path whose Fermat field inversion made `BLS12_G1ADD`/`BLS12_G2ADD` time-per-gas outliers; ~7.7x faster G1ADD, ~5.6x faster G2ADD (zkVM guest builds keep the portable backend) [#6792](https://github.com/lambdaclass/ethrex/pull/6792)
