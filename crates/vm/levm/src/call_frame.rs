@@ -76,6 +76,17 @@ impl Stack {
         Ok(value)
     }
 
+    /// Mutable reference to the top stack value. For stack-neutral unary ops
+    /// (`ISZERO`, `NOT`, `CLZ`) this lets the handler read-modify-write the top
+    /// slot in place, avoiding the `pop1` + `push` offset round-trip (two bounds
+    /// checks and two offset writes) for an op whose stack depth never changes.
+    #[inline]
+    pub fn top_mut(&mut self) -> Result<&mut U256, ExceptionalHalt> {
+        self.values
+            .get_mut(self.offset)
+            .ok_or(ExceptionalHalt::StackUnderflow)
+    }
+
     /// Push a single U256 value to the stack, faster than the generic push.
     #[inline]
     pub fn push(&mut self, value: U256) -> Result<(), ExceptionalHalt> {

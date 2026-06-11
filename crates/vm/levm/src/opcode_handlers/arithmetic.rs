@@ -274,10 +274,10 @@ impl OpcodeHandler for OpClzHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::CLZ)?;
 
-        let value = vm.current_call_frame.stack.pop1()?;
-        vm.current_call_frame
-            .stack
-            .push(value.leading_zeros().into())?;
+        // Stack-neutral: replace the top in place instead of pop1 + push.
+        let top = vm.current_call_frame.stack.top_mut()?;
+        let leading_zeros = top.leading_zeros();
+        *top = leading_zeros.into();
 
         Ok(OpcodeResult::Continue)
     }

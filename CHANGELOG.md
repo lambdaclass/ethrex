@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-11
+
+- Mutate the stack top in place for the stack-neutral unary opcodes `ISZERO`, `NOT` and `CLZ`, avoiding the `pop1` + `push` stack-offset round-trip [#6846](https://github.com/lambdaclass/ethrex/pull/6846)
+
 ### 2026-06-03
 
 - Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)

@@ -131,11 +131,13 @@ impl OpcodeHandler for OpIsZeroHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::ISZERO)?;
 
-        let value = vm.current_call_frame.stack.pop1()?;
+        // Stack-neutral: replace the top in place instead of pop1 + push.
+        let top = vm.current_call_frame.stack.top_mut()?;
+        let is_zero = top.is_zero();
         #[expect(clippy::as_conversions, reason = "safe")]
-        vm.current_call_frame
-            .stack
-            .push((value.is_zero() as u64).into())?;
+        {
+            *top = (is_zero as u64).into();
+        }
 
         Ok(OpcodeResult::Continue)
     }
@@ -190,8 +192,9 @@ impl OpcodeHandler for OpNotHandler {
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         vm.current_call_frame.increase_consumed_gas(gas_cost::NOT)?;
 
-        let value = vm.current_call_frame.stack.pop1()?;
-        vm.current_call_frame.stack.push(!value)?;
+        // Stack-neutral: replace the top in place instead of pop1 + push.
+        let top = vm.current_call_frame.stack.top_mut()?;
+        *top = !*top;
 
         Ok(OpcodeResult::Continue)
     }
