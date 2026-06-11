@@ -462,11 +462,16 @@ impl PeerHandler {
                 })) = response
                 {
                     if block_headers.is_empty() {
-                        // Empty response is valid per eth spec (peer may not have these blocks)
+                        // Empty response is valid per eth spec (peer may not have these blocks),
+                        // so apply only a soft score penalty (`record_failure`) rather than
+                        // ejecting the peer (`set_disposable`): a spec-conformant peer that simply
+                        // lacks a fork's blocks shouldn't be permanently dropped from rotation.
+                        // Genuine misbehavior below (unchained / wrong-chain-start) uses the same
+                        // soft tier, so the distinction stays consistent.
                         debug!(
                             "[SYNCING] Received empty headers from peer {peer_id}, trying another"
                         );
-                        let _ = self.peer_table.set_disposable(peer_id);
+                        self.peer_table.record_failure(peer_id)?;
                         return Ok(HeaderFetchOutcome::PeerFailed);
                     }
                     if are_block_headers_chained(&block_headers, &order) {

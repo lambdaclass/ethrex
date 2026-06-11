@@ -103,8 +103,10 @@ pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, Sync
 
 /// Index of the first resume point in a single newest->oldest header batch, or `None` if the
 /// batch contains none. The headers before that index are the missing blocks to execute; the
-/// header at that index is our executed/state head (state presence is contiguous from genesis,
-/// so the first canonical+stateful header scanning newest->oldest is exactly that head).
+/// header at that index is our executed/state head. State is retained only for a recent window
+/// down from the executed head (the layered store prunes older layers), so scanning newest->oldest
+/// the first canonical+stateful header is exactly that head — the stateless prefix above it is the
+/// not-yet-executed blocks, and everything below it within the retained window is also stateful.
 ///
 /// Scanning the batch *interior* — rather than only checking the parent of the batch's oldest
 /// header — is what stops the walk-back overshooting its own stateful head down to genesis when
@@ -202,10 +204,9 @@ pub async fn sync_cycle_full(
             .await?;
         let mut block_headers = match outcome {
             HeaderFetchOutcome::Headers(headers) => headers,
-            // No headers this round: `reason` says whether we couldn't find a peer to ask
-            // ("no eth peer available") or peers were asked and didn't serve ("peer(s) asked
-            // but did not serve headers"), so operators can tell connectivity apart from
-            // peers withholding data.
+            // No headers this round: `reason` (from `HeaderFetchOutcome::failure_reason`) says
+            // whether we couldn't find a peer to query or a peer was queried but didn't serve, so
+            // operators can tell connectivity apart from peers withholding data.
             other => {
                 let reason = other.failure_reason();
                 let eth_capable_peers = peers.eth_capable_peer_count().await;
@@ -296,9 +297,9 @@ pub async fn sync_cycle_full(
         if parent_is_resume_point || batch_resume_index.is_some() || sync_head.is_zero() {
             // Incoming chain merged with our executed state.
             // Drop only the already-executed (canonical + stateful) prefix; keep any
-            // canonical-but-stateless blocks so they get re-executed. Because both
-            // canonical-ness and state presence are contiguous from genesis, the first
-            // canonical+stateful header newest->oldest is exactly the state head.
+            // canonical-but-stateless blocks so they get re-executed. State is retained for a
+            // recent window down from the executed head, so the first canonical+stateful header
+            // scanning newest->oldest is exactly that state head.
             let first_skippable = batch_resume_index.unwrap_or(block_headers.len());
             block_headers.drain(first_skippable..block_headers.len());
             match block_headers.last() {
@@ -519,24 +520,43 @@ pub async fn sync_cycle_full(
     // Ensure the download task completes and propagate any panics
     download_task.await?;
 
-    // Execute pending blocks
-    if !pending_blocks.is_empty() {
-        info!(
-            "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
-            pending_blocks.len(),
-            pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
-            pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
-        );
-        add_blocks_in_batch(
-            blockchain.clone(),
-            cancel_token.clone(),
-            pending_blocks,
-            true,
-            store.clone(),
-            peers,
-        )
-        .await?;
-        reached_target = true;
+    // Execute pending blocks, but only if the downloaded chain they build on was fully
+    // executed first. The oldest pending block's parent is the rewound `sync_head`, i.e. the
+    // newest downloaded header; if body downloads gave up early its post-state is absent and
+    // executing the pending blocks would fail with `state root missing`. Gate on actual state
+    // presence rather than `reached_target`: the common follow-head case has no gap to download
+    // (nothing is sent, so `reached_target` stays false) yet the parent state is already on disk.
+    if let Some(oldest_pending) = pending_blocks.first() {
+        let parent_has_state =
+            match store.get_block_header_by_hash(oldest_pending.header.parent_hash)? {
+                Some(parent) => store.has_state_root(parent.state_root)?,
+                None => false,
+            };
+        if !parent_has_state {
+            let local_head = store.get_latest_block_number().await?;
+            warn!(
+                local_head,
+                "Skipping {} pending block(s): the downloaded chain they build on was not fully executed (parent state absent); will retry on the next forkchoice update",
+                pending_blocks.len()
+            );
+        } else {
+            info!(
+                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
+                pending_blocks.len(),
+                pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+            );
+            add_blocks_in_batch(
+                blockchain.clone(),
+                cancel_token.clone(),
+                pending_blocks,
+                true,
+                store.clone(),
+                peers,
+            )
+            .await?;
+            reached_target = true;
+        }
     }
 
     // If this cycle started behind, report the outcome so the operator can tell idle-waiting

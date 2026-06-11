@@ -351,8 +351,6 @@ pub enum SyncError {
     JoinHandle(#[from] tokio::task::JoinError),
     #[error("Missing data from DB")]
     CorruptDB,
-    #[error("No bodies were found for the given headers")]
-    BodiesNotFound,
     #[error("Failed to fetch latest canonical block, unable to sync")]
     NoLatestCanonical,
     #[error("Range received is invalid")]
@@ -441,7 +439,6 @@ impl SyncError {
             | SyncError::Rlp(_)
             | SyncError::JoinHandle(_)
             | SyncError::CorruptDB
-            | SyncError::BodiesNotFound
             | SyncError::InvalidRangeReceived
             | SyncError::BlockNumber(_)
             | SyncError::NoBlocks
