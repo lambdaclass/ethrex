@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-11
+
+- Monomorphize the LEVM opcode dispatch loop over whether a struct-log tracer is active (`run_dispatch::<const TRACED: bool>`), moving the per-opcode trace capture into cold out-of-line helpers. The non-traced path (the common case) drops the per-op tracer load/branches and the capture code's influence on loop codegen: ~36% fewer instructions and ~23% fewer cycles per opcode on a minimal op, lifting all-opcode dispatch throughput [#6846](https://github.com/lambdaclass/ethrex/pull/6846)
+
 ### 2026-06-03
 
 - Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
