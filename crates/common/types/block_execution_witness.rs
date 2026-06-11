@@ -124,15 +124,27 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         for node in value.storage_trie_roots.values() {
             node.encode_subtrie(&mut nodes)?;
         }
+        // Canonical witness ordering (EIP-8025, geth `ExtWitness`): state nodes
+        // and codes sorted lexicographically and deduplicated (identical
+        // storage subtries would otherwise emit identical nodes twice),
+        // headers ascending by block number.
+        nodes.sort();
+        nodes.dedup();
+        let mut codes = value.codes;
+        codes.sort();
+        codes.dedup();
+        let mut headers = value.block_headers_bytes;
+        headers.sort_by_key(|bytes| {
+            // Undecodable headers sort last; consumers reject them on decode anyway.
+            BlockHeader::decode(bytes)
+                .map(|header| header.number)
+                .unwrap_or(u64::MAX)
+        });
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
             keys: Vec::new(),
-            codes: value.codes.into_iter().map(Bytes::from).collect(),
-            headers: value
-                .block_headers_bytes
-                .into_iter()
-                .map(Bytes::from)
-                .collect(),
+            codes: codes.into_iter().map(Bytes::from).collect(),
+            headers: headers.into_iter().map(Bytes::from).collect(),
         })
     }
 }
