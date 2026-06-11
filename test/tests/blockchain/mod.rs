@@ -5,3 +5,4 @@ mod l1_tx_type_tests;
 mod logs_bloom_tests;
 mod mempool_tests;
 mod smoke_tests;
+mod storage_sharding_tests;
