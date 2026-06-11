@@ -13,10 +13,6 @@ use ethrex_trie::TrieNode;
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-fn make_store() -> Store {
-    Store::new("", EngineType::InMemory).expect("in-memory store")
-}
-
 /// Build an H256 where the top nibble (high 4 bits of byte 0) equals `nibble`
 /// and the remaining bytes are derived from `index`. This lets us place keys
 /// deterministically in a known shard bucket.
@@ -86,7 +82,7 @@ fn assert_equiv(serial: (H256, Vec<TrieNode>), sharded: (H256, Vec<TrieNode>), l
 // nibbles.
 #[test]
 fn sharded_vs_serial_new_storage_2048_slots() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0xdeadbeef);
     let parent_state_root = *EMPTY_TRIE_HASH;
     let storage_root = *EMPTY_TRIE_HASH;
@@ -121,7 +117,7 @@ fn sharded_vs_serial_new_storage_2048_slots() {
 // All slots removed: pre-seed 2048 slots, then call with all values == 0.
 #[test]
 fn sharded_vs_serial_all_slots_removed() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0xcafe_0002);
     let parent_state_root = *EMPTY_TRIE_HASH;
 
@@ -163,7 +159,7 @@ fn sharded_vs_serial_all_slots_removed() {
 // Mixed: pre-seed 512 slots, then insert new, remove some, update others.
 #[test]
 fn sharded_vs_serial_mixed_insert_remove_update() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0xbabe_0003);
     let parent_state_root = *EMPTY_TRIE_HASH;
 
@@ -220,7 +216,7 @@ fn sharded_vs_serial_mixed_insert_remove_update() {
 // Single-nibble concentration: 2048 keys all with top nibble 0xA.
 #[test]
 fn sharded_vs_serial_single_nibble_concentration() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0xface_0004);
     let parent_state_root = *EMPTY_TRIE_HASH;
     let storage_root = *EMPTY_TRIE_HASH;
@@ -252,7 +248,7 @@ fn sharded_vs_serial_single_nibble_concentration() {
 // Exactly one slot remaining: pre-seed several, remove all but one.
 #[test]
 fn sharded_vs_serial_single_slot_remaining() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0x1234_0005);
     let parent_state_root = *EMPTY_TRIE_HASH;
 
@@ -297,7 +293,7 @@ fn sharded_vs_serial_single_slot_remaining() {
 // Exactly two active buckets: all keys in nibble 0x3 and 0xC only.
 #[test]
 fn sharded_vs_serial_two_bucket_branch() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0x5678_0006);
     let parent_state_root = *EMPTY_TRIE_HASH;
     let storage_root = *EMPTY_TRIE_HASH;
@@ -334,7 +330,7 @@ fn sharded_vs_serial_two_bucket_branch() {
 // against a pre-seeded trie.
 #[test]
 fn sharded_vs_serial_normal_spread_mixed() {
-    let store = make_store();
+    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
     let hashed_address = H256::from_low_u64_be(0x9abc_0007);
     let parent_state_root = *EMPTY_TRIE_HASH;
 
