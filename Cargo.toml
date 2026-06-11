@@ -149,7 +149,7 @@ rocksdb = { version = "0.24.0", default-features = false, features = [
   "lz4",
 ] }
 
-# libssz (EIP-8025 SSZ support) — pinned to latest commit
+# libssz (EIP-8025 SSZ support)
 libssz = "0.2.2"
 libssz-types = "0.2.2"
 libssz-merkle = "0.2.2"
