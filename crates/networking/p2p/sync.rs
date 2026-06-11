@@ -189,7 +189,7 @@ impl Syncer {
                     }
                     true => {
                         // We do nothing, as the error is recoverable
-                        error!(
+                        warn!(
                             time_elapsed_s = start_time.elapsed().as_secs(),
                             %sync_head,
                             %error, "Sync cycle failed, retrying",

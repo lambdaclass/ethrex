@@ -20,7 +20,7 @@ use ethrex_common::{H256, H512, types::ForkId};
 use rand::rngs::OsRng;
 use secp256k1::SecretKey;
 use std::time::Duration;
-use tracing::{debug, error, trace};
+use tracing::{debug, trace};
 
 use super::server::{DiscoveryServer, DiscoveryServerError};
 
@@ -63,7 +63,7 @@ impl DiscoveryServer {
                 );
 
                 let _ = self.discv4_handle_ping(ping_message, hash, sender_public_key, node).await.inspect_err(|e| {
-                    error!(protocol = "discv4", sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
+                    debug!(protocol = "discv4", sent = "Ping", to = %format!("{sender_public_key:#x}"), err = ?e, "Error handling message");
                 });
             }
             Message::Pong(pong_message) => {
@@ -216,7 +216,7 @@ impl DiscoveryServer {
 
         for (idx, node_id, node, message) in queries {
             if let Err(e) = self.udp_socket.send_to(&message, &node.udp_addr()).await {
-                error!(protocol = "discv4", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
+                debug!(protocol = "discv4", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
                 if let Some(discv4) = &mut self.discv4
@@ -602,7 +602,7 @@ impl DiscoveryServer {
         let mut buf = BytesMut::new();
         message.encode_with_header(&mut buf, &self.signer);
         Ok(self.udp_socket.send_to(&buf, addr).await.inspect_err(
-            |e| error!(protocol = "discv4", sending = ?message, addr = ?addr, err=?e, "Error sending message"),
+            |e| debug!(protocol = "discv4", sending = ?message, addr = ?addr, err=?e, "Error sending message"),
         )?)
     }
 
@@ -622,7 +622,7 @@ impl DiscoveryServer {
             .try_into()
             .expect("first 32 bytes are the message hash");
         if let Err(e) = self.udp_socket.send_to(&buf, node.udp_addr()).await {
-            error!(protocol = "discv4", sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
+            debug!(protocol = "discv4", sending = ?message, addr = ?node.udp_addr(), to = ?node.node_id(), err=?e, "Error sending message");
             self.peer_table.set_disposable(node.node_id())?;
             METRICS.record_new_discarded_node();
             return Err(e.into());

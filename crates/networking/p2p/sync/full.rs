@@ -65,7 +65,7 @@ pub async fn sync_cycle_full(
     mut sync_head: H256,
     store: Store,
 ) -> Result<(), SyncError> {
-    info!("Syncing to sync_head {:?}", sync_head);
+    debug!("Syncing to sync_head {:?}", sync_head);
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
@@ -101,6 +101,11 @@ pub async fn sync_cycle_full(
     let mut started_behind = false;
     let mut sync_target_logged = false;
 
+    // Latest canonical block. The backward walk below also stops here: our head
+    // (e.g. a snap-sync pivot) may be a lone canonical block sitting mid-batch,
+    // which the lowest-parent check would skip, running the walk down to genesis.
+    let local_latest_number = store.get_latest_block_number().await?;
+
     // Request and store all block headers from the advertised sync head
     loop {
         let Some(mut block_headers) = peers
@@ -114,7 +119,7 @@ pub async fn sync_cycle_full(
                 return Ok(());
             }
             attempts += 1;
-            warn!(
+            debug!(
                 "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
             );
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -127,8 +132,8 @@ pub async fn sync_cycle_full(
         let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
         let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
 
-        info!(
-            "Received {} block headers| First Number: {} Last Number: {}",
+        debug!(
+            "Received {} block headers | First Number: {} Last Number: {}",
             block_headers.len(),
             first_header.number,
             last_header.number,
@@ -166,7 +171,11 @@ pub async fn sync_cycle_full(
         start_block_number = last_header.number;
 
         sync_head = last_header.parent_hash;
-        if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
+        let parent_is_canonical = store.is_canonical_sync(sync_head)? || sync_head.is_zero();
+        // The batch has descended to our head: scan it for the canonical ancestor
+        // the lowest-parent check above can miss (e.g. a lone snap-sync pivot).
+        let reached_local_head = last_header.number <= local_latest_number;
+        if parent_is_canonical || reached_local_head {
             // Incoming chain merged with current chain
             // Filter out already canonical blocks from batch
             let mut first_canon_block = block_headers.len();
@@ -176,17 +185,22 @@ pub async fn sync_cycle_full(
                     break;
                 }
             }
-            block_headers.drain(first_canon_block..block_headers.len());
-            if let Some(last_header) = block_headers.last() {
-                start_block_number = last_header.number;
+            // Only merge if we actually connected: parent canonical, or a
+            // canonical ancestor found in the batch. Otherwise keep walking
+            // (e.g. a reorg where our head isn't on the incoming chain).
+            if parent_is_canonical || first_canon_block < block_headers.len() {
+                block_headers.drain(first_canon_block..block_headers.len());
+                if let Some(last_header) = block_headers.last() {
+                    start_block_number = last_header.number;
+                }
+                // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
+                if single_batch {
+                    headers = block_headers.into_iter().rev().collect();
+                } else {
+                    store.add_fullsync_batch(block_headers).await?;
+                }
+                break;
             }
-            // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
-            if single_batch {
-                headers = block_headers.into_iter().rev().collect();
-            } else {
-                store.add_fullsync_batch(block_headers).await?;
-            }
-            break;
         }
         store.add_fullsync_batch(block_headers).await?;
         single_batch = false;
@@ -297,7 +311,7 @@ pub async fn sync_cycle_full(
     // Main loop: receive downloaded batches and execute them
     while let Some(result) = body_rx.recv().await {
         let (blocks, final_batch) = result?;
-        info!(
+        debug!(
             "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
             blocks.len(),
             blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
@@ -319,7 +333,7 @@ pub async fn sync_cycle_full(
 
     // Execute pending blocks
     if !pending_blocks.is_empty() {
-        info!(
+        debug!(
             "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
             pending_blocks.len(),
             pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
@@ -376,19 +390,17 @@ async fn add_blocks_in_batch(
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
     let chain_config = store.get_chain_config();
     let bals: Vec<Option<BlockAccessList>> = {
-        // Only the final batch goes through `run_blocks_pipeline`, which is the
-        // path that actually consumes BALs. Non-final batches use
-        // `blockchain.add_blocks_in_batch()` which doesn't accept BALs, so
-        // fetching them for those batches just wastes a network round-trip.
-        let any_amsterdam = final_batch
-            && blocks
-                .iter()
-                .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
+        // Fetch BALs for every Amsterdam batch (not just the final one): both the
+        // batch path and `run_blocks_pipeline` now persist them, so peers can serve
+        // these blocks over eth/71 later without regenerating against pruned state.
+        let any_amsterdam = blocks
+            .iter()
+            .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
         if any_amsterdam {
             match peers.request_block_access_lists(&blocks_hashes).await {
                 Ok(Some(bals)) if bals.len() == blocks.len() => bals,
                 _ => {
-                    debug!("[SYNCING] BAL fetch unavailable or failed, proceeding without BALs");
+                    debug!("BAL fetch unavailable or failed, proceeding without BALs");
                     vec![None; blocks.len()]
                 }
             }
@@ -437,17 +449,14 @@ async fn add_blocks_in_batch(
     let blocks_per_second = blocks_len as f64 / execution_time;
 
     info!(
-        "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
-        Started at block with hash {} (number {}).\n\
-        Finished at block with hash {} (number {}).\n\
-        Blocks per second: {:.3}",
+        "Executed and stored {} blocks in {:.3} seconds ({:.3} blocks/s). First block: {} ({}). Last block: {} ({}).",
         blocks_len,
         execution_time,
-        first_block_hash,
+        blocks_per_second,
         first_block_number,
-        last_block_hash,
+        first_block_hash,
         last_block_number,
-        blocks_per_second
+        last_block_hash
     );
     Ok(())
 }
@@ -474,7 +483,7 @@ async fn add_blocks(
     // them for the fallback. The clone cost is negligible (~1-5ms) vs batch
     // execution time (median ~29s on hoodi).
     match blockchain
-        .add_blocks_in_batch(blocks.clone(), cancel_token)
+        .add_blocks_in_batch(blocks.clone(), &bals, cancel_token)
         .await
     {
         Ok(()) => Ok(()),
