@@ -22,14 +22,14 @@ pub async fn process_account_range_request(
         // `responseBytes` is a soft limit chosen by the requester; clamp it to our server
         // maximum so a peer cannot request an unbounded walk of the whole state trie
         // (a single such request buffers every account into memory before replying — OOM).
-        let response_bytes = request.response_bytes.min(MAX_RESPONSE_BYTES);
+        let byte_budget = request.response_bytes.min(MAX_RESPONSE_BYTES);
         let mut accounts = vec![];
         let mut bytes_used = 0;
         for (hash, account) in store.iter_accounts_from(request.root_hash, request.starting_hash)? {
             debug_assert!(hash >= request.starting_hash);
             bytes_used += 32 + AccountStateSlimCodec(account).length() as u64;
             accounts.push(AccountRangeUnit { hash, account });
-            if hash >= request.limit_hash || bytes_used >= response_bytes {
+            if hash >= request.limit_hash || bytes_used >= byte_budget {
                 break;
             }
         }
@@ -55,7 +55,7 @@ pub async fn process_storage_ranges_request(
     tokio::task::spawn_blocking(move || {
         // Same soft-limit clamp as the account-range handler: bound the attacker-supplied
         // budget so a peer cannot walk a contract's entire storage trie into memory.
-        let response_bytes = request.response_bytes.min(MAX_RESPONSE_BYTES);
+        let byte_budget = request.response_bytes.min(MAX_RESPONSE_BYTES);
         let mut slots = vec![];
         let mut proof = vec![];
         let mut bytes_used = 0;
@@ -71,8 +71,8 @@ pub async fn process_storage_ranges_request(
                     debug_assert!(hash >= request.starting_hash);
                     bytes_used += 64_u64; // slot size
                     account_slots.push(StorageSlot { hash, data });
-                    if hash >= request.limit_hash || bytes_used >= response_bytes {
-                        if bytes_used >= response_bytes {
+                    if hash >= request.limit_hash || bytes_used >= byte_budget {
+                        if bytes_used >= byte_budget {
                             res_capped = true;
                         }
                         break;
@@ -99,7 +99,7 @@ pub async fn process_storage_ranges_request(
                 slots.push(account_slots);
             }
 
-            if bytes_used >= response_bytes {
+            if bytes_used >= byte_budget {
                 break;
             }
         }
@@ -121,7 +121,7 @@ pub async fn process_byte_codes_request(
         // Clamp the peer-supplied budget: `hashes` can be a large (or snappy-inflated,
         // repeated) list, so an unbounded `bytes` would let one request buffer many large
         // bytecodes into memory.
-        let bytes = request.bytes.min(MAX_RESPONSE_BYTES);
+        let byte_budget = request.bytes.min(MAX_RESPONSE_BYTES);
         let mut codes = vec![];
         let mut bytes_used = 0;
         for code_hash in request.hashes {
@@ -129,7 +129,7 @@ pub async fn process_byte_codes_request(
                 bytes_used += code.len() as u64;
                 codes.push(code);
             }
-            if bytes_used >= bytes {
+            if bytes_used >= byte_budget {
                 break;
             }
         }
@@ -150,7 +150,7 @@ pub async fn process_trie_nodes_request(
         let mut nodes = vec![];
         // Clamp the peer-supplied budget so a single request cannot pull an unbounded
         // number of trie nodes into memory.
-        let mut remaining_bytes = request.bytes.min(MAX_RESPONSE_BYTES);
+        let mut byte_budget = request.bytes.min(MAX_RESPONSE_BYTES);
         for paths in request.paths {
             if paths.is_empty() {
                 return Err(SnapError::BadRequest(
@@ -160,12 +160,12 @@ pub async fn process_trie_nodes_request(
             let trie_nodes = store.get_trie_nodes(
                 request.root_hash,
                 paths.into_iter().map(|bytes| bytes.to_vec()).collect(),
-                remaining_bytes,
+                byte_budget,
             )?;
             nodes.extend(trie_nodes.iter().map(|nodes| Bytes::copy_from_slice(nodes)));
-            remaining_bytes = remaining_bytes
+            byte_budget = byte_budget
                 .saturating_sub(trie_nodes.iter().fold(0, |acc, nodes| acc + nodes.len()) as u64);
-            if remaining_bytes == 0 {
+            if byte_budget == 0 {
                 break;
             }
         }
