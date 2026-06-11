@@ -513,6 +513,13 @@ pub struct VM<'a> {
     /// regular gas for block accounting — EELS charge_state_gas spills don't
     /// increment regular_gas_used.
     pub state_gas_spill: u64,
+    /// EIP-7778 (Amsterdam+): regular gas charged to the user but excluded from the
+    /// block-level regular-gas dimension. Accumulates the `create_message_gas` reserved by a
+    /// CREATE/CREATE2 that then fails the static-context check: EELS carves it out of `gas_left`
+    /// before `raise WriteInStaticContext`, so it is consumed by the sender (full frame burn)
+    /// yet never reaches `regular_gas_used`. Subtracted from the regular dimension in
+    /// `refund_sender`. VM-level so it survives the failing frame's revert/halt.
+    pub create_static_regular_spill: u64,
     /// EIP-8037: Dynamic cost per state byte (computed from block_gas_limit, Amsterdam+).
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
@@ -722,6 +729,7 @@ impl<'a> VM<'a> {
             state_gas_reservoir: 0,
             state_gas_reservoir_initial: 0,
             state_gas_spill: 0,
+            create_static_regular_spill: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
             state_gas_storage_set,

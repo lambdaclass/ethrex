@@ -546,12 +546,6 @@ pub struct OpCreateHandler;
 impl OpcodeHandler for OpCreateHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        // EIP-8037 (Amsterdam+): is_static check before stack pops and gas charging,
-        // consistent with SSTORE, CALL, and SELFDESTRUCT.
-        if vm.env.config.fork >= Fork::Amsterdam && vm.current_call_frame.is_static {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
-        }
-
         let [value_in_wei, code_offset, code_len] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
@@ -576,12 +570,6 @@ pub struct OpCreate2Handler;
 impl OpcodeHandler for OpCreate2Handler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        // EIP-8037 (Amsterdam+): is_static check before stack pops and gas charging,
-        // consistent with SSTORE, CALL, and SELFDESTRUCT.
-        if vm.env.config.fork >= Fork::Amsterdam && vm.current_call_frame.is_static {
-            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
-        }
-
         let [value_in_wei, code_offset, code_len, salt] = *vm.current_call_frame.stack.pop()?;
         let (code_len, code_offset) = size_offset_to_usize(code_len, code_offset)?;
 
@@ -795,6 +783,22 @@ impl<'a> VM<'a> {
         // Reserve gas for subcall
         let gas_limit = gas_cost::max_message_call_gas(current_call_frame)?;
         current_call_frame.increase_consumed_gas(gas_limit)?;
+
+        // EIP-7778/8037 (Amsterdam+): CREATE/CREATE2 in a static context fails AFTER the
+        // create_message_gas reservation, mirroring EELS `generic_create` where
+        // `raise WriteInStaticContext` runs past `gas_left -= create_message_gas`. The user is
+        // still charged the whole forwarded frame (exceptional halt), but per the EIP-7778
+        // shared counter the reserved-but-unused `create_message_gas` is NOT counted toward the
+        // block-level regular-gas dimension. Record it as a regular-gas spill so
+        // `refund_sender` excludes it from `block_gas_used` (header) while the receipt still
+        // reflects the full burn. Pre-Amsterdam is handled above.
+        if self.env.config.fork >= Fork::Amsterdam && self.current_call_frame.is_static {
+            self.create_static_regular_spill = self
+                .create_static_regular_spill
+                .checked_add(gas_limit)
+                .ok_or(InternalError::Overflow)?;
+            return Err(ExceptionalHalt::OpcodeNotAllowedInStaticContext.into());
+        }
 
         // Load code from memory
         let code = self
