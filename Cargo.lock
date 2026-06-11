@@ -4341,6 +4341,7 @@ dependencies = [
  "libssz-merkle",
  "libssz-types",
  "rand 0.8.5",
+ "rayon",
  "reqwest 0.12.28",
  "secp256k1",
  "serde",
