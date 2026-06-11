@@ -95,6 +95,10 @@ pub enum FixtureFailure {
         index: usize,
         detail: String,
     },
+    WitnessMismatch {
+        index: usize,
+        detail: String,
+    },
     FollowupFcu {
         index: usize,
         msg: String,
@@ -173,6 +177,9 @@ impl fmt::Display for FixtureFailure {
             FixtureFailure::MalformedResponse { index, detail } => {
                 write!(f, "malformed_response[{index}]  detail={detail}")
             }
+            FixtureFailure::WitnessMismatch { index, detail } => {
+                write!(f, "witness_mismatch[{index}]  {detail}")
+            }
             FixtureFailure::FollowupFcu { index, msg } => {
                 write!(f, "followup_fcu[{index}]  error={msg}")
             }
@@ -230,13 +237,24 @@ pub async fn run_fixture(
 
     // 5. Per-payload loop (mirrors test_via_engine.py:124–240)
     for (i, payload) in fix.engine_new_payloads.iter().enumerate() {
-        let resp = Box::pin(harness.new_payload(payload.new_payload_version, &payload.params))
-            .await
-            .map_err(|e| FixtureFailure::PayloadRpc {
-                index: i,
-                msg: e.to_string(),
-            })?;
+        // zkevm fixtures carry an expected witness per payload: route those
+        // through `engine_newPayloadWithWitnessV5` (same params, same status
+        // semantics) so the engine-side witness generation is exercised and
+        // its output verified against the fixture.
+        let with_witness = payload.new_payload_version == 5 && payload.execution_witness.is_some();
+        let resp = if with_witness {
+            Box::pin(harness.new_payload_with_witness(&payload.params)).await
+        } else {
+            Box::pin(harness.new_payload(payload.new_payload_version, &payload.params)).await
+        }
+        .map_err(|e| FixtureFailure::PayloadRpc {
+            index: i,
+            msg: e.to_string(),
+        })?;
         check_payload_response(&resp, payload, i, opts.strict_exceptions, name)?;
+        if with_witness && payload.valid() {
+            check_witness_response(&resp, payload, i, name)?;
+        }
         if payload.valid() {
             let head = payload
                 .head_block_hash()
@@ -259,6 +277,125 @@ pub async fn run_fixture(
 }
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
+
+/// Verify the witness returned by `engine_newPayloadWithWitnessV5` against the
+/// fixture's expected `executionWitness`. The endpoint returns geth's
+/// `ExtWitness` shape — an RLP list `(headers, codes, state, keys)` with
+/// headers ascending by block number and codes/state sorted lexicographically —
+/// which is the same canonical ordering the EEST fixture witness carries, so
+/// the comparison is exact per section. `keys` must be empty.
+fn check_witness_response(
+    resp: &Value,
+    payload: &FixturePayload,
+    index: usize,
+    name: &str,
+) -> Result<(), FixtureFailure> {
+    use ethrex_common::types::BlockHeader;
+    use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
+
+    // EEST consumption-validation fixtures (`witness_validation_*`,
+    // `*extra_unused*`) deliberately ship corrupted or padded witnesses to
+    // test the consumer side; they are not generation oracles.
+    if name.contains("witness_validation") || name.contains("extra_unused") {
+        return Ok(());
+    }
+
+    let mismatch = |detail: String| FixtureFailure::WitnessMismatch { index, detail };
+
+    let expected = payload
+        .execution_witness
+        .as_ref()
+        .expect("caller gates on execution_witness presence");
+
+    let witness_hex = resp
+        .get("result")
+        .and_then(|r| r.get("witness"))
+        .and_then(|w| w.as_str())
+        .ok_or_else(|| mismatch("missing 'witness' in response".into()))?;
+    let witness_bytes = hex::decode(witness_hex.strip_prefix("0x").unwrap_or(witness_hex))
+        .map_err(|e| mismatch(format!("witness hex decode failed: {e}")))?;
+
+    type ExtWitness = (
+        Vec<BlockHeader>,
+        Vec<bytes::Bytes>,
+        Vec<bytes::Bytes>,
+        Vec<bytes::Bytes>,
+    );
+    let (headers, codes, state, keys) = ExtWitness::decode(&witness_bytes)
+        .map_err(|e| mismatch(format!("witness RLP decode failed: {e}")))?;
+
+    if !keys.is_empty() {
+        return Err(mismatch(format!(
+            "expected empty keys section, got {} items",
+            keys.len()
+        )));
+    }
+
+    let got_headers: Vec<Vec<u8>> = headers.iter().map(|h| h.encode_to_vec()).collect();
+    let got_codes: Vec<Vec<u8>> = codes.iter().map(|b| b.to_vec()).collect();
+    let got_state: Vec<Vec<u8>> = state.iter().map(|b| b.to_vec()).collect();
+
+    for (section, got) in [
+        ("headers", got_headers),
+        ("codes", got_codes),
+        ("state", got_state),
+    ] {
+        let exp = parse_witness_hex_array(expected, section).map_err(mismatch)?;
+        if got != exp {
+            return Err(mismatch(witness_diff_detail(section, &got, &exp)));
+        }
+    }
+    Ok(())
+}
+
+/// Parse one `executionWitness` section (array of hex strings) into bytes.
+fn parse_witness_hex_array(expected: &Value, key: &str) -> Result<Vec<Vec<u8>>, String> {
+    expected
+        .get(key)
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| format!("fixture executionWitness missing '{key}' array"))?
+        .iter()
+        .map(|v| {
+            let s = v
+                .as_str()
+                .ok_or_else(|| format!("non-string item in executionWitness '{key}'"))?;
+            hex::decode(s.strip_prefix("0x").unwrap_or(s))
+                .map_err(|e| format!("hex decode failed in executionWitness '{key}': {e}"))
+        })
+        .collect()
+}
+
+/// Compact diff summary for a mismatched witness section.
+fn witness_diff_detail(section: &str, got: &[Vec<u8>], exp: &[Vec<u8>]) -> String {
+    use std::collections::BTreeSet;
+    let fmt_items = |items: &[&&[u8]]| {
+        items
+            .iter()
+            .take(4)
+            .map(|b| format!("0x{}…({}B)", hex::encode(&b[..b.len().min(8)]), b.len()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let got_set: BTreeSet<&[u8]> = got.iter().map(|v| v.as_slice()).collect();
+    let exp_set: BTreeSet<&[u8]> = exp.iter().map(|v| v.as_slice()).collect();
+    let missing: Vec<&&[u8]> = exp_set.difference(&got_set).collect();
+    let extra: Vec<&&[u8]> = got_set.difference(&exp_set).collect();
+    if missing.is_empty() && extra.is_empty() {
+        format!(
+            "{section}: same items, different order/multiplicity (got {}, expected {})",
+            got.len(),
+            exp.len()
+        )
+    } else {
+        format!(
+            "{section}: got {} items, expected {}; missing=[{}]  extra=[{}]",
+            got.len(),
+            exp.len(),
+            fmt_items(&missing),
+            fmt_items(&extra)
+        )
+    }
+}
 
 fn check_payload_response(
     resp: &Value,
