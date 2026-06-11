@@ -2,6 +2,15 @@
 
 These are the official execution spec tests. There are two kinds: `state tests` and `blockchain tests`, you can execute them with:
 
+> **Note:** The test tooling lives in the
+> [ethrex-tooling](https://github.com/lambdaclass/ethrex-tooling) repository.
+> Check it out into the `tooling/` directory at the pinned revision before
+> running the commands below:
+>
+> ```sh
+> make setup-tooling
+> ```
+
 ### State tests
 
 The state tests are individual transactions not related one to each other that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.

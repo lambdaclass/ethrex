@@ -1,7 +1,7 @@
 .PHONY: build lint test clean run-image build-image clean-vectors \
 		setup-hive test-pattern-default run-hive run-hive-debug clean-hive-logs \
 		load-test-fibonacci load-test-io run-hive-eels-blobs run-hive-eels-amsterdam \
-		run-hive-eels-bal-quick bench-rlp
+		run-hive-eels-bal-quick bench-rlp require-tooling setup-tooling verify-tooling
 
 help: ## 📚 Show help for each of the Makefile recipes
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
@@ -12,6 +12,39 @@ FRAME_POINTERS ?= 0
 ifeq ($(FRAME_POINTERS),1)
 PROFILING_CFG := --config .cargo/profiling.toml
 endif
+
+# Development tooling (load tests, genesis sorter, EF tests, etc.) lives in the
+# external lambdaclass/ethrex-tooling repo and is expected at ./tooling, pinned
+# to the same rev the build links (read from Cargo.toml, the single source of
+# truth). See docs/updating-ethrex-tooling.md.
+TOOLING_DIR ?= tooling
+TOOLING_REPO ?= https://github.com/lambdaclass/ethrex-tooling
+TOOLING_REV := $(shell sed -nE 's/.*ethrex-tooling".*rev = "([0-9a-f]+)".*/\1/p' Cargo.toml | head -1)
+
+require-tooling:
+	@test -d $(TOOLING_DIR)/load_test || { \
+		echo "ERROR: ethrex-tooling not found at ./$(TOOLING_DIR)."; \
+		echo "Run 'make setup-tooling' (clones $(TOOLING_REPO) into ./$(TOOLING_DIR))."; \
+		echo "See docs/updating-ethrex-tooling.md."; \
+		exit 1; \
+	}
+
+setup-tooling: ## 🧰 Clone/checkout ethrex-tooling at the pinned rev into ./tooling
+	@if [ ! -d $(TOOLING_DIR)/.git ]; then \
+		git clone $(TOOLING_REPO) $(TOOLING_DIR); \
+	fi
+	@cd $(TOOLING_DIR) && git fetch --quiet origin && git checkout --quiet $(TOOLING_REV)
+	@echo "$(TOOLING_DIR) checked out at pinned rev $(TOOLING_REV)"
+
+verify-tooling: ## ✅ Check ./tooling is checked out at the pinned rev
+	@test -d $(TOOLING_DIR)/.git || { echo "ERROR: ./$(TOOLING_DIR) not found; run 'make setup-tooling'."; exit 1; }
+	@have=$$(cd $(TOOLING_DIR) && git rev-parse HEAD); \
+	case "$$have" in \
+		$(TOOLING_REV)*) echo "OK: ./$(TOOLING_DIR) at pinned rev $(TOOLING_REV)";; \
+		*) echo "MISMATCH: ./$(TOOLING_DIR) at $${have} but Cargo.toml pins $(TOOLING_REV)."; \
+		   echo "Run 'make setup-tooling' to sync. See docs/updating-ethrex-tooling.md."; \
+		   exit 1;; \
+	esac
 
 build: ## 🔨 Build the client
 	cargo build $(PROFILING_CFG) --workspace
@@ -186,16 +219,16 @@ start-node-with-flamegraph: rm-test-db ## 🚀🔥 Starts an ethrex client used 
 	--dev \
 	--datadir test_ethrex
 
-load-test: ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
+load-test: require-tooling ## 🚧 Runs a load-test. Run make start-node-with-flamegraph and in a new terminal make load-node
 	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t eth-transfers
 
-load-test-erc20:
+load-test-erc20: require-tooling
 	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t erc20
 
-load-test-fibonacci:
+load-test-fibonacci: require-tooling
 	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t fibonacci
 
-load-test-io:
+load-test-io: require-tooling
 	cargo run $(PROFILING_CFG) --release --manifest-path ./tooling/load_test/Cargo.toml -- -k ./fixtures/keys/private_keys.txt -t io-heavy
 
 rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
@@ -204,7 +237,7 @@ rm-test-db:  ## 🛑 Removes the DB used by the ethrex client used for testing
 fixtures/ERC20/ERC20.bin: ## 🔨 Build the ERC20 contract for the load test
 	solc ./fixtures/contracts/ERC20/ERC20.sol -o $@
 
-sort-genesis-files:
+sort-genesis-files: require-tooling
 	cd ./tooling/genesis && cargo run
 
 bench-rlp: ## ⚡ Bench the RLP decoder/encoder
@@ -236,8 +269,6 @@ update-cargo-lock: ## 📦 Update Cargo.lock files
 	cargo tree --manifest-path crates/guest-program/bin/openvm/Cargo.toml
 	cargo tree --manifest-path crates/l2/tee/quote-gen/Cargo.toml
 	cargo tree --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml
-	cargo tree --manifest-path tooling/Cargo.toml
-	cargo tree --manifest-path tooling/ef_tests/state/Cargo.toml
 
 check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked > /dev/null
@@ -249,5 +280,3 @@ check-cargo-lock: ## 🔍 Check Cargo.lock files are up to date
 	cargo metadata --locked --manifest-path crates/guest-program/bin/openvm/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/l2/tee/quote-gen/Cargo.toml > /dev/null
 	cargo metadata --locked --manifest-path crates/vm/levm/bench/revm_comparison/Cargo.toml > /dev/null
-	cargo metadata --locked --manifest-path tooling/Cargo.toml > /dev/null
-	cargo metadata --locked --manifest-path tooling/ef_tests/state/Cargo.toml > /dev/null

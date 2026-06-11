@@ -23,6 +23,8 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # ethrex-tooling commit; keep in sync with the Cargo.toml rev (docs/updating-ethrex-tooling.md)
+  TOOLING_REV: 20d259d2260824ba665fd5a01064ed3e83e21864
 
 jobs:
   loc:
@@ -31,6 +33,12 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v6
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
 

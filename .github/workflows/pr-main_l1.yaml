@@ -20,6 +20,8 @@ env:
   # Work around frequent libgit2/submodule fetch flakiness in CI.
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
   CARGO_NET_RETRY: "10"
+  # ethrex-tooling commit; keep in sync with the Cargo.toml rev (docs/updating-ethrex-tooling.md)
+  TOOLING_REV: 20d259d2260824ba665fd5a01064ed3e83e21864
 
 jobs:
   detect-changes:
@@ -79,6 +81,9 @@ jobs:
       - name: Run cargo check
         run: cargo check
 
+      - name: Check ethrex-tooling [patch] coverage
+        run: bash .github/scripts/check_tooling_patch.sh
+
       - name: Run cargo clippy
         run: |
           cargo clippy -- -D warnings
@@ -86,6 +91,13 @@ jobs:
       - name: Run cargo fmt
         run: |
           cargo fmt --all -- --check
+
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Run tooling cargo check
         run: cargo check --workspace --all-targets
@@ -121,6 +133,13 @@ jobs:
         run: |
           cargo test --workspace --exclude 'ethrex-l2*' --exclude ethrex-prover --exclude ethrex-guest-program
 
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
+
       - name: Run Blockchain EF tests
         if: ${{ github.event_name != 'merge_group' }}
         run: |
@@ -152,6 +171,13 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Run Engine EF tests
         run: make -C tooling/ef_tests/engine test
@@ -500,6 +526,13 @@ jobs:
 
       - name: Setup Rust Environment
         uses: ./.github/actions/setup-rust
+
+      - name: Checkout ethrex-tooling
+        uses: actions/checkout@v6
+        with:
+          repository: lambdaclass/ethrex-tooling
+          ref: ${{ env.TOOLING_REV }}
+          path: tooling
 
       - name: Compile ethrex binary
         run: cargo build --bin ethrex
