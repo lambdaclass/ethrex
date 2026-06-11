@@ -47,6 +47,13 @@ fn migration_for_version(version: u64) -> MigrationFn {
 /// Minimum interval between migration progress log lines.
 const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Per-second processing rate for progress logs. Returns 0 when `elapsed` is
+/// zero so the division can never produce `inf` or `NaN`.
+fn entries_per_second(count: u64, elapsed: Duration) -> f64 {
+    let secs = elapsed.as_secs_f64();
+    if secs > 0.0 { count as f64 / secs } else { 0.0 }
+}
+
 /// Runs all pending migrations from `current_version` up to `STORE_SCHEMA_VERSION`.
 ///
 /// Each migration is applied one version at a time, and the metadata file is
@@ -161,7 +168,7 @@ fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
             tx.commit()?;
             migrated += count;
             if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
-                let rate = migrated as f64 / start.elapsed().as_secs_f64();
+                let rate = entries_per_second(migrated, start.elapsed());
                 tracing::info!(
                     "Schema migration v1 → v2: {migrated} receipt entries migrated so far ({rate:.0} entries/s)"
                 );
@@ -234,7 +241,7 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
         if total_old_entries.is_multiple_of(100_000)
             && last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL
         {
-            let rate = total_old_entries as f64 / start.elapsed().as_secs_f64();
+            let rate = entries_per_second(total_old_entries, start.elapsed());
             tracing::info!(
                 "Schema migration v2 → v3: {total_old_entries} transaction location entries processed so far ({rate:.0} entries/s)"
             );

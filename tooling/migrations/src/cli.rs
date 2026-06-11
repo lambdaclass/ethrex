@@ -11,6 +11,13 @@ use crate::utils::{migrate_block_body, migrate_block_header};
 /// Minimum interval between migration progress log lines.
 const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
+/// Per-second processing rate for progress logs. Returns 0 when `elapsed` is
+/// zero so the division can never produce `inf` or `NaN`.
+fn blocks_per_second(count: u64, elapsed: Duration) -> f64 {
+    let secs = elapsed.as_secs_f64();
+    if secs > 0.0 { count as f64 / secs } else { 0.0 }
+}
+
 #[allow(clippy::upper_case_acronyms)]
 #[derive(ClapParser)]
 #[command(
@@ -138,10 +145,10 @@ async fn migrate_libmdbx_to_rocksdb(
 
         if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
             let migrated = added_blocks.len() as u64;
-            let rate = migrated as f64 / start.elapsed().as_secs_f64();
+            let rate = blocks_per_second(migrated, start.elapsed());
             info!(
                 "Migrated {migrated}/{total_blocks} blocks ({:.1}%), currently at block {block_number} ({rate:.0} blocks/s)",
-                migrated as f64 * 100.0 / total_blocks as f64
+                migrated as f64 * 100.0 / total_blocks.max(1) as f64
             );
             last_progress_log = Instant::now();
         }
