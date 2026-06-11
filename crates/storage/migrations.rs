@@ -14,7 +14,10 @@ use crate::store::receipt_key;
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
 
 use ethrex_common::H256;
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_rlp::decode::{RLPDecode, decode_bytes};
+use ethrex_rlp::encode::RLPEncode;
+use bytes::Bytes;
+use ethrex_common::types::Code;
 
 use super::store::StoreMetadata;
 
@@ -323,6 +326,54 @@ fn flush_tx_location_group(
     for key in composite_keys {
         write_batch.delete(TRANSACTION_LOCATIONS, &key)?;
     }
+    Ok(())
+}
+
+/// Migrates from index-based Vec<u32> JUMPDEST to the Vec<u8> bitvec, 
+/// where bit i is set iff position i is a valid JUMPDEST
+fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    const BATCH_SIZE: usize = 10_000;
+
+    let txn = backend.begin_read()?;
+    let iter = txn.prefix_iterator(ACCOUNT_CODES, &[])?;
+
+    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+    let mut migrated: u64 = 0;
+
+    for result in iter {
+        let (key, val) = result?;
+        let bytes = Bytes::from(val.to_vec());
+        let (bytecode_slice, _targets) = decode_bytes(&bytes)?;
+        let bytecode = bytes.slice_ref(bytecode_slice);
+
+        let code = Code::from_bytecode_unchecked(bytecode, H256::from_slice(&key));
+        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + code.jump_targets.len());
+        code.bytecode.encode(&mut buf);
+        code.jump_targets.encode(&mut buf);
+        batch.push((key.to_vec(), buf));
+
+        if batch.len() >= BATCH_SIZE {
+            let count = batch.len() as u64;
+            let mut tx = backend.begin_write()?;
+            tx.put_batch(ACCOUNT_CODES, std::mem::take(&mut batch))?;
+            tx.commit()?;
+            migrated += count;
+            if migrated.is_multiple_of(100_000) {
+                tracing::info!("Migration v2→v3: migrated {migrated} ACCOUNT_CODES entries so far");
+            }
+        }
+    }
+
+    // Flush remaining entries.
+    if !batch.is_empty() {
+        let count = batch.len() as u64;
+        let mut tx = backend.begin_write()?;
+        tx.put_batch(ACCOUNT_CODES, batch)?;
+        tx.commit()?;
+        migrated += count;
+    }
+
+    tracing::info!("Migration v2→v3 complete: migrated {migrated} ACCOUNT_CODES entries total");
     Ok(())
 }
 
