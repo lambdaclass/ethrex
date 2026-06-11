@@ -60,11 +60,20 @@ fn entries_per_second(count: u64, elapsed: Duration) -> f64 {
 /// updated (with fsync) after each successful step for crash safety.
 ///
 /// Returns `Ok(())` if `current_version == STORE_SCHEMA_VERSION` (no-op).
+/// If `current_version > STORE_SCHEMA_VERSION` (older binary against a newer
+/// database), it warns and returns `Ok(())` without migrating.
 pub fn run_pending_migrations(
     backend: &dyn StorageBackend,
     db_path: &Path,
     current_version: u64,
 ) -> Result<(), StoreError> {
+    if current_version > STORE_SCHEMA_VERSION {
+        tracing::warn!(
+            "Database schema is at v{current_version}, ahead of this binary's v{STORE_SCHEMA_VERSION}; \
+             running an older binary against a newer database is unsupported. Upgrade the binary"
+        );
+    }
+
     let pending = STORE_SCHEMA_VERSION.saturating_sub(current_version);
     if pending == 0 {
         return Ok(());
@@ -238,9 +247,7 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
         }
 
         total_old_entries += 1;
-        if total_old_entries.is_multiple_of(100_000)
-            && last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL
-        {
+        if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
             let rate = entries_per_second(total_old_entries, start.elapsed());
             tracing::info!(
                 "Schema migration v2 → v3: {total_old_entries} transaction location entries processed so far ({rate:.0} entries/s)"
