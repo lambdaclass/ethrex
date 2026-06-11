@@ -21,8 +21,9 @@ use crate::types::payload::{
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
 
-// Engine API (Shanghai): clients MUST support request sizes of at least 1024 block hashes.
-// -> https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#specification-3
+// The Engine API (Shanghai) only mandates supporting request sizes of at least 32 blocks.
+// Cap at MAX_REQUEST_BLOCKS = 1024, the largest request a conforming consensus client makes.
+// -> https://github.com/ethereum/consensus-specs/blob/a84880a47a88700d8dfa451c2a7cd4b3f309bd0d/specs/phase0/p2p-interface.md#configuration
 const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: u64 = 1024;
 
 // NewPayload V1-V2-V3 implementations
