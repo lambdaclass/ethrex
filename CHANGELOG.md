@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-11
+
+- Monomorphize the LEVM opcode dispatch loop over whether a struct-log tracer is active (`run_dispatch::<const TRACED: bool>`), moving the per-opcode trace capture into cold out-of-line helpers. The non-traced path (the common case) drops the per-op tracer load/branches and the capture code's influence on loop codegen: ~36% fewer instructions and ~23% fewer cycles per opcode on a minimal op, lifting all-opcode dispatch throughput [#6847](https://github.com/lambdaclass/ethrex/pull/6847)
+
 ### 2026-06-05
 
 - Route the native BLS12-381 (EIP-2537) precompiles through the `blst` backend, replacing the pure-Rust path whose Fermat field inversion made `BLS12_G1ADD`/`BLS12_G2ADD` time-per-gas outliers; ~7.7x faster G1ADD, ~5.6x faster G2ADD (zkVM guest builds keep the portable backend) [#6792](https://github.com/lambdaclass/ethrex/pull/6792)
