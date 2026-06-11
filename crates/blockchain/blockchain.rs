@@ -2757,7 +2757,7 @@ impl Blockchain {
     /// Per-block pruning only covers the head block, so stale blob txs from
     /// non-head canonical blocks leak in and are never evicted (value/nonce
     /// eviction pins low nonces). Resetting against on-chain nonces clears them.
-    pub async fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
+    pub fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
         let blob_txs = self.mempool.blob_txs()?;
         if blob_txs.is_empty() {
             return Ok(());

@@ -30,7 +30,7 @@ use tracing::warn;
 /// Maximum number of alternate announcers tracked per hash. Bounds the memory
 /// used by the alternates map and prevents pathological peers from filling it.
 ///
-/// TODO(#6691-fu): expose this through `BlockchainOptions` / CLI like the
+/// TODO(#6849): expose this through `BlockchainOptions` / CLI like the
 /// other mempool ceilings (`max_mempool_size`, RBF price-bumps). 8 is
 /// conservative; high-fan-in benchmarks and Hive adversarial-mempool scenarios
 /// might want to raise it. FIFO eviction keeps the cap safe regardless.
@@ -45,10 +45,10 @@ pub const MAX_ALTERNATES_PER_HASH: usize = 8;
 ///
 /// Sized to comfortably hold several blocks' worth of includable blobs (Amsterdam
 /// allows up to 21 blobs/block) while bounding worst-case memory: blobs are held
-/// in RAM, so the bound is this count times the per-tx sidecar (`MAX_BLOB_TX_SIZE`,
+/// in RAM, so the bound is this count times the per-tx limit (`MAX_BLOB_TX_SIZE`,
 /// ~1 MiB) ⇒ ~0.5 GiB worst case.
 ///
-/// TODO(#6691-fu): expose through CLI and prefer a byte-based cap (like geth's
+/// TODO(#6849): expose through CLI and prefer a byte-based cap (like geth's
 /// blobpool `datacap`) so memory is bounded regardless of blobs-per-tx.
 pub const MAX_BLOB_MEMPOOL_SIZE: usize = 512;
 
