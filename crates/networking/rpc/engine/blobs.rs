@@ -121,7 +121,7 @@ impl RpcHandler for BlobsV2Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V2");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 2).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
         if res.iter().any(|blob| blob.is_none()) {
             return Ok(Value::Null);
         }
@@ -144,7 +144,7 @@ impl RpcHandler for BlobsV3Request {
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: Requested Blobs V3");
-        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context, 3).await?;
+        let res = get_blobs_and_proof(&self.blob_versioned_hashes, context).await?;
         serde_json::to_value(res).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -153,28 +153,32 @@ impl RpcHandler for BlobsV3Request {
 async fn get_blobs_and_proof(
     blob_versioned_hashes: &[H256],
     context: RpcApiContext,
-    version: u64,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
     if blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
         return Err(RpcErr::TooLargeRequest);
     }
 
-    // Intentional fall-through: before a canonical tip exists, there is no
-    // block timestamp to compare against Osaka, so the node is treated as pre-Osaka.
-    if let Some(current_block_header) = context
+    // getBlobsV2/V3 (EIP-7594) serve cell proofs, which only exist once the chain is at
+    // Osaka. The engine spec does NOT define a pre-fork `-38005` for these methods (that
+    // code is for the opposite direction, e.g. getBlobsV1 *after* Osaka); their contract is
+    // simply to return `null` for any blob we don't have. So before our canonical tip is at
+    // Osaka, return `null` for every requested hash rather than a bespoke error. This also
+    // covers the syncing case, where the local head is still pre-Osaka while we catch up
+    // (the spec likewise prescribes `null` while syncing).
+    let head_is_osaka = match context
         .storage
         .get_block_header(context.storage.get_latest_block_number().await?)?
-        && !context
+    {
+        Some(current_block_header) => context
             .storage
             .get_chain_config()
-            .is_osaka_activated(current_block_header.timestamp)
-    {
-        // validation requested in https://github.com/ethereum/execution-apis/blob/a1d95fb555cd91efb3e0d6555e4ab556d9f5dd06/src/engine/osaka.md?plain=1#L130
-        return Err(RpcErr::UnsupportedFork(format!(
-            "getBlobsV{} engine only supported for Osaka",
-            version
-        )));
+            .is_osaka_activated(current_block_header.timestamp),
+        // No canonical tip yet: treat as pre-Osaka.
+        None => false,
     };
+    if !head_is_osaka {
+        return Ok(vec![None; blob_versioned_hashes.len()]);
+    }
 
     let blob_tuples = context
         .blockchain
@@ -354,14 +358,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn blobs_v3_requires_osaka() {
+    async fn blobs_v3_returns_null_before_osaka() {
+        // Pre-Osaka, getBlobsV3 must not error: the spec contract is to return `null`
+        // for blobs we don't have (which, pre-Osaka, is all of them). Returning a bespoke
+        // -38005 here is a spec misread and spams the CL while the node is still syncing.
         let context = context_with_chain_config(false).await;
         let request = BlobsV3Request {
-            blob_versioned_hashes: vec![H256::from_low_u64_be(1)],
+            blob_versioned_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
         };
 
-        let err = request.handle(context).await.unwrap_err();
-        assert!(matches!(err, RpcErr::UnsupportedFork(_)));
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![None::<BlobAndProofV2>, None]).unwrap();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
