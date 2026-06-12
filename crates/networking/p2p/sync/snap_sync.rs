@@ -1126,16 +1126,9 @@ async fn insert_accounts(
     ingest_opts.set_move_files(true);
     db.ingest_external_file_opts(&ingest_opts, file_paths)
         .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCAK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
-        }
-    }
-
+    // Single pass: the trie build consumes the sorted leaves while the same
+    // decode feeds code-hash collection and the storage-root map, instead of
+    // a dedicated full iteration of the temp DB for the code hashes.
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     let compute_state_root = trie_from_sorted_accounts_wrap(
         trie.db(),
@@ -1146,6 +1139,10 @@ async fn insert_accounts(
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
+                if account_state.code_hash != *EMPTY_KECCAK_HASH {
+                    code_hash_collector.add(account_state.code_hash);
+                    code_hash_collector.flush_if_needed_sync();
+                }
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
                     storage_accounts.accounts_with_storage_root.insert(
                         H256::from_slice(k),

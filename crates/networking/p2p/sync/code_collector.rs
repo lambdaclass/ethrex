@@ -55,6 +55,19 @@ impl CodeHashCollector {
         Ok(())
     }
 
+    /// Sync variant of [`Self::flush_if_needed`], callable from iterator
+    /// closures (the sorted trie build). Skips awaiting the previous disk
+    /// write: the JoinSet accumulates the handful of in-flight dump tasks
+    /// instead, and their results — including write errors — are collected
+    /// by [`Self::finish`].
+    #[cfg(feature = "rocksdb")]
+    pub fn flush_if_needed_sync(&mut self) {
+        if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
+            let buffer = std::mem::take(&mut self.buffer);
+            self.flush_buffer(buffer);
+        }
+    }
+
     /// Finishes the code collector and returns the final index of file
     pub async fn finish(mut self) -> Result<(), SyncError> {
         // Final flush if needed
