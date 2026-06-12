@@ -8,10 +8,9 @@ use crate::types::{Block, Code, CodeMetadata};
 use crate::{
     constants::EMPTY_KECCAK_HASH,
     types::{AccountState, AccountUpdate, BlockHeader, ChainConfig},
-    utils::keccak,
 };
 use ethereum_types::{Address, H256, U256};
-use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_crypto::Crypto;
 use ethrex_rlp::error::RLPDecodeError;
 use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
@@ -209,6 +208,7 @@ impl RpcExecutionWitness {
         chain_config: ChainConfig,
         first_block_number: u64,
         decoded_headers: &[BlockHeader],
+        crypto: &dyn Crypto,
     ) -> Result<ExecutionWitness, GuestProgramStateError> {
         let initial_state_root = find_parent_state_root(decoded_headers, first_block_number)?;
         // Drop the `0x80` Null-node sentinel some `debug_executionWitness` producers emit.
@@ -223,13 +223,13 @@ impl RpcExecutionWitness {
                     return None;
                 }
                 let node = Node::decode(&b).ok()?;
-                Some((keccak(&b), node))
+                Some((H256(crypto.keccak256(&b)), node))
             })
             .collect();
 
         // get state trie root and embed the rest of the trie into it
         let state_trie_root = if let NodeRef::Node(state_trie_root, _) =
-            Trie::get_embedded_root(&nodes, initial_state_root)?
+            Trie::get_embedded_root(&nodes, initial_state_root, crypto)?
         {
             Some((*state_trie_root).clone())
         } else {
@@ -246,6 +246,7 @@ impl RpcExecutionWitness {
                 Nibbles::from_raw(&[], false),
                 &mut accounts,
                 &nodes,
+                crypto,
             );
 
             for (hashed_address, storage_root_hash) in accounts {
@@ -255,7 +256,7 @@ impl RpcExecutionWitness {
                 if !nodes.contains_key(&storage_root_hash) {
                     continue;
                 }
-                let node = Trie::get_embedded_root(&nodes, storage_root_hash)?;
+                let node = Trie::get_embedded_root(&nodes, storage_root_hash, crypto)?;
                 let NodeRef::Node(node, _) = node else {
                     return Err(GuestProgramStateError::Custom(
                         "execution witness does not contain non-empty storage trie".to_string(),
@@ -335,15 +336,14 @@ fn collect_accounts_from_trie(
     path: Nibbles,
     accounts: &mut Vec<(H256, H256)>,
     nodes: &BTreeMap<H256, Node>,
+    crypto: &dyn Crypto,
 ) {
     match node {
         Node::Branch(branch) => {
             for (i, child) in branch.choices.iter().enumerate() {
                 let child_node: Option<&Node> = match child {
                     NodeRef::Node(n, _) => Some(n),
-                    NodeRef::Hash(hash) if hash.is_valid() => {
-                        nodes.get(&hash.finalize(&NativeCrypto))
-                    }
+                    NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
                     _ => None,
                 };
                 if let Some(child_node) = child_node {
@@ -352,6 +352,7 @@ fn collect_accounts_from_trie(
                         path.append_new(i as u8),
                         accounts,
                         nodes,
+                        crypto,
                     );
                 }
             }
@@ -359,11 +360,17 @@ fn collect_accounts_from_trie(
         Node::Extension(ext) => {
             let child_node: Option<&Node> = match &ext.child {
                 NodeRef::Node(n, _) => Some(n),
-                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(&NativeCrypto)),
+                NodeRef::Hash(hash) if hash.is_valid() => nodes.get(&hash.finalize(crypto)),
                 _ => None,
             };
             if let Some(child_node) = child_node {
-                collect_accounts_from_trie(child_node, path.concat(&ext.prefix), accounts, nodes);
+                collect_accounts_from_trie(
+                    child_node,
+                    path.concat(&ext.prefix),
+                    accounts,
+                    nodes,
+                    crypto,
+                );
             }
         }
         Node::Leaf(leaf) => {

@@ -20,6 +20,7 @@ use ethrex_common::{
         InvalidBlockHeaderError,
     },
 };
+use ethrex_crypto::NativeCrypto;
 use ethrex_guest_program::input::ProgramInput;
 #[cfg(feature = "sp1")]
 use ethrex_prover::Sp1Backend;
@@ -621,7 +622,7 @@ async fn run_stateless_from_fixture(
                 format!("witness header decode failed for {test_key} block {block_number}: {e}")
             })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number, &decoded_headers)
+            .into_execution_witness(*chain_config, block_number, &decoded_headers, &NativeCrypto)
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;

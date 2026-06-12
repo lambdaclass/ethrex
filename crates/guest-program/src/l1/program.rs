@@ -461,8 +461,12 @@ fn validate_eip8025_canonical_execution(
         crypto.as_ref(),
     )?;
 
-    let execution_witness =
-        rpc_witness.into_execution_witness(chain_config, block_number, &decoded_headers)?;
+    let execution_witness = rpc_witness.into_execution_witness(
+        chain_config,
+        block_number,
+        &decoded_headers,
+        crypto.as_ref(),
+    )?;
 
     validate_eip8025_amsterdam_execution(
         &stateless_input.new_payload_request,
