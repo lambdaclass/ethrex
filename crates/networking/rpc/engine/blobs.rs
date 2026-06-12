@@ -79,7 +79,7 @@ impl RpcHandler for BlobsV1Request {
             ));
         }
 
-        if self.blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+        if self.blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
 
@@ -154,7 +154,7 @@ async fn get_blobs_and_proof(
     blob_versioned_hashes: &[H256],
     context: RpcApiContext,
 ) -> Result<Vec<Option<BlobAndProofV2>>, RpcErr> {
-    if blob_versioned_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+    if blob_versioned_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
         return Err(RpcErr::TooLargeRequest);
     }
 
@@ -381,5 +381,26 @@ mod tests {
 
         let err = request.handle(context).await.unwrap_err();
         assert!(matches!(err, RpcErr::TooLargeRequest));
+    }
+
+    #[tokio::test]
+    async fn blobs_v3_accepts_exactly_max_size() {
+        // Spec: clients MUST support at least MAX hashes, so exactly MAX must not be rejected.
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV3Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+        };
+        let result = request.handle(context).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn blobs_v1_accepts_exactly_max_size_before_osaka() {
+        let context = context_with_chain_config(false).await;
+        let request = BlobsV1Request {
+            blob_versioned_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+        };
+        let result = request.handle(context).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 }
