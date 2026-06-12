@@ -5812,6 +5812,7 @@ dependencies = [
  "libc",
  "rocksdb",
  "tokio",
+ "tracing",
  "tracing-subscriber 0.3.23",
 ]
 
