@@ -4,7 +4,7 @@ These tests benchmark **read-side JSON-RPC endpoints** (`eth_call`, `eth_getBloc
 
 > This is distinct from the [load tests](./load-tests.md) under `tooling/load_test`, which exercise the **write path** (submitting transactions, measuring gas/s). Use those for execution throughput; use this page for RPC serving performance.
 
-The harness lives in [`tooling/rpc_bench`](https://github.com/lambdaclass/ethrex/tree/main/tooling/rpc_bench) and drives [`vegeta`](https://github.com/tsenart/vegeta) (an HTTP load generator) with workloads sampled from the node under test. It has three pieces:
+The harness lives in `tooling/rpc_bench` and drives [`vegeta`](https://github.com/tsenart/vegeta) (an HTTP load generator) with workloads sampled from the node under test. It has three pieces:
 
 - `gen_workload.py` — samples a validated workload from the node and writes `vegeta` target files.
 - `run_bench.sh` — runs a `vegeta` rate-sweep over those targets.
