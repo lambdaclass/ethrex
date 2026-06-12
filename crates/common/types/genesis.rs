@@ -75,18 +75,9 @@ impl TryFrom<&Path> for Genesis {
         let genesis_reader = BufReader::new(genesis_file);
         let genesis: Genesis = serde_json::from_reader(genesis_reader)?;
 
-        // Try to derive if the genesis file is PoS
-        // Different genesis files have different configurations
-        // TODO: Remove once we have a way to run PoW chains, i.e Snap Sync
-        if genesis.config.terminal_total_difficulty != Some(0)
-            && genesis.config.merge_netsplit_block != Some(0)
-            && genesis.config.shanghai_time != Some(0)
-            && genesis.config.cancun_time != Some(0)
-            && genesis.config.prague_time != Some(0)
-        {
-            // Hive has a minimalistic genesis file, which is not supported
-            // return Err(GenesisError::InvalidFork());
-            warn!("Invalid fork, only post-merge networks are supported.");
+        // ethrex only supports post-merge (PoS) networks. PoW execution is not planned.
+        if is_unsupported_pow_genesis(&genesis) {
+            warn!("Genesis has no merge configuration; ethrex only supports post-merge networks.");
         }
 
         if genesis.config.bpo3_time.is_some() && genesis.config.blob_schedule.bpo3.is_none()
@@ -98,6 +89,25 @@ impl TryFrom<&Path> for Genesis {
 
         Ok(genesis)
     }
+}
+
+/// Returns true for a genesis that describes a pre-merge PoW chain with no
+/// merge configured. A real post-merge genesis either configures the merge
+/// (terminal total difficulty or merge-netsplit block) or starts post-merge
+/// (genesis difficulty 0). The previous heuristic warned whenever the
+/// post-merge forks were scheduled at non-zero timestamps, which false-fired
+/// on every mainnet-style genesis.
+///
+/// Note: `terminal_total_difficulty = Some(0)` is the sentinel for "PoS active
+/// from genesis" and counts as merge-configured here, as does the
+/// `terminal_total_difficulty_passed` flag (the post-merge signal used by the
+/// sync manager).
+fn is_unsupported_pow_genesis(genesis: &Genesis) -> bool {
+    let merge_configured = genesis.config.terminal_total_difficulty.is_some()
+        || genesis.config.merge_netsplit_block.is_some()
+        || genesis.config.terminal_total_difficulty_passed;
+    let post_merge_at_genesis = genesis.difficulty.is_zero();
+    !merge_configured && !post_merge_at_genesis
 }
 
 #[allow(unused)]
@@ -863,6 +873,37 @@ mod tests {
             err.to_string().contains("finite, non-negative"),
             "error should name the sign/finiteness cause, got: {err}"
         );
+    }
+
+    #[test]
+    fn pow_genesis_detection() {
+        // Default genesis: difficulty 0 (post-merge at genesis) -> supported.
+        let mut g = Genesis::default();
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // PoW genesis: non-zero difficulty, no merge configured -> unsupported.
+        g.difficulty = U256::from(0x4000_0000u64);
+        assert!(is_unsupported_pow_genesis(&g));
+
+        // Mainnet-style: non-zero difficulty but TTD configured -> supported.
+        g.config.terminal_total_difficulty = Some(58750000000000000000000);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // Merge-netsplit block configured (no TTD) -> supported.
+        g.config.terminal_total_difficulty = None;
+        g.config.merge_netsplit_block = Some(15537394);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // TTD = Some(0) sentinel (PoS from genesis), non-zero difficulty -> supported.
+        g.config.merge_netsplit_block = None;
+        g.config.terminal_total_difficulty = Some(0);
+        assert!(!is_unsupported_pow_genesis(&g));
+
+        // terminal_total_difficulty_passed with no TTD value (post-merge snapshot
+        // that dropped the redundant field), non-zero difficulty -> supported.
+        g.config.terminal_total_difficulty = None;
+        g.config.terminal_total_difficulty_passed = true;
+        assert!(!is_unsupported_pow_genesis(&g));
     }
 
     #[test]
