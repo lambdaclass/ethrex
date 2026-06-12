@@ -506,7 +506,7 @@ impl GeneralizedDatabase {
                         }
                     };
 
-                    code.bytecode.len() as u64
+                    code.len() as u64
                 };
 
                 let metadata = CodeMetadata {
@@ -938,12 +938,12 @@ impl<'a> VM<'a> {
                 .current_accounts_state
                 .get(&address)
                 .and_then(|account| self.db.codes.get(&account.info.code_hash))
-                .map(|c| c.bytecode.clone())
+                .map(|c| c.code_bytes())
                 .unwrap_or_default();
             let has_code = !current_code_bytes.is_empty();
             recorder.capture_initial_code_presence(address, has_code);
             recorder.set_initial_code(address, current_code_bytes);
-            recorder.record_code_change(address, new_bytecode.bytecode.clone());
+            recorder.record_code_change(address, new_bytecode.code_bytes());
         }
 
         let acc = self.get_account_mut(address)?;

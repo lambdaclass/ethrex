@@ -41,7 +41,7 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
 
-        let bytecode = &vm.current_call_frame.bytecode.bytecode;
+        let bytecode = vm.current_call_frame.bytecode.dispatch_buf();
         let value = match bytecode.get(literal_offset..) {
             #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
             Some(data) if data.len() >= N => {

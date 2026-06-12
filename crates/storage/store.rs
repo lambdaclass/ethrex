@@ -21,7 +21,6 @@ use crate::{
     utils::{ChainDataIndex, SnapStateIndex},
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{
@@ -844,15 +843,12 @@ impl Store {
         else {
             return Ok(None);
         };
-        let bytes = Bytes::from_owner(bytes);
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let bytecode = bytes.slice_ref(bytecode_slice);
-
-        let code = Code {
-            hash: code_hash,
-            bytecode,
-            jump_targets: <Vec<u32>>::decode(targets)?.into(),
-        };
+        let code = Code::from_parts(
+            code_hash,
+            bytecode_slice,
+            <Vec<u32>>::decode(targets)?.into(),
+        );
 
         // insert into cache and evict if needed
         self.account_code_cache
@@ -926,7 +922,7 @@ impl Store {
                 return Ok(None);
             };
             let metadata = CodeMetadata {
-                length: code.bytecode.len() as u64,
+                length: code.len() as u64,
             };
 
             // Write metadata for future use (async, fire and forget)
@@ -961,7 +957,7 @@ impl Store {
     pub async fn add_account_code(&self, code: Code) -> Result<(), StoreError> {
         let hash_key = code.hash.0.to_vec();
         let buf = encode_code(&code);
-        let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+        let metadata_buf = (code.len() as u64).to_be_bytes();
 
         // Write both code and metadata atomically
         let backend = self.backend.clone();
@@ -1385,7 +1381,7 @@ impl Store {
 
         for (code_hash, code) in account_codes {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+            let metadata_buf = (code.len() as u64).to_be_bytes().to_vec();
             code_batch_items.push((code_hash.as_bytes().to_vec(), buf));
             metadata_batch_items.push((code_hash.as_bytes().to_vec(), metadata_buf));
         }
@@ -1612,7 +1608,7 @@ impl Store {
 
         for (code_hash, code) in update_batch.code_updates {
             let buf = encode_code(&code);
-            let metadata_buf = (code.bytecode.len() as u64).to_be_bytes();
+            let metadata_buf = (code.len() as u64).to_be_bytes();
             tx.put(ACCOUNT_CODES, code_hash.as_ref(), &buf)?;
             tx.put(ACCOUNT_CODE_METADATA, code_hash.as_ref(), &metadata_buf)?;
         }
@@ -3527,10 +3523,9 @@ pub fn receipt_key(block_hash: &BlockHash, index: u64) -> Vec<u8> {
 }
 
 fn encode_code(code: &Code) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(
-        6 + code.bytecode.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets),
-    );
-    code.bytecode.encode(&mut buf);
+    let mut buf =
+        Vec::with_capacity(6 + code.len() + std::mem::size_of_val::<[u32]>(&code.jump_targets));
+    code.code().encode(&mut buf);
     // `Arc<[u32]>` (the in-memory share) has no `RLPEncode` impl; encode through an
     // owned `Vec` on this cold DB-write path (code is persisted once per hash).
     code.jump_targets.to_vec().encode(&mut buf);

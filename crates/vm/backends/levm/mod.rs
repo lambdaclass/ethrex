@@ -1516,16 +1516,14 @@ impl LEVM {
                     match actual {
                         Some(a) => {
                             let actual_code = if let Some(c) = codes.get(&a.info.code_hash) {
-                                c.bytecode.clone()
+                                c.code_bytes()
                             } else {
-                                store
-                                    .get_account_code(a.info.code_hash)
-                                    .map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading account code for {addr:?}: {e}"
-                                        ))
-                                    })?
-                                    .bytecode
+                                let c = store.get_account_code(a.info.code_hash).map_err(|e| {
+                                    BalValidationError::Database(format!(
+                                        "DB error reading account code for {addr:?}: {e}"
+                                    ))
+                                })?;
+                                c.code_bytes()
                             };
                             if actual_code != *expected_code {
                                 return Err(BalValidationError::Mismatch(format!(
@@ -1550,17 +1548,15 @@ impl LEVM {
                                     })?
                             };
                             let pre_code = if let Some(c) = codes.get(&code_hash) {
-                                c.bytecode.clone()
+                                c.code_bytes()
                             } else {
-                                store
-                                    .get_account_code(code_hash)
-                                    .map_err(|e| {
-                                        BalValidationError::Database(format!(
-                                            "DB error reading account code for hash \
+                                let c = store.get_account_code(code_hash).map_err(|e| {
+                                    BalValidationError::Database(format!(
+                                        "DB error reading account code for hash \
                                              {code_hash:?}: {e}"
-                                        ))
-                                    })?
-                                    .bytecode
+                                    ))
+                                })?;
+                                c.code_bytes()
                             };
                             if *expected_code != pre_code {
                                 return Err(BalValidationError::Mismatch(format!(
@@ -2674,7 +2670,7 @@ pub fn generic_system_contract_levm(
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
         .any(|contract| contract.address == contract_address)
-        && db.get_account_code(contract_address)?.bytecode.is_empty()
+        && db.get_account_code(contract_address)?.is_empty()
     {
         return Err(EvmError::SystemContractCallFailed(format!(
             "System contract: {contract_address} has no code after deployment"
@@ -3204,7 +3200,7 @@ mod bal_tests {
         assert_eq!(updates.len(), 1);
         let u = &updates[0];
         assert_eq!(u.info.as_ref().unwrap().code_hash, expected_hash);
-        assert_eq!(u.code.as_ref().unwrap().bytecode, code);
+        assert_eq!(u.code.as_ref().unwrap().code(), &code[..]);
     }
 }
 
@@ -3262,7 +3258,7 @@ mod system_call_coinbase_tests {
         }
         fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
             let length = if code_hash == self.history_code.hash {
-                self.history_code.bytecode.len() as u64
+                self.history_code.len() as u64
             } else {
                 0
             };
