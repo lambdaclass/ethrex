@@ -1,12 +1,14 @@
+use bytes::Bytes;
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::PayloadBuildResult;
 use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_execution_witness::{ExecutionWitness, RpcExecutionWitness};
 use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
-use ethrex_common::types::{Block, BlockBody, BlockHash, BlockNumber, Fork};
+use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
 use ethrex_p2p::sync::SyncMode;
-use ethrex_rlp::error::RLPDecodeError;
+use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Encoder};
 use serde_json::Value;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
@@ -47,7 +49,7 @@ impl RpcHandler for NewPayloadV1Request {
             }
         };
         let payload_status =
-            handle_new_payload_v1_v2(self.payload.block_hash, block, context, None).await?;
+            handle_new_payload_v1_v2(self.payload.block_hash, block, context, None, false).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -80,7 +82,7 @@ impl RpcHandler for NewPayloadV2Request {
             }
         };
         let payload_status =
-            handle_new_payload_v1_v2(self.payload.block_hash, block, context, None).await?;
+            handle_new_payload_v1_v2(self.payload.block_hash, block, context, None, false).await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
     }
 }
@@ -145,6 +147,7 @@ impl RpcHandler for NewPayloadV3Request {
             block,
             Some(self.expected_blob_versioned_hashes.clone()),
             None,
+            false,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -268,6 +271,7 @@ impl RpcHandler for NewPayloadV4Request {
             block,
             Some(self.expected_blob_versioned_hashes.clone()),
             None,
+            false,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
@@ -337,16 +341,17 @@ impl RpcHandler for NewPayloadV5Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        // EIP-7928 / Amsterdam: V5 payloads MUST include the BAL field — its
-        // absence is a structural error, not a block-validity failure. Per
-        // engine-API spec, this returns JSON-RPC -32602 (Invalid params).
-        if self.payload.block_access_list.is_none() {
-            return Err(RpcErr::WrongParam(
-                "block_access_list required in engine_newPayloadV5".to_string(),
-            ));
-        }
+        self.handle_with_witness(context, false).await
+    }
+}
 
-        validate_execution_payload_v4(&self.payload)?;
+impl NewPayloadV5Request {
+    async fn handle_with_witness(
+        &self,
+        context: RpcApiContext,
+        make_witness: bool,
+    ) -> Result<Value, RpcErr> {
+        validate_execution_payload_v5(&self.payload)?;
 
         // validate the received requests
         validate_execution_requests(&self.execution_requests)?;
@@ -411,9 +416,37 @@ impl RpcHandler for NewPayloadV5Request {
             block,
             Some(self.expected_blob_versioned_hashes.clone()),
             bal,
+            make_witness,
         )
         .await?;
         serde_json::to_value(payload_status).map_err(|error| RpcErr::Internal(error.to_string()))
+    }
+}
+
+pub struct NewPayloadWithWitnessV5Request(pub NewPayloadV5Request);
+
+impl From<NewPayloadWithWitnessV5Request> for RpcRequest {
+    fn from(val: NewPayloadWithWitnessV5Request) -> Self {
+        RpcRequest {
+            method: "engine_newPayloadWithWitnessV5".to_string(),
+            params: Some(vec![
+                serde_json::json!(val.0.payload),
+                serde_json::json!(val.0.expected_blob_versioned_hashes),
+                serde_json::json!(val.0.parent_beacon_block_root),
+                serde_json::json!(val.0.execution_requests),
+            ]),
+            ..Default::default()
+        }
+    }
+}
+
+impl RpcHandler for NewPayloadWithWitnessV5Request {
+    fn parse(params: &Option<Vec<Value>>) -> Result<Self, RpcErr> {
+        NewPayloadV5Request::parse(params).map(Self)
+    }
+
+    async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
+        self.0.handle_with_witness(context, true).await
     }
 }
 
@@ -750,23 +783,39 @@ fn bal_for_block(
     block: &Block,
 ) -> Result<Option<BlockAccessList>, RpcErr> {
     let block_hash = block.hash();
+    let commitment = block.header.block_access_list_hash;
     if let Some(bal) = context.storage.get_block_access_list(block_hash)? {
-        return Ok(Some(bal));
+        // EIP-8159: never serve a BAL that doesn't match the header commitment.
+        // A stale/empty entry (e.g. from a prior regeneration against state that
+        // was later pruned) must degrade to "unavailable" rather than a wrong BAL.
+        if bal.matches_commitment(commitment) {
+            return Ok(Some(bal));
+        }
+        warn!("Stored BAL for {block_hash} does not match header commitment; ignoring it");
     }
     let generated = context
         .blockchain
         .generate_bal_for_block(block)
         .map_err(|e| RpcErr::Internal(e.to_string()))?;
+    // Only persist/serve a regenerated BAL if it matches the header commitment.
+    // Regeneration re-executes against the parent state; if that state is gone
+    // or stale the result can be empty/wrong, so guard before writing it back.
+    let regenerated = generated.is_some();
+    let Some(bal) = generated.filter(|bal| bal.matches_commitment(commitment)) else {
+        // A successful regeneration whose hash doesn't match the commitment means
+        // the block was re-executed against wrong/incomplete state; don't serve or
+        // persist it. (Absent regeneration just means the state is unavailable.)
+        if regenerated {
+            warn!("Regenerated BAL for {block_hash} does not match header commitment; discarding");
+        }
+        return Ok(None);
+    };
     // Write back so subsequent requests for this block are served from the
-    // store instead of re-executing every time. Regeneration only succeeds
-    // while the parent state is still in the retained window; the block has
-    // long been accepted, so the regenerated BAL is authoritative for serving.
-    if let Some(bal) = &generated
-        && let Err(err) = context.storage.store_block_access_list(block_hash, bal)
-    {
+    // store instead of re-executing every time.
+    if let Err(err) = context.storage.store_block_access_list(block_hash, &bal) {
         warn!("Failed to persist regenerated block access list for {block_hash}: {err}");
     }
-    Ok(generated)
+    Ok(Some(bal))
 }
 
 // ==================== V2 Body Methods (EIP-7928) ====================
@@ -945,6 +994,17 @@ fn validate_execution_payload_v4(payload: &ExecutionPayload) -> Result<(), RpcEr
     Ok(())
 }
 
+#[inline]
+fn validate_execution_payload_v5(payload: &ExecutionPayload) -> Result<(), RpcErr> {
+    validate_execution_payload_v4(payload)?;
+
+    if payload.slot_number.is_none() {
+        return Err(RpcErr::WrongParam("slot_number".to_string()));
+    }
+
+    Ok(())
+}
+
 fn validate_payload_v1_v2(block: &Block, context: &RpcApiContext) -> Result<(), RpcErr> {
     let chain_config = &context.storage.get_chain_config();
     if chain_config.is_cancun_activated(block.header.timestamp) {
@@ -997,6 +1057,7 @@ pub(crate) async fn handle_new_payload_v1_v2(
     block: Block,
     context: RpcApiContext,
     bal: Option<BlockAccessList>,
+    make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -1022,7 +1083,8 @@ pub(crate) async fn handle_new_payload_v1_v2(
     }
 
     // All checks passed, execute payload
-    let payload_status = try_execute_payload(block, &context, latest_valid_hash, bal).await?;
+    let payload_status =
+        try_execute_payload(block, &context, latest_valid_hash, bal, make_witness).await?;
     Ok(payload_status)
 }
 
@@ -1032,6 +1094,7 @@ pub(crate) async fn handle_new_payload_v3(
     block: Block,
     expected_blob_versioned_hashes: Option<Vec<H256>>,
     bal: Option<BlockAccessList>,
+    make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
     // V3 specific: validate blob hashes (skipped when None, e.g. REST callers)
     if let Some(expected) = expected_blob_versioned_hashes {
@@ -1049,7 +1112,7 @@ pub(crate) async fn handle_new_payload_v3(
         }
     }
 
-    handle_new_payload_v1_v2(expected_block_hash, block, context, bal).await
+    handle_new_payload_v1_v2(expected_block_hash, block, context, bal, make_witness).await
 }
 
 pub(crate) async fn handle_new_payload_v4(
@@ -1058,6 +1121,7 @@ pub(crate) async fn handle_new_payload_v4(
     block: Block,
     expected_blob_versioned_hashes: Option<Vec<H256>>,
     bal: Option<BlockAccessList>,
+    make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
     if let Some(bal) = &bal
         && let Err(err) = bal.validate_ordering()
@@ -1070,6 +1134,7 @@ pub(crate) async fn handle_new_payload_v4(
         block,
         expected_blob_versioned_hashes,
         bal,
+        make_witness,
     )
     .await
 }
@@ -1124,10 +1189,11 @@ pub async fn add_block(
     ctx: &RpcApiContext,
     block: Block,
     bal: Option<BlockAccessList>,
-) -> Result<(), ChainError> {
+    make_witness: bool,
+) -> Result<Option<ExecutionWitness>, ChainError> {
     let (notify_send, notify_recv) = oneshot::channel();
     ctx.block_worker_channel
-        .send((notify_send, block, bal))
+        .send((notify_send, block, bal, make_witness))
         .map_err(|e| {
             ChainError::Custom(format!(
                 "failed to send block execution request to worker: {e}"
@@ -1143,6 +1209,7 @@ async fn try_execute_payload(
     context: &RpcApiContext,
     latest_valid_hash: H256,
     bal: Option<BlockAccessList>,
+    make_witness: bool,
 ) -> Result<PayloadStatus, RpcErr> {
     let Some(syncer) = &context.syncer else {
         return Err(RpcErr::Internal(
@@ -1152,11 +1219,12 @@ async fn try_execute_payload(
     let block_hash = block.hash();
     let block_number = block.header.number;
     let storage = &context.storage;
-    // Return the valid message directly if we already have it.
+    // If we already know this block, return valid without re-importing it.
+    // Witness requests still need to include a witness in the response.
     // We check for header only as we do not download the block bodies before the pivot during snap sync
     // https://github.com/lambdaclass/ethrex/issues/1766
     if storage.get_block_header_by_hash(block_hash)?.is_some() {
-        return Ok(PayloadStatus::valid_with_hash(block_hash));
+        return payload_status_for_existing_block(&block, context, make_witness).await;
     }
 
     // A payload whose parent *state* we don't have yet must be answered with
@@ -1179,7 +1247,7 @@ async fn try_execute_payload(
     // Execute and store the block
     debug!(%block_hash, %block_number, "Executing payload");
 
-    match add_block(context, block, bal).await {
+    match add_block(context, block, bal, make_witness).await {
         Err(ChainError::ParentNotFound) => {
             // Start sync
             syncer.sync_to_head(block_hash);
@@ -1224,11 +1292,99 @@ async fn try_execute_payload(
             error!("{e} for block {block_hash}");
             Err(RpcErr::Internal(e.to_string()))
         }
-        Ok(()) => {
+        Ok(witness) => {
             debug!("Block with hash {block_hash} executed and added to storage successfully");
-            Ok(PayloadStatus::valid_with_hash(block_hash))
+            let mut status = PayloadStatus::valid_with_hash(block_hash);
+            if make_witness {
+                let witness = witness.ok_or_else(|| {
+                    RpcErr::Internal("Payload executed without producing a witness".to_string())
+                })?;
+                status.witness = Some(encode_witness_for_engine_rpc(witness)?);
+            }
+            Ok(status)
         }
     }
+}
+
+async fn payload_status_for_existing_block(
+    block: &Block,
+    context: &RpcApiContext,
+    make_witness: bool,
+) -> Result<PayloadStatus, RpcErr> {
+    let block_hash = block.hash();
+    let mut status = PayloadStatus::valid_with_hash(block_hash);
+
+    if make_witness {
+        status.witness = Some(witness_for_existing_block(block, context).await?);
+    }
+
+    Ok(status)
+}
+
+async fn witness_for_existing_block(
+    block: &Block,
+    context: &RpcApiContext,
+) -> Result<Bytes, RpcErr> {
+    let block_hash = block.hash();
+    if let Some(json_bytes) = context
+        .storage
+        .get_witness_json_bytes(block.header.number, block_hash)?
+    {
+        let rpc_witness = serde_json::from_slice(&json_bytes).map_err(|error| {
+            RpcErr::Internal(format!("Failed to parse cached witness: {error}"))
+        })?;
+        return encode_rpc_witness_for_engine_rpc(rpc_witness);
+    }
+
+    let witness = context
+        .blockchain
+        .generate_witness_for_blocks(std::slice::from_ref(block))
+        .await
+        .map_err(|error| RpcErr::Internal(format!("Failed to build execution witness: {error}")))?;
+    encode_witness_for_engine_rpc(witness)
+}
+
+fn encode_witness_for_engine_rpc(witness: ExecutionWitness) -> Result<Bytes, RpcErr> {
+    let rpc_witness = RpcExecutionWitness::try_from(witness).map_err(|error| {
+        RpcErr::Internal(format!("Failed to encode execution witness: {error}"))
+    })?;
+    encode_rpc_witness_for_engine_rpc(rpc_witness)
+}
+
+/// Encodes the witness in geth's opaque `engine_newPayloadWithWitness*` shape.
+///
+/// Format: geth returns `rlp.EncodeToBytes(proofs)` from `newPayload`, and
+/// `stateless.Witness::EncodeRLP` delegates to `ExtWitness`.
+/// `ExtWitness` is an RLP list of `(headers, codes, state, keys)`, with
+/// headers ordered by block number and code/state byte lists sorted
+/// lexicographically. Geth currently emits empty keys, but the trailing field
+/// is part of the RLP shape.
+/// Reference:
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L30-L52
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L92-L98
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/eth/catalyst/api.go#L915-L920
+fn encode_rpc_witness_for_engine_rpc(rpc_witness: RpcExecutionWitness) -> Result<Bytes, RpcErr> {
+    let mut headers = rpc_witness
+        .headers
+        .iter()
+        .map(|header| BlockHeader::decode(header.as_ref()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| RpcErr::Internal(format!("Failed to decode witness header: {error}")))?;
+    headers.sort_by_key(|header| header.number);
+    let mut codes = rpc_witness.codes;
+    codes.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut state = rpc_witness.state;
+    state.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut keys = rpc_witness.keys;
+    keys.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+    let mut encoded = Vec::new();
+    Encoder::new(&mut encoded)
+        .encode_field(&headers)
+        .encode_field(&codes)
+        .encode_field(&state)
+        .encode_field(&keys)
+        .finish();
+    Ok(Bytes::from(encoded))
 }
 
 fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr> {
@@ -1306,4 +1462,139 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
     };
 
     Ok(new_payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ethrex_common::types::ChainConfig;
+    use ethrex_rlp::encode::RLPEncode;
+
+    fn header(number: u64) -> BlockHeader {
+        BlockHeader {
+            number,
+            ..Default::default()
+        }
+    }
+
+    fn v5_payload() -> ExecutionPayload {
+        ExecutionPayload {
+            parent_hash: H256::zero(),
+            fee_recipient: Default::default(),
+            state_root: H256::zero(),
+            receipts_root: H256::zero(),
+            logs_bloom: Default::default(),
+            prev_randao: H256::zero(),
+            block_number: 0,
+            gas_limit: 30_000_000,
+            gas_used: 0,
+            timestamp: 0,
+            extra_data: Bytes::new(),
+            base_fee_per_gas: 1,
+            block_hash: H256::zero(),
+            transactions: vec![],
+            withdrawals: Some(vec![]),
+            blob_gas_used: Some(0),
+            excess_blob_gas: Some(0),
+            slot_number: Some(0),
+            block_access_list: Some(BlockAccessList::default()),
+        }
+    }
+
+    #[test]
+    fn new_payload_with_witness_v5_parses_like_v5() {
+        let params = Some(vec![
+            serde_json::json!(v5_payload()),
+            serde_json::json!(Vec::<H256>::new()),
+            serde_json::json!(H256::zero()),
+            serde_json::json!(Vec::<EncodedRequests>::new()),
+        ]);
+
+        let request = NewPayloadWithWitnessV5Request::parse(&params).unwrap();
+
+        assert_eq!(request.0.payload.slot_number, Some(0));
+        assert!(request.0.raw_bal_hash.is_some());
+    }
+
+    #[test]
+    fn new_payload_v5_rejects_missing_slot_number() {
+        let mut payload = v5_payload();
+        payload.slot_number = None;
+
+        let err = validate_execution_payload_v5(&payload).unwrap_err();
+
+        assert!(matches!(err, RpcErr::WrongParam(param) if param == "slot_number"));
+    }
+
+    #[test]
+    fn engine_witness_encoding_matches_geth_ext_witness_shape() {
+        let header_1 = header(1);
+        let header_2 = header(2);
+        let witness = RpcExecutionWitness {
+            headers: vec![
+                header_2.encode_to_vec().into(),
+                header_1.encode_to_vec().into(),
+            ],
+            codes: vec![
+                Bytes::from_static(&[0x02]),
+                Bytes::from_static(&[0x01, 0xff]),
+                Bytes::from_static(&[0x01]),
+            ],
+            state: vec![
+                Bytes::from_static(&[0xff]),
+                Bytes::from_static(&[0x00]),
+                Bytes::from_static(&[0x7f]),
+            ],
+            keys: vec![Bytes::from_static(&[0x03]), Bytes::from_static(&[0x02])],
+        };
+
+        let encoded = encode_rpc_witness_for_engine_rpc(witness).unwrap();
+
+        let expected_headers = vec![header_1, header_2];
+        let expected_codes = vec![
+            Bytes::from_static(&[0x01]),
+            Bytes::from_static(&[0x01, 0xff]),
+            Bytes::from_static(&[0x02]),
+        ];
+        let expected_state = vec![
+            Bytes::from_static(&[0x00]),
+            Bytes::from_static(&[0x7f]),
+            Bytes::from_static(&[0xff]),
+        ];
+        let expected_keys = vec![Bytes::from_static(&[0x02]), Bytes::from_static(&[0x03])];
+        let expected = (
+            expected_headers,
+            expected_codes,
+            expected_state,
+            expected_keys,
+        )
+            .encode_to_vec();
+
+        assert_eq!(encoded.as_ref(), expected.as_slice());
+    }
+
+    #[test]
+    fn engine_witness_encoding_from_execution_witness_matches_expected_bytes() {
+        let header_1 = header(1);
+        let header_2 = header(2);
+        let witness = ExecutionWitness {
+            codes: vec![vec![0x02], vec![0x01]],
+            block_headers_bytes: vec![header_2.encode_to_vec(), header_1.encode_to_vec()],
+            first_block_number: 1,
+            chain_config: ChainConfig::default(),
+            state_trie_root: None,
+            storage_trie_roots: Default::default(),
+        };
+
+        let encoded = encode_witness_for_engine_rpc(witness).unwrap();
+
+        let expected = (
+            vec![header_1, header_2],
+            vec![Bytes::from_static(&[0x01]), Bytes::from_static(&[0x02])],
+            Vec::<Bytes>::new(),
+            Vec::<Bytes>::new(),
+        )
+            .encode_to_vec();
+        assert_eq!(encoded.as_ref(), expected.as_slice());
+    }
 }

@@ -60,6 +60,9 @@ use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::MAX_BLOB_TX_SIZE;
+use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -70,7 +73,6 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
@@ -100,7 +102,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
-    Arc, OnceLock, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -142,6 +144,12 @@ type BlockExecutionPipelineResult = (
     usize,                   // max queue length
     [Instant; 7],            // timing instants
     Duration,                // warmer duration
+);
+
+type AddBlockPipelineInnerResult = (
+    Option<BlockAccessList>,
+    Option<ExecutionWitness>,
+    Result<(), ChainError>,
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -213,13 +221,10 @@ pub struct Blockchain {
     /// Persistent thread pool for merkleization workers.
     /// 17 threads: 16 shard workers + 1 watcher/coordination.
     ///
-    /// Built lazily on the first merkleization (`get_or_init`) rather than at
-    /// construction, so the many `Blockchain`s built by RPC test harnesses —
-    /// which never merkleize — don't each spawn 17 OS threads (that exhausts
-    /// macOS's per-task thread cap and makes `pthread_create` fail with EAGAIN).
-    /// `default_with_store_and_pool` pre-fills the cell to share an externally
-    /// owned pool across instances.
-    merkle_pool: OnceLock<Arc<rayon::ThreadPool>>,
+    /// `Arc` for sharing in test harnesses that build many `Blockchain`s; the
+    /// production path keeps the original semantics (one fresh pool per call
+    /// to `Blockchain::new` / `default_with_store`).
+    merkle_pool: Arc<rayon::ThreadPool>,
 }
 
 /// Configuration options for the blockchain.
@@ -351,10 +356,9 @@ struct BalStateWorkItem {
 }
 
 impl Blockchain {
-    /// Build a fresh 17-thread merkleization pool. Invoked lazily on the first
-    /// merkleization of a `Blockchain` (see the `merkle_pool` field); tests that
-    /// build many `Blockchain`s should share one pool via
-    /// `default_with_store_and_pool` to avoid spawning the pool repeatedly.
+    /// Build a fresh 17-thread merkleization pool. Used by the default
+    /// constructors; tests that build many `Blockchain`s should share one pool
+    /// via `default_with_store_and_pool` to avoid spawning the pool repeatedly.
     pub fn build_merkle_pool() -> Arc<rayon::ThreadPool> {
         Arc::new(
             rayon::ThreadPoolBuilder::new()
@@ -372,7 +376,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: blockchain_opts,
-            merkle_pool: OnceLock::new(),
+            merkle_pool: Self::build_merkle_pool(),
         }
     }
 
@@ -386,15 +390,13 @@ impl Blockchain {
     /// all 16 worker jobs to run concurrently (they cross-communicate via
     /// channels); sharing a pool across simultaneous callers deadlocks.
     pub fn default_with_store_and_pool(store: Store, pool: Arc<rayon::ThreadPool>) -> Self {
-        let merkle_pool = OnceLock::new();
-        let _ = merkle_pool.set(pool);
         Self {
             storage: store,
             mempool: Mempool::new(MAX_MEMPOOL_SIZE_DEFAULT),
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
-            merkle_pool,
+            merkle_pool: pool,
         }
     }
 
@@ -405,7 +407,7 @@ impl Blockchain {
             is_synced: AtomicBool::new(false),
             payloads: Arc::new(TokioMutex::new(Vec::new())),
             options: BlockchainOptions::default(),
-            merkle_pool: OnceLock::new(),
+            merkle_pool: Self::build_merkle_pool(),
         }
     }
 
@@ -481,11 +483,9 @@ impl Blockchain {
         Ok((execution_result, account_updates))
     }
 
-    /// Returns the Block Access List for a block, preferring the copy stored at
-    /// import time and falling back to re-execution only when it isn't persisted.
+    /// Generates Block Access List by re-executing a block.
     /// Returns None for pre-Amsterdam blocks.
-    /// Used by the JSON-RPC `engine_getPayloadBodiesByHash/RangeV2` handlers and
-    /// the engine REST `/{fork}/bodies` handlers.
+    /// This is used by engine_getPayloadBodiesByHashV2 and engine_getPayloadBodiesByRangeV2.
     pub fn generate_bal_for_block(
         &self,
         block: &Block,
@@ -495,14 +495,6 @@ impl Blockchain {
         // Pre-Amsterdam blocks don't have BAL
         if !chain_config.is_amsterdam_activated(block.header.timestamp) {
             return Ok(None);
-        }
-
-        // Prefer the BAL recorded during import (see `store_block_access_list`).
-        // Re-execution is a last resort for blocks imported without a stored BAL,
-        // since a bodies-by-range request would otherwise re-execute up to
-        // BODIES_MAX_COUNT blocks synchronously.
-        if let Some(bal) = self.storage.get_block_access_list(block.hash())? {
-            return Ok(Some(bal));
         }
 
         // Find parent header
@@ -530,6 +522,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
+        collect_witness: bool,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -571,7 +564,7 @@ impl Blockchain {
             } else {
                 None
             };
-        let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
+        let optimistic_witness: Option<Vec<AccountUpdate>> = if collect_witness {
             optimistic_updates.as_ref().map(|m| {
                 m.iter()
                     .map(|(addr, item)| AccountUpdate {
@@ -783,6 +776,7 @@ impl Blockchain {
                                     parent_header_ref,
                                     queue_length_ref,
                                     max_queue_length_ref,
+                                    collect_witness,
                                 )?
                             };
                         let merkle_end_instant = Instant::now();
@@ -854,6 +848,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
+        collect_witness: bool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -876,189 +871,181 @@ impl Blockchain {
         // (dispatching messages, collecting results) runs on the calling thread
         // via in_place_scope, so it executes concurrently with the pool tasks.
         let watcher_error: Arc<std::sync::Mutex<Option<StoreError>>> = Default::default();
-        let result = self
-            .merkle_pool
-            .get_or_init(Self::build_merkle_pool)
-            .in_place_scope(|s| {
-                // Spawn 16 unified workers (each gets clone of all 16 senders)
-                for (i, rx) in workers_rx.into_iter().enumerate() {
-                    let all_senders = workers_tx.clone();
-                    let storage_clone = self.storage.clone();
-                    let shutdown_rx = shutdown_rx.clone();
-                    let done_tx = done_tx.clone();
-                    s.spawn(move |_| {
-                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            handle_subtrie(
-                                storage_clone,
-                                rx,
-                                parent_state_root,
-                                i as u8,
-                                all_senders,
-                                shutdown_rx,
-                            )
-                        }));
-                        let result = match result {
-                            Ok(r) => r,
-                            Err(_) => Err(StoreError::Custom(format!("shard worker {i} panicked"))),
-                        };
-                        if let Err(cb::SendError(Err(e))) = done_tx.send(result) {
-                            error!("Failed to send worker {i} error to watcher: {e}");
-                        }
-                    });
-                }
-                drop(done_tx); // Only workers hold senders
-                drop(shutdown_rx); // Only workers hold receivers
-
-                // Watcher task: drops shutdown_tx on first worker error to signal
-                // all remaining workers, preventing deadlock on gatherer_rx.
-                let watcher_error = watcher_error.clone();
+        let result = self.merkle_pool.in_place_scope(|s| {
+            // Spawn 16 unified workers (each gets clone of all 16 senders)
+            for (i, rx) in workers_rx.into_iter().enumerate() {
+                let all_senders = workers_tx.clone();
+                let storage_clone = self.storage.clone();
+                let shutdown_rx = shutdown_rx.clone();
+                let done_tx = done_tx.clone();
                 s.spawn(move |_| {
-                    let _shutdown = shutdown_tx;
-                    for result in done_rx {
-                        if let Err(e) = result {
-                            // Store error for the caller, then drop _shutdown to signal workers.
-                            *watcher_error.lock().expect("watcher mutex poisoned") = Some(e);
-                            return;
-                        }
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        handle_subtrie(
+                            storage_clone,
+                            rx,
+                            parent_state_root,
+                            i as u8,
+                            all_senders,
+                            shutdown_rx,
+                        )
+                    }));
+                    let result = match result {
+                        Ok(r) => r,
+                        Err(_) => Err(StoreError::Custom(format!("shard worker {i} panicked"))),
+                    };
+                    if let Err(cb::SendError(Err(e))) = done_tx.send(result) {
+                        error!("Failed to send worker {i} error to watcher: {e}");
                     }
                 });
+            }
+            drop(done_tx); // Only workers hold senders
+            drop(shutdown_rx); // Only workers hold receivers
 
-                // Coordination runs on the calling thread, concurrently with pool tasks.
-                let mut code_updates: Vec<(H256, Code)> = vec![];
-                let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
-                let mut has_storage: FxHashSet<H256> = Default::default();
+            // Watcher task: drops shutdown_tx on first worker error to signal
+            // all remaining workers, preventing deadlock on gatherer_rx.
+            let watcher_error = watcher_error.clone();
+            s.spawn(move |_| {
+                let _shutdown = shutdown_tx;
+                for result in done_rx {
+                    if let Err(e) = result {
+                        // Store error for the caller, then drop _shutdown to signal workers.
+                        *watcher_error.lock().expect("watcher mutex poisoned") = Some(e);
+                        return;
+                    }
+                }
+            });
 
-                // Accumulator for witness generation (only used if precompute_witnesses is true)
-                let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                    if self.options.precompute_witnesses {
-                        Some(FxHashMap::default())
-                    } else {
-                        None
-                    };
+            // Coordination runs on the calling thread, concurrently with pool tasks.
+            let mut code_updates: Vec<(H256, Code)> = vec![];
+            let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
+            let mut has_storage: FxHashSet<H256> = Default::default();
 
-                for updates in rx {
-                    let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
-                    *max_queue_length = current_length.max(*max_queue_length);
-                    // Accumulate updates for witness generation if enabled
-                    if let Some(acc) = &mut accumulator {
-                        for update in updates.clone() {
-                            match acc.entry(update.address) {
-                                Entry::Vacant(e) => {
-                                    e.insert(update);
-                                }
-                                Entry::Occupied(mut e) => {
-                                    e.get_mut().merge(update);
-                                }
+            let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
+                collect_witness.then(FxHashMap::default);
+
+            for updates in rx {
+                let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
+                *max_queue_length = current_length.max(*max_queue_length);
+                // Accumulate updates for witness generation if enabled
+                if let Some(acc) = &mut accumulator {
+                    for update in updates.clone() {
+                        match acc.entry(update.address) {
+                            Entry::Vacant(e) => {
+                                e.insert(update);
+                            }
+                            Entry::Occupied(mut e) => {
+                                e.get_mut().merge(update);
                             }
                         }
                     }
-
-                    for update in updates {
-                        let hashed_address = *hashed_address_cache
-                            .entry(update.address)
-                            .or_insert_with(|| keccak(update.address));
-
-                        let (info, code, storage) = if update.removed {
-                            (Some(Default::default()), None, Default::default())
-                        } else {
-                            (update.info, update.code, update.added_storage)
-                        };
-
-                        // Extract code for dispatcher-local collection
-                        if let Some(ref info) = info
-                            && let Some(code) = code
-                        {
-                            code_updates.push((info.code_hash, code));
-                        }
-
-                        if update.removed || update.removed_storage || !storage.is_empty() {
-                            has_storage.insert(hashed_address);
-                        }
-
-                        let bucket = hashed_address.as_fixed_bytes()[0] >> 4;
-                        workers_tx[bucket as usize]
-                            .send(WorkerRequest::ProcessAccount {
-                                prefix: hashed_address,
-                                info,
-                                storage,
-                                removed: update.removed,
-                                removed_storage: update.removed_storage,
-                            })
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    }
                 }
 
-                // Send FinishRouting — workers self-synchronize via RoutingDone exchange.
-                for tx in &workers_tx {
-                    tx.send(WorkerRequest::FinishRouting)
+                for update in updates {
+                    let hashed_address = *hashed_address_cache
+                        .entry(update.address)
+                        .or_insert_with(|| keccak(update.address));
+
+                    let (info, code, storage) = if update.removed {
+                        (Some(Default::default()), None, Default::default())
+                    } else {
+                        (update.info, update.code, update.added_storage)
+                    };
+
+                    // Extract code for dispatcher-local collection
+                    if let Some(ref info) = info
+                        && let Some(code) = code
+                    {
+                        code_updates.push((info.code_hash, code));
+                    }
+
+                    if update.removed || update.removed_storage || !storage.is_empty() {
+                        has_storage.insert(hashed_address);
+                    }
+
+                    let bucket = hashed_address.as_fixed_bytes()[0] >> 4;
+                    workers_tx[bucket as usize]
+                        .send(WorkerRequest::ProcessAccount {
+                            prefix: hashed_address,
+                            info,
+                            storage,
+                            removed: update.removed,
+                            removed_storage: update.removed_storage,
+                        })
                         .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
+            }
 
-                // Send MerklizeAccounts for no-storage accounts.
-                let mut early_batches: [Vec<H256>; 16] = Default::default();
-                for hashed_account in hashed_address_cache.values() {
-                    if !has_storage.contains(hashed_account) {
-                        let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
-                        early_batches[bucket as usize].push(*hashed_account);
-                    }
-                }
-                for (i, batch) in early_batches.into_iter().enumerate() {
-                    if !batch.is_empty() {
-                        workers_tx[i]
-                            .send(WorkerRequest::MerklizeAccounts { accounts: batch })
-                            .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
-                    }
-                }
-
-                // Send CollectState immediately — workers defer until collection is done.
-                let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
-                let (gatherer_tx, gatherer_rx) = channel();
-                for tx in &workers_tx {
-                    tx.send(WorkerRequest::CollectState {
-                        tx: gatherer_tx.clone(),
-                    })
+            // Send FinishRouting — workers self-synchronize via RoutingDone exchange.
+            for tx in &workers_tx {
+                tx.send(WorkerRequest::FinishRouting)
                     .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
+
+            // Send MerklizeAccounts for no-storage accounts.
+            let mut early_batches: [Vec<H256>; 16] = Default::default();
+            for hashed_account in hashed_address_cache.values() {
+                if !has_storage.contains(hashed_account) {
+                    let bucket = hashed_account.as_fixed_bytes()[0] >> 4;
+                    early_batches[bucket as usize].push(*hashed_account);
                 }
-                drop(gatherer_tx);
-                drop(workers_tx);
-
-                let mut root = BranchNode::default();
-                let mut state_updates = Vec::new();
-                for CollectedStateMsg {
-                    index,
-                    subroot,
-                    state_nodes,
-                    storage_nodes,
-                } in gatherer_rx
-                {
-                    storage_updates.extend(storage_nodes);
-                    state_updates.extend(state_nodes);
-                    root.choices[index as usize] = subroot.choices[index as usize].clone();
+            }
+            for (i, batch) in early_batches.into_iter().enumerate() {
+                if !batch.is_empty() {
+                    workers_tx[i]
+                        .send(WorkerRequest::MerklizeAccounts { accounts: batch })
+                        .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
                 }
+            }
 
-                let collapsed = self.collapse_root_node(parent_header, None, root)?;
-                let state_trie_hash = if let Some(root) = collapsed {
-                    let mut root = NodeRef::from(root);
-                    let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
-                    let _ = DROP_SENDER.send(Box::new(root));
-                    hash.finalize(&NativeCrypto)
-                } else {
-                    state_updates.push((Nibbles::default(), vec![RLP_NULL]));
-                    *EMPTY_TRIE_HASH
-                };
+            // Send CollectState immediately — workers defer until collection is done.
+            let mut storage_updates: Vec<(H256, Vec<TrieNode>)> = Default::default();
+            let (gatherer_tx, gatherer_rx) = channel();
+            for tx in &workers_tx {
+                tx.send(WorkerRequest::CollectState {
+                    tx: gatherer_tx.clone(),
+                })
+                .map_err(|e| StoreError::Custom(format!("send error: {e}")))?;
+            }
+            drop(gatherer_tx);
+            drop(workers_tx);
 
-                let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+            let mut root = BranchNode::default();
+            let mut state_updates = Vec::new();
+            for CollectedStateMsg {
+                index,
+                subroot,
+                state_nodes,
+                storage_nodes,
+            } in gatherer_rx
+            {
+                storage_updates.extend(storage_nodes);
+                state_updates.extend(state_nodes);
+                root.choices[index as usize] = subroot.choices[index as usize].clone();
+            }
 
-                Ok((
-                    AccountUpdatesList {
-                        state_trie_hash,
-                        state_updates,
-                        storage_updates,
-                        code_updates,
-                    },
-                    accumulated_updates,
-                ))
-            });
+            let collapsed = self.collapse_root_node(parent_header, None, root)?;
+            let state_trie_hash = if let Some(root) = collapsed {
+                let mut root = NodeRef::from(root);
+                let hash = root.commit(Nibbles::default(), &mut state_updates, &NativeCrypto);
+                let _ = DROP_SENDER.send(Box::new(root));
+                hash.finalize(&NativeCrypto)
+            } else {
+                state_updates.push((Nibbles::default(), vec![RLP_NULL]));
+                *EMPTY_TRIE_HASH
+            };
+
+            let accumulated_updates = accumulator.map(|acc| acc.into_values().collect());
+
+            Ok((
+                AccountUpdatesList {
+                    state_trie_hash,
+                    state_updates,
+                    storage_updates,
+                    code_updates,
+                },
+                accumulated_updates,
+            ))
+        });
 
         // Surface any worker errors captured by the watcher task.
         if let Some(err) = watcher_error.lock().expect("watcher mutex poisoned").take() {
@@ -2028,7 +2015,7 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
-        let (_, result) = self.add_block_pipeline_inner(block, bal)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result
     }
 
@@ -2043,9 +2030,25 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// Same as [`add_block_pipeline`] but returns the execution witness produced
+    /// while importing the block.
+    pub fn add_block_pipeline_with_witness(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<ExecutionWitness, ChainError> {
+        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        result?;
+        witness.ok_or_else(|| {
+            ChainError::WitnessGeneration(
+                "forced witness collection completed without producing a witness".to_string(),
+            )
+        })
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
@@ -2060,7 +2063,8 @@ impl Blockchain {
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
-    ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        force_witness: bool,
+    ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -2068,7 +2072,10 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+        let should_store_witness = self.options.precompute_witnesses && self.is_synced();
+        let collect_witness = should_store_witness || force_witness;
+
+        let (mut vm, logger) = if collect_witness {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
@@ -2106,7 +2113,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2116,17 +2123,32 @@ impl Blockchain {
         );
         let block_hash = block.hash();
 
+        let mut witness = None;
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
-            let witness = self.generate_witness_from_account_updates(
+            let block_hash = block.hash();
+            let generated_witness = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
                 parent_header,
                 &logger,
             )?;
-            self.storage
-                .store_witness(block_hash, block_number, witness)?;
+            match (should_store_witness, force_witness) {
+                (true, true) => {
+                    witness = Some(generated_witness.clone());
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (true, false) => {
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (false, true) => {
+                    witness = Some(generated_witness);
+                }
+                (false, false) => {}
+            }
         };
 
         // Store the block's BAL so peers can request it later without re-execution.
@@ -2175,7 +2197,7 @@ impl Blockchain {
             METRICS_BAL.slot_count.set(slot_count as i64);
         });
 
-        Ok((produced_bal, result))
+        Ok((produced_bal, witness, result))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2418,12 +2440,27 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
+    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned
+    /// by index with `blocks`. Pass an empty slice when no BALs are available
+    /// (e.g. block import from RLP); the persistence step then stores none. Only
+    /// BALs matching their block's header commitment are persisted.
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
+        bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
+
+        // `bals` is either empty (no BALs available) or index-aligned with `blocks`.
+        // Guard the contract so a wrong-length slice can't silently drop/ignore BALs
+        // via the `zip` in the persistence step below.
+        debug_assert!(
+            bals.is_empty() || bals.len() == blocks.len(),
+            "bals must be empty or aligned with blocks (bals={}, blocks={})",
+            bals.len(),
+            blocks.len(),
+        );
 
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
             return Err((ChainError::Custom("First block not found".into()), None));
@@ -2548,6 +2585,22 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // EIP-8159: persist the per-block BAL fetched during sync so peers can
+        // later request it over eth/71 without re-execution (the batch path
+        // doesn't record BALs, so without this they'd fall back to regenerating
+        // against possibly-pruned parent state). Only persist a BAL that matches
+        // its header commitment; a wrong/empty peer BAL is dropped here, and the
+        // serve path guards again. Captured before `blocks` is moved below.
+        let bals_to_store: Vec<(BlockHash, BlockAccessList)> = blocks
+            .iter()
+            .zip(bals.iter())
+            .filter_map(|(block, bal)| {
+                let bal = bal.as_ref()?;
+                bal.matches_commitment(block.header.block_access_list_hash)
+                    .then(|| (block.hash(), bal.clone()))
+            })
+            .collect();
+
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
@@ -2560,6 +2613,14 @@ impl Blockchain {
         self.storage
             .store_block_updates(update_batch)
             .map_err(|e| (e.into(), None))?;
+
+        for (block_hash, bal) in &bals_to_store {
+            if let Err(err) = self.storage.store_block_access_list(*block_hash, bal) {
+                warn!(
+                    "Failed to persist block access list for {block_hash} during batch sync: {err}"
+                );
+            }
+        }
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
@@ -2688,6 +2749,36 @@ impl Blockchain {
     pub fn remove_block_transactions_from_pool(&self, block: &Block) -> Result<(), StoreError> {
         for tx in &block.body.transactions {
             self.mempool.remove_transaction(&tx.hash())?;
+        }
+        Ok(())
+    }
+
+    /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
+    /// Per-block pruning only covers the head block, so stale blob txs from
+    /// non-head canonical blocks leak in and are never evicted (value/nonce
+    /// eviction pins low nonces). Resetting against on-chain nonces clears them.
+    pub fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
+        let blob_txs = self.mempool.blob_txs()?;
+        if blob_txs.is_empty() {
+            return Ok(());
+        }
+        // Cache on-chain nonce per sender to avoid repeated state reads.
+        let mut nonce_by_sender: HashMap<Address, u64> = HashMap::new();
+        for (hash, sender, tx_nonce) in blob_txs {
+            let state_nonce = match nonce_by_sender.entry(sender) {
+                Entry::Occupied(e) => *e.get(),
+                Entry::Vacant(e) => {
+                    let nonce = self
+                        .storage
+                        .get_account_info_by_hash(head_hash, sender)?
+                        .map(|info| info.nonce)
+                        .unwrap_or(0);
+                    *e.insert(nonce)
+                }
+            };
+            if tx_nonce < state_nonce {
+                self.mempool.remove_transaction(&hash)?;
+            }
         }
         Ok(())
     }

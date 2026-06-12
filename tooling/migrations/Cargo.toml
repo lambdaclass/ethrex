@@ -18,6 +18,7 @@ ethrex-storage = { features = ["rocksdb"], workspace = true }
 tokio = { features = ["full"], workspace = true }
 libc = "0.2"
 rocksdb.workspace = true
+tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [[bin]]

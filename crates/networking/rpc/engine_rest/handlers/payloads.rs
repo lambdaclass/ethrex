@@ -154,19 +154,29 @@ where
     //    only need the expected block_hash from the payload, so we pass it
     //    directly and skip the `JsonExecutionPayload::from_block` intermediate.
     let result = match call {
-        EngineCall::V1V2 => handle_new_payload_v1_v2(expected_block_hash, block, ctx, None).await,
+        EngineCall::V1V2 => {
+            handle_new_payload_v1_v2(expected_block_hash, block, ctx, None, false).await
+        }
         EngineCall::V3 { .. } => {
-            handle_new_payload_v3(expected_block_hash, ctx, block, None, None).await
+            handle_new_payload_v3(expected_block_hash, ctx, block, None, None, false).await
         }
         // Prague (V4) reuses handle_new_payload_v3 — matches the JSON-RPC
         // NewPayloadV4Request::handle behavior in engine/payload.rs.
         EngineCall::V4 { .. } => {
-            handle_new_payload_v3(expected_block_hash, ctx, block, None, None).await
+            handle_new_payload_v3(expected_block_hash, ctx, block, None, None, false).await
         }
         EngineCall::V5 { .. } => {
             // Pass the decoded BAL so handle_new_payload_v4 runs validate_ordering,
             // matching the JSON-RPC engine_newPayloadV5 path.
-            handle_new_payload_v4(expected_block_hash, ctx, block, None, block_access_list).await
+            handle_new_payload_v4(
+                expected_block_hash,
+                ctx,
+                block,
+                None,
+                block_access_list,
+                false,
+            )
+            .await
         }
     };
 

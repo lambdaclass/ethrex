@@ -47,6 +47,8 @@ jemalloc_pprof = { version = "0.8.0", optional = true, features = [
 ] }
 spawned-rt.workspace = true
 spawned-concurrency.workspace = true
+# Used by test_utils to share a single merkleization pool across test contexts.
+rayon.workspace = true
 
 # EIP-8025 dependencies
 libssz = { workspace = true }

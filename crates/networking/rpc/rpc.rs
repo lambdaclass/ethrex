@@ -4,7 +4,9 @@ use crate::debug::execution_witness::ExecutionWitnessRequest;
 use crate::debug::execution_witness_by_hash::ExecutionWitnessByBlockHashRequest;
 use crate::engine::blobs::{BlobsV2Request, BlobsV3Request};
 use crate::engine::client_version::GetClientVersionV1Request;
-use crate::engine::payload::{GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request};
+use crate::engine::payload::{
+    GetPayloadV5Request, GetPayloadV6Request, NewPayloadV5Request, NewPayloadWithWitnessV5Request,
+};
 use crate::engine::{
     ExchangeCapabilitiesRequest,
     blobs::BlobsV1Request,
@@ -64,6 +66,7 @@ use ethrex_blockchain::Blockchain;
 use ethrex_blockchain::error::ChainError;
 use ethrex_common::types::Block;
 use ethrex_common::types::block_access_list::BlockAccessList;
+use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_metrics::rpc::{RpcOutcome, record_async_duration, record_rpc_outcome};
 use ethrex_p2p::peer_handler::PeerHandler;
 use ethrex_p2p::sync_manager::SyncManager;
@@ -180,9 +183,10 @@ pub enum RpcRequestWrapper {
 
 /// Channel message type for the block executor worker thread.
 type BlockWorkerMessage = (
-    oneshot::Sender<Result<(), ChainError>>,
+    oneshot::Sender<Result<Option<ExecutionWitness>, ChainError>>,
     Block,
     Option<BlockAccessList>,
+    bool,
 );
 
 /// This struct contains all the dependencies that RPC handlers need to process requests,
@@ -446,9 +450,19 @@ pub fn start_block_executor(blockchain: Arc<Blockchain>) -> UnboundedSender<Bloc
     std::thread::Builder::new()
         .name("block_executor".to_string())
         .spawn(move || {
-            while let Some((notify, block, bal)) = block_receiver.blocking_recv() {
+            while let Some((notify, block, bal, make_witness)) = block_receiver.blocking_recv() {
+                let result = (|| {
+                    if make_witness {
+                        let witness =
+                            blockchain.add_block_pipeline_with_witness(block, bal.as_ref())?;
+                        Ok(Some(witness))
+                    } else {
+                        blockchain.add_block_pipeline(block, bal.as_ref())?;
+                        Ok(None)
+                    }
+                })();
                 let _ = notify
-                    .send(blockchain.add_block_pipeline(block, bal.as_ref()))
+                    .send(result)
                     .inspect_err(|_| tracing::error!("failed to notify caller"));
             }
         })
@@ -1185,8 +1199,8 @@ pub async fn map_debug_requests(req: &RpcRequest, context: RpcApiContext) -> Res
 ///
 /// Handles:
 /// - Fork choice: `engine_forkchoiceUpdatedV1/V2/V3`
-/// - Payload submission: `engine_newPayloadV1/V2/V3/V4`
-/// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5`
+/// - Payload submission: `engine_newPayloadV1/V2/V3/V4/V5`, `engine_newPayloadWithWitnessV5`
+/// - Payload retrieval: `engine_getPayloadV1/V2/V3/V4/V5/V6`
 /// - Payload bodies: `engine_getPayloadBodiesByHashV1`, `engine_getPayloadBodiesByRangeV1`
 /// - Blob retrieval: `engine_getBlobsV1/V2/V3`
 /// - Capabilities: `engine_exchangeCapabilities`, `engine_exchangeTransitionConfigurationV1`
@@ -1200,9 +1214,19 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
         "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
-        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
-        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
-        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
+        // The newPayload handlers carry the largest futures of any engine arm
+        // (block execution + optional witness collection). Because this `match`
+        // awaits each arm inline, the future of `map_engine_requests` is sized to
+        // its largest arm and shared by every engine request. Box these arms so
+        // they live on the heap instead of inflating the stack frame that even a
+        // lightweight `forkchoiceUpdated` poll must reserve — otherwise a single
+        // poll overflows the 2 MB tokio worker stack in unoptimized debug builds.
+        "engine_newPayloadWithWitnessV5" => {
+            Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
+        }
+        "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
+        "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
+        "engine_newPayloadV3" => Box::pin(NewPayloadV3Request::call(req, context)).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
