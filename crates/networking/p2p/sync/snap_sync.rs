@@ -55,6 +55,11 @@ use ethrex_rlp::encode::RLPEncode;
 pub struct SnapBlockSyncState {
     pub block_hashes: Vec<H256>,
     store: Store,
+    /// When false, header batches are stored without advancing the
+    /// header-download checkpoint. The pivot-extension path runs concurrently
+    /// with the background backfill that owns the checkpoint; if both wrote
+    /// it, a restart could resume past headers the backfill never downloaded.
+    checkpoint_enabled: bool,
 }
 
 impl SnapBlockSyncState {
@@ -62,6 +67,17 @@ impl SnapBlockSyncState {
         Self {
             block_hashes: Vec::new(),
             store,
+            checkpoint_enabled: true,
+        }
+    }
+
+    /// State for the pivot-extension segment while a background header
+    /// backfill owns the checkpoint (see `checkpoint_enabled`).
+    pub fn new_without_checkpoint(store: Store) -> Self {
+        Self {
+            block_hashes: Vec::new(),
+            store,
+            checkpoint_enabled: false,
         }
     }
 
@@ -88,14 +104,106 @@ impl SnapBlockSyncState {
             block_hashes.push(header.hash());
             block_headers_vec.push(header);
         }
-        self.store
-            .set_header_download_checkpoint(
-                *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
-            )
-            .await?;
+        if self.checkpoint_enabled {
+            self.store
+                .set_header_download_checkpoint(
+                    *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
+                )
+                .await?;
+        }
         self.block_hashes.extend_from_slice(&block_hashes);
         self.store.add_block_headers(block_headers_vec).await?;
         Ok(())
+    }
+}
+
+/// Downloads headers from `current_head` up to `sync_head` in the background
+/// while the state phases run against a provisional pivot. Owns the
+/// header-download checkpoint. Returns the ordered hashes (oldest first,
+/// ending at the sync head), or `None` if peers never served the target
+/// header — the cycle should then end and wait for a newer sync head.
+async fn header_backfill(
+    mut peers: PeerHandler,
+    store: Store,
+    mut current_head: H256,
+    mut current_head_number: u64,
+    sync_head: H256,
+    pending_block: Option<ethrex_common::types::Block>,
+    diagnostics: Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<Option<Vec<H256>>, SyncError> {
+    let mut block_sync_state = SnapBlockSyncState::new(store);
+    let mut attempts = 0;
+
+    loop {
+        let _ = peers.peer_table.prune_table();
+        debug!("Backfill requesting block headers from {current_head}");
+
+        let Some(mut block_headers) = peers
+            .request_block_headers(current_head_number, sync_head)
+            .await?
+        else {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                warn!("Header backfill failed to find the target header after {attempts} attempts");
+                return Ok(None);
+            }
+            attempts += 1;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        };
+        attempts = 0;
+
+        let Some((first_block_hash, first_block_parent_hash)) = block_headers
+            .first()
+            .map(|header| (header.hash(), header.parent_hash))
+        else {
+            continue;
+        };
+        let Some(last_block_hash) = block_headers.last().map(|header| header.hash()) else {
+            continue;
+        };
+        // Same side-chain fallback as the serial path (TODO #2126).
+        if first_block_hash == last_block_hash
+            && first_block_hash == current_head
+            && current_head != sync_head
+        {
+            warn!("Backfill failed to find target block header, going back to the previous parent");
+            current_head = first_block_parent_hash;
+            continue;
+        }
+
+        if let Some(ref block) = pending_block
+            && block.header.parent_hash == last_block_hash
+        {
+            block_headers.push(block.header.clone());
+        }
+
+        let mut sync_head_found = false;
+        if let Some(index) = block_headers
+            .iter()
+            .position(|header| header.hash() == sync_head)
+        {
+            sync_head_found = true;
+            block_headers.drain(index + 1..);
+        }
+
+        current_head = block_headers.last().map(|h| h.hash()).unwrap_or(sync_head);
+        current_head_number = block_headers.last().map(|h| h.number).unwrap_or_default();
+
+        // Discard the first header as we already have it
+        if block_headers.len() > 1 {
+            block_sync_state
+                .process_incoming_headers(block_headers.into_iter().skip(1))
+                .await?;
+        }
+
+        diagnostics.write().await.phase_progress.insert(
+            "headers_downloaded".to_string(),
+            block_sync_state.block_hashes.len() as u64,
+        );
+
+        if sync_head_found {
+            return Ok(Some(block_sync_state.block_hashes));
+        }
     }
 }
 
@@ -108,6 +216,7 @@ pub async fn sync_cycle_snap(
     store: Store,
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+    probed_head: Option<BlockHeader>,
 ) -> Result<(), SyncError> {
     // Request all block headers between the current head and the sync head
     // We will begin from the current head so that we download the earliest state first
@@ -134,6 +243,52 @@ pub async fn sync_cycle_snap(
         Ok(res) => res,
         Err(e) => return Err(e.into()),
     };
+
+    // Parallel path: with the sync-head header already probed, the state
+    // phases start immediately against it as a provisional pivot while the
+    // header chain backfills in a background task. The two header segments
+    // stay separate (backfill: current head -> sync head, owning the
+    // checkpoint; pivot extensions: sync head -> final pivot, no checkpoint)
+    // and are concatenated before the forkchoice update, which requires one
+    // contiguous ordered chain ending at the pivot.
+    if let Some(pivot0) = probed_head.filter(|h| h.hash() == sync_head) {
+        info!(
+            pivot = pivot0.number,
+            "Starting state download against the probed sync head while headers backfill in the background"
+        );
+        // The provisional pivot's header must be readable from the store for
+        // body fetch and pivot bookkeeping before the backfill reaches it.
+        store.add_block_headers(vec![pivot0.clone()]).await?;
+        let backfill = tokio::spawn(header_backfill(
+            peers.clone(),
+            store.clone(),
+            current_head,
+            current_head_number,
+            sync_head,
+            pending_block,
+            diagnostics.clone(),
+        ));
+        let mut extension_state = SnapBlockSyncState::new_without_checkpoint(store.clone());
+        let completed = snap_sync(
+            peers,
+            &store,
+            &mut extension_state,
+            datadir,
+            diagnostics,
+            Some(pivot0),
+            Some(backfill),
+        )
+        .await?;
+        if !completed {
+            // Header chain incomplete: keep snap mode and the checkpoint so
+            // the next forkchoice update retries with a newer head.
+            return Ok(());
+        }
+
+        store.clear_snap_state().await?;
+        snap_enabled.store(false, Ordering::Relaxed);
+        return Ok(());
+    }
 
     let mut attempts = 0;
 
@@ -263,7 +418,16 @@ pub async fn sync_cycle_snap(
         };
     }
 
-    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        datadir,
+        diagnostics,
+        None,
+        None,
+    )
+    .await?;
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
@@ -272,24 +436,35 @@ pub async fn sync_cycle_snap(
 }
 
 /// Main snap sync logic - downloads state via snap protocol
+///
+/// With `initial_pivot`/`backfill` set (the parallel header path), the pivot
+/// comes from the caller and the header chain is joined from the backfill
+/// task before the forkchoice update.
 pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
-) -> Result<(), SyncError> {
+    initial_pivot: Option<BlockHeader>,
+    mut backfill: Option<tokio::task::JoinHandle<Result<Option<Vec<H256>>, SyncError>>>,
+) -> Result<bool, SyncError> {
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
     // - Execute blocks after the pivot (like in full-sync)
-    let pivot_hash = block_sync_state
-        .block_hashes
-        .last()
-        .ok_or(SyncError::NoBlockHeaders)?;
-    let mut pivot_header = store
-        .get_block_header_by_hash(*pivot_hash)?
-        .ok_or(SyncError::CorruptDB)?;
+    let mut pivot_header = match initial_pivot {
+        Some(header) => header,
+        None => {
+            let pivot_hash = block_sync_state
+                .block_hashes
+                .last()
+                .ok_or(SyncError::NoBlockHeaders)?;
+            store
+                .get_block_header_by_hash(*pivot_hash)?
+                .ok_or(SyncError::CorruptDB)?
+        }
+    };
 
     while block_is_stale(&pivot_header) {
         pivot_header = update_pivot(
@@ -577,8 +752,27 @@ pub async fn snap_sync(
 
     store.add_block(block).await?;
 
-    let numbers_and_hashes = block_sync_state
-        .block_hashes
+    // With a background backfill, the canonical chain is its segment plus
+    // the pivot extensions accumulated here; both are ordered and contiguous
+    // by construction (backfill ends at the original sync head, extensions
+    // start right after it).
+    let full_chain_hashes = match backfill.take() {
+        Some(handle) => match handle.await?? {
+            Some(mut hashes) => {
+                hashes.extend(block_sync_state.block_hashes.iter().copied());
+                hashes
+            }
+            None => {
+                warn!(
+                    "Header backfill could not find the sync head; ending the cycle to wait for a newer head"
+                );
+                return Ok(false);
+            }
+        },
+        None => std::mem::take(&mut block_sync_state.block_hashes),
+    };
+
+    let numbers_and_hashes = full_chain_hashes
         .iter()
         .rev()
         .enumerate()
@@ -594,7 +788,7 @@ pub async fn snap_sync(
             None,
         )
         .await?;
-    Ok(())
+    Ok(true)
 }
 
 /// Fetches all block bodies for the given block headers via p2p and stores them

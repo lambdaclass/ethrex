@@ -213,9 +213,11 @@ impl Syncer {
             // barely synced themselves. Pre-checking avoids that. The probe
             // response is intentionally discarded; on the snap path the loop
             // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
-            if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
-                && sync_head_number < MIN_FULL_BLOCKS
+            let probed_head = probe_sync_head(&mut self.peers, sync_head).await;
+            if let Some(header) = &probed_head
+                && header.number < MIN_FULL_BLOCKS
             {
+                let sync_head_number = header.number;
                 info!(
                     sync_head_number,
                     "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
@@ -249,6 +251,7 @@ impl Syncer {
                 store,
                 &self.datadir,
                 &self.diagnostics,
+                probed_head,
             )
             .await;
             METRICS.disable().await;
@@ -271,7 +274,7 @@ const PROBE_SYNC_HEAD_ATTEMPTS: u32 = 3;
 /// Delay between probe attempts.
 const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Tries to fetch the block header for `sync_head` and return its number.
+/// Tries to fetch the block header for `sync_head`.
 ///
 /// Returns `None` if peers don't respond with the requested header within
 /// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
@@ -282,7 +285,10 @@ const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::fr
 /// `PROBE_SYNC_HEAD_RETRY_DELAY` = ~19s on a peer-starved network before we
 /// fall through to the snap path. On a healthy network the first attempt
 /// usually returns in well under a second.
-async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Option<u64> {
+async fn probe_sync_head(
+    peers: &mut PeerHandler,
+    sync_head: H256,
+) -> Option<ethrex_common::types::BlockHeader> {
     for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
         match peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
@@ -290,7 +296,7 @@ async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Opt
         {
             Ok(Some(headers)) => {
                 if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
-                    return Some(header.number);
+                    return Some(header.clone());
                 }
                 debug!("Sync head probe: response did not contain target header");
             }
