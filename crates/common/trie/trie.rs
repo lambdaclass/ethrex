@@ -27,7 +27,7 @@ pub use self::nibbles::Nibbles;
 pub use self::threadpool::ThreadPool;
 pub use self::verify_range::verify_range;
 pub use self::{
-    node::{Node, NodeRef},
+    node::{Node, NodeRef, OnceLock},
     node_hash::NodeHash,
 };
 
@@ -330,6 +330,16 @@ impl Trie {
             TrieError::InconsistentTree(Box::new(InconsistentTreeError::RootNotFound(root_hash)))
         })?;
 
+        /// Creates an embedded node reference with its hash slot pre-seeded.
+        ///
+        /// The caller must guarantee that `hash` is the hash of the referenced
+        /// node, for example because the node was just resolved by looking that
+        /// hash up. Seeding lets later hash computations over the subtree reuse
+        /// the known value instead of re-encoding and re-hashing it.
+        fn node_with_hash(node: Node, hash: NodeHash) -> NodeRef {
+            NodeRef::Node(Arc::new(node), OnceLock::from(hash))
+        }
+
         fn get_embedded_node(
             all_nodes: &BTreeMap<H256, Node>,
             cur_node: &Node,
@@ -344,7 +354,10 @@ impl Trie {
 
                         if hash.is_valid() {
                             *choice = match all_nodes.get(&hash.finalize(crypto)) {
-                                Some(node) => get_embedded_node(all_nodes, node, crypto)?.into(),
+                                Some(node) => node_with_hash(
+                                    get_embedded_node(all_nodes, node, crypto)?,
+                                    hash,
+                                ),
                                 None => hash.into(),
                             };
                         }
@@ -358,7 +371,9 @@ impl Trie {
                     };
 
                     node.child = match all_nodes.get(&hash.finalize(crypto)) {
-                        Some(node) => get_embedded_node(all_nodes, node, crypto)?.into(),
+                        Some(node) => {
+                            node_with_hash(get_embedded_node(all_nodes, node, crypto)?, hash)
+                        }
                         None => hash.into(),
                     };
 
@@ -369,7 +384,7 @@ impl Trie {
         }
 
         let root = get_embedded_node(all_nodes, root_rlp, crypto)?;
-        Ok(root.into())
+        Ok(node_with_hash(root, NodeHash::Hashed(root_hash)))
     }
 
     /// Builds a trie from a set of nodes with an empty InMemoryTrieDB as a backend because the nodes are embedded in the root.
