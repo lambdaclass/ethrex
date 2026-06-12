@@ -23,7 +23,7 @@ use crate::types::payload::{EncodedTransaction, ExecutionPayload as JsonExecutio
 /// no production code reads.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub(crate) enum EngineCall {
+pub enum EngineCall {
     V1V2,
     V3 {
         parent_beacon_block_root: H256,
@@ -42,7 +42,7 @@ pub(crate) enum EngineCall {
 /// Outcome of converting an SSZ envelope: the reconstructed `Block`, the
 /// CL-claimed `block_hash` (preserved separately for `validate_block_hash`,
 /// since the field is not stored on `Block`), and the dispatch tag.
-pub(crate) struct DecodedNewPayload {
+pub struct DecodedNewPayload {
     pub block: Block,
     pub expected_block_hash: H256,
     pub call: EngineCall,
@@ -53,7 +53,7 @@ pub(crate) struct DecodedNewPayload {
 }
 
 /// Implemented by each per-fork `ExecutionPayloadEnvelope`.
-pub(crate) trait IntoEngineCall {
+pub trait IntoEngineCall {
     fn into_engine_call(self) -> Result<DecodedNewPayload, ProblemJson>;
 }
 

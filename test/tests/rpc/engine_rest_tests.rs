@@ -1,6 +1,6 @@
-//! Integration tests for the engine_rest sub-router and helpers.
+//! Integration tests for the engine REST/SSZ sub-router, helpers, and
+//! wire types (migrated from crates/networking/rpc/engine_rest/tests.rs).
 
-#[cfg(test)]
 mod test_helpers {
     /// Build a valid JWT bearer token for the given secret, with `iat` set to now.
     pub async fn auth_token(secret: &[u8]) -> String {
@@ -21,11 +21,10 @@ mod test_helpers {
         .unwrap()
     }
 }
-#[cfg(test)]
 mod problem_json_tests {
-    use crate::engine_rest::error::ProblemJson;
     use axum::http::StatusCode;
     use axum::response::IntoResponse;
+    use ethrex_rpc::engine_rest::error::ProblemJson;
     use http_body_util::BodyExt;
 
     #[tokio::test]
@@ -78,10 +77,9 @@ mod problem_json_tests {
     }
 }
 
-#[cfg(test)]
 mod fork_path_tests {
-    use crate::engine_rest::fork_path::parse_fork_segment;
     use ethrex_common::types::Fork;
+    use ethrex_rpc::engine_rest::fork_path::parse_fork_segment;
 
     #[test]
     fn parse_supported_forks() {
@@ -109,9 +107,9 @@ mod fork_path_tests {
 
     #[tokio::test]
     async fn extractor_rejects_unknown_fork_with_400() {
-        use crate::engine_rest::fork_path::ForkPath;
         use axum::Router;
         use axum::routing::post;
+        use ethrex_rpc::engine_rest::fork_path::ForkPath;
         use http_body_util::BodyExt;
         use tower::ServiceExt;
 
@@ -134,13 +132,12 @@ mod fork_path_tests {
     }
 }
 
-#[cfg(test)]
 mod auth_tests {
-    use crate::engine_rest::auth::engine_auth_middleware;
     use axum::Router;
     use axum::http::StatusCode;
     use axum::routing::get;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::auth::engine_auth_middleware;
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use serde::Serialize;
@@ -223,7 +220,7 @@ mod auth_tests {
 
     #[tokio::test]
     async fn captures_client_version_header_into_extensions() {
-        use crate::engine_rest::auth::EngineClientVersion;
+        use ethrex_rpc::engine_rest::auth::EngineClientVersion;
 
         let secret = vec![0xAB; 32];
         let token = make_jwt(&secret, 0);
@@ -253,13 +250,12 @@ mod auth_tests {
 
 // stub_tests removed: all stubs replaced by real handlers in sub-project 3.
 
-#[cfg(test)]
 mod identity_tests {
-    use crate::engine::client_version::ClientVersionV1;
-    use crate::engine_rest::handlers::identity::get_identity;
-    use crate::rpc::ClientVersion;
     use axum::Router;
     use axum::routing::get;
+    use ethrex_rpc::engine::client_version::ClientVersionV1;
+    use ethrex_rpc::engine_rest::handlers::identity::get_identity;
+    use ethrex_rpc::rpc::ClientVersion;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
@@ -301,13 +297,12 @@ mod identity_tests {
     }
 }
 
-#[cfg(test)]
 mod capabilities_tests {
-    use crate::engine_rest::handlers::capabilities::{
-        BLOBS_MAX_COUNT, BODIES_MAX_COUNT, Capabilities, PAYLOAD_MAX_BYTES, get_capabilities,
-    };
     use axum::Router;
     use axum::routing::get;
+    use ethrex_rpc::engine_rest::handlers::capabilities::{
+        BLOBS_MAX_COUNT, BODIES_MAX_COUNT, Capabilities, PAYLOAD_MAX_BYTES, get_capabilities,
+    };
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
@@ -357,12 +352,11 @@ mod capabilities_tests {
     }
 }
 
-#[cfg(test)]
 mod router_tests {
-    use crate::engine_rest::router;
-    use crate::test_utils::default_context_with_storage;
-    use crate::test_utils::setup_store;
     use axum::http::StatusCode;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::test_utils::default_context_with_storage;
+    use ethrex_rpc::test_utils::setup_store;
     use http_body_util::BodyExt;
     use jsonwebtoken::{EncodingKey, Header, encode};
     use serde::Serialize;
@@ -470,14 +464,13 @@ mod router_tests {
     }
 }
 
-#[cfg(test)]
 mod coexistence_tests {
-    use crate::engine_rest::router as engine_rest_router;
-    use crate::test_utils::default_context_with_storage;
-    use crate::test_utils::setup_store;
     use axum::Router;
     use axum::http::StatusCode;
     use axum::routing::post;
+    use ethrex_rpc::engine_rest::router as engine_rest_router;
+    use ethrex_rpc::test_utils::default_context_with_storage;
+    use ethrex_rpc::test_utils::setup_store;
     use tower::ServiceExt;
 
     /// Stand-in for the authrpc JSON-RPC handler — just confirms POST / is reachable.
@@ -553,14 +546,13 @@ mod coexistence_tests {
     }
 }
 
-#[cfg(test)]
 mod wire_tests {
-    use crate::engine_rest::extractors::Ssz;
-    use crate::engine_rest::responses::SszBody;
     use axum::Router;
     use axum::extract::DefaultBodyLimit;
     use axum::http::StatusCode;
     use axum::routing::post;
+    use ethrex_rpc::engine_rest::extractors::Ssz;
+    use ethrex_rpc::engine_rest::responses::SszBody;
     use http_body_util::BodyExt;
     use libssz::{SszDecode, SszEncode};
     use libssz_derive::{SszDecode, SszEncode};
@@ -670,9 +662,8 @@ mod wire_tests {
     }
 }
 
-#[cfg(test)]
 mod common_types_tests {
-    use crate::engine_rest::types::common::{
+    use ethrex_rpc::engine_rest::types::common::{
         ForkchoiceResponse, ForkchoiceState, PayloadId, PayloadStatus, PayloadStatusCode,
     };
     use libssz::{SszDecode, SszEncode};
@@ -787,9 +778,8 @@ mod common_types_tests {
     }
 }
 
-#[cfg(test)]
 mod paris_types_tests {
-    use crate::engine_rest::types::paris::{
+    use ethrex_rpc::engine_rest::types::paris::{
         Bytes20, ExecutionPayload as ParisPayload, ExecutionPayloadEnvelope as ParisEnvelope,
         PayloadAttributes as ParisAttrs,
     };
@@ -870,10 +860,9 @@ mod paris_types_tests {
     }
 }
 
-#[cfg(test)]
 mod shanghai_types_tests {
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::shanghai::{
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::shanghai::{
         ExecutionPayload as ShanghaiPayload, ExecutionPayloadEnvelope as ShanghaiEnvelope,
         PayloadAttributes as ShanghaiAttrs, Withdrawal,
     };
@@ -942,14 +931,13 @@ mod shanghai_types_tests {
     }
 }
 
-#[cfg(test)]
 mod cancun_types_tests {
-    use crate::engine_rest::types::cancun::{
+    use ethrex_rpc::engine_rest::types::cancun::{
         ExecutionPayload as CancunPayload, ExecutionPayloadEnvelope as CancunEnvelope,
         PayloadAttributes as CancunAttrs,
     };
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::shanghai::Withdrawal;
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::shanghai::Withdrawal;
     use libssz::{SszDecode, SszEncode};
 
     fn sample_payload() -> CancunPayload {
@@ -1019,14 +1007,13 @@ mod cancun_types_tests {
     }
 }
 
-#[cfg(test)]
 mod prague_types_tests {
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::prague::{
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::prague::{
         ExecutionPayload as PraguePayload, ExecutionPayloadEnvelope as PragueEnvelope,
         PayloadAttributes as PragueAttrs,
     };
-    use crate::engine_rest::types::shanghai::Withdrawal;
+    use ethrex_rpc::engine_rest::types::shanghai::Withdrawal;
     use libssz::{SszDecode, SszEncode};
 
     fn sample_payload() -> PraguePayload {
@@ -1092,10 +1079,9 @@ mod prague_types_tests {
     }
 }
 
-#[cfg(test)]
 mod osaka_types_tests {
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::osaka::{
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::osaka::{
         ExecutionPayload as OsakaPayload, ExecutionPayloadEnvelope as OsakaEnvelope,
         PayloadAttributes as OsakaAttrs,
     };
@@ -1103,7 +1089,7 @@ mod osaka_types_tests {
     #[test]
     fn osaka_payload_is_type_alias_for_prague_via_pub_use() {
         // Compile-time check: a Prague-shaped payload assigns into the Osaka alias.
-        let _: OsakaPayload = crate::engine_rest::types::prague::ExecutionPayload {
+        let _: OsakaPayload = ethrex_rpc::engine_rest::types::prague::ExecutionPayload {
             parent_hash: [0; 32],
             fee_recipient: Bytes20([0; 20]),
             state_root: [0; 32],
@@ -1126,8 +1112,8 @@ mod osaka_types_tests {
 
     #[test]
     fn osaka_envelope_and_attrs_are_aliases() {
-        let _: OsakaEnvelope = crate::engine_rest::types::prague::ExecutionPayloadEnvelope {
-            execution_payload: crate::engine_rest::types::prague::ExecutionPayload {
+        let _: OsakaEnvelope = ethrex_rpc::engine_rest::types::prague::ExecutionPayloadEnvelope {
+            execution_payload: ethrex_rpc::engine_rest::types::prague::ExecutionPayload {
                 parent_hash: [0; 32],
                 fee_recipient: Bytes20([0; 20]),
                 state_root: [0; 32],
@@ -1149,7 +1135,7 @@ mod osaka_types_tests {
             parent_beacon_block_root: [0; 32],
             execution_requests: vec![].try_into().unwrap(),
         };
-        let _: OsakaAttrs = crate::engine_rest::types::prague::PayloadAttributes {
+        let _: OsakaAttrs = ethrex_rpc::engine_rest::types::prague::PayloadAttributes {
             timestamp: 0,
             prev_randao: [0; 32],
             suggested_fee_recipient: Bytes20([0; 20]),
@@ -1159,14 +1145,13 @@ mod osaka_types_tests {
     }
 }
 
-#[cfg(test)]
 mod amsterdam_types_tests {
-    use crate::engine_rest::types::amsterdam::{
+    use ethrex_rpc::engine_rest::types::amsterdam::{
         ExecutionPayload as AmsterdamPayload, ExecutionPayloadEnvelope as AmsterdamEnvelope,
         PayloadAttributes as AmsterdamAttrs,
     };
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::shanghai::Withdrawal;
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::shanghai::Withdrawal;
     use libssz::{SszDecode, SszEncode};
 
     fn sample_payload() -> AmsterdamPayload {
@@ -1244,13 +1229,14 @@ mod amsterdam_types_tests {
     }
 }
 
-#[cfg(test)]
 mod conversion_tests {
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::conversions::{DecodedNewPayload, EngineCall, IntoEngineCall};
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::conversions::{
+        DecodedNewPayload, EngineCall, IntoEngineCall,
+    };
 
-    fn paris_empty_envelope() -> crate::engine_rest::types::paris::ExecutionPayloadEnvelope {
-        use crate::engine_rest::types::paris::*;
+    fn paris_empty_envelope() -> ethrex_rpc::engine_rest::types::paris::ExecutionPayloadEnvelope {
+        use ethrex_rpc::engine_rest::types::paris::*;
         ExecutionPayloadEnvelope {
             execution_payload: ExecutionPayload {
                 parent_hash: [0; 32],
@@ -1286,7 +1272,7 @@ mod conversion_tests {
 
     #[test]
     fn cancun_envelope_dispatches_to_v3_with_beacon_root() {
-        use crate::engine_rest::types::cancun::*;
+        use ethrex_rpc::engine_rest::types::cancun::*;
         let env = ExecutionPayloadEnvelope {
             execution_payload: ExecutionPayload {
                 parent_hash: [0; 32],
@@ -1326,7 +1312,7 @@ mod conversion_tests {
 
     #[test]
     fn prague_envelope_dispatches_to_v4_with_requests() {
-        use crate::engine_rest::types::prague::*;
+        use ethrex_rpc::engine_rest::types::prague::*;
         let env = ExecutionPayloadEnvelope {
             execution_payload: ExecutionPayload {
                 parent_hash: [0; 32],
@@ -1366,7 +1352,7 @@ mod conversion_tests {
 
     #[test]
     fn shanghai_envelope_dispatches_to_v1v2_no_blob_fields() {
-        use crate::engine_rest::types::shanghai::*;
+        use ethrex_rpc::engine_rest::types::shanghai::*;
         let env = ExecutionPayloadEnvelope {
             execution_payload: ExecutionPayload {
                 parent_hash: [0; 32],
@@ -1406,9 +1392,9 @@ mod conversion_tests {
 
     #[test]
     fn amsterdam_envelope_dispatches_to_v5_with_bal() {
-        use crate::engine_rest::types::amsterdam::*;
         use ethrex_common::types::block_access_list::BlockAccessList;
         use ethrex_rlp::encode::RLPEncode;
+        use ethrex_rpc::engine_rest::types::amsterdam::*;
         // The block_access_list field carries the RLP-encoded BAL; the conversion
         // decodes it (to run validate_ordering downstream), so it must be valid RLP.
         let bal_rlp = BlockAccessList::new().encode_to_vec();
@@ -1448,18 +1434,17 @@ mod conversion_tests {
     }
 }
 
-#[cfg(test)]
 mod submit_payload_tests {
     use super::test_helpers::auth_token;
-    use crate::engine_rest::router;
-    use crate::engine_rest::types::cancun::{
-        ExecutionPayload as CancunPayload, ExecutionPayloadEnvelope as CancunEnv,
-    };
-    use crate::engine_rest::types::common::{Bytes20, PayloadStatusCode};
-    use crate::test_utils::default_context_with_storage;
-    use crate::test_utils::setup_store;
     use axum::http::StatusCode;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::cancun::{
+        ExecutionPayload as CancunPayload, ExecutionPayloadEnvelope as CancunEnv,
+    };
+    use ethrex_rpc::engine_rest::types::common::{Bytes20, PayloadStatusCode};
+    use ethrex_rpc::test_utils::default_context_with_storage;
+    use ethrex_rpc::test_utils::setup_store;
     use http_body_util::BodyExt;
     use libssz::{SszDecode, SszEncode};
     use tower::ServiceExt;
@@ -1515,7 +1500,8 @@ mod submit_payload_tests {
         );
         let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let status =
-            crate::engine_rest::types::common::PayloadStatus::from_ssz_bytes(&body_bytes).unwrap();
+            ethrex_rpc::engine_rest::types::common::PayloadStatus::from_ssz_bytes(&body_bytes)
+                .unwrap();
         // Empty/zero payload's parent_hash is unknown to a fresh store; expect SYNCING or INVALID.
         assert!(
             status.status == PayloadStatusCode::Syncing as u8
@@ -1550,13 +1536,12 @@ mod submit_payload_tests {
     }
 }
 
-#[cfg(test)]
 mod get_payload_tests {
     use super::test_helpers::auth_token;
-    use crate::engine_rest::router;
-    use crate::test_utils::default_context_with_storage;
-    use crate::test_utils::setup_store;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::test_utils::default_context_with_storage;
+    use ethrex_rpc::test_utils::setup_store;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
@@ -1602,15 +1587,16 @@ mod get_payload_tests {
     }
 }
 
-#[cfg(test)]
 mod forkchoice_handler_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::common::{ForkchoiceResponse, ForkchoiceState, to_optional};
-    use crate::engine_rest::types::forkchoice_update::CancunForkchoiceUpdate;
-    use crate::test_utils::default_context_with_storage;
-    use crate::test_utils::setup_store;
+    use super::test_helpers::auth_token;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::common::{
+        ForkchoiceResponse, ForkchoiceState, to_optional,
+    };
+    use ethrex_rpc::engine_rest::types::forkchoice_update::CancunForkchoiceUpdate;
+    use ethrex_rpc::test_utils::default_context_with_storage;
+    use ethrex_rpc::test_utils::setup_store;
     use http_body_util::BodyExt;
     use libssz::{SszDecode, SszEncode};
     use tower::ServiceExt;
@@ -1647,7 +1633,7 @@ mod forkchoice_handler_tests {
         // Unknown head → SYNCING (status code 2).
         assert_eq!(
             r.payload_status.status,
-            crate::engine_rest::types::common::PayloadStatusCode::Syncing as u8
+            ethrex_rpc::engine_rest::types::common::PayloadStatusCode::Syncing as u8
         );
         assert!(r.payload_id().is_none());
     }
@@ -1673,18 +1659,19 @@ mod forkchoice_handler_tests {
     }
 }
 
-#[cfg(test)]
 mod end_to_end_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::built_payload::BuiltPayloadCancun;
-    use crate::engine_rest::types::cancun::PayloadAttributes;
-    use crate::engine_rest::types::common::{
+    use super::test_helpers::auth_token;
+    use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::built_payload::BuiltPayloadCancun;
+    use ethrex_rpc::engine_rest::types::cancun::PayloadAttributes;
+    use ethrex_rpc::engine_rest::types::common::{
         Bytes20, ForkchoiceResponse, ForkchoiceState, to_optional,
     };
-    use crate::engine_rest::types::forkchoice_update::CancunForkchoiceUpdate;
-    use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
-    use bytes::Bytes;
+    use ethrex_rpc::engine_rest::types::forkchoice_update::CancunForkchoiceUpdate;
+    use ethrex_rpc::test_utils::{
+        add_eip1559_tx_blocks, default_context_with_storage, setup_store,
+    };
     use http_body_util::BodyExt;
     use libssz::{SszDecode, SszEncode};
     use tower::ServiceExt;
@@ -1766,11 +1753,10 @@ mod end_to_end_tests {
     }
 }
 
-#[cfg(test)]
 mod helpers_tests {
-    use crate::engine_rest::extractors::decode_ssz;
-    use crate::engine_rest::handlers::helpers::check_content_type;
     use axum::http::HeaderMap;
+    use ethrex_rpc::engine_rest::extractors::decode_ssz;
+    use ethrex_rpc::engine_rest::handlers::helpers::check_content_type;
     use libssz::SszEncode;
     use libssz_derive::{SszDecode, SszEncode};
 
@@ -1811,13 +1797,12 @@ mod helpers_tests {
     }
 }
 
-#[cfg(test)]
 mod bodies_types_tests {
-    use crate::engine_rest::types::bodies::{
+    use ethrex_rpc::engine_rest::types::bodies::{
         BlockHashList, BodyAmsterdam, BodyParis, BodyShanghai,
     };
-    use crate::engine_rest::types::common::Bytes20;
-    use crate::engine_rest::types::shanghai::Withdrawal;
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
+    use ethrex_rpc::engine_rest::types::shanghai::Withdrawal;
     use libssz::{SszDecode, SszEncode};
 
     #[test]
@@ -1871,14 +1856,15 @@ mod bodies_types_tests {
     }
 }
 
-#[cfg(test)]
 mod bodies_by_hash_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::bodies::BlockHashList;
-    use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
+    use super::test_helpers::auth_token;
     use axum::http::StatusCode;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::bodies::BlockHashList;
+    use ethrex_rpc::test_utils::{
+        add_eip1559_tx_blocks, default_context_with_storage, setup_store,
+    };
     use http_body_util::BodyExt;
     use libssz::SszEncode;
     use tower::ServiceExt;
@@ -1970,13 +1956,14 @@ mod bodies_by_hash_tests {
     }
 }
 
-#[cfg(test)]
 mod bodies_by_range_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::test_utils::{add_eip1559_tx_blocks, default_context_with_storage, setup_store};
+    use super::test_helpers::auth_token;
     use axum::http::StatusCode;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::test_utils::{
+        add_eip1559_tx_blocks, default_context_with_storage, setup_store,
+    };
     use tower::ServiceExt;
 
     #[tokio::test]
@@ -2061,9 +2048,8 @@ mod bodies_by_range_tests {
     }
 }
 
-#[cfg(test)]
 mod blobs_types_tests {
-    use crate::engine_rest::types::blobs::{
+    use ethrex_rpc::engine_rest::types::blobs::{
         BlobAndProofV1, BlobAndProofV2, BlobsRequestV4, VersionedHashList,
     };
     use libssz::{SszDecode, SszEncode};
@@ -2119,7 +2105,7 @@ mod blobs_types_tests {
 
     #[test]
     fn blobs_v1_response_roundtrips_mixed_availability() {
-        use crate::engine_rest::types::blobs::{BlobV1Entry, BlobsV1Response};
+        use ethrex_rpc::engine_rest::types::blobs::{BlobV1Entry, BlobsV1Response};
         let entries = vec![
             BlobV1Entry::available(BlobAndProofV1 {
                 blob: vec![0x11u8; 131_072].try_into().unwrap(),
@@ -2136,7 +2122,7 @@ mod blobs_types_tests {
 
     #[test]
     fn blobs_v4_response_roundtrips_with_optional_cells() {
-        use crate::engine_rest::types::blobs::{
+        use ethrex_rpc::engine_rest::types::blobs::{
             BYTES_PER_CELL, BlobCellsAndProofs, BlobV4Entry, BlobsV4Response,
         };
         use libssz_types::{SszList, SszVector};
@@ -2162,13 +2148,12 @@ mod blobs_types_tests {
     }
 }
 
-#[cfg(test)]
 mod blobs_v1_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::blobs::VersionedHashList;
-    use crate::test_utils::{default_context_with_storage, setup_store};
+    use super::test_helpers::auth_token;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::blobs::VersionedHashList;
+    use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
     use http_body_util::BodyExt;
     use libssz::SszEncode;
     use tower::ServiceExt;
@@ -2224,13 +2209,12 @@ mod blobs_v1_tests {
     }
 }
 
-#[cfg(test)]
 mod blobs_v2v3_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::blobs::VersionedHashList;
-    use crate::test_utils::{default_context_with_storage, setup_store};
+    use super::test_helpers::auth_token;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::blobs::VersionedHashList;
+    use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
     use libssz::SszEncode;
     use tower::ServiceExt;
 
@@ -2302,13 +2286,12 @@ mod blobs_v2v3_tests {
     }
 }
 
-#[cfg(test)]
 mod blobs_v4_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::engine_rest::types::blobs::BlobsRequestV4;
-    use crate::test_utils::{default_context_with_storage, setup_store};
+    use super::test_helpers::auth_token;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::engine_rest::types::blobs::BlobsRequestV4;
+    use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
     use libssz::SszEncode;
     use libssz_types::SszBitvector;
     use tower::ServiceExt;
@@ -2369,13 +2352,12 @@ mod blobs_v4_tests {
     }
 }
 
-#[cfg(test)]
 mod sp3_smoke_tests {
-    use crate::engine_rest::router;
-    use crate::engine_rest::tests::test_helpers::auth_token;
-    use crate::test_utils::{default_context_with_storage, setup_store};
+    use super::test_helpers::auth_token;
     use axum::http::StatusCode;
     use bytes::Bytes;
+    use ethrex_rpc::engine_rest::router;
+    use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
     use tower::ServiceExt;
 
     /// Hit every spec-defined endpoint with an auth header and check we never
@@ -2422,7 +2404,6 @@ mod sp3_smoke_tests {
     }
 }
 
-#[cfg(test)]
 mod transport_tests {
     //! Guards that `axum::serve` (used for the authrpc port in `rpc.rs`) serves
     //! HTTP/2 cleartext (h2c). execution-apis #793 mandates HTTP/2, and the only
@@ -2457,5 +2438,134 @@ mod transport_tests {
             .expect("h2c handshake must succeed — is axum's `http2` feature still enabled?");
         assert_eq!(resp.version(), axum::http::Version::HTTP_2);
         assert_eq!(resp.text().await.unwrap(), "pong");
+    }
+}
+
+// ── forkchoice_update wire-type round-trips (migrated from types/forkchoice_update.rs) ──
+mod forkchoice_update_type_tests {
+    use ethrex_rpc::engine_rest::types::blobs::CELLS_PER_EXT_BLOB;
+    use ethrex_rpc::engine_rest::types::common::{ForkchoiceState, from_optional, to_optional};
+    use ethrex_rpc::engine_rest::types::forkchoice_update::*;
+    use ethrex_rpc::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
+    use libssz::{SszDecode, SszEncode};
+    use libssz_types::SszBitvector;
+
+    #[test]
+    fn paris_forkchoice_update_roundtrips_none_attrs() {
+        let update = ParisForkchoiceUpdate {
+            state: ForkchoiceState {
+                head_block_hash: [1; 32],
+                safe_block_hash: [2; 32],
+                finalized_block_hash: [3; 32],
+            },
+            payload_attributes: to_optional(None),
+        };
+        let bytes = update.to_ssz();
+        let back = ParisForkchoiceUpdate::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, update);
+        assert!(from_optional(&back.payload_attributes).is_none());
+    }
+
+    #[test]
+    fn paris_forkchoice_update_roundtrips_some_attrs() {
+        use ethrex_rpc::engine_rest::types::common::Bytes20;
+        let update = ParisForkchoiceUpdate {
+            state: ForkchoiceState {
+                head_block_hash: [0xFF; 32],
+                safe_block_hash: [0; 32],
+                finalized_block_hash: [0; 32],
+            },
+            payload_attributes: to_optional(Some(paris::PayloadAttributes {
+                timestamp: 1_700_000_001,
+                prev_randao: [9; 32],
+                suggested_fee_recipient: Bytes20([10; 20]),
+            })),
+        };
+        let bytes = update.to_ssz();
+        let back = ParisForkchoiceUpdate::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, update);
+        let attrs = from_optional(&back.payload_attributes).unwrap();
+        assert_eq!(attrs.timestamp, 1_700_000_001);
+    }
+
+    #[test]
+    fn cancun_forkchoice_update_roundtrips_some_attrs() {
+        use ethrex_rpc::engine_rest::types::common::Bytes20;
+        let update = CancunForkchoiceUpdate {
+            state: ForkchoiceState {
+                head_block_hash: [0xAA; 32],
+                safe_block_hash: [0xBB; 32],
+                finalized_block_hash: [0xCC; 32],
+            },
+            payload_attributes: to_optional(Some(cancun::PayloadAttributes {
+                timestamp: 9_999,
+                prev_randao: [7; 32],
+                suggested_fee_recipient: Bytes20([8; 20]),
+                withdrawals: vec![].try_into().unwrap(),
+                parent_beacon_block_root: [0xDD; 32],
+            })),
+        };
+        let bytes = update.to_ssz();
+        let back = CancunForkchoiceUpdate::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, update);
+    }
+
+    #[test]
+    fn malformed_bytes_returns_error() {
+        let result = CancunForkchoiceUpdate::from_ssz_bytes(&[0u8; 10]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn amsterdam_forkchoice_update_roundtrips_with_custody_columns() {
+        use ethrex_rpc::engine_rest::types::common::Bytes20;
+
+        let mut custody = SszBitvector::<CELLS_PER_EXT_BLOB>::new();
+        custody.set(3, true).unwrap();
+        custody.set(127, true).unwrap();
+
+        let update = AmsterdamForkchoiceUpdate {
+            state: ForkchoiceState {
+                head_block_hash: [0x11; 32],
+                safe_block_hash: [0x22; 32],
+                finalized_block_hash: [0x33; 32],
+            },
+            payload_attributes: to_optional(Some(amsterdam::PayloadAttributes {
+                timestamp: 1_700_000_123,
+                prev_randao: [4; 32],
+                suggested_fee_recipient: Bytes20([5; 20]),
+                withdrawals: vec![].try_into().unwrap(),
+                parent_beacon_block_root: [0xEE; 32],
+                slot_number: 9_001,
+                target_gas_limit: 30_000_000,
+            })),
+            custody_columns: to_optional(Some(custody)),
+        };
+        let bytes = update.to_ssz();
+        let back = AmsterdamForkchoiceUpdate::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, update);
+        let attrs = from_optional(&back.payload_attributes).unwrap();
+        assert_eq!(attrs.slot_number, 9_001);
+        assert_eq!(attrs.target_gas_limit, 30_000_000);
+        let c = from_optional(&back.custody_columns).unwrap();
+        assert_eq!(c.get(3), Some(true));
+        assert_eq!(c.get(127), Some(true));
+        assert_eq!(c.get(0), Some(false));
+    }
+
+    #[test]
+    fn amsterdam_forkchoice_update_roundtrips_none() {
+        let update = AmsterdamForkchoiceUpdate {
+            state: ForkchoiceState {
+                head_block_hash: [0; 32],
+                safe_block_hash: [0; 32],
+                finalized_block_hash: [0; 32],
+            },
+            payload_attributes: to_optional(None),
+            custody_columns: to_optional(None),
+        };
+        let bytes = update.to_ssz();
+        let back = AmsterdamForkchoiceUpdate::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back, update);
     }
 }

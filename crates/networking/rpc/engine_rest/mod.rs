@@ -12,9 +12,6 @@ pub mod handlers;
 pub mod responses;
 pub mod types;
 
-#[cfg(test)]
-mod tests;
-
 use axum::Router;
 use axum::routing::{get, post};
 

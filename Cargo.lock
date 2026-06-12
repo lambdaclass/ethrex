@@ -4440,6 +4440,7 @@ version = "15.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "axum 0.8.9",
  "bytes",
  "cita_trie",
  "ethereum-types 0.15.1",
@@ -4462,7 +4463,12 @@ dependencies = [
  "hasher",
  "hex",
  "hex-literal 0.4.1",
+ "http-body-util",
+ "jsonwebtoken",
  "lazy_static",
+ "libssz",
+ "libssz-derive",
+ "libssz-types",
  "once_cell",
  "proptest",
  "rand 0.8.5",
@@ -4470,9 +4476,11 @@ dependencies = [
  "rkyv",
  "rustc-hash 2.1.2",
  "secp256k1",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
+ "tower 0.5.3",
 ]
 
 [[package]]

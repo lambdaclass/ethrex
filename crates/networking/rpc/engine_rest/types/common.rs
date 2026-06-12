@@ -113,7 +113,7 @@ pub enum PayloadStatusCode {
 // Rust `Option<T>` used by handlers and the `SszList<T, 1>` wire field.
 
 /// `Option<T>` → `List[T, 1]`.
-pub(crate) fn to_optional<T>(opt: Option<T>) -> SszList<T, 1> {
+pub fn to_optional<T>(opt: Option<T>) -> SszList<T, 1> {
     opt.into_iter()
         .collect::<Vec<T>>()
         .try_into()
@@ -121,7 +121,7 @@ pub(crate) fn to_optional<T>(opt: Option<T>) -> SszList<T, 1> {
 }
 
 /// `List[T, 1]` → `Option<T>`.
-pub(crate) fn from_optional<T: Clone>(list: &SszList<T, 1>) -> Option<T> {
+pub fn from_optional<T: Clone>(list: &SszList<T, 1>) -> Option<T> {
     list.iter().next().cloned()
 }
 

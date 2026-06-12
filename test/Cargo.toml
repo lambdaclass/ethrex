@@ -54,6 +54,15 @@ ethrex-l2.workspace = true
 ethrex-l2-rpc.workspace = true
 reqwest.workspace = true
 tokio-util.workspace = true
+# engine REST/SSZ tests (tests/rpc/engine_rest_tests.rs)
+axum = { workspace = true, features = ["http2"] }
+tower = "0.5"
+http-body-util = "0.1"
+jsonwebtoken.workspace = true
+serde.workspace = true
+libssz.workspace = true
+libssz-types.workspace = true
+libssz-derive.workspace = true
 
 [[test]]
 name = "ethrex_tests"
