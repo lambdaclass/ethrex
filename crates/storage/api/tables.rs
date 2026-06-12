@@ -113,7 +113,12 @@ pub const EXECUTION_WITNESSES: &str = "execution_witnesses";
 /// - [`Vec<u8>`] = RLP-encoded `BlockAccessList`
 pub const BLOCK_ACCESS_LISTS: &str = "block_access_lists";
 
-pub const TABLES: [&str; 20] = [
+/// Inverted log index column family: `address (20B) || section (8B BE)` =>
+/// big-endian `u16` in-section block offsets where the address emitted a log.
+/// Populated off the block-import path by a background indexer (see `log_index`).
+pub const LOG_ADDRESS_INDEX: &str = "log_address_index";
+
+pub const TABLES: [&str; 21] = [
     CHAIN_DATA,
     ACCOUNT_CODES,
     ACCOUNT_CODE_METADATA,
@@ -134,4 +139,5 @@ pub const TABLES: [&str; 20] = [
     MISC_VALUES,
     EXECUTION_WITNESSES,
     BLOCK_ACCESS_LISTS,
+    LOG_ADDRESS_INDEX,
 ];
