@@ -312,9 +312,10 @@ pub async fn request_bytecodes(
     peers: &mut PeerHandler,
     all_bytecode_hashes: &[H256],
 ) -> Result<Option<Vec<Bytes>>, SnapError> {
-    METRICS
-        .current_step
-        .set(CurrentStepValue::RequestingBytecodes);
+    // Deliberately does not set METRICS.current_step: bytecode batches run
+    // concurrently with the other phases, and flipping the global step from
+    // here would report a phase change on every batch. The drain point in
+    // the sync cycle sets it once bytecodes are the critical path.
     if all_bytecode_hashes.is_empty() {
         return Ok(Some(Vec::new()));
     }

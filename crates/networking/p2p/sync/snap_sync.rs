@@ -555,6 +555,9 @@ pub async fn snap_sync(
     code_hash_collector.finish().await?;
 
     diagnostics.write().await.current_phase = "bytecodes".to_string();
+    METRICS
+        .current_step
+        .set(CurrentStepValue::RequestingBytecodes);
     debug!("Waiting for streamed bytecode download to finish");
     bytecode_fetcher.await??;
 
