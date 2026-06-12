@@ -34,19 +34,8 @@ const EXTRA_SKIPS: &[&str] = &[
     "Return50000",
     "static_Call1MB1024Calldepth",
 ];
-// The stateless suite runs the zkevm@v0.4.1 bundle, which is filled against an older
-// Amsterdam base (tests-bal@v7.2.0 era) and is the latest zkevm release available. It
-// predates the tests-bal@v7.3.0 CREATE/CREATE2-in-static-context gas refinement
-// (EIP-7778 regular-gas dimension excludes the reserved create_message_gas), so its block
-// headers still encode the old full-frame burn. Our execution is correct for v7.3.0 and
-// therefore mismatches these stale fixtures. Skip them here until a newer zkevm bundle ships;
-// they pass in the amsterdam (v7.3.0) test-levm suite. See docs/known_issues.md.
 #[cfg(feature = "stateless")]
-const EXTRA_SKIPS: &[&str] = &[
-    "bal_create_in_static_context",
-    "create2check_fields_in_initcode",
-    "test_static_call_create.py",
-];
+const EXTRA_SKIPS: &[&str] = &[];
 #[cfg(not(any(feature = "sp1", feature = "stateless")))]
 const EXTRA_SKIPS: &[&str] = &[];
 

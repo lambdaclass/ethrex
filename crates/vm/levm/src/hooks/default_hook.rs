@@ -264,10 +264,7 @@ pub fn refund_sender(
         let regular_gas = raw_consumed
             .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
-            .saturating_sub(vm.state_gas_spill)
-            // EIP-7778: create_message_gas reserved by a CREATE/CREATE2 that failed the
-            // static-context check is charged to the user but not the regular dimension.
-            .saturating_sub(vm.create_static_regular_spill);
+            .saturating_sub(vm.state_gas_spill);
         let effective_regular = regular_gas.max(floor);
         ctx_result.gas_used = effective_regular
             .checked_add(state_gas)
