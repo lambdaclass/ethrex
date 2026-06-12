@@ -400,13 +400,9 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.bytecode.len() {
-            #[expect(unsafe_code, reason = "bounds checked above")]
-            unsafe {
-                *self.bytecode.bytecode.get_unchecked(self.pc)
-            }
-        } else {
-            0
+        #[expect(unsafe_code, reason = "bytecode padded with 33 STOPs at construction")]
+        unsafe {
+            *self.bytecode.dispatch_buf().get_unchecked(self.pc)
         }
     }
 
@@ -534,12 +530,11 @@ impl<'a> VM<'a> {
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "pc bounded by padded bytecode len"
+    )]
+    pub fn advance_pc(&mut self, count: usize) {
+        self.current_call_frame.pc += count;
     }
 }

@@ -32,7 +32,10 @@ pub struct Code {
     // We use a bogus H256::zero() value for initcodes as there is no way for the VM or
     // endpoints to access that hash, saving one expensive Keccak hash.
     pub hash: H256,
-    pub bytecode: Bytes,
+    /// bytecode padded with 33 zeroes (STOP opcodes, due to PUSH32) to avoid checks on the hot path.
+    bytecode: Bytes,
+    /// The real bytecode length, needed for some opcodes, `bytecode` is padded with 33 STOPs to avoid checked adds on hot loop.
+    bytecode_len: usize,
     // `Arc<[u32]>` so cloning `Code` (hot: every message-call resolves and clones
     // the callee's code) is a refcount bump instead of deep-copying the table.
     // Serializes via serde's `rc` feature (enabled workspace-wide).
@@ -48,18 +51,24 @@ impl Code {
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
-        Self {
-            hash,
-            bytecode: code,
-            jump_targets,
-        }
+        Self::from_parts(hash, &code, jump_targets)
     }
 
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
+        let hash = H256(crypto.keccak256(code.as_ref()));
+        Self::from_parts(hash, &code, jump_targets)
+    }
+
+    pub fn from_parts(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+        let bytecode_len = code.len();
+        let mut padded_code = Vec::with_capacity(bytecode_len + 33);
+        padded_code.extend_from_slice(code);
+        padded_code.extend_from_slice(&[0u8; 33]);
         Self {
-            hash: H256(crypto.keccak256(code.as_ref())),
-            bytecode: code,
+            hash,
+            bytecode: Bytes::from_owner(padded_code),
+            bytecode_len,
             jump_targets,
         }
     }
@@ -93,6 +102,31 @@ impl Code {
         }
     }
 
+    #[inline]
+    pub fn code(&self) -> &[u8] {
+        self.bytecode.get(..self.bytecode_len).unwrap_or_default()
+    }
+
+    #[inline]
+    pub fn code_bytes(&self) -> Bytes {
+        self.bytecode.slice(..self.bytecode_len)
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.bytecode_len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.bytecode_len == 0
+    }
+
+    #[inline]
+    pub fn dispatch_buf(&self) -> &[u8] {
+        &self.bytecode
+    }
+
     /// Estimates the size of the Code struct in bytes
     /// (including stack size and heap allocation).
     ///
@@ -106,12 +140,6 @@ impl Code {
         let bytes_size = size_of::<Bytes>();
         let vec_size = size_of::<Arc<[u32]>>() + self.jump_targets.len() * size_of::<u32>();
         hash_size + bytes_size + vec_size
-    }
-}
-
-impl AsRef<Bytes> for Code {
-    fn as_ref(&self) -> &Bytes {
-        &self.bytecode
     }
 }
 
@@ -176,7 +204,8 @@ impl Default for AccountState {
 impl Default for Code {
     fn default() -> Self {
         Self {
-            bytecode: Bytes::new(),
+            bytecode: Bytes::from_static(&[0u8; 33]),
+            bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
             jump_targets: EMPTY_JUMP_TARGETS.clone(),
         }
