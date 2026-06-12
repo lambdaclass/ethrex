@@ -85,14 +85,29 @@ pub async fn bodies_by_range(
     // unbounded u64 query param) overflowing `from + count`.
     let last = latest.min(from.saturating_add(count).saturating_sub(1));
 
+    // Fetch every body in one storage transaction (like the JSON-RPC
+    // `getPayloadBodiesByRange` handler) instead of one async round-trip per
+    // block; the headers — needed only for the per-entry fork-era check — are
+    // cheap synchronous point reads.
     let mut blocks: Vec<Option<Block>> = Vec::new();
     if last >= from {
-        blocks.reserve((last - from + 1) as usize);
-        for n in from..=last {
-            match ctx.storage.get_block_by_number(n).await {
-                Ok(b) => blocks.push(b),
-                Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
-            }
+        let bodies = match ctx.storage.get_block_bodies(from, last).await {
+            Ok(b) => b,
+            Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
+        };
+        blocks.reserve(bodies.len());
+        for (i, body) in bodies.into_iter().enumerate() {
+            let block = match body {
+                Some(body) => match ctx.storage.get_block_header(from + i as u64) {
+                    Ok(Some(header)) => Some(Block::new(header, body)),
+                    Ok(None) => None,
+                    Err(e) => {
+                        return ProblemJson::internal(&format!("storage: {e}")).into_response();
+                    }
+                },
+                None => None,
+            };
+            blocks.push(block);
         }
     }
 
@@ -157,10 +172,23 @@ async fn build_bodies_response(
             for block_opt in blocks {
                 let entry = match block_opt {
                     Some(block) if in_era(&block) => {
+                        // Fast path: the BAL persisted at import time is a
+                        // synchronous point read. Only the re-execution
+                        // fallback (BAL absent) is CPU-bound enough to need
+                        // the blocking-thread helper.
                         let (bal_bytes, block) =
-                            match bal_bytes_for_block(ctx.blockchain.clone(), block).await {
-                                Ok(v) => v,
-                                Err(resp) => return resp,
+                            match ctx.storage.get_block_access_list(block.hash()) {
+                                Ok(Some(bal)) => (bal.encode_to_vec(), block),
+                                Ok(None) => {
+                                    match bal_bytes_for_block(ctx.blockchain.clone(), block).await {
+                                        Ok(v) => v,
+                                        Err(resp) => return resp,
+                                    }
+                                }
+                                Err(e) => {
+                                    return ProblemJson::internal(&format!("storage: {e}"))
+                                        .into_response();
+                                }
                             };
                         match amsterdam_body_from_internal(block.body, bal_bytes) {
                             Ok(body) => BodyEntryAmsterdam::available(body),
