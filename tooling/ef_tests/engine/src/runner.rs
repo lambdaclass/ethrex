@@ -290,7 +290,7 @@ fn check_witness_response(
     index: usize,
     name: &str,
 ) -> Result<(), FixtureFailure> {
-    use ethrex_common::types::BlockHeader;
+    use ethrex_common::types::block_execution_witness::ExtWitness;
     use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 
     // EEST consumption-validation fixtures (`witness_validation_*`,
@@ -315,25 +315,19 @@ fn check_witness_response(
     let witness_bytes = hex::decode(witness_hex.strip_prefix("0x").unwrap_or(witness_hex))
         .map_err(|e| mismatch(format!("witness hex decode failed: {e}")))?;
 
-    type ExtWitness = (
-        Vec<BlockHeader>,
-        Vec<bytes::Bytes>,
-        Vec<bytes::Bytes>,
-        Vec<bytes::Bytes>,
-    );
-    let (headers, codes, state, keys) = ExtWitness::decode(&witness_bytes)
+    let witness = ExtWitness::decode(&witness_bytes)
         .map_err(|e| mismatch(format!("witness RLP decode failed: {e}")))?;
 
-    if !keys.is_empty() {
+    if !witness.keys.is_empty() {
         return Err(mismatch(format!(
             "expected empty keys section, got {} items",
-            keys.len()
+            witness.keys.len()
         )));
     }
 
-    let got_headers: Vec<Vec<u8>> = headers.iter().map(|h| h.encode_to_vec()).collect();
-    let got_codes: Vec<Vec<u8>> = codes.iter().map(|b| b.to_vec()).collect();
-    let got_state: Vec<Vec<u8>> = state.iter().map(|b| b.to_vec()).collect();
+    let got_headers: Vec<Vec<u8>> = witness.headers.iter().map(|h| h.encode_to_vec()).collect();
+    let got_codes: Vec<Vec<u8>> = witness.codes.iter().map(|b| b.to_vec()).collect();
+    let got_state: Vec<Vec<u8>> = witness.state.iter().map(|b| b.to_vec()).collect();
 
     for (section, got) in [
         ("headers", got_headers),

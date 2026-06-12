@@ -154,10 +154,11 @@ impl Hook for DefaultHook {
         vm: &mut VM<'_>,
         ctx_result: &mut ContextResult,
     ) -> Result<(), VMError> {
-        // System calls carry no value and pay no fees: nothing to undo or
-        // refund, and the zero-amount sender/coinbase balance ops below would
-        // leak SYSTEM_ADDRESS reads into execution witnesses (EIP-8025).
-        // Callers ignore the gas accounting fields for system calls.
+        // System calls (EELS `process_unchecked_system_transaction`) have no
+        // sender or fee semantics: there is nothing to undo, refund, or pay
+        // (the value and gas price are zero), so skip straight to the
+        // self-destruct cleanup. Callers ignore the gas accounting fields for
+        // system calls.
         if vm.env.is_system_call {
             delete_self_destruct_accounts(vm)?;
             return Ok(());
@@ -364,13 +365,14 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
     // Only pay coinbase if there's actually a fee to pay.
     if !coinbase_fee.is_zero() {
         vm.increase_account_balance(vm.env.coinbase, coinbase_fee)?;
-    } else if !vm.env.gas_price.is_zero() {
+    } else if !vm.env.is_system_call {
         // The spec reads the coinbase account unconditionally during user-tx
         // fee transfer (EELS `process_transaction` calls `get_account` before
         // deciding whether to credit), but system contract calls never touch
-        // the coinbase. Keep the read observable for zero-priority-fee user
-        // txs so execution witnesses (EIP-8025) record the coinbase trie
-        // path, including its exclusion proof when it doesn't exist.
+        // the coinbase. Keep the read observable for zero-fee user txs
+        // (including gas-price-zero txs on zero-base-fee chains) so execution
+        // witnesses (EIP-8025) record the coinbase trie path, including its
+        // exclusion proof when it doesn't exist.
         vm.db.get_account(vm.env.coinbase)?;
     }
 

@@ -572,19 +572,6 @@ impl Blockchain {
             } else {
                 None
             };
-        let optimistic_witness: Option<Vec<AccountUpdate>> = if collect_witness {
-            optimistic_updates.as_ref().map(|m| {
-                m.iter()
-                    .map(|(addr, item)| AccountUpdate {
-                        address: *addr,
-                        added_storage: item.added_storage.clone(),
-                        ..Default::default()
-                    })
-                    .collect()
-            })
-        } else {
-            None
-        };
 
         // Synchronously warm all BAL storage slots before the executor thread starts.
         //
@@ -836,8 +823,10 @@ impl Blockchain {
             merkleization_result?;
         let (execution_result, produced_bal, exec_end_instant) = execution_result?;
 
-        // Synthesized witness wins when BAL is present; streaming witness wins otherwise.
-        let accumulated_updates = optimistic_witness.or(streaming_witness);
+        // Witness collection forces the streaming merkleizer (synthesized
+        // updates are disabled above), so the streaming witness is the only
+        // possible source of accumulated updates.
+        let accumulated_updates = streaming_witness;
 
         let exec_merkle_end_instant = Instant::now();
 

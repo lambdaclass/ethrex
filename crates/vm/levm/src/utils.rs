@@ -260,27 +260,12 @@ pub fn eip7702_get_code(
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Code), VMError> {
-    // Address is the delgated address
-    let bytecode = db.get_account_code(address)?;
-
-    // If the Address doesn't have a delegation code
-    // return false meaning that is not a delegation
-    // return the same address given
-    // return the bytecode of the given address
-    if !code_has_delegation(&bytecode.bytecode)? {
-        return Ok((false, 0, address, bytecode.clone()));
-    }
-
-    // Here the address has a delegation code
-    // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
-
-    let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        COLD_ADDRESS_ACCESS_COST
-    } else {
-        WARM_ADDRESS_ACCESS_COST
+    let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address)?;
+    let Some((auth_address, access_cost)) = delegation else {
+        return Ok((false, 0, address, bytecode));
     };
 
+    accrued_substate.add_accessed_address(auth_address);
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
