@@ -21,10 +21,10 @@ use crate::types::payload::{
 use crate::utils::RpcErr;
 use crate::utils::{RpcRequest, parse_json_hex};
 
-// Must support rquest sizes of at least 32 blocks
-// Chosen an arbitrary x4 value
-// -> https://github.com/ethereum/execution-apis/blob/main/src/engine/shanghai.md#specification-3
-const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: u64 = 128;
+// The Engine API (Shanghai) only mandates supporting request sizes of at least 32 blocks.
+// Cap at MAX_REQUEST_BLOCKS = 1024, the largest request a conforming consensus client makes.
+// -> https://github.com/ethereum/consensus-specs/blob/a84880a47a88700d8dfa451c2a7cd4b3f309bd0d/specs/phase0/p2p-interface.md#configuration
+const GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE: u64 = 1024;
 
 // NewPayload V1-V2-V3 implementations
 pub struct NewPayloadV1Request {
@@ -718,7 +718,7 @@ impl RpcHandler for GetPayloadBodiesByHashV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+        if self.hashes.len() as u64 > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
         let mut bodies = Vec::new();
@@ -754,7 +754,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV1Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+        if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
         let latest_block_number = context.storage.get_latest_block_number().await?;
@@ -841,7 +841,7 @@ impl RpcHandler for GetPayloadBodiesByHashV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.hashes.len() as u64 >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+        if self.hashes.len() as u64 > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
 
@@ -887,7 +887,7 @@ impl RpcHandler for GetPayloadBodiesByRangeV2Request {
     }
 
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        if self.count >= GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
+        if self.count > GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
         let latest_block_number = context.storage.get_latest_block_number().await?;
@@ -1476,7 +1476,7 @@ mod tests {
     use ethrex_rlp::encode::RLPEncode;
     use ethrex_storage::{EngineType, Store};
 
-    async fn context_with_v5_payload(timestamp: u64, payload_id: u64) -> crate::rpc::RpcApiContext {
+    async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> RpcApiContext {
         let mut storage = Store::new(
             "test-getpayload-v5-amsterdam-boundary",
             EngineType::InMemory,
@@ -1523,7 +1523,7 @@ mod tests {
     #[tokio::test]
     async fn get_payload_v5_accepts_osaka_payload_before_amsterdam() {
         let payload_id = 1;
-        let context = context_with_v5_payload(9, payload_id).await;
+        let context = context_with_built_payload_at(9, payload_id).await;
 
         let response = GetPayloadV5Request { payload_id }
             .handle(context)
@@ -1537,7 +1537,7 @@ mod tests {
     #[tokio::test]
     async fn get_payload_v5_rejects_amsterdam_payload() {
         let payload_id = 1;
-        let context = context_with_v5_payload(10, payload_id).await;
+        let context = context_with_built_payload_at(10, payload_id).await;
 
         let err = GetPayloadV5Request { payload_id }
             .handle(context)
@@ -1673,5 +1673,89 @@ mod tests {
         )
             .encode_to_vec();
         assert_eq!(encoded.as_ref(), expected.as_slice());
+    }
+
+    async fn test_context() -> RpcApiContext {
+        let storage = Store::new("test-payload-bodies", EngineType::InMemory)
+            .expect("Failed to create test store");
+        default_context_with_storage(storage).await
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_hash_v1_accepts_exactly_max_size() {
+        // Spec: clients MUST support request sizes of at least the max constant, so
+        // exactly MAX must be served, not rejected.
+        let request = GetPayloadBodiesByHashV1Request {
+            hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize],
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_hash_v1_rejects_above_max_size() {
+        let request = GetPayloadBodiesByHashV1Request {
+            hashes: vec![BlockHash::default(); GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE as usize + 1],
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_range_v1_accepts_exactly_max_size() {
+        let request = GetPayloadBodiesByRangeV1Request {
+            start: 1,
+            count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_range_v1_rejects_above_max_size() {
+        let request = GetPayloadBodiesByRangeV1Request {
+            start: 1,
+            count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_hash_v2_accepts_exactly_max_size() {
+        let request = GetPayloadBodiesByHashV2Request {
+            hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE) as usize],
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_hash_v2_rejects_above_max_size() {
+        let request = GetPayloadBodiesByHashV2Request {
+            hashes: vec![BlockHash::default(); (GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1) as usize],
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_range_v2_accepts_exactly_max_size() {
+        let request = GetPayloadBodiesByRangeV2Request {
+            start: 1,
+            count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE,
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
+    #[tokio::test]
+    async fn get_payload_bodies_by_range_v2_rejects_above_max_size() {
+        let request = GetPayloadBodiesByRangeV2Request {
+            start: 1,
+            count: GET_PAYLOAD_BODIES_REQUEST_MAX_SIZE + 1,
+        };
+        let result = request.handle(test_context().await).await;
+        assert!(matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 }
