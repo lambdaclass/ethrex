@@ -420,8 +420,9 @@ impl SyncError {
             | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
             // A timed-out actor request is transient (mailbox pressure or a
-            // slow handler — the protocol macro hardwires a 5s timeout); a
-            // stopped actor means p2p is shutting down and must stay fatal.
+            // slow handler — requests use spawned-concurrency's 5s default
+            // timeout); a stopped actor means p2p is shutting down and must
+            // stay fatal.
             SyncError::PeerTableError(ActorError::RequestTimeout) => true,
             SyncError::PeerTableError(ActorError::ActorStopped) => false,
             SyncError::Chain(_)
