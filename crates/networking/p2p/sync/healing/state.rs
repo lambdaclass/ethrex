@@ -353,6 +353,20 @@ async fn heal_state_trie(
                     for i in 0..path.len() {
                         encoded_to_write.insert(path.slice(0, i), vec![]);
                     }
+                    // Mirror healed leaves into the account FlatKeyValue table in
+                    // the same batch: prebuilt FKV rows emitted from pre-healing
+                    // range data go stale wherever healing changes a leaf, so the
+                    // healed value must overwrite them. The full leaf path is 65
+                    // elements (64 nibbles + leaf flag), which `put_batch` routes
+                    // to ACCOUNT_FLATKEYVALUE automatically.
+                    //
+                    // Limitation: healing only observes nodes it downloads, so
+                    // leaves *removed* from the trie are not visible here. Stale
+                    // FKV rows for deleted accounts are left in place for a later
+                    // reconciliation phase to detect and remove.
+                    if let Node::Leaf(leaf) = &node {
+                        encoded_to_write.insert(path.concat(&leaf.partial), leaf.value.clone());
+                    }
                     encoded_to_write.insert(path, node.encode_to_vec());
                 }
                 let trie_db = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;

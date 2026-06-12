@@ -263,19 +263,48 @@ pub async fn heal_storage_trie(
             }
             db_joinset.spawn_blocking(move || {
                 let mut encoded_to_write = vec![];
+                let mut fkv_to_write = vec![];
                 for (hashed_account, nodes) in to_write {
                     let mut account_nodes = vec![];
+                    let mut account_leaves = vec![];
                     for (path, node) in nodes {
                         for i in 0..path.len() {
                             account_nodes.push((path.slice(0, i), vec![]));
                         }
+                        // Mirror healed leaves into the storage FlatKeyValue
+                        // table: prebuilt FKV rows derived from pre-healing
+                        // range data go stale wherever healing changes a leaf,
+                        // so the healed value must overwrite them. The node
+                        // batch below goes through
+                        // `write_storage_trie_nodes_batch`, which targets
+                        // STORAGE_TRIE_NODES unconditionally, so leaves take a
+                        // dedicated FKV write issued by this same single
+                        // background task to preserve write ordering.
+                        //
+                        // Limitation: healing only observes nodes it downloads,
+                        // so leaves *removed* from the trie are not visible
+                        // here. Stale FKV rows for deleted slots are left in
+                        // place for a later reconciliation phase to detect and
+                        // remove.
+                        if let Node::Leaf(leaf) = &node {
+                            account_leaves.push((path.concat(&leaf.partial), leaf.value.clone()));
+                        }
                         account_nodes.push((path, node.encode_to_vec()));
                     }
                     encoded_to_write.push((hashed_account, account_nodes));
+                    if !account_leaves.is_empty() {
+                        fkv_to_write.push((hashed_account, account_leaves));
+                    }
                 }
                 // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
                 spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
                     .expect("db write failed");
+                if !fkv_to_write.is_empty() {
+                    spawned_rt::tasks::block_on(
+                        store.write_storage_flatkeyvalue_batch(fkv_to_write),
+                    )
+                    .expect("db write failed");
+                }
             });
         }
 

@@ -1375,6 +1375,30 @@ impl Store {
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
+    /// Writes storage-trie leaf rows into the storage FlatKeyValue table. Each leaf
+    /// path (64 slot nibbles + leaf flag) is prefixed with its account hash via
+    /// [`apply_prefix`], producing the 131-element keys STORAGE_FLATKEYVALUE expects.
+    /// Unlike [`Self::write_storage_trie_nodes_batch`], which targets STORAGE_TRIE_NODES
+    /// unconditionally, this lands rows in the flat table.
+    pub async fn write_storage_flatkeyvalue_batch(
+        &self,
+        storage_leaves: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.backend.begin_write()?;
+        tokio::task::spawn_blocking(move || {
+            for (address_hash, leaves) in storage_leaves {
+                for (leaf_path, value) in leaves {
+                    let key = apply_prefix(Some(address_hash), leaf_path);
+                    txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &value)?;
+                }
+            }
+            txn.commit()
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
     /// For updating the state after block execution, use [`Self::store_block_updates`].
     pub async fn write_account_code_batch(
         &self,
