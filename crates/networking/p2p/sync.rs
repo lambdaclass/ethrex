@@ -4,6 +4,7 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+mod bytecode_fetcher;
 mod code_collector;
 mod full;
 mod healing;
