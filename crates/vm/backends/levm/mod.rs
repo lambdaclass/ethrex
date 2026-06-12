@@ -13,7 +13,6 @@ use bytes::Bytes;
 use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::Code;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::types::TxType;
