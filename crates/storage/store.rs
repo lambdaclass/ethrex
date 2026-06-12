@@ -3154,6 +3154,29 @@ impl Store {
         Ok(last_computed_flatkeyvalue.clone())
     }
 
+    /// Records how far snap sync prebuilt ACCOUNT_FLATKEYVALUE rows during the
+    /// account trie build. `path` is the nibble path (64 nibbles + leaf flag)
+    /// of the last account leaf emitted.
+    ///
+    /// Rows `[0..=path]` in ACCOUNT_FLATKEYVALUE were written from
+    /// proof-verified snap range data during sync, before healing — they may be
+    /// stale wherever healing later changed leaves, and must not be trusted
+    /// (the FKV read gate, the "last_written" key, stays closed) until a later
+    /// reconciliation step promotes them.
+    pub fn set_fkv_prebuilt_accounts_marker(&self, path: &[u8]) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"fkv_prebuilt_accounts".to_vec(),
+            path.to_vec(),
+        )
+    }
+
+    /// Returns the marker written by [`Self::set_fkv_prebuilt_accounts_marker`],
+    /// or `None` if snap sync never prebuilt account FlatKeyValue rows.
+    pub fn get_fkv_prebuilt_accounts_marker(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.read(MISC_VALUES, b"fkv_prebuilt_accounts".to_vec())
+    }
+
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
@@ -3800,5 +3823,50 @@ mod merge_tests {
         let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
         let out = tx_locations_merge(None, vec![p3]).unwrap();
         assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod fkv_prebuilt_marker_tests {
+    use super::*;
+
+    #[test]
+    fn marker_roundtrip() {
+        let store =
+            Store::new("test.db", EngineType::InMemory).expect("in-memory store should open");
+
+        // No marker until snap sync writes one.
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("getter should not fail"),
+            None
+        );
+
+        // A 65-element account leaf path: 64 nibbles plus the leaf flag.
+        let path = Nibbles::from_bytes(&[0xab; 32]);
+        store
+            .set_fkv_prebuilt_accounts_marker(path.as_ref())
+            .expect("setter should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("getter should not fail")
+                .as_deref(),
+            Some(path.as_ref())
+        );
+
+        // Writing again overwrites the previous marker.
+        let path2 = Nibbles::from_bytes(&[0xcd; 32]);
+        store
+            .set_fkv_prebuilt_accounts_marker(path2.as_ref())
+            .expect("setter should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("getter should not fail")
+                .as_deref(),
+            Some(path2.as_ref())
+        );
     }
 }

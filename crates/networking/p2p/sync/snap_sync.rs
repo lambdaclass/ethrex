@@ -1065,6 +1065,11 @@ async fn insert_accounts(
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+    use ethrex_trie::{Nibbles, TrieDB, TrieError};
+
+    /// How many account leaves to accumulate before flushing a
+    /// FlatKeyValue batch through the trie backend.
+    const FKV_EMISSION_BATCH_SIZE: usize = 100_000;
 
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
     let mut db_options = rocksdb::Options::default();
@@ -1082,9 +1087,22 @@ async fn insert_accounts(
     // Single pass: the trie build consumes the sorted leaves while the same
     // decode feeds code-hash collection and the storage-root map, instead of
     // a dedicated full iteration of the temp DB for the code hashes.
+    //
+    // The same pass also mirrors each leaf into ACCOUNT_FLATKEYVALUE: the
+    // (nibble path, RLP value) pairs are byte-identical to the rows the
+    // post-sync FlatKeyValue generator would re-derive by walking the finished
+    // trie. The rows stay inert — the FKV read gate ("last_written") is
+    // untouched, and the coverage marker written below only records that they
+    // exist so a later phase can reconcile and promote them.
+    let trie_db = trie.db();
+    let mut fkv_buffer: Vec<(Nibbles, Vec<u8>)> = Vec::with_capacity(FKV_EMISSION_BATCH_SIZE);
+    // `inspect` can't propagate errors, so the first flush failure is parked
+    // here and returned once the trie build finishes.
+    let mut fkv_flush_error: Option<TrieError> = None;
+    let mut fkv_last_emitted: Option<H256> = None;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     let compute_state_root = trie_from_sorted_accounts_wrap(
-        trie.db(),
+        trie_db,
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
             .inspect(|(k, v)| {
@@ -1102,10 +1120,31 @@ async fn insert_accounts(
                         (Some(account_state.storage_root), Vec::new()),
                     );
                 }
+                if fkv_flush_error.is_none() {
+                    fkv_buffer.push((Nibbles::from_bytes(k), v.to_vec()));
+                    fkv_last_emitted = Some(H256::from_slice(k));
+                    if fkv_buffer.len() >= FKV_EMISSION_BATCH_SIZE
+                        && let Err(err) = trie_db.put_batch(std::mem::take(&mut fkv_buffer))
+                    {
+                        fkv_flush_error = Some(err);
+                    }
+                }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
+
+    if let Some(err) = fkv_flush_error {
+        return Err(err.into());
+    }
+    if !fkv_buffer.is_empty() {
+        trie_db.put_batch(fkv_buffer)?;
+    }
+    if let Some(account_hash) = fkv_last_emitted {
+        store.set_fkv_prebuilt_accounts_marker(
+            Nibbles::from_bytes(account_hash.as_bytes()).as_ref(),
+        )?;
+    }
 
     drop(db); // close db before removing directory
 
