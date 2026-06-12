@@ -8,8 +8,8 @@ pub struct SszResponse {
     pub status: u16,
     pub bytes_sent: usize,
     pub bytes_received: usize,
-    // body read by Task 7 stats/output layer
-    #[allow(dead_code)]
+    /// Raw response body. Decoded by callers after the timed window (hit
+    /// counting only).
     pub body: bytes::Bytes,
 }
 

@@ -3084,6 +3084,7 @@ dependencies = [
  "csv",
  "ethereum-types",
  "ethrex-common 15.0.0",
+ "ethrex-rlp 15.0.0",
  "ethrex-rpc",
  "eyre",
  "hex",

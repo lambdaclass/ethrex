@@ -3,13 +3,12 @@
 use eyre::{Context, Result};
 use reqwest::Client;
 use serde::Serialize;
-use serde_json::Value;
 
 #[derive(Debug, Serialize)]
-struct RpcRequest<'a> {
+struct RpcRequest<'a, P> {
     jsonrpc: &'a str,
     method: &'a str,
-    params: Value,
+    params: P,
     id: u64,
 }
 
@@ -18,17 +17,28 @@ pub struct JsonResponse {
     pub status: u16,
     pub bytes_sent: usize,
     pub bytes_received: usize,
-    // body read by Task 7 stats/output layer
-    #[allow(dead_code)]
-    pub body: Value,
+    /// Raw response body. Parsed lazily by callers that need it (hit counting,
+    /// run setup) so response decoding stays out of the timed window.
+    pub raw: bytes::Bytes,
 }
 
-pub async fn call(
+impl JsonResponse {
+    /// Parse the raw body as JSON. Never called inside a timed window.
+    pub fn json(&self) -> Option<serde_json::Value> {
+        serde_json::from_slice(&self.raw).ok()
+    }
+}
+
+/// Encode the envelope and POST it. Serialization happens in here so a caller
+/// timing this call covers typed-struct → wire-bytes for JSON exactly like
+/// `to_ssz()` does for SSZ. Tuples serialize as JSON arrays, so pass params as
+/// e.g. `(&payload, hashes, root)`.
+pub async fn call<P: Serialize>(
     client: &Client,
     url: &str,
     token: &str,
     method: &str,
-    params: Value,
+    params: P,
 ) -> Result<JsonResponse> {
     let envelope = RpcRequest {
         jsonrpc: "2.0",
@@ -48,16 +58,10 @@ pub async fn call(
         .with_context(|| format!("JSON-RPC {method} request to {url}"))?;
     let status = response.status().as_u16();
     let raw = response.bytes().await?;
-    let bytes_received = raw.len();
-    let body: Value = if raw.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&raw).unwrap_or(Value::Null)
-    };
     Ok(JsonResponse {
         status,
         bytes_sent,
-        bytes_received,
-        body,
+        bytes_received: raw.len(),
+        raw,
     })
 }

@@ -10,6 +10,7 @@ license.workspace = true
 clap = { workspace = true, features = ["derive"] }
 ethrex-common.workspace = true
 ethrex-rpc.workspace = true
+ethrex-rlp.workspace = true
 ethereum-types.workspace = true
 tokio = { workspace = true, features = ["full"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
