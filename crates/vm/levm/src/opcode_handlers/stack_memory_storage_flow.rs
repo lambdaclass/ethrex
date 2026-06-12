@@ -80,16 +80,16 @@ pub struct OpMLoadHandler;
 impl OpcodeHandler for OpMLoadHandler {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
-        let offset = u256_to_usize(vm.current_call_frame.stack.pop1()?)?;
+        // Stack-neutral: replace the top (the offset) with the loaded word in place.
+        let offset = u256_to_usize(*vm.current_call_frame.stack.top_mut()?)?;
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::mload(
                 calculate_memory_size(offset, WORD_SIZE_IN_BYTES_USIZE)?,
                 vm.current_call_frame.memory.len(),
             )?)?;
 
-        vm.current_call_frame
-            .stack
-            .push(vm.current_call_frame.memory.load_word(offset)?)?;
+        let word = vm.current_call_frame.memory.load_word(offset)?;
+        *vm.current_call_frame.stack.top_mut()? = word;
 
         Ok(OpcodeResult::Continue)
     }
