@@ -208,6 +208,7 @@ async fn header_backfill(
 }
 
 /// Performs snap sync cycle - fetches state via snap protocol while downloading blocks in parallel
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_cycle_snap(
     peers: &mut PeerHandler,
     blockchain: Arc<Blockchain>,
@@ -440,6 +441,7 @@ pub async fn sync_cycle_snap(
 /// With `initial_pivot`/`backfill` set (the parallel header path), the pivot
 /// comes from the caller and the header chain is joined from the backfill
 /// task before the forkchoice update.
+#[allow(clippy::too_many_arguments)]
 pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
