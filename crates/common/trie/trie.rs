@@ -17,7 +17,7 @@ use ethrex_crypto::keccak::keccak_hash;
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::encode::RLPEncode;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -317,7 +317,7 @@ impl Trie {
 
     /// Gets node with embedded references to child nodes, all in just one `Node`.
     pub fn get_embedded_root(
-        all_nodes: &BTreeMap<H256, Node>,
+        all_nodes: &FxHashMap<H256, Node>,
         root_hash: H256,
         crypto: &dyn Crypto,
     ) -> Result<NodeRef, TrieError> {
@@ -341,7 +341,7 @@ impl Trie {
         }
 
         fn get_embedded_node(
-            all_nodes: &BTreeMap<H256, Node>,
+            all_nodes: &FxHashMap<H256, Node>,
             cur_node: &Node,
             crypto: &dyn Crypto,
         ) -> Result<Node, TrieError> {
@@ -396,7 +396,7 @@ impl Trie {
     ///   root node are considered dangling.
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, Node>,
+        state_nodes: &FxHashMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut trie = Trie::new(Box::new(InMemoryTrieDB::default()));
         let root = Self::get_embedded_root(state_nodes, root_hash, &NativeCrypto)?;

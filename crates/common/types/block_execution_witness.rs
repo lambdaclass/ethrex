@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use bytes::Bytes;
+use rustc_hash::FxHashMap;
 
 use crate::rkyv_utils::H256Wrapper;
 use crate::serde_utils;
@@ -215,7 +216,7 @@ impl RpcExecutionWitness {
         // Undecodable/unused nodes are dropped per EELS
         // `test_validation_state_extra_unused_trie_node`; missing needed nodes surface
         // later as `RootNotFound` from `get_embedded_root`.
-        let nodes: BTreeMap<H256, Node> = self
+        let nodes: FxHashMap<H256, Node> = self
             .state
             .into_iter()
             .filter_map(|b| {
@@ -335,7 +336,7 @@ fn collect_accounts_from_trie(
     node: &Node,
     path: Nibbles,
     accounts: &mut Vec<(H256, H256)>,
-    nodes: &BTreeMap<H256, Node>,
+    nodes: &FxHashMap<H256, Node>,
     crypto: &dyn Crypto,
 ) {
     match node {

@@ -1686,7 +1686,7 @@ impl Blockchain {
         }
 
         // Get initial state trie root and embed the rest of the trie into it
-        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+        let nodes: FxHashMap<H256, Node> = used_trie_nodes
             .into_iter()
             .map(|node| {
                 (
@@ -1920,7 +1920,7 @@ impl Blockchain {
         }
 
         // Get initial state trie root and embed the rest of the trie into it
-        let nodes: BTreeMap<H256, Node> = used_trie_nodes
+        let nodes: FxHashMap<H256, Node> = used_trie_nodes
             .into_iter()
             .map(|node| {
                 (

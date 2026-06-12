@@ -2,6 +2,7 @@ use ethereum_types::H256;
 use ethrex_rlp::encode::RLPEncode;
 
 use crate::{Nibbles, Node, Trie, error::TrieError};
+use rustc_hash::FxHashMap;
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
@@ -69,7 +70,7 @@ impl InMemoryTrieDB {
     // Do not remove or make private as we use this in ethrex-replay
     pub fn from_nodes(
         root_hash: H256,
-        state_nodes: &BTreeMap<H256, Node>,
+        state_nodes: &FxHashMap<H256, Node>,
     ) -> Result<Self, TrieError> {
         let mut embedded_root =
             Trie::get_embedded_root(state_nodes, root_hash, &ethrex_crypto::NativeCrypto)?;
