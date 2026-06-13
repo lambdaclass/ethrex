@@ -140,6 +140,25 @@ impl StorageReadView for InMemoryReadTx {
         };
         Ok(Box::new(iter))
     }
+
+    fn iter_from(
+        &self,
+        table: &str,
+        start: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let table_data = self.snapshot.get(table).cloned().unwrap_or_default();
+        let start_vec = start.to_vec();
+
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = table_data
+            .into_iter()
+            .filter(|(key, _)| key.as_slice() >= start_vec.as_slice())
+            .collect();
+        entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+
+        Ok(Box::new(entries.into_iter().map(|(key, value)| {
+            Ok((key.into_boxed_slice(), value.into_boxed_slice()))
+        })))
+    }
 }
 
 pub struct InMemoryWriteTx {
