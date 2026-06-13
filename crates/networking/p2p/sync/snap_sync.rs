@@ -143,7 +143,16 @@ async fn header_backfill(
     diagnostics: Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
 ) -> Result<Option<Vec<H256>>, SyncError> {
     let mut block_sync_state = SnapBlockSyncState::new(store);
-    let mut attempts = 0;
+    // Unlike the serial header walk, the background backfill must not give up
+    // after a short run of empty responses: it competes with the concurrent
+    // state-download lanes for the per-peer request budget and is routinely
+    // starved for minutes during a storage burst, but it has slack until the
+    // forkchoice update at the very end of the cycle. It retries until peers
+    // free up; the surrounding sync cycle's pivot-staleness handling bounds
+    // overall liveness. Only a peer set that never serves the head at all
+    // (logged periodically) leaves the lane stuck — the join then ends the
+    // cycle to wait for a newer head, same as the serial path.
+    let mut empty_streak: u64 = 0;
 
     loop {
         let _ = peers.peer_table.prune_table();
@@ -153,15 +162,18 @@ async fn header_backfill(
             .request_block_headers(current_head_number, sync_head)
             .await?
         else {
-            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
-                warn!("Header backfill failed to find the target header after {attempts} attempts");
-                return Ok(None);
+            empty_streak += 1;
+            // Surface a prolonged stall without giving up (every ~2 min).
+            if empty_streak.is_multiple_of(60) {
+                warn!(
+                    empty_streak,
+                    "Header backfill starved for headers (likely peer-budget contention with state download); still retrying"
+                );
             }
-            attempts += 1;
             tokio::time::sleep(Duration::from_secs(2)).await;
             continue;
         };
-        attempts = 0;
+        empty_streak = 0;
 
         let Some((first_block_hash, first_block_parent_hash)) = block_headers
             .first()
