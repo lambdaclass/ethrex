@@ -65,6 +65,14 @@ pub trait StorageReadView: Send + Sync {
         table: &'static str,
         prefix: &[u8],
     ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
+
+    /// Returns an ordered iterator over all key-value pairs starting at
+    /// `start` (inclusive), in ascending key order.
+    fn iter_from(
+        &self,
+        table: &'static str,
+        start: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError>;
 }
 
 /// Write transaction interface.

@@ -1385,6 +1385,41 @@ impl Store {
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
+    /// Writes storage-trie leaf rows into the storage FlatKeyValue table. Each leaf
+    /// path (64 slot nibbles + leaf flag) is prefixed with its account hash via
+    /// [`apply_prefix`], producing the 131-element keys STORAGE_FLATKEYVALUE expects.
+    /// Unlike [`Self::write_storage_trie_nodes_batch`], which targets STORAGE_TRIE_NODES
+    /// unconditionally, this lands rows in the flat table.
+    pub async fn write_storage_flatkeyvalue_batch(
+        &self,
+        storage_leaves: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        let store = self.clone();
+        tokio::task::spawn_blocking(move || {
+            store.write_storage_flatkeyvalue_batch_sync(storage_leaves)
+        })
+        .await
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Synchronous variant of [`Self::write_storage_flatkeyvalue_batch`] for
+    /// callers already on a blocking thread (e.g. snap sync's scoped storage
+    /// trie-build workers, which run outside the tokio runtime).
+    pub fn write_storage_flatkeyvalue_batch_sync(
+        &self,
+        storage_leaves: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.backend.begin_write()?;
+        for (address_hash, leaves) in storage_leaves {
+            for (leaf_path, value) in leaves {
+                let key = apply_prefix(Some(address_hash), leaf_path);
+                txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &value)?;
+            }
+        }
+        txn.commit()
+    }
+
+    /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
     /// For updating the state after block execution, use [`Self::store_block_updates`].
     pub async fn write_account_code_batch(
         &self,
@@ -3174,6 +3209,79 @@ impl Store {
         Ok(last_computed_flatkeyvalue.clone())
     }
 
+    /// Records how far snap sync prebuilt ACCOUNT_FLATKEYVALUE rows during the
+    /// account trie build. `path` is the nibble path (64 nibbles + leaf flag)
+    /// of the last account leaf emitted.
+    ///
+    /// Rows `[0..=path]` in ACCOUNT_FLATKEYVALUE were written from
+    /// proof-verified snap range data during sync, before healing — they may be
+    /// stale wherever healing later changed leaves, and must not be trusted
+    /// (the FKV read gate, the "last_written" key, stays closed) until a later
+    /// reconciliation step promotes them.
+    pub fn set_fkv_prebuilt_accounts_marker(&self, path: &[u8]) -> Result<(), StoreError> {
+        self.write(
+            MISC_VALUES,
+            b"fkv_prebuilt_accounts".to_vec(),
+            path.to_vec(),
+        )
+    }
+
+    /// Returns the marker written by [`Self::set_fkv_prebuilt_accounts_marker`],
+    /// or `None` if snap sync never prebuilt account FlatKeyValue rows.
+    pub fn get_fkv_prebuilt_accounts_marker(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        self.read(MISC_VALUES, b"fkv_prebuilt_accounts".to_vec())
+    }
+
+    /// Appends account hashes to the storage FlatKeyValue coverage list, the
+    /// MISC_VALUES key "fkv_prebuilt_storage_accounts".
+    ///
+    /// Encoding: the raw concatenation of 32-byte account hashes. Fixed-width
+    /// entries keep the list compact and append-friendly — extending it is a
+    /// read-extend-write of the value with no header to rewrite, and the
+    /// entry count is `len / 32`. The list may contain duplicates if snap
+    /// sync restarts and rebuilds an account's storage trie; readers must
+    /// treat it as a set.
+    ///
+    /// Each listed account had ALL of its STORAGE_FLATKEYVALUE rows written
+    /// from proof-verified snap range data during its per-account storage
+    /// trie build; callers must only append an account once its rows are
+    /// durably committed. The rows may still go stale wherever storage
+    /// healing later changes leaves, so they must not be trusted (the FKV
+    /// read gate, the "last_written" key, stays closed) until a later
+    /// reconciliation step verifies and promotes them.
+    pub fn append_fkv_prebuilt_storage_accounts(
+        &self,
+        accounts: &[H256],
+    ) -> Result<(), StoreError> {
+        if accounts.is_empty() {
+            return Ok(());
+        }
+        let key = b"fkv_prebuilt_storage_accounts".to_vec();
+        let mut list = self.read(MISC_VALUES, key.clone())?.unwrap_or_default();
+        list.reserve(accounts.len() * 32);
+        for account in accounts {
+            list.extend_from_slice(account.as_bytes());
+        }
+        self.write(MISC_VALUES, key, list)
+    }
+
+    /// Returns the coverage list written by
+    /// [`Self::append_fkv_prebuilt_storage_accounts`]; empty if snap sync
+    /// never prebuilt storage FlatKeyValue rows. May contain duplicates (see
+    /// the appender); treat the result as a set.
+    pub fn get_fkv_prebuilt_storage_accounts(&self) -> Result<Vec<H256>, StoreError> {
+        let Some(bytes) = self.read(MISC_VALUES, b"fkv_prebuilt_storage_accounts".to_vec())? else {
+            return Ok(Vec::new());
+        };
+        if !bytes.len().is_multiple_of(32) {
+            return Err(StoreError::Custom(format!(
+                "fkv_prebuilt_storage_accounts list has invalid length {}",
+                bytes.len()
+            )));
+        }
+        Ok(bytes.chunks_exact(32).map(H256::from_slice).collect())
+    }
+
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
@@ -3320,15 +3428,40 @@ fn flatkeyvalue_generator(
     control_rx: &std::sync::mpsc::Receiver<FKVGeneratorControlMessage>,
 ) -> Result<(), StoreError> {
     info!("Generation of FlatKeyValue started.");
-    let initial_last_written = backend
-        .begin_read()?
+    let initial_read = backend.begin_read()?;
+    let initial_last_written = initial_read
         .get(MISC_VALUES, "last_written".as_bytes())?
         .unwrap_or_default();
+    // Account rows prebuilt during snap sync (written from proof-verified
+    // range data and kept fresh by healing) cannot be trusted blindly: an
+    // account deleted between pivots is never visited by healing, leaving an
+    // orphan row a flat read would resurrect. The walk below verifies them
+    // with an ordered merge-join against the trie — fixing differing rows,
+    // writing missing ones, deleting orphans — which turns the bulk of
+    // generation from a full rewrite into reads.
+    let prebuilt_accounts = initial_read
+        .get(MISC_VALUES, "fkv_prebuilt_accounts".as_bytes())?
+        .is_some();
+    let prebuilt_storage = initial_read
+        .get(MISC_VALUES, "fkv_prebuilt_storage_accounts".as_bytes())?
+        .is_some();
+    drop(initial_read);
 
     if initial_last_written.is_empty() {
-        // First time generating the FKV. Remove all FKV entries just in case
-        backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
-        backend.clear_table(STORAGE_FLATKEYVALUE)?;
+        if prebuilt_accounts {
+            info!(
+                "FlatKeyValue account rows were prebuilt during sync; verifying instead of regenerating"
+            );
+        } else {
+            backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
+        }
+        if prebuilt_storage {
+            info!(
+                "FlatKeyValue storage rows were prebuilt during sync; verifying instead of regenerating"
+            );
+        } else {
+            backend.clear_table(STORAGE_FLATKEYVALUE)?;
+        }
     } else if initial_last_written == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
@@ -3373,6 +3506,16 @@ fn flatkeyvalue_generator(
         if last_written_account > Nibbles::default() {
             iter.advance(last_written_account.to_bytes())?;
         }
+        // Merge-join cursor over the existing account rows, resumed from the
+        // watermark like the trie iterator. Rows behind the trie cursor are
+        // orphans (accounts that no longer exist) and are deleted; matching
+        // rows with identical values need no write.
+        let mut existing_rows = read_tx
+            .iter_from(ACCOUNT_FLATKEYVALUE, last_written_account.as_ref())?
+            .peekable();
+        let mut existing_storage_rows = read_tx
+            .iter_from(STORAGE_FLATKEYVALUE, &last_written)?
+            .peekable();
         let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
             let Node::Leaf(node) = node else {
                 return Ok(());
@@ -3380,7 +3523,28 @@ fn flatkeyvalue_generator(
             let account_state = AccountState::decode(&node.value)?;
             let account_hash = H256::from_slice(&path.to_bytes());
             write_txn.put(MISC_VALUES, "last_written".as_bytes(), path.as_ref())?;
-            write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            let mut row_is_current = false;
+            loop {
+                match existing_rows.peek() {
+                    Some(Ok((key, _))) if key.as_ref() < path.as_ref() => {
+                        let (key, _) = existing_rows.next().ok_or(StoreError::LockError)??;
+                        write_txn.delete(ACCOUNT_FLATKEYVALUE, &key)?;
+                        ctr += 1;
+                    }
+                    Some(Ok((key, value))) if key.as_ref() == path.as_ref() => {
+                        row_is_current = value.as_ref() == node.value.as_slice();
+                        existing_rows.next();
+                        break;
+                    }
+                    Some(Err(_)) => {
+                        existing_rows.next().ok_or(StoreError::LockError)??;
+                    }
+                    _ => break,
+                }
+            }
+            if !row_is_current {
+                write_txn.put(ACCOUNT_FLATKEYVALUE, path.as_ref(), &node.value)?;
+            }
             ctr += 1;
             if ctr > 10_000 {
                 write_txn.commit()?;
@@ -3411,7 +3575,35 @@ fn flatkeyvalue_generator(
                 };
                 let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                // Merge-join against existing rows: rows behind the cursor —
+                // including the storage of accounts that no longer exist —
+                // are orphans and are deleted; identical rows are skipped.
+                let mut row_is_current = false;
+                loop {
+                    match existing_storage_rows.peek() {
+                        Some(Ok((row_key, _))) if row_key.as_ref() < key.as_ref() => {
+                            let (row_key, _) = existing_storage_rows
+                                .next()
+                                .ok_or(StoreError::LockError)??;
+                            write_txn.delete(STORAGE_FLATKEYVALUE, &row_key)?;
+                            ctr += 1;
+                        }
+                        Some(Ok((row_key, row_value))) if row_key.as_ref() == key.as_ref() => {
+                            row_is_current = row_value.as_ref() == node.value.as_slice();
+                            existing_storage_rows.next();
+                            break;
+                        }
+                        Some(Err(_)) => {
+                            existing_storage_rows
+                                .next()
+                                .ok_or(StoreError::LockError)??;
+                        }
+                        _ => break,
+                    }
+                }
+                if !row_is_current {
+                    write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                }
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
@@ -3455,6 +3647,17 @@ fn flatkeyvalue_generator(
             }
             Err(err) => return Err(err),
             Ok(()) => {
+                // Any rows past the last trie leaf are orphans.
+                for row in existing_rows {
+                    let (key, _) = row?;
+                    write_txn.delete(ACCOUNT_FLATKEYVALUE, &key)?;
+                }
+                for row in existing_storage_rows {
+                    let (key, _) = row?;
+                    write_txn.delete(STORAGE_FLATKEYVALUE, &key)?;
+                }
+                write_txn.delete(MISC_VALUES, "fkv_prebuilt_accounts".as_bytes())?;
+                write_txn.delete(MISC_VALUES, "fkv_prebuilt_storage_accounts".as_bytes())?;
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
                 *last_computed_fkv
@@ -3945,6 +4148,212 @@ mod fkv_generator_control_tests {
             }),
             "a flush resume started generation without a trigger; watermark {:?}",
             store.last_written()
+        );
+    }
+}
+
+#[cfg(test)]
+mod fkv_prebuilt_marker_tests {
+    use super::*;
+
+    #[test]
+    fn marker_roundtrip() {
+        let store =
+            Store::new("test.db", EngineType::InMemory).expect("in-memory store should open");
+
+        // No marker until snap sync writes one.
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("getter should not fail"),
+            None
+        );
+
+        // A 65-element account leaf path: 64 nibbles plus the leaf flag.
+        let path = Nibbles::from_bytes(&[0xab; 32]);
+        store
+            .set_fkv_prebuilt_accounts_marker(path.as_ref())
+            .expect("setter should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("getter should not fail")
+                .as_deref(),
+            Some(path.as_ref())
+        );
+
+        // Writing again overwrites the previous marker.
+        let path2 = Nibbles::from_bytes(&[0xcd; 32]);
+        store
+            .set_fkv_prebuilt_accounts_marker(path2.as_ref())
+            .expect("setter should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("getter should not fail")
+                .as_deref(),
+            Some(path2.as_ref())
+        );
+    }
+}
+
+#[cfg(test)]
+mod fkv_prebuilt_storage_accounts_tests {
+    use super::*;
+
+    #[test]
+    fn coverage_list_roundtrip() {
+        let store =
+            Store::new("test.db", EngineType::InMemory).expect("in-memory store should open");
+
+        // Empty until snap sync records coverage.
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            Vec::new()
+        );
+
+        // Appending an empty batch is a no-op.
+        store
+            .append_fkv_prebuilt_storage_accounts(&[])
+            .expect("empty append should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            Vec::new()
+        );
+
+        let first = vec![H256::repeat_byte(0x01), H256::repeat_byte(0x02)];
+        store
+            .append_fkv_prebuilt_storage_accounts(&first)
+            .expect("append should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            first
+        );
+
+        // A second append extends the list instead of overwriting it, and
+        // duplicates are allowed: readers treat the list as a set.
+        let second = vec![H256::repeat_byte(0x03), H256::repeat_byte(0x01)];
+        store
+            .append_fkv_prebuilt_storage_accounts(&second)
+            .expect("append should not fail");
+        let mut expected = first;
+        expected.extend(&second);
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            expected
+        );
+    }
+}
+
+#[cfg(test)]
+mod fkv_verify_walk_tests {
+    use super::*;
+    use ethrex_common::utils::keccak;
+    use std::time::{Duration, Instant};
+
+    fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        false
+    }
+
+    // With prebuilt account rows present, generation must verify instead of
+    // wiping and rewriting: orphan rows (accounts that no longer exist) are
+    // deleted, stale rows fixed, missing rows written — and the prebuilt
+    // marker cleared on completion.
+    #[test]
+    fn prebuilt_rows_are_verified_not_regenerated() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let mut trie = store
+            .open_direct_state_trie(*EMPTY_TRIE_HASH)
+            .expect("open state trie");
+        let value = AccountState {
+            nonce: 1,
+            balance: U256::zero(),
+            storage_root: *EMPTY_TRIE_HASH,
+            code_hash: keccak([]),
+        }
+        .encode_to_vec();
+        let mut keys: Vec<H256> = (0u32..200).map(|i| keccak(i.to_be_bytes())).collect();
+        keys.sort();
+        for key in &keys {
+            trie.insert(key.as_bytes().to_vec(), value.clone())
+                .expect("insert account");
+        }
+        // The direct trie commit also routes leaf full-path rows into
+        // ACCOUNT_FLATKEYVALUE — organically simulating the prebuilt rows.
+        trie.hash(&NativeCrypto).expect("commit state trie");
+
+        let leaf_path = |key: &H256| Nibbles::from_bytes(key.as_bytes());
+
+        // Doctor the prebuilt rows: one orphan, one stale, one missing.
+        let orphan_key = {
+            let mut k = keys[50];
+            k.0[31] ^= 0xff;
+            leaf_path(&k)
+        };
+        let stale_path = leaf_path(&keys[10]);
+        let missing_path = leaf_path(&keys[20]);
+        {
+            let mut txn = store.backend.begin_write().expect("write txn");
+            txn.put(ACCOUNT_FLATKEYVALUE, orphan_key.as_ref(), b"orphan")
+                .expect("orphan row");
+            txn.put(ACCOUNT_FLATKEYVALUE, stale_path.as_ref(), b"stale")
+                .expect("stale row");
+            txn.delete(ACCOUNT_FLATKEYVALUE, missing_path.as_ref())
+                .expect("missing row");
+            txn.commit().expect("commit doctoring");
+        }
+        store
+            .set_fkv_prebuilt_accounts_marker(leaf_path(keys.last().expect("keys")).as_ref())
+            .expect("set marker");
+
+        store.generate_flatkeyvalue().expect("trigger generation");
+        assert!(
+            wait_until(Duration::from_secs(30), || {
+                store.last_written().expect("gate") == vec![0xff; 131]
+            }),
+            "generation never finished"
+        );
+
+        let read = store.backend.begin_read().expect("read txn");
+        assert_eq!(
+            read.get(ACCOUNT_FLATKEYVALUE, orphan_key.as_ref())
+                .expect("orphan read"),
+            None,
+            "orphan row must be deleted"
+        );
+        assert_eq!(
+            read.get(ACCOUNT_FLATKEYVALUE, stale_path.as_ref())
+                .expect("stale read"),
+            Some(value.clone()),
+            "stale row must be fixed"
+        );
+        assert_eq!(
+            read.get(ACCOUNT_FLATKEYVALUE, missing_path.as_ref())
+                .expect("missing read"),
+            Some(value),
+            "missing row must be written"
+        );
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_accounts_marker()
+                .expect("marker read"),
+            None,
+            "prebuilt marker must be cleared on completion"
         );
     }
 }

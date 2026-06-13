@@ -5,14 +5,12 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
-#[cfg(feature = "rocksdb")]
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
 
 use ethrex_blockchain::Blockchain;
-use ethrex_common::types::{AccountState, BlockHeader, Code};
+use ethrex_common::types::{AccountState, BlockHeader};
 use ethrex_common::{
     H256,
     constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH},
@@ -31,10 +29,10 @@ use crate::rlpx::p2p::SUPPORTED_ETH_CAPABILITIES;
 use crate::snap::{
     async_fs,
     constants::{
-        BYTECODE_CHUNK_SIZE, MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE,
-        SECONDS_PER_BLOCK, SNAP_LIMIT,
+        MAX_HEADER_FETCH_ATTEMPTS, MIN_FULL_BLOCKS, MISSING_SLOTS_PERCENTAGE, SECONDS_PER_BLOCK,
+        SNAP_LIMIT,
     },
-    request_account_range, request_bytecodes, request_storage_ranges,
+    request_account_range, request_storage_ranges,
 };
 use crate::sync::code_collector::CodeHashCollector;
 use crate::sync::healing::{heal_state_trie_wrap, heal_storage_trie};
@@ -55,6 +53,11 @@ use ethrex_rlp::encode::RLPEncode;
 pub struct SnapBlockSyncState {
     pub block_hashes: Vec<H256>,
     store: Store,
+    /// When false, header batches are stored without advancing the
+    /// header-download checkpoint. The pivot-extension path runs concurrently
+    /// with the background backfill that owns the checkpoint; if both wrote
+    /// it, a restart could resume past headers the backfill never downloaded.
+    checkpoint_enabled: bool,
 }
 
 impl SnapBlockSyncState {
@@ -62,6 +65,17 @@ impl SnapBlockSyncState {
         Self {
             block_hashes: Vec::new(),
             store,
+            checkpoint_enabled: true,
+        }
+    }
+
+    /// State for the pivot-extension segment while a background header
+    /// backfill owns the checkpoint (see `checkpoint_enabled`).
+    pub fn new_without_checkpoint(store: Store) -> Self {
+        Self {
+            block_hashes: Vec::new(),
+            store,
+            checkpoint_enabled: false,
         }
     }
 
@@ -104,15 +118,108 @@ impl SnapBlockSyncState {
         // crash after the headers commit only re-downloads a suffix, while a
         // crash after a checkpoint-first write leaves a dangling checkpoint.
         self.store.add_block_headers(block_headers_vec).await?;
-        self.store
-            .set_header_download_checkpoint(checkpoint)
-            .await?;
+        if self.checkpoint_enabled {
+            self.store
+                .set_header_download_checkpoint(checkpoint)
+                .await?;
+        }
         self.block_hashes.extend_from_slice(&block_hashes);
         Ok(())
     }
 }
 
+/// Downloads headers from `current_head` up to `sync_head` in the background
+/// while the state phases run against a provisional pivot. Owns the
+/// header-download checkpoint. Returns the ordered hashes (oldest first,
+/// ending at the sync head), or `None` if peers never served the target
+/// header — the cycle should then end and wait for a newer sync head.
+async fn header_backfill(
+    mut peers: PeerHandler,
+    store: Store,
+    mut current_head: H256,
+    mut current_head_number: u64,
+    sync_head: H256,
+    pending_block: Option<ethrex_common::types::Block>,
+    diagnostics: Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+) -> Result<Option<Vec<H256>>, SyncError> {
+    let mut block_sync_state = SnapBlockSyncState::new(store);
+    let mut attempts = 0;
+
+    loop {
+        let _ = peers.peer_table.prune_table();
+        debug!("Backfill requesting block headers from {current_head}");
+
+        let Some(mut block_headers) = peers
+            .request_block_headers(current_head_number, sync_head)
+            .await?
+        else {
+            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                warn!("Header backfill failed to find the target header after {attempts} attempts");
+                return Ok(None);
+            }
+            attempts += 1;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            continue;
+        };
+        attempts = 0;
+
+        let Some((first_block_hash, first_block_parent_hash)) = block_headers
+            .first()
+            .map(|header| (header.hash(), header.parent_hash))
+        else {
+            continue;
+        };
+        let Some(last_block_hash) = block_headers.last().map(|header| header.hash()) else {
+            continue;
+        };
+        // Same side-chain fallback as the serial path (TODO #2126).
+        if first_block_hash == last_block_hash
+            && first_block_hash == current_head
+            && current_head != sync_head
+        {
+            warn!("Backfill failed to find target block header, going back to the previous parent");
+            current_head = first_block_parent_hash;
+            continue;
+        }
+
+        if let Some(ref block) = pending_block
+            && block.header.parent_hash == last_block_hash
+        {
+            block_headers.push(block.header.clone());
+        }
+
+        let mut sync_head_found = false;
+        if let Some(index) = block_headers
+            .iter()
+            .position(|header| header.hash() == sync_head)
+        {
+            sync_head_found = true;
+            block_headers.drain(index + 1..);
+        }
+
+        current_head = block_headers.last().map(|h| h.hash()).unwrap_or(sync_head);
+        current_head_number = block_headers.last().map(|h| h.number).unwrap_or_default();
+
+        // Discard the first header as we already have it
+        if block_headers.len() > 1 {
+            block_sync_state
+                .process_incoming_headers(block_headers.into_iter().skip(1))
+                .await?;
+        }
+
+        diagnostics.write().await.phase_progress.insert(
+            "headers_downloaded".to_string(),
+            block_sync_state.block_hashes.len() as u64,
+        );
+
+        if sync_head_found {
+            return Ok(Some(block_sync_state.block_hashes));
+        }
+    }
+}
+
 /// Performs snap sync cycle - fetches state via snap protocol while downloading blocks in parallel
+#[allow(clippy::too_many_arguments)]
 pub async fn sync_cycle_snap(
     peers: &mut PeerHandler,
     blockchain: Arc<Blockchain>,
@@ -121,6 +228,7 @@ pub async fn sync_cycle_snap(
     store: Store,
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
+    probed_head: Option<BlockHeader>,
 ) -> Result<(), SyncError> {
     // Request all block headers between the current head and the sync head
     // We will begin from the current head so that we download the earliest state first
@@ -148,6 +256,52 @@ pub async fn sync_cycle_snap(
         Err(e) => return Err(e.into()),
     };
 
+    // Parallel path: with the sync-head header already probed, the state
+    // phases start immediately against it as a provisional pivot while the
+    // header chain backfills in a background task. The two header segments
+    // stay separate (backfill: current head -> sync head, owning the
+    // checkpoint; pivot extensions: sync head -> final pivot, no checkpoint)
+    // and are concatenated before the forkchoice update, which requires one
+    // contiguous ordered chain ending at the pivot.
+    if let Some(pivot0) = probed_head.filter(|h| h.hash() == sync_head) {
+        info!(
+            pivot = pivot0.number,
+            "Starting state download against the probed sync head while headers backfill in the background"
+        );
+        // The provisional pivot's header must be readable from the store for
+        // body fetch and pivot bookkeeping before the backfill reaches it.
+        store.add_block_headers(vec![pivot0.clone()]).await?;
+        let backfill = tokio::spawn(header_backfill(
+            peers.clone(),
+            store.clone(),
+            current_head,
+            current_head_number,
+            sync_head,
+            pending_block,
+            diagnostics.clone(),
+        ));
+        let mut extension_state = SnapBlockSyncState::new_without_checkpoint(store.clone());
+        let completed = snap_sync(
+            peers,
+            &store,
+            &mut extension_state,
+            datadir,
+            diagnostics,
+            Some(pivot0),
+            Some(backfill),
+        )
+        .await?;
+        if !completed {
+            // Header chain incomplete: keep snap mode and the checkpoint so
+            // the next forkchoice update retries with a newer head.
+            return Ok(());
+        }
+
+        store.clear_snap_state().await?;
+        snap_enabled.store(false, Ordering::Relaxed);
+        return Ok(());
+    }
+
     let mut attempts = 0;
 
     loop {
@@ -156,6 +310,12 @@ pub async fn sync_cycle_snap(
 
         debug!("Requesting Block Headers from {current_head}");
 
+        // The serial header walk is the critical path; the background
+        // backfill and pivot updates fetch headers too but must not write
+        // the global step.
+        METRICS
+            .current_step
+            .set(CurrentStepValue::DownloadingHeaders);
         let Some(mut block_headers) = peers
             .request_block_headers(current_head_number, sync_head)
             .await?
@@ -276,7 +436,16 @@ pub async fn sync_cycle_snap(
         };
     }
 
-    snap_sync(peers, &store, &mut block_sync_state, datadir, diagnostics).await?;
+    snap_sync(
+        peers,
+        &store,
+        &mut block_sync_state,
+        datadir,
+        diagnostics,
+        None,
+        None,
+    )
+    .await?;
 
     store.clear_snap_state().await?;
     snap_enabled.store(false, Ordering::Relaxed);
@@ -285,24 +454,36 @@ pub async fn sync_cycle_snap(
 }
 
 /// Main snap sync logic - downloads state via snap protocol
+///
+/// With `initial_pivot`/`backfill` set (the parallel header path), the pivot
+/// comes from the caller and the header chain is joined from the backfill
+/// task before the forkchoice update.
+#[allow(clippy::too_many_arguments)]
 pub async fn snap_sync(
     peers: &mut PeerHandler,
     store: &Store,
     block_sync_state: &mut SnapBlockSyncState,
     datadir: &Path,
     diagnostics: &Arc<tokio::sync::RwLock<super::SyncDiagnostics>>,
-) -> Result<(), SyncError> {
+    initial_pivot: Option<BlockHeader>,
+    mut backfill: Option<tokio::task::JoinHandle<Result<Option<Vec<H256>>, SyncError>>>,
+) -> Result<bool, SyncError> {
     // snap-sync: launch tasks to fetch blocks and state in parallel
     // - Fetch each block's body and its receipt via eth p2p requests
     // - Fetch the pivot block's state via snap p2p requests
     // - Execute blocks after the pivot (like in full-sync)
-    let pivot_hash = block_sync_state
-        .block_hashes
-        .last()
-        .ok_or(SyncError::NoBlockHeaders)?;
-    let mut pivot_header = store
-        .get_block_header_by_hash(*pivot_hash)?
-        .ok_or(SyncError::CorruptDB)?;
+    let mut pivot_header = match initial_pivot {
+        Some(header) => header,
+        None => {
+            let pivot_hash = block_sync_state
+                .block_hashes
+                .last()
+                .ok_or(SyncError::NoBlockHeaders)?;
+            store
+                .get_block_header_by_hash(*pivot_hash)?
+                .ok_or(SyncError::CorruptDB)?
+        }
+    };
 
     while block_is_stale(&pivot_header) {
         pivot_header = update_pivot(
@@ -338,9 +519,15 @@ pub async fn snap_sync(
     let code_hashes_snapshot_dir = get_code_hashes_snapshots_dir(datadir);
     async_fs::ensure_dir_exists(&code_hashes_snapshot_dir).await?;
 
-    // Create collector to store code hashes in files
+    // Create collector to store code hashes in files. Bytecodes are
+    // content-addressed and pivot-independent, so a background fetcher
+    // downloads them concurrently with the remaining phases, consuming each
+    // code-hash file as the collector finishes writing it.
+    let (code_file_tx, code_file_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut code_hash_collector: CodeHashCollector =
-        CodeHashCollector::new(code_hashes_snapshot_dir.clone());
+        CodeHashCollector::new(code_hashes_snapshot_dir.clone(), code_file_tx);
+    let bytecode_fetcher =
+        super::bytecode_fetcher::spawn_bytecode_fetcher(peers.clone(), store.clone(), code_file_rx);
 
     let mut storage_accounts = AccountStorageRoots::default();
     if !std::env::var("SKIP_START_SNAP_SYNC").is_ok_and(|var| !var.is_empty()) {
@@ -349,6 +536,49 @@ pub async fn snap_sync(
         // account_state_snapshots_dir
 
         diagnostics.write().await.current_phase = "account_ranges".to_string();
+        // Storage ranges download concurrently with the account phase: every
+        // account leaf carries its storage root, so discovered accounts feed
+        // a background wave runner instead of waiting for the built and
+        // healed state trie. Wave leftovers rejoin the post-build loop.
+        let (storage_feed_tx, storage_feed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (pivot_watch_tx, pivot_watch_rx) = tokio::sync::watch::channel(pivot_header.clone());
+        // Ingest each finished storage snapshot file into the temporary
+        // RocksDB while the downloads are still running, instead of ingesting
+        // the whole batch only inside `insert_storages`. Both producers (the
+        // wave runner below and the post-build loop) share the sender; the
+        // per-account trie build still runs once, in `insert_storages`, after
+        // the downloads and the ingest task both finish.
+        #[cfg(feature = "rocksdb")]
+        let (storage_ingest_tx, storage_ingest_handle) = {
+            let (tx, handle) = super::storage_ingestor::spawn_storage_snapshot_ingestor(datadir);
+            (Some(tx), handle)
+        };
+        #[cfg(not(feature = "rocksdb"))]
+        let storage_ingest_tx = None;
+        let storage_waves = tokio::spawn(super::storage_feed::run_storage_waves(
+            peers.clone(),
+            store.clone(),
+            account_storages_snapshots_dir.clone(),
+            storage_feed_rx,
+            pivot_watch_rx,
+            storage_ingest_tx.clone(),
+        ));
+        let storage_hooks = crate::snap::StorageDiscoveryHooks {
+            feed: storage_feed_tx,
+            pivot_watch: pivot_watch_tx,
+        };
+        // Ingest each finished snapshot file into the temporary RocksDB
+        // while the range download is still running, instead of ingesting
+        // the whole batch only after the download completes. The sorted trie
+        // build still runs once, in `insert_accounts`, after the download
+        // and the ingest task both finish.
+        #[cfg(feature = "rocksdb")]
+        let (account_ingest_tx, account_ingest_handle) = {
+            let (tx, handle) = super::account_ingestor::spawn_account_snapshot_ingestor(datadir);
+            (Some(tx), handle)
+        };
+        #[cfg(not(feature = "rocksdb"))]
+        let account_ingest_tx = None;
         request_account_range(
             peers,
             H256::zero(),
@@ -357,6 +587,8 @@ pub async fn snap_sync(
             &mut pivot_header,
             block_sync_state,
             diagnostics,
+            Some(&storage_hooks),
+            account_ingest_tx,
         )
         .await?;
         debug!("Finished downloading account ranges from peers");
@@ -378,7 +610,18 @@ pub async fn snap_sync(
         // We read the account leafs from the files in account_state_snapshots_dir, write it into
         // the trie to compute the nodes and stores the accounts with storages for later use
 
+        #[cfg(feature = "rocksdb")]
+        let (computed_state_root, accounts_with_storage) = insert_accounts(
+            store.clone(),
+            &mut storage_accounts,
+            &account_state_snapshots_dir,
+            datadir,
+            &mut code_hash_collector,
+            account_ingest_handle,
+        )
+        .await?;
         // Variable `accounts_with_storage` unused if not in rocksdb
+        #[cfg(not(feature = "rocksdb"))]
         #[allow(unused_variables)]
         let (computed_state_root, accounts_with_storage) = insert_accounts(
             store.clone(),
@@ -399,9 +642,40 @@ pub async fn snap_sync(
 
         diagnostics.write().await.current_phase = "storage_ranges".to_string();
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+        // The wave runner drains once the feed closes (request_account_range
+        // returning dropped the sender); give it a fresh pivot to finish with,
+        // then reconcile: wave-completed accounts must not be re-downloaded,
+        // wave leftovers replace their stale bookkeeping here.
+        while block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+                diagnostics,
+            )
+            .await?;
+        }
+        storage_hooks.pivot_watch.send_replace(pivot_header.clone());
+        drop(storage_hooks);
+        let wave_outcome = storage_waves.await??;
+        storage_accounts
+            .accounts_with_storage_root
+            .retain(|account, _| !wave_outcome.done.contains(account));
+        storage_accounts
+            .accounts_with_storage_root
+            .extend(wave_outcome.carry.accounts_with_storage_root);
+        storage_accounts
+            .healed_accounts
+            .extend(wave_outcome.carry.healed_accounts);
+        debug!(
+            wave_done = wave_outcome.done.len(),
+            remaining = storage_accounts.accounts_with_storage_root.len(),
+            "Reconciled storage waves with the post-build loop"
+        );
         // We start downloading the storage leafs. To do so, we need to be sure that the storage root
         // is correct. To do so, we always heal the state trie before requesting storage rates
-        let mut chunk_index = 0_u64;
+        let mut chunk_index = wave_outcome.chunk_index;
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
@@ -417,17 +691,22 @@ pub async fn snap_sync(
             }
             // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
             // We just need to update the pivot and start again
-            if !heal_state_trie_wrap(
+            let mut newly_healed_accounts = HashSet::new();
+            let state_heal_complete = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut state_leafs_healed,
-                &mut storage_accounts,
+                &mut newly_healed_accounts,
                 &mut code_hash_collector,
             )
-            .await?
-            {
+            .await?;
+            // Merge even after a partial pass: accounts healed before
+            // staleness hit must still be marked healed (and their recorded
+            // storage roots invalidated) for request_storage_ranges.
+            storage_accounts.merge_healed_accounts(newly_healed_accounts);
+            if !state_heal_complete {
                 continue;
             };
 
@@ -437,6 +716,9 @@ pub async fn snap_sync(
             );
             storage_range_request_attempts += 1;
             if storage_range_request_attempts < 5 {
+                METRICS
+                    .current_step
+                    .set(CurrentStepValue::RequestingStorageRanges);
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
@@ -444,6 +726,7 @@ pub async fn snap_sync(
                     chunk_index,
                     &mut pivot_header,
                     store.clone(),
+                    storage_ingest_tx.clone(),
                 )
                 .await?;
             } else {
@@ -493,6 +776,20 @@ pub async fn snap_sync(
             .set(CurrentStepValue::InsertingStorageRanges);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
+        // Both producers are done (the wave runner was joined above and the
+        // download loop just ended); dropping the last sender closes the
+        // ingest channel so `insert_storages` can join the ingest task.
+        drop(storage_ingest_tx);
+        #[cfg(feature = "rocksdb")]
+        insert_storages(
+            store.clone(),
+            accounts_with_storage,
+            &account_storages_snapshots_dir,
+            datadir,
+            storage_ingest_handle,
+        )
+        .await?;
+        #[cfg(not(feature = "rocksdb"))]
         insert_storages(
             store.clone(),
             accounts_with_storage,
@@ -511,8 +808,19 @@ pub async fn snap_sync(
     debug!("Starting healing process");
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
-    let mut healing_done = false;
-    while !healing_done {
+    // Healing runs in rounds: while state healing is incomplete, both healers
+    // run concurrently, with the storage lane processing the cumulative
+    // healed-accounts snapshot taken at the end of the previous round. The
+    // lanes write disjoint column families through their own single-writer
+    // background tasks, and the state lane collects newly healed accounts
+    // into its own set, merged into `storage_accounts` only between rounds —
+    // so the lanes share no mutable state. The merge re-enqueues every
+    // account the state lane (re-)healed, guaranteeing a later storage pass
+    // re-processes it against its latest healed root. Once state healing is
+    // complete, catch-up storage passes run alone until one covers the whole
+    // healed set within the staleness window.
+    let mut state_heal_complete = false;
+    loop {
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header) {
             pivot_header = update_pivot(
@@ -523,30 +831,66 @@ pub async fn snap_sync(
                 diagnostics,
             )
             .await?;
+            // A new pivot means a new state root: the state trie must be
+            // re-healed before its account leaves can be trusted again.
+            state_heal_complete = false;
         }
-        healing_done = heal_state_trie_wrap(
-            pivot_header.state_root,
-            store.clone(),
-            peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
-            &mut global_state_leafs_healed,
-            &mut storage_accounts,
-            &mut code_hash_collector,
-        )
-        .await?;
-        if !healing_done {
-            continue;
+        let staleness_timestamp = calculate_staleness_timestamp(pivot_header.timestamp);
+        let state_heal_was_complete = state_heal_complete;
+        let mut newly_healed_accounts = HashSet::new();
+        let storage_snapshot = storage_accounts.healed_accounts.clone();
+        let storage_heal_complete = if state_heal_was_complete {
+            // State healing already finished for this pivot: storage healing
+            // is the remaining critical-path work, so flip the global step
+            // only now (the healers don't set it while running concurrently).
+            METRICS.current_step.set(CurrentStepValue::HealingStorage);
+            heal_storage_trie(
+                pivot_header.state_root,
+                storage_snapshot,
+                peers,
+                store.clone(),
+                HashMap::new(),
+                staleness_timestamp,
+                &mut global_storage_leafs_healed,
+            )
+            .await?
+        } else {
+            // The storage lane takes `&mut PeerHandler`, so it gets its own
+            // clone (a cheap handle over the shared peer table) while the
+            // state lane borrows `peers`. Both lanes get the same staleness
+            // deadline; on staleness both return incomplete and the loop
+            // re-pivots.
+            let mut storage_peers = peers.clone();
+            let (state_heal_result, storage_heal_result) = tokio::join!(
+                heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    peers,
+                    staleness_timestamp,
+                    &mut global_state_leafs_healed,
+                    &mut newly_healed_accounts,
+                    &mut code_hash_collector,
+                ),
+                heal_storage_trie(
+                    pivot_header.state_root,
+                    storage_snapshot,
+                    &mut storage_peers,
+                    store.clone(),
+                    HashMap::new(),
+                    staleness_timestamp,
+                    &mut global_storage_leafs_healed,
+                )
+            );
+            state_heal_complete = state_heal_result?;
+            storage_heal_result?
+        };
+        storage_accounts.merge_healed_accounts(newly_healed_accounts);
+        // Done only when state healing was already complete at round entry
+        // (so no account leaf changed during the round) and the storage pass
+        // covered the full healed set within the staleness window.
+        if state_heal_was_complete && storage_heal_complete {
+            break;
         }
-        healing_done = heal_storage_trie(
-            pivot_header.state_root,
-            &storage_accounts,
-            peers,
-            store.clone(),
-            HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
-            &mut global_storage_leafs_healed,
-        )
-        .await?;
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -557,71 +901,18 @@ pub async fn snap_sync(
 
     debug!("Finished healing");
 
-    // Finish code hash collection
+    // Finish code hash collection: flushes the final file and closes the
+    // file channel, letting the bytecode fetcher drain its last batch.
     code_hash_collector.finish().await?;
 
-    *METRICS.bytecode_download_start_time.lock().await = Some(SystemTime::now());
+    diagnostics.write().await.current_phase = "bytecodes".to_string();
+    METRICS
+        .current_step
+        .set(CurrentStepValue::RequestingBytecodes);
+    debug!("Waiting for streamed bytecode download to finish");
+    bytecode_fetcher.await??;
 
     let code_hashes_dir = get_code_hashes_snapshots_dir(datadir);
-    let mut seen_code_hashes = HashSet::new();
-    let mut code_hashes_to_download = Vec::new();
-
-    diagnostics.write().await.current_phase = "bytecodes".to_string();
-    debug!("Starting download code hashes from peers");
-    let code_hash_files = async_fs::read_dir_paths(&code_hashes_dir).await?;
-    for file_path in code_hash_files {
-        let snapshot_contents = async_fs::read_file(&file_path).await?;
-        let code_hashes: Vec<H256> = RLPDecode::decode(&snapshot_contents)
-            .map_err(|_| SyncError::CodeHashesSnapshotDecodeError(file_path))?;
-
-        for hash in code_hashes {
-            // If we haven't seen the code hash yet, add it to the list of hashes to download
-            if seen_code_hashes.insert(hash) {
-                code_hashes_to_download.push(hash);
-
-                if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                    debug!(
-                        "Starting bytecode download of {} hashes",
-                        code_hashes_to_download.len()
-                    );
-                    let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
-                        .await?
-                        .ok_or(SyncError::BytecodesNotFound)?;
-
-                    store
-                        .write_account_code_batch(
-                            code_hashes_to_download
-                                .drain(..)
-                                .zip(bytecodes)
-                                // SAFETY: hash already checked by the download worker
-                                .map(|(hash, code)| {
-                                    (hash, Code::from_bytecode_unchecked(code, hash))
-                                })
-                                .collect(),
-                        )
-                        .await?;
-                }
-            }
-        }
-    }
-
-    // Download remaining bytecodes if any
-    if !code_hashes_to_download.is_empty() {
-        let bytecodes = request_bytecodes(peers, &code_hashes_to_download)
-            .await?
-            .ok_or(SyncError::BytecodesNotFound)?;
-        store
-            .write_account_code_batch(
-                code_hashes_to_download
-                    .drain(..)
-                    .zip(bytecodes)
-                    // SAFETY: hash already checked by the download worker
-                    .map(|(hash, code)| (hash, Code::from_bytecode_unchecked(code, hash)))
-                    .collect(),
-            )
-            .await?;
-    }
-
     async_fs::remove_dir_all(&code_hashes_dir).await?;
 
     *METRICS.bytecode_download_end_time.lock().await = Some(SystemTime::now());
@@ -637,8 +928,27 @@ pub async fn snap_sync(
 
     store.add_block(block).await?;
 
-    let numbers_and_hashes = block_sync_state
-        .block_hashes
+    // With a background backfill, the canonical chain is its segment plus
+    // the pivot extensions accumulated here; both are ordered and contiguous
+    // by construction (backfill ends at the original sync head, extensions
+    // start right after it).
+    let full_chain_hashes = match backfill.take() {
+        Some(handle) => match handle.await?? {
+            Some(mut hashes) => {
+                hashes.extend(block_sync_state.block_hashes.iter().copied());
+                hashes
+            }
+            None => {
+                warn!(
+                    "Header backfill could not find the sync head; ending the cycle to wait for a newer head"
+                );
+                return Ok(false);
+            }
+        },
+        None => std::mem::take(&mut block_sync_state.block_hashes),
+    };
+
+    let numbers_and_hashes = full_chain_hashes
         .iter()
         .rev()
         .enumerate()
@@ -654,7 +964,7 @@ pub async fn snap_sync(
             None,
         )
         .await?;
-    Ok(())
+    Ok(true)
 }
 
 /// Fetches all block bodies for the given block headers via p2p and stores them
@@ -1166,36 +1476,56 @@ async fn insert_accounts(
     account_state_snapshots_dir: &Path,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
+    ingest_handle: super::account_ingestor::AccountIngestHandle,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    use crate::sync::account_ingestor;
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
+    use ethrex_trie::{Nibbles, TrieError};
+
+    /// How many account leaves to accumulate before flushing a
+    /// FlatKeyValue batch through the trie backend.
+    const FKV_EMISSION_BATCH_SIZE: usize = 100_000;
 
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
-    // Move SST files into the temp DB instead of copying them. The snapshot dir
-    // and the temp DB live under the same datadir, so rename succeeds and we
-    // avoid keeping two on-disk copies of the leaf data during ingest.
-    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
-    ingest_opts.set_move_files(true);
-    db.ingest_external_file_opts(&ingest_opts, file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-    let iter = db.full_iterator(rocksdb::IteratorMode::Start);
-    for account in iter {
-        let account = account.map_err(|err| SyncError::RocksDBError(err.into_string()))?;
-        let account_state = AccountState::decode(&account.1).map_err(SyncError::Rlp)?;
-        if account_state.code_hash != *EMPTY_KECCAK_HASH {
-            code_hash_collector.add(account_state.code_hash);
-            code_hash_collector.flush_if_needed().await?;
+    // The ingest task has been moving snapshot files into the temp DB since
+    // the download started; the download's return closed the channel, so the
+    // join yields the DB with every received file already ingested. If the
+    // task died early, reopen the DB: every chunk it never ingested is still
+    // in the snapshot dir (sends are best-effort and `move_files` only
+    // removes ingested files), so the sweep below retries them and a
+    // persistent ingest error resurfaces from there.
+    let db = match ingest_handle.await? {
+        Ok(db) => db,
+        Err(err) => {
+            warn!(
+                "Account snapshot ingest task failed ({err}); re-ingesting the remaining snapshot files"
+            );
+            account_ingestor::open_temp_accounts_db(datadir)?
         }
-    }
-
+    };
+    // Ingest whatever is left in the snapshot dir: chunks whose send failed
+    // because the ingest task had died, or leftovers from a previous run.
+    account_ingestor::ingest_remaining_snapshot_files(&db, account_state_snapshots_dir).await?;
+    // Single pass: the trie build consumes the sorted leaves while the same
+    // decode feeds code-hash collection and the storage-root map, instead of
+    // a dedicated full iteration of the temp DB for the code hashes.
+    //
+    // The same pass also mirrors each leaf into ACCOUNT_FLATKEYVALUE: the
+    // (nibble path, RLP value) pairs are byte-identical to the rows the
+    // post-sync FlatKeyValue generator would re-derive by walking the finished
+    // trie. The rows stay inert — the FKV read gate ("last_written") is
+    // untouched, and the coverage marker written below only records that they
+    // exist so a later phase can reconcile and promote them.
+    let trie_db = trie.db();
+    let mut fkv_buffer: Vec<(Nibbles, Vec<u8>)> = Vec::with_capacity(FKV_EMISSION_BATCH_SIZE);
+    // `inspect` can't propagate errors, so the first flush failure is parked
+    // here and returned once the trie build finishes.
+    let mut fkv_flush_error: Option<TrieError> = None;
+    let mut fkv_last_emitted: Option<H256> = None;
     let iter = db.full_iterator(rocksdb::IteratorMode::Start);
     let compute_state_root = trie_from_sorted_accounts_wrap(
-        trie.db(),
+        trie_db,
         &mut iter
             .map(|k| k.expect("We shouldn't have a rocksdb error here")) // TODO: remove unwrap
             .inspect(|(k, v)| {
@@ -1203,16 +1533,41 @@ async fn insert_accounts(
                     .account_tries_inserted
                     .fetch_add(1, Ordering::Relaxed);
                 let account_state = AccountState::decode(v).expect("We should have accounts here");
+                if account_state.code_hash != *EMPTY_KECCAK_HASH {
+                    code_hash_collector.add(account_state.code_hash);
+                    code_hash_collector.flush_if_needed_sync();
+                }
                 if account_state.storage_root != *EMPTY_TRIE_HASH {
                     storage_accounts.accounts_with_storage_root.insert(
                         H256::from_slice(k),
                         (Some(account_state.storage_root), Vec::new()),
                     );
                 }
+                if fkv_flush_error.is_none() {
+                    fkv_buffer.push((Nibbles::from_bytes(k), v.to_vec()));
+                    fkv_last_emitted = Some(H256::from_slice(k));
+                    if fkv_buffer.len() >= FKV_EMISSION_BATCH_SIZE
+                        && let Err(err) = trie_db.put_batch(std::mem::take(&mut fkv_buffer))
+                    {
+                        fkv_flush_error = Some(err);
+                    }
+                }
             })
             .map(|(k, v)| (H256::from_slice(&k), v.to_vec())),
     )
     .map_err(SyncError::TrieGenerationError)?;
+
+    if let Some(err) = fkv_flush_error {
+        return Err(err.into());
+    }
+    if !fkv_buffer.is_empty() {
+        trie_db.put_batch(fkv_buffer)?;
+    }
+    if let Some(account_hash) = fkv_last_emitted {
+        store.set_fkv_prebuilt_accounts_marker(
+            Nibbles::from_bytes(account_hash.as_bytes()).as_ref(),
+        )?;
+    }
 
     drop(db); // close db before removing directory
 
@@ -1230,14 +1585,21 @@ async fn insert_storages(
     accounts_with_storage: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     datadir: &Path,
+    ingest_handle: super::storage_ingestor::StorageIngestHandle,
 ) -> Result<(), SyncError> {
+    use crate::sync::storage_ingestor;
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
+    use ethrex_storage::error::StoreError;
     use ethrex_trie::{
         Nibbles, Node, ThreadPool,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;
+
+    /// How many storage leaves an account build accumulates before flushing a
+    /// FlatKeyValue batch to the store.
+    const FKV_EMISSION_BATCH_SIZE: usize = 100_000;
 
     struct RocksDBIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
@@ -1273,18 +1635,25 @@ async fn insert_storages(
         }
     }
 
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
-    // Move SST files into the temp DB instead of copying them. The snapshot dir
-    // and the temp DB live under the same datadir, so rename succeeds and we
-    // avoid keeping two on-disk copies of the leaf data during ingest.
-    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
-    ingest_opts.set_move_files(true);
-    db.ingest_external_file_opts(&ingest_opts, file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    // The ingest task has been moving snapshot files into the temp DB since
+    // the storage downloads started; dropping the last sender closed the
+    // channel, so the join yields the DB with every received file already
+    // ingested. If the task died early, reopen the DB: every chunk it never
+    // ingested is still in the snapshot dir (sends are best-effort and
+    // `move_files` only removes ingested files), so the sweep below retries
+    // them and a persistent ingest error resurfaces from there.
+    let db = match ingest_handle.await? {
+        Ok(db) => db,
+        Err(err) => {
+            warn!(
+                "Storage snapshot ingest task failed ({err}); re-ingesting the remaining snapshot files"
+            );
+            storage_ingestor::open_temp_storage_db(datadir)?
+        }
+    };
+    // Ingest whatever is left in the snapshot dir: chunks whose send failed
+    // because the ingest task had died, or leftovers from a previous run.
+    storage_ingestor::ingest_remaining_snapshot_files(&db, account_storages_snapshots_dir).await?;
     let snapshot = db.snapshot();
 
     let account_with_storage_and_tries = accounts_with_storage
@@ -1310,12 +1679,18 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
+    // Accounts whose build finished with every FlatKeyValue row committed;
+    // drained into the coverage list once the build pool has joined.
+    let (completed_sender, completed_receiver) = unbounded::<H256>();
+
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
+            let completed_sender = completed_sender.clone();
+            let store = store.clone();
             if counter >= thread_count - 1 {
                 let _ = receiver.recv();
                 counter -= 1;
@@ -1332,9 +1707,35 @@ async fn insert_storages(
                     limit: *account_hash,
                 };
 
-                let _ = trie_from_sorted_accounts(
+                // Mirror each slot leaf into STORAGE_FLATKEYVALUE while the
+                // trie build consumes the sorted iterator: the
+                // (account-prefixed nibble path, RLP value) rows are
+                // byte-identical to what the post-sync FlatKeyValue generator
+                // would re-derive by walking the finished storage trie. The
+                // rows stay inert — the FKV read gate ("last_written") is
+                // untouched — and the coverage record below only marks that
+                // this account's rows exist so a later phase can reconcile
+                // and promote them.
+                let mut fkv_buffer: Vec<(Nibbles, Vec<u8>)> = Vec::new();
+                // `inspect` can't propagate errors, so the first flush
+                // failure is parked here and skips the coverage record.
+                let mut fkv_flush_error: Option<StoreError> = None;
+                let build_result = trie_from_sorted_accounts(
                     trie.db(),
-                    &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
+                    &mut iter.inspect(|(slot_hash, value)| {
+                        METRICS.storage_leaves_inserted.inc();
+                        if fkv_flush_error.is_none() {
+                            fkv_buffer
+                                .push((Nibbles::from_bytes(slot_hash.as_bytes()), value.clone()));
+                            if fkv_buffer.len() >= FKV_EMISSION_BATCH_SIZE
+                                && let Err(err) = store.write_storage_flatkeyvalue_batch_sync(
+                                    vec![(*account_hash, std::mem::take(&mut fkv_buffer))],
+                                )
+                            {
+                                fkv_flush_error = Some(err);
+                            }
+                        }
+                    }),
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
@@ -1343,13 +1744,45 @@ async fn insert_storages(
                     error!(
                         "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
                     );
-                })
-                .map_err(SyncError::TrieGenerationError);
+                });
+
+                // Record coverage only when the build consumed every leaf and
+                // every FlatKeyValue batch (including the tail) committed:
+                // the post-sync verifier trusts listed accounts to have a
+                // complete set of rows.
+                if build_result.is_ok() && fkv_flush_error.is_none() {
+                    let tail_flush = if fkv_buffer.is_empty() {
+                        Ok(())
+                    } else {
+                        store.write_storage_flatkeyvalue_batch_sync(vec![(
+                            *account_hash,
+                            fkv_buffer,
+                        )])
+                    };
+                    match tail_flush {
+                        Ok(()) => {
+                            let _ = completed_sender.send(*account_hash);
+                        }
+                        Err(err) => fkv_flush_error = Some(err),
+                    }
+                }
+                if let Some(err) = fkv_flush_error {
+                    error!(
+                        "failed to write storage FlatKeyValue rows for the account {account_hash:x}, err {err}; skipping its coverage record"
+                    );
+                }
                 let _ = sender.send(());
             });
             pool.execute(task);
         }
     });
+
+    // The scope joined every build thread, so each account hash in the
+    // channel had all of its FlatKeyValue rows committed before being sent;
+    // record the whole run's coverage in one append.
+    drop(completed_sender);
+    let completed_accounts: Vec<H256> = completed_receiver.try_iter().collect();
+    store.append_fkv_prebuilt_storage_accounts(&completed_accounts)?;
 
     // close db before removing directory
     drop(snapshot);

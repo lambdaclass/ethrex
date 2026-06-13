@@ -1,5 +1,5 @@
 use crate::{
-    metrics::{CurrentStepValue, METRICS},
+    metrics::METRICS,
     peer_handler::PeerHandler,
     peer_table::PeerTableServerProtocol as _,
     rlpx::{
@@ -14,7 +14,7 @@ use crate::{
         },
         request_storage_trienodes,
     },
-    sync::{AccountStorageRoots, SyncError},
+    sync::SyncError,
     utils::current_unix_time,
 };
 
@@ -28,8 +28,8 @@ use rand::random;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::{BinaryHeap, HashMap},
-    sync::atomic::Ordering,
+    collections::{BinaryHeap, HashMap, HashSet},
+    sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
 };
 use tokio::{sync::mpsc::error::TryRecvError, task::JoinSet};
@@ -153,7 +153,10 @@ impl Ord for DepthOrderedRequest {
 
 /// This algorithm 'heals' the storage trie. That is to say, it downloads data until all accounts have the storage indicated
 /// by the storage root in their account state
-/// We receive a list of the counts that we want to save, we heal by chunks of accounts.
+/// We receive the snapshot of healed accounts to process by value: state
+/// healing may run concurrently with this pass, collecting newly healed
+/// accounts into its own set which the caller merges between passes, so this
+/// pass must own a stable snapshot.
 /// We assume these accounts are not empty hash tries, but may or may not have their
 /// Algorithmic rules:
 /// - If a nodehash is present in the db, it and all of its children are present in the db
@@ -161,20 +164,25 @@ impl Ord for DepthOrderedRequest {
 /// - When a node is downloaded:
 ///    - if it has no missing children, we store it in the db
 ///    - if the node has missing children, we store it in our healing_queue, which is preserved between calls
+///
+/// Note: this function does not set the global sync step. While state healing
+/// is still incomplete the step must stay on `HealingState` (critical-path
+/// rule), so the caller sets `HealingStorage` only when storage healing is the
+/// remaining work.
 pub async fn heal_storage_trie(
     state_root: H256,
-    storage_accounts: &AccountStorageRoots,
+    healed_accounts: HashSet<H256>,
     peers: &mut PeerHandler,
     store: Store,
     healing_queue: StorageHealingQueue,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
 ) -> Result<bool, SyncError> {
-    METRICS.current_step.set(CurrentStepValue::HealingStorage);
-    let download_queue = get_initial_downloads(&store, state_root, storage_accounts);
+    let (download_queue, unresolved_accounts) =
+        get_initial_downloads(&store, state_root, &healed_accounts);
     debug!(
         initial_accounts_count = download_queue.len(),
-        "Started Storage Healing",
+        unresolved_accounts, "Started Storage Healing",
     );
     let mut state = StorageHealer {
         last_update: Instant::now(),
@@ -263,25 +271,58 @@ pub async fn heal_storage_trie(
             }
             db_joinset.spawn_blocking(move || {
                 let mut encoded_to_write = vec![];
+                let mut fkv_to_write = vec![];
                 for (hashed_account, nodes) in to_write {
                     let mut account_nodes = vec![];
+                    let mut account_leaves = vec![];
                     for (path, node) in nodes {
                         for i in 0..path.len() {
                             account_nodes.push((path.slice(0, i), vec![]));
                         }
+                        // Mirror healed leaves into the storage FlatKeyValue
+                        // table: prebuilt FKV rows derived from pre-healing
+                        // range data go stale wherever healing changes a leaf,
+                        // so the healed value must overwrite them. The node
+                        // batch below goes through
+                        // `write_storage_trie_nodes_batch`, which targets
+                        // STORAGE_TRIE_NODES unconditionally, so leaves take a
+                        // dedicated FKV write issued by this same single
+                        // background task to preserve write ordering.
+                        //
+                        // Limitation: healing only observes nodes it downloads,
+                        // so leaves *removed* from the trie are not visible
+                        // here. Stale FKV rows for deleted slots are left in
+                        // place for a later reconciliation phase to detect and
+                        // remove.
+                        if let Node::Leaf(leaf) = &node {
+                            account_leaves.push((path.concat(&leaf.partial), leaf.value.clone()));
+                        }
                         account_nodes.push((path, node.encode_to_vec()));
                     }
                     encoded_to_write.push((hashed_account, account_nodes));
+                    if !account_leaves.is_empty() {
+                        fkv_to_write.push((hashed_account, account_leaves));
+                    }
                 }
                 // PERF: use put_batch_no_alloc? (it needs to remove parent nodes too)
                 spawned_rt::tasks::block_on(store.write_storage_trie_nodes_batch(encoded_to_write))
                     .expect("db write failed");
+                if !fkv_to_write.is_empty() {
+                    spawned_rt::tasks::block_on(
+                        store.write_storage_flatkeyvalue_batch(fkv_to_write),
+                    )
+                    .expect("db write failed");
+                }
             });
         }
 
         if is_done {
             db_joinset.join_all().await;
-            return Ok(true);
+            // Accounts whose storage root couldn't be resolved (a concurrent
+            // state-healing flush was in progress) were skipped this pass:
+            // report it as incomplete so the caller runs another pass over
+            // the cumulative healed set.
+            return Ok(unresolved_accounts == 0);
         }
 
         if is_stale {
@@ -641,24 +682,37 @@ fn process_node_responses(
     Ok(())
 }
 
+/// Builds the initial download queue: one storage-root request per healed
+/// account, resolved from the state trie at `state_root`. Also returns the
+/// number of accounts whose trie read failed: a concurrent state-healing
+/// flush transiently clears ancestor node paths (including the root) between
+/// write batches, so reads can error while the state lane is running. Skipped
+/// accounts stay in the caller's cumulative healed set and are retried on the
+/// next pass, which the caller schedules because this pass reports itself
+/// incomplete.
 fn get_initial_downloads(
     store: &Store,
     state_root: H256,
-    account_paths: &AccountStorageRoots,
-) -> BinaryHeap<DepthOrderedRequest> {
+    healed_accounts: &HashSet<H256>,
+) -> (BinaryHeap<DepthOrderedRequest>, usize) {
     let trie = store
         .open_locked_state_trie(state_root)
         .expect("We should be able to open the store");
-    account_paths
-        .healed_accounts
+    let unresolved_accounts = AtomicUsize::new(0);
+    let download_queue = healed_accounts
         .par_iter()
         .filter_map(|acc_path| {
-            // Accounts can be deleted from the trie after the healing process happens
-            // This is an edge case where an account with value got deleted by
-            // a self destruct contract creation step
-            let rlp = trie
-                .get(acc_path.as_bytes())
-                .expect("We should be able to open the store")?;
+            let rlp = match trie.get(acc_path.as_bytes()) {
+                Ok(Some(rlp)) => rlp,
+                // Accounts can be deleted from the trie after the healing process happens
+                // This is an edge case where an account with value got deleted by
+                // a self destruct contract creation step
+                Ok(None) => return None,
+                Err(_) => {
+                    unresolved_accounts.fetch_add(1, Ordering::Relaxed);
+                    return None;
+                }
+            };
             let account = AccountState::decode(&rlp).expect("We should have a valid account");
             if account.storage_root == *EMPTY_TRIE_HASH {
                 return None;
@@ -671,7 +725,8 @@ fn get_initial_downloads(
                 hash: account.storage_root,
             }))
         })
-        .collect()
+        .collect();
+    (download_queue, unresolved_accounts.load(Ordering::Relaxed))
 }
 
 /// Returns the full paths to the node's missing children and grandchildren

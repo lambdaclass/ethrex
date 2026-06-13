@@ -4,10 +4,16 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+#[cfg(feature = "rocksdb")]
+mod account_ingestor;
+mod bytecode_fetcher;
 mod code_collector;
 mod full;
 mod healing;
 mod snap_sync;
+mod storage_feed;
+#[cfg(feature = "rocksdb")]
+mod storage_ingestor;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};
@@ -212,9 +218,11 @@ impl Syncer {
             // barely synced themselves. Pre-checking avoids that. The probe
             // response is intentionally discarded; on the snap path the loop
             // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
-            if let Some(sync_head_number) = probe_sync_head_number(&mut self.peers, sync_head).await
-                && sync_head_number < MIN_FULL_BLOCKS
+            let probed_head = probe_sync_head(&mut self.peers, sync_head).await;
+            if let Some(header) = &probed_head
+                && header.number < MIN_FULL_BLOCKS
             {
+                let sync_head_number = header.number;
                 info!(
                     sync_head_number,
                     "Sync head below MIN_FULL_BLOCKS ({MIN_FULL_BLOCKS}), using full sync"
@@ -248,6 +256,7 @@ impl Syncer {
                 store,
                 &self.datadir,
                 &self.diagnostics,
+                probed_head,
             )
             .await;
             METRICS.disable().await;
@@ -270,7 +279,7 @@ const PROBE_SYNC_HEAD_ATTEMPTS: u32 = 3;
 /// Delay between probe attempts.
 const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Tries to fetch the block header for `sync_head` and return its number.
+/// Tries to fetch the block header for `sync_head`.
 ///
 /// Returns `None` if peers don't respond with the requested header within
 /// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
@@ -281,7 +290,10 @@ const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::fr
 /// `PROBE_SYNC_HEAD_RETRY_DELAY` = ~19s on a peer-starved network before we
 /// fall through to the snap path. On a healthy network the first attempt
 /// usually returns in well under a second.
-async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Option<u64> {
+async fn probe_sync_head(
+    peers: &mut PeerHandler,
+    sync_head: H256,
+) -> Option<ethrex_common::types::BlockHeader> {
     for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
         match peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
@@ -289,7 +301,7 @@ async fn probe_sync_head_number(peers: &mut PeerHandler, sync_head: H256) -> Opt
         {
             Ok(Some(headers)) => {
                 if let Some(header) = headers.iter().find(|h| h.hash() == sync_head) {
-                    return Some(header.number);
+                    return Some(header.clone());
                 }
                 debug!("Sync head probe: response did not contain target header");
             }
@@ -319,6 +331,24 @@ pub struct AccountStorageRoots {
     /// If an account has been healed, it may return to a previous state, so we just store the account
     /// in a hashset
     pub healed_accounts: HashSet<H256>,
+}
+
+impl AccountStorageRoots {
+    /// Merges the accounts healed by a state-healing pass: marks them healed
+    /// and invalidates any storage root recorded for them, since the healed
+    /// leaf may have changed the root. State healing collects these into its
+    /// own set instead of mutating this struct directly, so a storage-healing
+    /// pass can run concurrently over a snapshot of `healed_accounts`; merging
+    /// between passes re-enqueues every re-healed account for the next
+    /// storage pass against its latest root.
+    pub fn merge_healed_accounts(&mut self, healed: HashSet<H256>) {
+        for account_hash in healed {
+            if let Some((root, _)) = self.accounts_with_storage_root.get_mut(&account_hash) {
+                *root = None;
+            }
+            self.healed_accounts.insert(account_hash);
+        }
+    }
 }
 
 #[derive(thiserror::Error, Debug)]

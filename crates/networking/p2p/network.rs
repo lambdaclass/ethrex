@@ -233,6 +233,9 @@ pub async fn periodically_show_peer_stats_during_syncing(
     let mut phase_start = PhaseCounters::default();
     // Track metrics from previous interval for rate calculations
     let mut prev_interval = PhaseCounters::default();
+    // Wall-clock instant of the previous interval snapshot, so lane rates are
+    // computed over the real elapsed time rather than an assumed tick length.
+    let mut prev_interval_at = std::time::Instant::now();
 
     loop {
         if blockchain.is_synced() {
@@ -334,22 +337,12 @@ pub async fn periodically_show_peer_stats_during_syncing(
             continue;
         }
 
-        // Detect phase transition
+        // Detect critical-path phase transition. With pipelined sync several
+        // lanes progress at once; the step transitions only mark which lane
+        // gates overall completion, while the table below shows all of them.
         if current_step != previous_step && current_step != CurrentStepValue::None {
             // Log completion of previous phase (if any)
             if previous_step != CurrentStepValue::None {
-                // Force a final progress print so the bar doesn't look incomplete
-                let phase_elapsed = phase_start_time.elapsed();
-                let total_elapsed = format_duration(start.elapsed());
-                log_phase_progress(
-                    previous_step,
-                    phase_elapsed,
-                    &total_elapsed,
-                    peer_number,
-                    &prev_interval,
-                )
-                .await;
-
                 let phase_elapsed_str = format_duration(phase_start_time.elapsed());
                 log_phase_completion(
                     previous_step,
@@ -387,18 +380,18 @@ pub async fn periodically_show_peer_stats_during_syncing(
             previous_step = current_step;
         }
 
-        // Log phase-specific progress update
-        let phase_elapsed = phase_start_time.elapsed();
+        // All-lane progress table: with pipelined sync several lanes advance
+        // concurrently, so every tick prints every lane instead of a block
+        // for whichever lane owns the global step.
         let total_elapsed = format_duration(start.elapsed());
-
-        log_phase_progress(
+        let tick_secs = prev_interval_at.elapsed().as_secs_f64().max(1.0);
+        log_lane_table(
             current_step,
-            phase_elapsed,
+            &prev_interval,
+            tick_secs,
             &total_elapsed,
             peer_number,
-            &prev_interval,
-        )
-        .await;
+        );
 
         // Push progress + peer health to Prometheus
         #[cfg(feature = "metrics")]
@@ -418,9 +411,160 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
         // Update previous interval counters for next rate calculation
         prev_interval = PhaseCounters::capture_current();
+        prev_interval_at = std::time::Instant::now();
 
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
+}
+
+/// One row of the lane table: a sync activity that may run concurrently with
+/// the others once the pipeline seams land.
+struct LaneRow {
+    name: &'static str,
+    /// Which global step marks this lane as the critical path.
+    steps: &'static [CurrentStepValue],
+    total: u64,
+    /// Counter delta since the previous tick.
+    delta: u64,
+    /// Known target for this lane, if any (only headers today).
+    target: Option<u64>,
+}
+
+impl LaneRow {
+    fn state(&self, current_step: CurrentStepValue, rate: u64) -> &'static str {
+        if let Some(target) = self.target
+            && target > 0
+            && self.total >= target
+        {
+            return "done";
+        }
+        if self.steps.contains(&current_step) || rate > 0 {
+            return "active";
+        }
+        if self.total > 0 { "idle" } else { "queued" }
+    }
+}
+
+/// Prints one table with a row per lane each tick. Lane rates are computed
+/// from counter deltas over the real interval; "◀" marks the lane gating
+/// overall completion (the global step).
+fn log_lane_table(
+    current_step: CurrentStepValue,
+    prev: &PhaseCounters,
+    tick_secs: f64,
+    total_elapsed: &str,
+    peer_count: usize,
+) {
+    let now = PhaseCounters::capture_current();
+    let sync_head_block = METRICS.sync_head_block.load(Ordering::Relaxed);
+    use CurrentStepValue as S;
+    let rows = [
+        LaneRow {
+            name: "headers",
+            steps: &[S::DownloadingHeaders],
+            total: now.headers,
+            delta: now.headers.saturating_sub(prev.headers),
+            target: Some(sync_head_block),
+        },
+        LaneRow {
+            name: "accounts \u{2193}",
+            steps: &[S::RequestingAccountRanges],
+            total: now.accounts,
+            delta: now.accounts.saturating_sub(prev.accounts),
+            target: None,
+        },
+        LaneRow {
+            name: "account trie",
+            steps: &[S::InsertingAccountRanges, S::InsertingAccountRangesNoDb],
+            total: now.accounts_inserted,
+            delta: now.accounts_inserted.saturating_sub(prev.accounts_inserted),
+            target: None,
+        },
+        LaneRow {
+            name: "storage \u{2193}",
+            steps: &[S::RequestingStorageRanges],
+            total: now.storage,
+            delta: now.storage.saturating_sub(prev.storage),
+            target: None,
+        },
+        LaneRow {
+            name: "storage trie",
+            steps: &[S::InsertingStorageRanges],
+            total: now.storage_inserted,
+            delta: now.storage_inserted.saturating_sub(prev.storage_inserted),
+            target: None,
+        },
+        LaneRow {
+            name: "state heal",
+            steps: &[S::HealingState],
+            total: now.healed_accounts,
+            delta: now.healed_accounts.saturating_sub(prev.healed_accounts),
+            target: None,
+        },
+        LaneRow {
+            name: "storage heal",
+            steps: &[S::HealingStorage],
+            total: now.healed_storage,
+            delta: now.healed_storage.saturating_sub(prev.healed_storage),
+            target: None,
+        },
+        LaneRow {
+            name: "bytecodes \u{2193}",
+            steps: &[S::RequestingBytecodes],
+            total: now.bytecodes,
+            delta: now.bytecodes.saturating_sub(prev.bytecodes),
+            target: None,
+        },
+    ];
+
+    let header = format!(
+        "─ SNAP SYNC ─ total {} │ peers {} ",
+        total_elapsed, peer_count
+    );
+    info!("");
+    info!(
+        "╭{}{}╮",
+        header,
+        "─".repeat(76usize.saturating_sub(header.chars().count()))
+    );
+    info!(
+        "│ {:<13} {:>30} {:>14}   {:<11} │",
+        "lane", "progress", "rate/s", "state"
+    );
+    for row in &rows {
+        let rate = (row.delta as f64 / tick_secs) as u64;
+        let progress = match row.target {
+            Some(target) if target > 0 => {
+                let pct = (row.total.min(target) as f64 / target as f64) * 100.0;
+                format!(
+                    "{} / {}  {:>5.1}%",
+                    format_thousands(row.total.min(target)),
+                    format_thousands(target),
+                    pct
+                )
+            }
+            _ => format_thousands(row.total),
+        };
+        let state = row.state(current_step, rate);
+        let marker = if row.steps.contains(&current_step) {
+            " ◀"
+        } else {
+            ""
+        };
+        let rate_str = if rate > 0 {
+            format_thousands(rate)
+        } else {
+            "—".to_string()
+        };
+        info!(
+            "│ {:<13} {:>30} {:>14}   {:<11} │",
+            row.name,
+            progress,
+            rate_str,
+            format!("{}{}", state, marker),
+        );
+    }
+    info!("╰{}╯", "─".repeat(76));
 }
 
 /// Returns (phase_number, phase_name) for the current step
@@ -517,173 +661,6 @@ async fn phase_metrics(step: CurrentStepValue, phase_start: &PhaseCounters) -> S
     }
 }
 
-/// Interval in seconds between progress updates
-const PROGRESS_INTERVAL_SECS: u64 = 30;
-
-async fn log_phase_progress(
-    step: CurrentStepValue,
-    phase_elapsed: Duration,
-    total_elapsed: &str,
-    peer_count: usize,
-    prev_interval: &PhaseCounters,
-) {
-    let phase_elapsed_str = format_duration(phase_elapsed);
-
-    // Use consistent column widths: left column 40 chars, then │, then right column
-    let col1_width = 40;
-
-    match step {
-        CurrentStepValue::DownloadingHeaders => {
-            let headers_to_download = METRICS.sync_head_block.load(Ordering::Relaxed);
-            let headers_downloaded =
-                u64::min(METRICS.downloaded_headers.get(), headers_to_download);
-            let interval_downloaded = headers_downloaded.saturating_sub(prev_interval.headers);
-            let percentage = if headers_to_download == 0 {
-                0.0
-            } else {
-                (headers_downloaded as f64 / headers_to_download as f64) * 100.0
-            };
-            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
-
-            let progress = progress_bar(percentage, 40);
-            info!("  {} {:>5.1}%", progress, percentage);
-            info!("");
-            let col1 = format!(
-                "Headers: {} / {}",
-                format_thousands(headers_downloaded),
-                format_thousands(headers_to_download)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} headers/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::RequestingAccountRanges => {
-            let accounts_downloaded = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
-            let interval_downloaded = accounts_downloaded.saturating_sub(prev_interval.accounts);
-            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
-
-            info!("");
-            let col1 = format!(
-                "Accounts fetched: {}",
-                format_thousands(accounts_downloaded)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::InsertingAccountRanges | CurrentStepValue::InsertingAccountRangesNoDb => {
-            let accounts_to_insert = METRICS.downloaded_account_tries.load(Ordering::Relaxed);
-            let accounts_inserted = METRICS.account_tries_inserted.load(Ordering::Relaxed);
-            let interval_inserted =
-                accounts_inserted.saturating_sub(prev_interval.accounts_inserted);
-            let percentage = if accounts_to_insert == 0 {
-                0.0
-            } else {
-                (accounts_inserted as f64 / accounts_to_insert as f64) * 100.0
-            };
-            let rate = interval_inserted / PROGRESS_INTERVAL_SECS;
-
-            let progress = progress_bar(percentage, 40);
-            info!("  {} {:>5.1}%", progress, percentage);
-            info!("");
-            let col1 = format!(
-                "Accounts: {} / {}",
-                format_thousands(accounts_inserted),
-                format_thousands(accounts_to_insert)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::RequestingStorageRanges => {
-            let storage_downloaded = METRICS.storage_leaves_downloaded.get();
-            let interval_downloaded = storage_downloaded.saturating_sub(prev_interval.storage);
-            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
-
-            info!("");
-            let col1 = format!(
-                "Storage slots fetched: {}",
-                format_thousands(storage_downloaded)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} slots/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::InsertingStorageRanges => {
-            let storage_inserted = METRICS.storage_leaves_inserted.get();
-            let interval_inserted = storage_inserted.saturating_sub(prev_interval.storage_inserted);
-            let rate = interval_inserted / PROGRESS_INTERVAL_SECS;
-
-            info!("");
-            let col1 = format!(
-                "Storage slots inserted: {}",
-                format_thousands(storage_inserted)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} slots/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::HealingState => {
-            let healed = METRICS
-                .global_state_trie_leafs_healed
-                .load(Ordering::Relaxed);
-            let interval_healed = healed.saturating_sub(prev_interval.healed_accounts);
-            let rate = interval_healed / PROGRESS_INTERVAL_SECS;
-
-            info!("");
-            let col1 = format!("State paths healed: {}", format_thousands(healed));
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} paths/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::HealingStorage => {
-            let healed = METRICS
-                .global_storage_tries_leafs_healed
-                .load(Ordering::Relaxed);
-            let interval_healed = healed.saturating_sub(prev_interval.healed_storage);
-            let rate = interval_healed / PROGRESS_INTERVAL_SECS;
-
-            info!("");
-            let col1 = format!("Storage accounts healed: {}", format_thousands(healed));
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} accounts/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::RequestingBytecodes => {
-            let bytecodes_to_download = METRICS.bytecodes_to_download.load(Ordering::Relaxed);
-            let bytecodes_downloaded = METRICS.downloaded_bytecodes.load(Ordering::Relaxed);
-            let interval_downloaded = bytecodes_downloaded.saturating_sub(prev_interval.bytecodes);
-            let percentage = if bytecodes_to_download == 0 {
-                0.0
-            } else {
-                (bytecodes_downloaded as f64 / bytecodes_to_download as f64) * 100.0
-            };
-            let rate = interval_downloaded / PROGRESS_INTERVAL_SECS;
-
-            let progress = progress_bar(percentage, 40);
-            info!("  {} {:>5.1}%", progress, percentage);
-            info!("");
-            let col1 = format!(
-                "Bytecodes: {} / {}",
-                format_thousands(bytecodes_downloaded),
-                format_thousands(bytecodes_to_download)
-            );
-            info!("  {:<col1_width$} │  Elapsed: {}", col1, phase_elapsed_str);
-            let col1 = format!("Rate: {} codes/s", format_thousands(rate));
-            info!("  {:<col1_width$} │  Peers: {}", col1, peer_count);
-            info!("  Total time: {}", total_elapsed);
-        }
-        CurrentStepValue::None => {}
-    }
-}
-
 /// Push snap sync progress to Prometheus gauges (from METRICS atomics).
 /// Called each polling cycle. Rates are NOT computed here — use rate() in Grafana.
 #[cfg(feature = "metrics")]
@@ -754,14 +731,6 @@ fn push_sync_prometheus_metrics(step: CurrentStepValue) {
         }
         CurrentStepValue::None => {}
     }
-}
-
-fn progress_bar(percentage: f64, width: usize) -> String {
-    let clamped_percentage = percentage.clamp(0.0, 100.0);
-    let filled = ((clamped_percentage / 100.0) * width as f64) as usize;
-    let filled = filled.min(width);
-    let empty = width.saturating_sub(filled);
-    format!("{}{}", "▓".repeat(filled), "░".repeat(empty))
 }
 
 fn format_thousands(n: u64) -> String {

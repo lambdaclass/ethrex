@@ -26,6 +26,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
+    constants::EMPTY_TRIE_HASH,
     types::{AccountState, BlockHeader},
 };
 use ethrex_crypto::NativeCrypto;
@@ -35,7 +36,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
@@ -43,6 +44,14 @@ use tracing::{debug, error, trace, warn};
 
 // Re-export DumpError from error module
 pub use super::error::DumpError;
+
+/// Hooks letting the account-range download feed the concurrent storage
+/// downloader: discovered (account, storage_root) pairs, and pivot updates so
+/// stale storage waves can wait for a fresh header instead of re-pivoting.
+pub struct StorageDiscoveryHooks {
+    pub feed: tokio::sync::mpsc::UnboundedSender<Vec<(H256, H256)>>,
+    pub pivot_watch: tokio::sync::watch::Sender<BlockHeader>,
+}
 
 /// Metadata for requesting trie nodes
 #[derive(Debug, Clone)]
@@ -84,12 +93,19 @@ struct StorageTask {
 /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
 /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
 ///
+/// With `account_ingest_tx` set, each finished snapshot file is announced as
+/// `(chunk_index, path)` to the background ingest task so it can be ingested
+/// into the temp DB while the download is still running. Sends are
+/// best-effort: if the ingest task is gone the file stays in the snapshot
+/// dir and is picked up at build time.
+///
 /// # Returns
 ///
 /// The account range or `None` if:
 ///
 /// - There are no available peers (the node just started up or was rejected by all other nodes)
 /// - No peer returned a valid response in the given time and retry limits
+#[allow(clippy::too_many_arguments)]
 pub async fn request_account_range(
     peers: &mut PeerHandler,
     start: H256,
@@ -98,6 +114,8 @@ pub async fn request_account_range(
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
     diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
+    storage_hooks: Option<&StorageDiscoveryHooks>,
+    account_ingest_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, PathBuf)>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -163,13 +181,26 @@ pub async fn request_account_range(
             async_fs::ensure_dir_exists(account_state_snapshots_dir).await?;
 
             let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
+            let ingest_tx = account_ingest_tx.clone();
             write_set.spawn(async move {
                 let path = get_account_state_snapshot_file(
                     &account_state_snapshots_dir_cloned,
                     chunk_file,
                 );
                 // TODO: check the error type and handle it properly
-                dump_accounts_to_file(&path, account_state_chunk)
+                dump_accounts_to_file(&path, account_state_chunk)?;
+                // Best-effort: if the ingest task died, leave the file in
+                // the snapshot dir; the build step ingests whatever is
+                // still there, so the chunk is not lost.
+                if let Some(tx) = ingest_tx
+                    && tx.send((chunk_file, path)).is_err()
+                {
+                    warn!(
+                        chunk_file,
+                        "Account snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+                    );
+                }
+                Ok(())
             });
 
             chunk_file += 1;
@@ -210,6 +241,18 @@ pub async fn request_account_range(
                 accounts.len(),
                 peer_id
             );
+            if let Some(hooks) = storage_hooks {
+                let discovered: Vec<(H256, H256)> = accounts
+                    .iter()
+                    .filter(|unit| unit.account.storage_root != *EMPTY_TRIE_HASH)
+                    .map(|unit| (unit.hash, unit.account.storage_root))
+                    .collect();
+                if !discovered.is_empty() {
+                    // Best-effort: a dead wave runner surfaces its error at
+                    // the join point; the post-build loop covers the misses.
+                    let _ = hooks.feed.send(discovered);
+                }
+            }
             all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
         }
@@ -300,6 +343,16 @@ pub async fn request_account_range(
                     chunk_file
                 ))
             })?;
+        // All dump tasks were joined above, so this is the last and
+        // highest-numbered chunk; sending it closes out the ingest sequence.
+        if let Some(tx) = account_ingest_tx
+            && tx.send((chunk_file, path)).is_err()
+        {
+            warn!(
+                chunk_file,
+                "Account snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+            );
+        }
     }
 
     METRICS
@@ -318,9 +371,10 @@ pub async fn request_bytecodes(
     peers: &mut PeerHandler,
     all_bytecode_hashes: &[H256],
 ) -> Result<Option<Vec<Bytes>>, SnapError> {
-    METRICS
-        .current_step
-        .set(CurrentStepValue::RequestingBytecodes);
+    // Deliberately does not set METRICS.current_step: bytecode batches run
+    // concurrently with the other phases, and flipping the global step from
+    // here would report a phase change on every batch. The drain point in
+    // the sync cycle sets it once bytecodes are the critical path.
     if all_bytecode_hashes.is_empty() {
         return Ok(Some(Vec::new()));
     }
@@ -503,6 +557,13 @@ pub async fn request_bytecodes(
 /// Returns the list of hashed storage keys and values for each account's storage or None if:
 /// - There are no available peers (the node just started up or was rejected by all other nodes)
 /// - No peer returned a valid response in the given time and retry limits
+///
+/// With `storage_ingest_tx` set, each finished snapshot file is announced as
+/// `(chunk_index, path)` to the background ingest task so it can be ingested
+/// into the temp DB while the downloads are still running. Sends are
+/// best-effort: if the ingest task is gone the file stays in the snapshot
+/// dir and is picked up at build time.
+#[allow(clippy::too_many_arguments)]
 pub async fn request_storage_ranges(
     peers: &mut PeerHandler,
     account_storage_roots: &mut AccountStorageRoots,
@@ -510,10 +571,8 @@ pub async fn request_storage_ranges(
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
+    storage_ingest_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, PathBuf)>>,
 ) -> Result<u64, SnapError> {
-    METRICS
-        .current_step
-        .set(CurrentStepValue::RequestingStorageRanges);
     debug!("Starting request_storage_ranges function");
     // 1) split the range in chunks of same length
     let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
@@ -606,12 +665,25 @@ pub async fn request_storage_ranges(
                     .inspect_err(|err| error!("Failed to dump storage snapshot to file: {err:?}"))
                     .map_err(SnapError::from)?;
             }
+            let ingest_tx = storage_ingest_tx.clone();
             disk_joinset.spawn(async move {
                 let path = get_account_storages_snapshot_file(
                     &account_storages_snapshots_dir_cloned,
                     chunk_index,
                 );
-                dump_storages_to_file(&path, snapshot)
+                dump_storages_to_file(&path, snapshot)?;
+                // Best-effort: if the ingest task died, leave the file in
+                // the snapshot dir; the build step ingests whatever is
+                // still there, so the chunk is not lost.
+                if let Some(tx) = ingest_tx
+                    && tx.send((chunk_index, path)).is_err()
+                {
+                    warn!(
+                        chunk_index,
+                        "Storage snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+                    );
+                }
+                Ok(())
             });
 
             chunk_index += 1;
@@ -781,10 +853,14 @@ pub async fn request_storage_ranges(
                                 task_count += 1;
                             }
                         } else {
-                            // TODO: DRY
+                            // Keep the group's root with the interval state:
+                            // the storage waves run before the state trie
+                            // exists, so a None root (resolved via a trie
+                            // lookup) must never be produced here.
+                            let group_root = accounts_by_root_hash[remaining_start].0;
                             account_storage_roots
                                 .accounts_with_storage_root
-                                .insert(first_acc_hash, (None, vec![]));
+                                .insert(first_acc_hash, (Some(group_root), vec![]));
                             let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&first_acc_hash)
@@ -987,6 +1063,17 @@ pub async fn request_storage_ranges(
                 chunk_index
             ))
         })?;
+        // This is the highest-numbered chunk of this round; earlier dump
+        // tasks may still be in flight (they are joined below), so the
+        // ingestor's reorder buffer holds this file until the prefix lands.
+        if let Some(tx) = &storage_ingest_tx
+            && tx.send((chunk_index, path)).is_err()
+        {
+            warn!(
+                chunk_index,
+                "Storage snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+            );
+        }
     }
     disk_joinset
         .join_all()

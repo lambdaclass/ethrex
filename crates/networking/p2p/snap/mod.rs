@@ -31,8 +31,8 @@ pub use error::{DumpError, SnapError};
 
 // Re-export client types and functions
 pub use client::{
-    RequestMetadata, RequestStorageTrieNodesError, request_account_range, request_bytecodes,
-    request_state_trienodes, request_storage_ranges, request_storage_trienodes,
+    RequestMetadata, RequestStorageTrieNodesError, StorageDiscoveryHooks, request_account_range,
+    request_bytecodes, request_state_trienodes, request_storage_ranges, request_storage_trienodes,
 };
 
 // Helper to convert proof to RLP-encodable format

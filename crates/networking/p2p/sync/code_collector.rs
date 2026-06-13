@@ -6,6 +6,7 @@ use ethrex_common::H256;
 use ethrex_rlp::encode::RLPEncode;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::task::JoinSet;
 use tracing::error;
 
@@ -19,16 +20,21 @@ pub struct CodeHashCollector {
     file_index: u64,
     // JoinSet to manage async disk writes
     disk_tasks: JoinSet<Result<(), DumpError>>,
+    // Notified with each snapshot file path once its write completes; the
+    // receiving end is the streaming bytecode fetcher. Dropped by `finish`,
+    // which closes the channel and lets the fetcher drain.
+    notify_tx: UnboundedSender<PathBuf>,
 }
 
 impl CodeHashCollector {
     /// Creates a new code collector
-    pub fn new(snapshots_dir: PathBuf) -> Self {
+    pub fn new(snapshots_dir: PathBuf, notify_tx: UnboundedSender<PathBuf>) -> Self {
         Self {
             buffer: HashSet::new(),
             snapshots_dir,
             file_index: 0,
             disk_tasks: JoinSet::new(),
+            notify_tx,
         }
     }
 
@@ -53,6 +59,19 @@ impl CodeHashCollector {
             self.flush_buffer(buffer);
         }
         Ok(())
+    }
+
+    /// Sync variant of [`Self::flush_if_needed`], callable from iterator
+    /// closures (the sorted trie build). Skips awaiting the previous disk
+    /// write: the JoinSet accumulates the handful of in-flight dump tasks
+    /// instead, and their results — including write errors — are collected
+    /// by [`Self::finish`].
+    #[cfg(feature = "rocksdb")]
+    pub fn flush_if_needed_sync(&mut self) {
+        if self.buffer.len() >= CODE_HASH_WRITE_BUFFER_SIZE {
+            let buffer = std::mem::take(&mut self.buffer);
+            self.flush_buffer(buffer);
+        }
     }
 
     /// Finishes the code collector and returns the final index of file
@@ -83,8 +102,14 @@ impl CodeHashCollector {
     fn flush_buffer(&mut self, buffer: HashSet<H256>) {
         let file_name = get_code_hashes_snapshot_file(&self.snapshots_dir, self.file_index);
         let encoded = buffer.into_iter().collect::<Vec<_>>().encode_to_vec();
-        self.disk_tasks
-            .spawn(async move { dump_to_file(&file_name, encoded) });
+        let notify_tx = self.notify_tx.clone();
+        self.disk_tasks.spawn(async move {
+            dump_to_file(&file_name, encoded)?;
+            // A failed send means the fetcher already exited; its error
+            // surfaces at the join point, the unread file is harmless.
+            let _ = notify_tx.send(file_name);
+            Ok(())
+        });
         self.file_index += 1;
     }
 

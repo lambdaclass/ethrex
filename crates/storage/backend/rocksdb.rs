@@ -385,6 +385,28 @@ impl StorageReadView for RocksDBReadTx {
         });
         Ok(Box::new(iter))
     }
+
+    fn iter_from(
+        &self,
+        table: &'static str,
+        start: &[u8],
+    ) -> Result<Box<dyn Iterator<Item = PrefixResult> + '_>, StoreError> {
+        let cf = self
+            .db
+            .cf_handle(table)
+            .ok_or_else(|| StoreError::Custom(format!("Table {} not found", table)))?;
+
+        let iter = self
+            .db
+            .iterator_cf(
+                &cf,
+                rocksdb::IteratorMode::From(start, rocksdb::Direction::Forward),
+            )
+            .map(|result| {
+                result.map_err(|e| StoreError::Custom(format!("Failed to iterate: {e}")))
+            });
+        Ok(Box::new(iter))
+    }
 }
 
 /// Write batch for RocksDB
