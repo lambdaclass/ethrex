@@ -108,9 +108,19 @@ impl Default for StoreConfig {
     }
 }
 
-/// Control messages for the FlatKeyValue generator
+/// Control messages for the FlatKeyValue generator.
+///
+/// `Start` is reserved for the generation triggers (snap sync completion,
+/// full-sync startup); `Stop`/`Continue` are the trie-update worker's
+/// pause/resume pair around disk flushes. The two must stay distinguishable:
+/// the worker pauses/resumes unconditionally on every flush, so a `Continue`
+/// is not evidence that generation was ever requested, and a trigger arriving
+/// while the generator is paused must not be mistaken for the resume signal
+/// (the generator would advance the watermark concurrently with the flush,
+/// desynchronizing it from the worker's leaf-skip decisions).
 #[derive(Debug, PartialEq)]
 enum FKVGeneratorControlMessage {
+    Start,
     Stop,
     Continue,
 }
@@ -1750,11 +1760,14 @@ impl Store {
         let last_computed_fkv = store.last_computed_flatkeyvalue.clone();
         background_threads.push(std::thread::spawn(move || {
             let rx = fkv_rx;
-            // Wait for the first Continue to start generation
+            // Wait for a Start to begin generation. The trie-update worker
+            // sends Stop/Continue around every disk flush even when
+            // generation was never requested; neither is a start signal.
             loop {
                 match rx.recv() {
-                    Ok(FKVGeneratorControlMessage::Continue) => break,
-                    Ok(FKVGeneratorControlMessage::Stop) => {}
+                    Ok(FKVGeneratorControlMessage::Start) => break,
+                    Ok(FKVGeneratorControlMessage::Stop)
+                    | Ok(FKVGeneratorControlMessage::Continue) => {}
                     Err(std::sync::mpsc::RecvError) => {
                         debug!("Closing FlatKeyValue generator.");
                         return;
@@ -3074,8 +3087,15 @@ impl Store {
     }
 
     pub fn generate_flatkeyvalue(&self) -> Result<(), StoreError> {
+        // Already generated: the generator thread exits after finishing, and
+        // a retried sync cycle may trigger again. Genuine paths never start
+        // with 0xff (nibbles are <= 16), so this only matches the finished
+        // sentinel.
+        if self.last_written()?.first() == Some(&0xff) {
+            return Ok(());
+        }
         self.flatkeyvalue_control_tx
-            .send(FKVGeneratorControlMessage::Continue)
+            .send(FKVGeneratorControlMessage::Start)
             .map_err(|_| StoreError::Custom("FlatKeyValue thread disconnected.".to_string()))
     }
 
@@ -3409,15 +3429,27 @@ fn flatkeyvalue_generator(
         });
         match res {
             Err(StoreError::PivotChanged) => {
-                match control_rx.recv() {
-                    Ok(FKVGeneratorControlMessage::Continue) => {}
-                    Ok(FKVGeneratorControlMessage::Stop) => {
-                        return Err(StoreError::Custom("Unexpected Stop message".to_string()));
-                    }
-                    // If the channel was closed, we stop generation prematurely
-                    Err(std::sync::mpsc::RecvError) => {
-                        info!("Store closed, stopping FlatKeyValue generation.");
-                        return Ok(());
+                // Paused for a trie-update flush: wait for the worker's
+                // resume. A redundant generation trigger may arrive while
+                // paused (a retried sync cycle) and must not be mistaken for
+                // the resume — resuming mid-flush would advance the watermark
+                // concurrently with the worker's leaf-skip decisions.
+                loop {
+                    match control_rx.recv() {
+                        Ok(FKVGeneratorControlMessage::Continue) => break,
+                        Ok(FKVGeneratorControlMessage::Start) => {
+                            debug!(
+                                "Redundant FlatKeyValue generation trigger while paused; ignoring."
+                            );
+                        }
+                        Ok(FKVGeneratorControlMessage::Stop) => {
+                            return Err(StoreError::Custom("Unexpected Stop message".to_string()));
+                        }
+                        // If the channel was closed, we stop generation prematurely
+                        Err(std::sync::mpsc::RecvError) => {
+                            info!("Store closed, stopping FlatKeyValue generation.");
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -3441,6 +3473,11 @@ fn fkv_check_for_stop_msg(
     match control_rx.try_recv() {
         Ok(FKVGeneratorControlMessage::Stop) | Err(TryRecvError::Disconnected) => {
             return Err(StoreError::PivotChanged);
+        }
+        // A retried sync cycle may trigger generation again while a previous
+        // run is still in flight; the redundant trigger is harmless.
+        Ok(FKVGeneratorControlMessage::Start) => {
+            debug!("Redundant FlatKeyValue generation trigger mid-run; ignoring.");
         }
         Ok(FKVGeneratorControlMessage::Continue) => {
             return Err(StoreError::Custom(
@@ -3800,5 +3837,114 @@ mod merge_tests {
         let p3 = tx_locations_merge(None, vec![p2, op(3, h256(0x03), 0)]).unwrap();
         let out = tx_locations_merge(None, vec![p3]).unwrap();
         assert_eq!(decode(&out).len(), 3);
+    }
+}
+
+#[cfg(test)]
+mod fkv_generator_control_tests {
+    use super::*;
+    use ethrex_common::utils::keccak;
+    use std::time::{Duration, Instant};
+
+    /// Enough accounts that generation spans several 10k-leaf watermark
+    /// batches, leaving a wide window to deliver control messages mid-run.
+    const ACCOUNTS: u32 = 60_000;
+
+    /// In-memory gate value before any generation progress.
+    fn initial_gate() -> Vec<u8> {
+        vec![0u8; 64]
+    }
+
+    /// In-memory gate value after generation finished.
+    fn finished_gate() -> Vec<u8> {
+        vec![0xff; 131]
+    }
+
+    fn populated_store() -> Store {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let mut trie = store
+            .open_direct_state_trie(*EMPTY_TRIE_HASH)
+            .expect("open state trie");
+        let value = AccountState {
+            nonce: 1,
+            balance: U256::zero(),
+            storage_root: *EMPTY_TRIE_HASH,
+            code_hash: keccak([]),
+        }
+        .encode_to_vec();
+        for i in 0..ACCOUNTS {
+            let key = keccak(i.to_be_bytes());
+            trie.insert(key.as_bytes().to_vec(), value.clone())
+                .expect("insert account");
+        }
+        trie.hash(&NativeCrypto).expect("commit state trie");
+        store
+    }
+
+    fn wait_until(timeout: Duration, mut cond: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        false
+    }
+
+    // A snap-sync cycle can fail with a recoverable error after triggering
+    // FKV generation; the retried cycle then triggers again while the
+    // generator is mid-run. A redundant trigger must not kill the generator:
+    // generation has to reach the finished watermark, otherwise leaves later
+    // rewritten by healing below the frozen watermark serve stale flat reads.
+    #[test]
+    fn generator_survives_redundant_trigger() {
+        let store = populated_store();
+        store
+            .generate_flatkeyvalue()
+            .expect("first generation trigger");
+        // Wait for the first committed batch so the redundant trigger lands
+        // mid-run rather than before the generator picked up the first one.
+        assert!(
+            wait_until(Duration::from_secs(60), || {
+                store.last_written().expect("read gate") != initial_gate()
+            }),
+            "generator never committed a watermark batch"
+        );
+        store
+            .generate_flatkeyvalue()
+            .expect("redundant generation trigger");
+        assert!(
+            wait_until(Duration::from_secs(60), || {
+                store.last_written().expect("read gate") == finished_gate()
+            }),
+            "generation never finished after a redundant trigger; watermark frozen at {:?}",
+            store.last_written()
+        );
+    }
+
+    // The trie-update worker pauses/resumes the generator around every disk
+    // flush, even on nodes where generation was never triggered (e.g. a
+    // restarted node executing blocks). That resume signal must not be
+    // mistaken for the start signal.
+    #[test]
+    fn flush_resume_does_not_start_generation() {
+        let store = populated_store();
+        // Simulate apply_trie_updates' unconditional pause/resume pair.
+        store
+            .flatkeyvalue_control_tx
+            .send(FKVGeneratorControlMessage::Stop)
+            .expect("send stop");
+        store
+            .flatkeyvalue_control_tx
+            .send(FKVGeneratorControlMessage::Continue)
+            .expect("send continue");
+        assert!(
+            !wait_until(Duration::from_secs(2), || {
+                store.last_written().expect("read gate") != initial_gate()
+            }),
+            "a flush resume started generation without a trigger; watermark {:?}",
+            store.last_written()
+        );
     }
 }
