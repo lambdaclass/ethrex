@@ -1649,7 +1649,7 @@ impl Store {
             let version = read_store_schema_version(&db_path)?;
 
             match version {
-                None if db_path.exists() && dir_contains_existing_db(&db_path)? => {
+                None if db_path.exists() && dir_contains_legacy_db(&db_path)? => {
                     // Pre-metadata DB — cannot migrate safely
                     return Err(StoreError::NotFoundDBVersion);
                 }
@@ -3598,15 +3598,18 @@ fn init_metadata_file(parent_path: &Path) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// Returns `true` if `path` contains files that look like an existing on-disk
-/// database, as opposed to unrelated files that merely share the datadir.
+/// Returns `true` if `path` contains a *legacy* database — one written before
+/// the metadata file existed, so it has no `metadata.json` to identify it.
+/// Detected by RocksDB's own marker files, as opposed to unrelated files that
+/// merely share the datadir. Only meaningful once metadata has been confirmed
+/// absent; otherwise prefer `has_valid_db`, which keys off the metadata file.
 ///
-/// Previously the caller treated *any* non-empty directory as a pre-metadata
+/// Previously the caller treated *any* non-empty directory as such a legacy
 /// database, which made startup fail when unrelated files lived alongside the DB
 /// — e.g. EthDocker writes the JWT secret into the datadir (issue #5680). We
 /// instead look for RocksDB's marker files, so a datadir that only contains such
 /// unrelated files is correctly treated as fresh.
-fn dir_contains_existing_db(path: &Path) -> Result<bool, StoreError> {
+fn dir_contains_legacy_db(path: &Path) -> Result<bool, StoreError> {
     // `CURRENT` has a fixed name and is written by every RocksDB instance, so
     // check for it directly instead of scanning a datadir that may hold many
     // unrelated files.
@@ -3840,7 +3843,7 @@ mod datadir_tests {
     #[test]
     fn empty_dir_has_no_existing_db() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!dir_contains_existing_db(dir.path()).unwrap());
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
     }
 
     #[test]
@@ -3850,7 +3853,7 @@ mod datadir_tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("jwt.hex"), "0xdeadbeef").unwrap();
         fs::write(dir.path().join("LOG"), "noise").unwrap();
-        assert!(!dir_contains_existing_db(dir.path()).unwrap());
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
     }
 
     #[test]
@@ -3858,11 +3861,11 @@ mod datadir_tests {
         // A `CURRENT` file (and, separately, a `MANIFEST-*` file) marks a real DB.
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("CURRENT"), "MANIFEST-000001\n").unwrap();
-        assert!(dir_contains_existing_db(dir.path()).unwrap());
+        assert!(dir_contains_legacy_db(dir.path()).unwrap());
 
         let dir2 = tempfile::tempdir().unwrap();
         fs::write(dir2.path().join("MANIFEST-000007"), "x").unwrap();
-        assert!(dir_contains_existing_db(dir2.path()).unwrap());
+        assert!(dir_contains_legacy_db(dir2.path()).unwrap());
     }
 
     #[test]
@@ -3872,6 +3875,6 @@ mod datadir_tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("CURRENT")).unwrap();
         fs::create_dir(dir.path().join("MANIFEST-000001")).unwrap();
-        assert!(!dir_contains_existing_db(dir.path()).unwrap());
+        assert!(!dir_contains_legacy_db(dir.path()).unwrap());
     }
 }
