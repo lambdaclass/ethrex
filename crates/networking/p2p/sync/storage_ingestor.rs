@@ -35,6 +35,16 @@ pub(super) type StorageIngestHandle = JoinHandle<Result<rocksdb::DB, SyncError>>
 pub(super) fn open_temp_storage_db(datadir: &Path) -> Result<rocksdb::DB, SyncError> {
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
+    // This is a throwaway DB: snapshot files are ingested into it and then
+    // read once, in order, to build the storage tries. Incremental ingestion
+    // accumulates hundreds of overlapping SST files at L0; with default
+    // options RocksDB tries to compact them, builds a multi-hundred-GB
+    // compaction backlog, and throttles writes to a crawl (write stall),
+    // grinding the whole sync to a halt. Bulk-load mode disables auto
+    // compaction and lifts the L0 stall/stop triggers — the iterator read
+    // tolerates many L0 files, and the DB is deleted right after.
+    db_options.prepare_for_bulk_load();
+    db_options.create_if_missing(true);
     rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
         .map_err(|err| SyncError::RocksDBError(err.into_string()))
 }

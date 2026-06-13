@@ -27,6 +27,12 @@ pub(super) type AccountIngestHandle = JoinHandle<Result<rocksdb::DB, SyncError>>
 pub(super) fn open_temp_accounts_db(datadir: &Path) -> Result<rocksdb::DB, SyncError> {
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
+    // Throwaway ingest DB read once in order to build the account trie.
+    // Bulk-load mode disables auto compaction and lifts the L0 stall/stop
+    // triggers, so incrementally ingesting many overlapping SST files cannot
+    // build a compaction backlog and throttle writes (see open_temp_storage_db).
+    db_options.prepare_for_bulk_load();
+    db_options.create_if_missing(true);
     rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
         .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))
 }
