@@ -4,6 +4,8 @@
 //! between full sync mode (all blocks executed) and snap sync mode (state fetched
 //! via snap protocol).
 
+#[cfg(feature = "rocksdb")]
+mod account_ingestor;
 mod bytecode_fetcher;
 mod code_collector;
 mod full;

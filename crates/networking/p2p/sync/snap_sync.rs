@@ -536,6 +536,18 @@ pub async fn snap_sync(
             feed: storage_feed_tx,
             pivot_watch: pivot_watch_tx,
         };
+        // Ingest each finished snapshot file into the temporary RocksDB
+        // while the range download is still running, instead of ingesting
+        // the whole batch only after the download completes. The sorted trie
+        // build still runs once, in `insert_accounts`, after the download
+        // and the ingest task both finish.
+        #[cfg(feature = "rocksdb")]
+        let (account_ingest_tx, account_ingest_handle) = {
+            let (tx, handle) = super::account_ingestor::spawn_account_snapshot_ingestor(datadir);
+            (Some(tx), handle)
+        };
+        #[cfg(not(feature = "rocksdb"))]
+        let account_ingest_tx = None;
         request_account_range(
             peers,
             H256::zero(),
@@ -545,6 +557,7 @@ pub async fn snap_sync(
             block_sync_state,
             diagnostics,
             Some(&storage_hooks),
+            account_ingest_tx,
         )
         .await?;
         debug!("Finished downloading account ranges from peers");
@@ -566,7 +579,18 @@ pub async fn snap_sync(
         // We read the account leafs from the files in account_state_snapshots_dir, write it into
         // the trie to compute the nodes and stores the accounts with storages for later use
 
+        #[cfg(feature = "rocksdb")]
+        let (computed_state_root, accounts_with_storage) = insert_accounts(
+            store.clone(),
+            &mut storage_accounts,
+            &account_state_snapshots_dir,
+            datadir,
+            &mut code_hash_collector,
+            account_ingest_handle,
+        )
+        .await?;
         // Variable `accounts_with_storage` unused if not in rocksdb
+        #[cfg(not(feature = "rocksdb"))]
         #[allow(unused_variables)]
         let (computed_state_root, accounts_with_storage) = insert_accounts(
             store.clone(),
@@ -1310,7 +1334,9 @@ async fn insert_accounts(
     account_state_snapshots_dir: &Path,
     datadir: &Path,
     code_hash_collector: &mut CodeHashCollector,
+    ingest_handle: super::account_ingestor::AccountIngestHandle,
 ) -> Result<(H256, BTreeSet<H256>), SyncError> {
+    use crate::sync::account_ingestor;
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
     use ethrex_trie::{Nibbles, TrieDB, TrieError};
@@ -1320,18 +1346,25 @@ async fn insert_accounts(
     const FKV_EMISSION_BATCH_SIZE: usize = 100_000;
 
     let trie = store.open_direct_state_trie(*EMPTY_TRIE_HASH)?;
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
-        .map_err(|e| SyncError::AccountTempDBDirNotFound(e.to_string()))?;
-    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
-    // Move SST files into the temp DB instead of copying them. The snapshot dir
-    // and the temp DB live under the same datadir, so rename succeeds and we
-    // avoid keeping two on-disk copies of the leaf data during ingest.
-    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
-    ingest_opts.set_move_files(true);
-    db.ingest_external_file_opts(&ingest_opts, file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    // The ingest task has been moving snapshot files into the temp DB since
+    // the download started; the download's return closed the channel, so the
+    // join yields the DB with every received file already ingested. If the
+    // task died early, reopen the DB: every chunk it never ingested is still
+    // in the snapshot dir (sends are best-effort and `move_files` only
+    // removes ingested files), so the sweep below retries them and a
+    // persistent ingest error resurfaces from there.
+    let db = match ingest_handle.await? {
+        Ok(db) => db,
+        Err(err) => {
+            warn!(
+                "Account snapshot ingest task failed ({err}); re-ingesting the remaining snapshot files"
+            );
+            account_ingestor::open_temp_accounts_db(datadir)?
+        }
+    };
+    // Ingest whatever is left in the snapshot dir: chunks whose send failed
+    // because the ingest task had died, or leftovers from a previous run.
+    account_ingestor::ingest_remaining_snapshot_files(&db, account_state_snapshots_dir).await?;
     // Single pass: the trie build consumes the sorted leaves while the same
     // decode feeds code-hash collection and the storage-root map, instead of
     // a dedicated full iteration of the temp DB for the code hashes.

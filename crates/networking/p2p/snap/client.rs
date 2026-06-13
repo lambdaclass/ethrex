@@ -36,7 +36,7 @@ use ethrex_trie::Nibbles;
 use ethrex_trie::{Node, verify_range};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
@@ -93,6 +93,12 @@ struct StorageTask {
 /// Will also return a boolean indicating if there is more state to be fetched towards the right of the trie
 /// (Note that the boolean will be true even if the remaining state is ouside the boundary set by the limit hash)
 ///
+/// With `account_ingest_tx` set, each finished snapshot file is announced as
+/// `(chunk_index, path)` to the background ingest task so it can be ingested
+/// into the temp DB while the download is still running. Sends are
+/// best-effort: if the ingest task is gone the file stays in the snapshot
+/// dir and is picked up at build time.
+///
 /// # Returns
 ///
 /// The account range or `None` if:
@@ -109,6 +115,7 @@ pub async fn request_account_range(
     block_sync_state: &mut SnapBlockSyncState,
     diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
     storage_hooks: Option<&StorageDiscoveryHooks>,
+    account_ingest_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, PathBuf)>>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -174,13 +181,26 @@ pub async fn request_account_range(
             async_fs::ensure_dir_exists(account_state_snapshots_dir).await?;
 
             let account_state_snapshots_dir_cloned = account_state_snapshots_dir.to_path_buf();
+            let ingest_tx = account_ingest_tx.clone();
             write_set.spawn(async move {
                 let path = get_account_state_snapshot_file(
                     &account_state_snapshots_dir_cloned,
                     chunk_file,
                 );
                 // TODO: check the error type and handle it properly
-                dump_accounts_to_file(&path, account_state_chunk)
+                dump_accounts_to_file(&path, account_state_chunk)?;
+                // Best-effort: if the ingest task died, leave the file in
+                // the snapshot dir; the build step ingests whatever is
+                // still there, so the chunk is not lost.
+                if let Some(tx) = ingest_tx
+                    && tx.send((chunk_file, path)).is_err()
+                {
+                    warn!(
+                        chunk_file,
+                        "Account snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+                    );
+                }
+                Ok(())
             });
 
             chunk_file += 1;
@@ -317,6 +337,16 @@ pub async fn request_account_range(
                     chunk_file
                 ))
             })?;
+        // All dump tasks were joined above, so this is the last and
+        // highest-numbered chunk; sending it closes out the ingest sequence.
+        if let Some(tx) = account_ingest_tx
+            && tx.send((chunk_file, path)).is_err()
+        {
+            warn!(
+                chunk_file,
+                "Account snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+            );
+        }
     }
 
     METRICS
