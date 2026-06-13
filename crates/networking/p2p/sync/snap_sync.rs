@@ -1533,11 +1533,16 @@ async fn insert_storages(
     use crate::sync::storage_ingestor;
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
+    use ethrex_storage::error::StoreError;
     use ethrex_trie::{
         Nibbles, Node, ThreadPool,
         trie_sorted::{BUFFER_COUNT, SIZE_TO_WRITE_DB, trie_from_sorted_accounts},
     };
     use std::thread::scope;
+
+    /// How many storage leaves an account build accumulates before flushing a
+    /// FlatKeyValue batch to the store.
+    const FKV_EMISSION_BATCH_SIZE: usize = 100_000;
 
     struct RocksDBIterator<'a> {
         iter: rocksdb::DBRawIterator<'a>,
@@ -1617,12 +1622,18 @@ async fn insert_storages(
         let _ = buffer_sender.send(Vec::with_capacity(SIZE_TO_WRITE_DB as usize));
     }
 
+    // Accounts whose build finished with every FlatKeyValue row committed;
+    // drained into the coverage list once the build pool has joined.
+    let (completed_sender, completed_receiver) = unbounded::<H256>();
+
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
             let sender = sender.clone();
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
+            let completed_sender = completed_sender.clone();
+            let store = store.clone();
             if counter >= thread_count - 1 {
                 let _ = receiver.recv();
                 counter -= 1;
@@ -1639,9 +1650,35 @@ async fn insert_storages(
                     limit: *account_hash,
                 };
 
-                let _ = trie_from_sorted_accounts(
+                // Mirror each slot leaf into STORAGE_FLATKEYVALUE while the
+                // trie build consumes the sorted iterator: the
+                // (account-prefixed nibble path, RLP value) rows are
+                // byte-identical to what the post-sync FlatKeyValue generator
+                // would re-derive by walking the finished storage trie. The
+                // rows stay inert — the FKV read gate ("last_written") is
+                // untouched — and the coverage record below only marks that
+                // this account's rows exist so a later phase can reconcile
+                // and promote them.
+                let mut fkv_buffer: Vec<(Nibbles, Vec<u8>)> = Vec::new();
+                // `inspect` can't propagate errors, so the first flush
+                // failure is parked here and skips the coverage record.
+                let mut fkv_flush_error: Option<StoreError> = None;
+                let build_result = trie_from_sorted_accounts(
                     trie.db(),
-                    &mut iter.inspect(|_| METRICS.storage_leaves_inserted.inc()),
+                    &mut iter.inspect(|(slot_hash, value)| {
+                        METRICS.storage_leaves_inserted.inc();
+                        if fkv_flush_error.is_none() {
+                            fkv_buffer
+                                .push((Nibbles::from_bytes(slot_hash.as_bytes()), value.clone()));
+                            if fkv_buffer.len() >= FKV_EMISSION_BATCH_SIZE
+                                && let Err(err) = store.write_storage_flatkeyvalue_batch_sync(
+                                    vec![(*account_hash, std::mem::take(&mut fkv_buffer))],
+                                )
+                            {
+                                fkv_flush_error = Some(err);
+                            }
+                        }
+                    }),
                     pool_clone,
                     buffer_sender,
                     buffer_receiver,
@@ -1650,13 +1687,45 @@ async fn insert_storages(
                     error!(
                         "we found an error while inserting the storage trie for the account {account_hash:x}, err {err}"
                     );
-                })
-                .map_err(SyncError::TrieGenerationError);
+                });
+
+                // Record coverage only when the build consumed every leaf and
+                // every FlatKeyValue batch (including the tail) committed:
+                // the post-sync verifier trusts listed accounts to have a
+                // complete set of rows.
+                if build_result.is_ok() && fkv_flush_error.is_none() {
+                    let tail_flush = if fkv_buffer.is_empty() {
+                        Ok(())
+                    } else {
+                        store.write_storage_flatkeyvalue_batch_sync(vec![(
+                            *account_hash,
+                            fkv_buffer,
+                        )])
+                    };
+                    match tail_flush {
+                        Ok(()) => {
+                            let _ = completed_sender.send(*account_hash);
+                        }
+                        Err(err) => fkv_flush_error = Some(err),
+                    }
+                }
+                if let Some(err) = fkv_flush_error {
+                    error!(
+                        "failed to write storage FlatKeyValue rows for the account {account_hash:x}, err {err}; skipping its coverage record"
+                    );
+                }
                 let _ = sender.send(());
             });
             pool.execute(task);
         }
     });
+
+    // The scope joined every build thread, so each account hash in the
+    // channel had all of its FlatKeyValue rows committed before being sent;
+    // record the whole run's coverage in one append.
+    drop(completed_sender);
+    let completed_accounts: Vec<H256> = completed_receiver.try_iter().collect();
+    store.append_fkv_prebuilt_storage_accounts(&completed_accounts)?;
 
     // close db before removing directory
     drop(snapshot);

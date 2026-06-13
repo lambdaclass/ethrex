@@ -1384,18 +1384,29 @@ impl Store {
         &self,
         storage_leaves: StorageUpdates,
     ) -> Result<(), StoreError> {
-        let mut txn = self.backend.begin_write()?;
+        let store = self.clone();
         tokio::task::spawn_blocking(move || {
-            for (address_hash, leaves) in storage_leaves {
-                for (leaf_path, value) in leaves {
-                    let key = apply_prefix(Some(address_hash), leaf_path);
-                    txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &value)?;
-                }
-            }
-            txn.commit()
+            store.write_storage_flatkeyvalue_batch_sync(storage_leaves)
         })
         .await
         .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+    }
+
+    /// Synchronous variant of [`Self::write_storage_flatkeyvalue_batch`] for
+    /// callers already on a blocking thread (e.g. snap sync's scoped storage
+    /// trie-build workers, which run outside the tokio runtime).
+    pub fn write_storage_flatkeyvalue_batch_sync(
+        &self,
+        storage_leaves: StorageUpdates,
+    ) -> Result<(), StoreError> {
+        let mut txn = self.backend.begin_write()?;
+        for (address_hash, leaves) in storage_leaves {
+            for (leaf_path, value) in leaves {
+                let key = apply_prefix(Some(address_hash), leaf_path);
+                txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &value)?;
+            }
+        }
+        txn.commit()
     }
 
     /// CAUTION: This method writes directly to the underlying database, bypassing any caching layer.
@@ -3201,6 +3212,56 @@ impl Store {
         self.read(MISC_VALUES, b"fkv_prebuilt_accounts".to_vec())
     }
 
+    /// Appends account hashes to the storage FlatKeyValue coverage list, the
+    /// MISC_VALUES key "fkv_prebuilt_storage_accounts".
+    ///
+    /// Encoding: the raw concatenation of 32-byte account hashes. Fixed-width
+    /// entries keep the list compact and append-friendly — extending it is a
+    /// read-extend-write of the value with no header to rewrite, and the
+    /// entry count is `len / 32`. The list may contain duplicates if snap
+    /// sync restarts and rebuilds an account's storage trie; readers must
+    /// treat it as a set.
+    ///
+    /// Each listed account had ALL of its STORAGE_FLATKEYVALUE rows written
+    /// from proof-verified snap range data during its per-account storage
+    /// trie build; callers must only append an account once its rows are
+    /// durably committed. The rows may still go stale wherever storage
+    /// healing later changes leaves, so they must not be trusted (the FKV
+    /// read gate, the "last_written" key, stays closed) until a later
+    /// reconciliation step verifies and promotes them.
+    pub fn append_fkv_prebuilt_storage_accounts(
+        &self,
+        accounts: &[H256],
+    ) -> Result<(), StoreError> {
+        if accounts.is_empty() {
+            return Ok(());
+        }
+        let key = b"fkv_prebuilt_storage_accounts".to_vec();
+        let mut list = self.read(MISC_VALUES, key.clone())?.unwrap_or_default();
+        list.reserve(accounts.len() * 32);
+        for account in accounts {
+            list.extend_from_slice(account.as_bytes());
+        }
+        self.write(MISC_VALUES, key, list)
+    }
+
+    /// Returns the coverage list written by
+    /// [`Self::append_fkv_prebuilt_storage_accounts`]; empty if snap sync
+    /// never prebuilt storage FlatKeyValue rows. May contain duplicates (see
+    /// the appender); treat the result as a set.
+    pub fn get_fkv_prebuilt_storage_accounts(&self) -> Result<Vec<H256>, StoreError> {
+        let Some(bytes) = self.read(MISC_VALUES, b"fkv_prebuilt_storage_accounts".to_vec())? else {
+            return Ok(Vec::new());
+        };
+        if !bytes.len().is_multiple_of(32) {
+            return Err(StoreError::Custom(format!(
+                "fkv_prebuilt_storage_accounts list has invalid length {}",
+                bytes.len()
+            )));
+        }
+        Ok(bytes.chunks_exact(32).map(H256::from_slice).collect())
+    }
+
     fn flatkeyvalue_computed_with_last_written(account: H256, last_written: &[u8]) -> bool {
         let account_nibbles = Nibbles::from_bytes(account.as_bytes());
         &last_written[0..64] > account_nibbles.as_ref()
@@ -3891,6 +3952,62 @@ mod fkv_prebuilt_marker_tests {
                 .expect("getter should not fail")
                 .as_deref(),
             Some(path2.as_ref())
+        );
+    }
+}
+
+#[cfg(test)]
+mod fkv_prebuilt_storage_accounts_tests {
+    use super::*;
+
+    #[test]
+    fn coverage_list_roundtrip() {
+        let store =
+            Store::new("test.db", EngineType::InMemory).expect("in-memory store should open");
+
+        // Empty until snap sync records coverage.
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            Vec::new()
+        );
+
+        // Appending an empty batch is a no-op.
+        store
+            .append_fkv_prebuilt_storage_accounts(&[])
+            .expect("empty append should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            Vec::new()
+        );
+
+        let first = vec![H256::repeat_byte(0x01), H256::repeat_byte(0x02)];
+        store
+            .append_fkv_prebuilt_storage_accounts(&first)
+            .expect("append should not fail");
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            first
+        );
+
+        // A second append extends the list instead of overwriting it, and
+        // duplicates are allowed: readers treat the list as a set.
+        let second = vec![H256::repeat_byte(0x03), H256::repeat_byte(0x01)];
+        store
+            .append_fkv_prebuilt_storage_accounts(&second)
+            .expect("append should not fail");
+        let mut expected = first;
+        expected.extend(&second);
+        assert_eq!(
+            store
+                .get_fkv_prebuilt_storage_accounts()
+                .expect("getter should not fail"),
+            expected
         );
     }
 }
