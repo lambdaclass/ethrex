@@ -9,6 +9,7 @@ mod code_collector;
 mod full;
 mod healing;
 mod snap_sync;
+mod storage_feed;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};

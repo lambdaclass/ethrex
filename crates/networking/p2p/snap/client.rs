@@ -26,6 +26,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     BigEndianHash, H256, U256,
+    constants::EMPTY_TRIE_HASH,
     types::{AccountState, BlockHeader},
 };
 use ethrex_crypto::NativeCrypto;
@@ -43,6 +44,14 @@ use tracing::{debug, error, trace, warn};
 
 // Re-export DumpError from error module
 pub use super::error::DumpError;
+
+/// Hooks letting the account-range download feed the concurrent storage
+/// downloader: discovered (account, storage_root) pairs, and pivot updates so
+/// stale storage waves can wait for a fresh header instead of re-pivoting.
+pub struct StorageDiscoveryHooks {
+    pub feed: tokio::sync::mpsc::UnboundedSender<Vec<(H256, H256)>>,
+    pub pivot_watch: tokio::sync::watch::Sender<BlockHeader>,
+}
 
 /// Metadata for requesting trie nodes
 #[derive(Debug, Clone)]
@@ -90,6 +99,7 @@ struct StorageTask {
 ///
 /// - There are no available peers (the node just started up or was rejected by all other nodes)
 /// - No peer returned a valid response in the given time and retry limits
+#[allow(clippy::too_many_arguments)]
 pub async fn request_account_range(
     peers: &mut PeerHandler,
     start: H256,
@@ -98,6 +108,7 @@ pub async fn request_account_range(
     pivot_header: &mut BlockHeader,
     block_sync_state: &mut SnapBlockSyncState,
     diagnostics: &std::sync::Arc<tokio::sync::RwLock<crate::sync::SyncDiagnostics>>,
+    storage_hooks: Option<&StorageDiscoveryHooks>,
 ) -> Result<(), SnapError> {
     METRICS
         .current_step
@@ -210,6 +221,18 @@ pub async fn request_account_range(
                 accounts.len(),
                 peer_id
             );
+            if let Some(hooks) = storage_hooks {
+                let discovered: Vec<(H256, H256)> = accounts
+                    .iter()
+                    .filter(|unit| unit.account.storage_root != *EMPTY_TRIE_HASH)
+                    .map(|unit| (unit.hash, unit.account.storage_root))
+                    .collect();
+                if !discovered.is_empty() {
+                    // Best-effort: a dead wave runner surfaces its error at
+                    // the join point; the post-build loop covers the misses.
+                    let _ = hooks.feed.send(discovered);
+                }
+            }
             all_account_hashes.extend(accounts.iter().map(|unit| unit.hash));
             all_accounts_state.extend(accounts.iter().map(|unit| unit.account));
         }
@@ -506,9 +529,6 @@ pub async fn request_storage_ranges(
     pivot_header: &mut BlockHeader,
     store: Store,
 ) -> Result<u64, SnapError> {
-    METRICS
-        .current_step
-        .set(CurrentStepValue::RequestingStorageRanges);
     debug!("Starting request_storage_ranges function");
     // 1) split the range in chunks of same length
     let mut accounts_by_root_hash: BTreeMap<_, Vec<_>> = BTreeMap::new();
@@ -776,10 +796,14 @@ pub async fn request_storage_ranges(
                                 task_count += 1;
                             }
                         } else {
-                            // TODO: DRY
+                            // Keep the group's root with the interval state:
+                            // the storage waves run before the state trie
+                            // exists, so a None root (resolved via a trie
+                            // lookup) must never be produced here.
+                            let group_root = accounts_by_root_hash[remaining_start].0;
                             account_storage_roots
                                 .accounts_with_storage_root
-                                .insert(first_acc_hash, (None, vec![]));
+                                .insert(first_acc_hash, (Some(group_root), vec![]));
                             let (_, intervals) = account_storage_roots
                                     .accounts_with_storage_root
                                     .get_mut(&first_acc_hash)

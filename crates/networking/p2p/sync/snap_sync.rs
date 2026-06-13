@@ -519,6 +519,23 @@ pub async fn snap_sync(
         // account_state_snapshots_dir
 
         diagnostics.write().await.current_phase = "account_ranges".to_string();
+        // Storage ranges download concurrently with the account phase: every
+        // account leaf carries its storage root, so discovered accounts feed
+        // a background wave runner instead of waiting for the built and
+        // healed state trie. Wave leftovers rejoin the post-build loop.
+        let (storage_feed_tx, storage_feed_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (pivot_watch_tx, pivot_watch_rx) = tokio::sync::watch::channel(pivot_header.clone());
+        let storage_waves = tokio::spawn(super::storage_feed::run_storage_waves(
+            peers.clone(),
+            store.clone(),
+            account_storages_snapshots_dir.clone(),
+            storage_feed_rx,
+            pivot_watch_rx,
+        ));
+        let storage_hooks = crate::snap::StorageDiscoveryHooks {
+            feed: storage_feed_tx,
+            pivot_watch: pivot_watch_tx,
+        };
         request_account_range(
             peers,
             H256::zero(),
@@ -527,6 +544,7 @@ pub async fn snap_sync(
             &mut pivot_header,
             block_sync_state,
             diagnostics,
+            Some(&storage_hooks),
         )
         .await?;
         debug!("Finished downloading account ranges from peers");
@@ -569,9 +587,40 @@ pub async fn snap_sync(
 
         diagnostics.write().await.current_phase = "storage_ranges".to_string();
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
+        // The wave runner drains once the feed closes (request_account_range
+        // returning dropped the sender); give it a fresh pivot to finish with,
+        // then reconcile: wave-completed accounts must not be re-downloaded,
+        // wave leftovers replace their stale bookkeeping here.
+        while block_is_stale(&pivot_header) {
+            pivot_header = update_pivot(
+                pivot_header.number,
+                pivot_header.timestamp,
+                peers,
+                block_sync_state,
+                diagnostics,
+            )
+            .await?;
+        }
+        storage_hooks.pivot_watch.send_replace(pivot_header.clone());
+        drop(storage_hooks);
+        let wave_outcome = storage_waves.await??;
+        storage_accounts
+            .accounts_with_storage_root
+            .retain(|account, _| !wave_outcome.done.contains(account));
+        storage_accounts
+            .accounts_with_storage_root
+            .extend(wave_outcome.carry.accounts_with_storage_root);
+        storage_accounts
+            .healed_accounts
+            .extend(wave_outcome.carry.healed_accounts);
+        debug!(
+            wave_done = wave_outcome.done.len(),
+            remaining = storage_accounts.accounts_with_storage_root.len(),
+            "Reconciled storage waves with the post-build loop"
+        );
         // We start downloading the storage leafs. To do so, we need to be sure that the storage root
         // is correct. To do so, we always heal the state trie before requesting storage rates
-        let mut chunk_index = 0_u64;
+        let mut chunk_index = wave_outcome.chunk_index;
         let mut state_leafs_healed = 0_u64;
         let mut storage_range_request_attempts = 0;
         loop {
@@ -607,6 +656,9 @@ pub async fn snap_sync(
             );
             storage_range_request_attempts += 1;
             if storage_range_request_attempts < 5 {
+                METRICS
+                    .current_step
+                    .set(CurrentStepValue::RequestingStorageRanges);
                 chunk_index = request_storage_ranges(
                     peers,
                     &mut storage_accounts,
