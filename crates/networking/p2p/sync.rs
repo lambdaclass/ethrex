@@ -210,14 +210,16 @@ impl Syncer {
     async fn sync_cycle(&mut self, sync_head: H256, store: Store) -> Result<(), SyncError> {
         // Take picture of the current sync mode, we will update the original value when we need to
         if self.snap_enabled.load(Ordering::Relaxed) {
-            // Probe the sync head's block number before committing to snap sync.
-            // On a fresh devnet the chain head may be only a few blocks deep; the
-            // existing in-loop `head_close_to_0` guard in `sync_cycle_snap`
-            // (snap_sync.rs, same `< MIN_FULL_BLOCKS` check) is only reached
-            // after a successful header batch, which can stall when peers are
-            // barely synced themselves. Pre-checking avoids that. The probe
-            // response is intentionally discarded; on the snap path the loop
-            // re-fetches headers, which keeps `sync_cycle_snap`'s entry simple.
+            // Probe the sync head's header before committing to snap sync. It
+            // serves two purposes: (1) on a fresh devnet the chain head may be
+            // only a few blocks deep — pre-checking `< MIN_FULL_BLOCKS` here
+            // avoids stalling in `sync_cycle_snap`'s in-loop `head_close_to_0`
+            // guard, which is only reached after a successful header batch and
+            // can hang when peers are barely synced; and (2) on the snap path
+            // the probed header is passed through as the provisional pivot so
+            // the state phases start immediately while headers backfill (the
+            // parallel path in `sync_cycle_snap`). The probe therefore must win
+            // the cold-start race against peer connection, hence its budget.
             let probed_head = probe_sync_head(&mut self.peers, sync_head).await;
             if let Some(header) = &probed_head
                 && header.number < MIN_FULL_BLOCKS
@@ -274,27 +276,38 @@ impl Syncer {
     }
 }
 
-/// Number of attempts to fetch the sync head's header for the snap-vs-full pre-check.
-const PROBE_SYNC_HEAD_ATTEMPTS: u32 = 3;
+/// How long to keep probing for the sync head's header before falling through
+/// to the serial sync path.
+///
+/// This must span cold-start peer connection. On a fresh start the ETH-capable
+/// peer table is empty for the first several seconds (only 1-2 peers connect in
+/// the first minute), and `request_block_headers_from_hash` returns `None`
+/// *instantly* when there is no peer to ask — so a short attempt budget is
+/// exhausted long before any peer can serve the head. A probe that loses this
+/// race returns `None`, which disables the parallel header/state path for the
+/// *entire* sync cycle (the node downloads every header before starting the
+/// state phases). The node cannot make sync progress without peers regardless,
+/// so we keep probing until they arrive.
+const PROBE_SYNC_HEAD_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
 /// Delay between probe attempts.
 const PROBE_SYNC_HEAD_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Tries to fetch the block header for `sync_head`.
 ///
-/// Returns `None` if peers don't respond with the requested header within
-/// `PROBE_SYNC_HEAD_ATTEMPTS`. Callers should treat that as "couldn't decide"
-/// and fall through to the regular sync path.
-///
-/// Worst-case latency budget: `PROBE_SYNC_HEAD_ATTEMPTS` × `PEER_REPLY_TIMEOUT`
-/// (5s, from `snap/constants.rs`) + (`PROBE_SYNC_HEAD_ATTEMPTS` − 1) ×
-/// `PROBE_SYNC_HEAD_RETRY_DELAY` = ~19s on a peer-starved network before we
-/// fall through to the snap path. On a healthy network the first attempt
-/// usually returns in well under a second.
+/// Keeps retrying for up to `PROBE_SYNC_HEAD_BUDGET`, returning as soon as a
+/// peer serves the target header. Returns `None` only if no peer serves it
+/// within the budget (genuinely unavailable head, e.g. a side-chain reorg);
+/// callers treat that as "couldn't decide" and fall through to the regular
+/// sync path. On a healthy network with peers already connected the first
+/// attempt returns in well under a second.
 async fn probe_sync_head(
     peers: &mut PeerHandler,
     sync_head: H256,
 ) -> Option<ethrex_common::types::BlockHeader> {
-    for attempt in 1..=PROBE_SYNC_HEAD_ATTEMPTS {
+    let deadline = tokio::time::Instant::now() + PROBE_SYNC_HEAD_BUDGET;
+    let mut attempt = 0u32;
+    loop {
+        attempt += 1;
         match peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
             .await
@@ -306,19 +319,21 @@ async fn probe_sync_head(
                 debug!("Sync head probe: response did not contain target header");
             }
             Ok(None) => {
-                debug!(
-                    "Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS}: no peer response"
-                );
+                debug!("Sync head probe attempt {attempt}: no peer served the head yet");
             }
             Err(e) => {
-                warn!("Sync head probe attempt {attempt}/{PROBE_SYNC_HEAD_ATTEMPTS} failed: {e}");
+                warn!("Sync head probe attempt {attempt} failed: {e}");
             }
         }
-        if attempt < PROBE_SYNC_HEAD_ATTEMPTS {
-            tokio::time::sleep(PROBE_SYNC_HEAD_RETRY_DELAY).await;
+        if tokio::time::Instant::now() >= deadline {
+            warn!(
+                "Sync head probe gave up after {attempt} attempts (~{}s); falling back to the serial header download (no header/state pipelining this cycle)",
+                PROBE_SYNC_HEAD_BUDGET.as_secs()
+            );
+            return None;
         }
+        tokio::time::sleep(PROBE_SYNC_HEAD_RETRY_DELAY).await;
     }
-    None
 }
 
 #[derive(Debug, Default)]
