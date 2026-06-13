@@ -3422,6 +3422,9 @@ fn flatkeyvalue_generator(
     let prebuilt_accounts = initial_read
         .get(MISC_VALUES, "fkv_prebuilt_accounts".as_bytes())?
         .is_some();
+    let prebuilt_storage = initial_read
+        .get(MISC_VALUES, "fkv_prebuilt_storage_accounts".as_bytes())?
+        .is_some();
     drop(initial_read);
 
     if initial_last_written.is_empty() {
@@ -3432,8 +3435,13 @@ fn flatkeyvalue_generator(
         } else {
             backend.clear_table(ACCOUNT_FLATKEYVALUE)?;
         }
-        // No prebuilt coverage exists for storage rows yet.
-        backend.clear_table(STORAGE_FLATKEYVALUE)?;
+        if prebuilt_storage {
+            info!(
+                "FlatKeyValue storage rows were prebuilt during sync; verifying instead of regenerating"
+            );
+        } else {
+            backend.clear_table(STORAGE_FLATKEYVALUE)?;
+        }
     } else if initial_last_written == [0xff] {
         // FKV was already generated
         info!("FlatKeyValue already generated. Skipping.");
@@ -3484,6 +3492,9 @@ fn flatkeyvalue_generator(
         // rows with identical values need no write.
         let mut existing_rows = read_tx
             .iter_from(ACCOUNT_FLATKEYVALUE, last_written_account.as_ref())?
+            .peekable();
+        let mut existing_storage_rows = read_tx
+            .iter_from(STORAGE_FLATKEYVALUE, &last_written)?
             .peekable();
         let res = iter.try_for_each(|(path, node)| -> Result<(), StoreError> {
             let Node::Leaf(node) = node else {
@@ -3544,7 +3555,35 @@ fn flatkeyvalue_generator(
                 };
                 let key = apply_prefix(Some(account_hash), path);
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), key.as_ref())?;
-                write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                // Merge-join against existing rows: rows behind the cursor —
+                // including the storage of accounts that no longer exist —
+                // are orphans and are deleted; identical rows are skipped.
+                let mut row_is_current = false;
+                loop {
+                    match existing_storage_rows.peek() {
+                        Some(Ok((row_key, _))) if row_key.as_ref() < key.as_ref() => {
+                            let (row_key, _) = existing_storage_rows
+                                .next()
+                                .ok_or(StoreError::LockError)??;
+                            write_txn.delete(STORAGE_FLATKEYVALUE, &row_key)?;
+                            ctr += 1;
+                        }
+                        Some(Ok((row_key, row_value))) if row_key.as_ref() == key.as_ref() => {
+                            row_is_current = row_value.as_ref() == node.value.as_slice();
+                            existing_storage_rows.next();
+                            break;
+                        }
+                        Some(Err(_)) => {
+                            existing_storage_rows
+                                .next()
+                                .ok_or(StoreError::LockError)??;
+                        }
+                        _ => break,
+                    }
+                }
+                if !row_is_current {
+                    write_txn.put(STORAGE_FLATKEYVALUE, key.as_ref(), &node.value)?;
+                }
                 ctr += 1;
                 if ctr > 10_000 {
                     write_txn.commit()?;
@@ -3581,7 +3620,12 @@ fn flatkeyvalue_generator(
                     let (key, _) = row?;
                     write_txn.delete(ACCOUNT_FLATKEYVALUE, &key)?;
                 }
+                for row in existing_storage_rows {
+                    let (key, _) = row?;
+                    write_txn.delete(STORAGE_FLATKEYVALUE, &key)?;
+                }
                 write_txn.delete(MISC_VALUES, "fkv_prebuilt_accounts".as_bytes())?;
+                write_txn.delete(MISC_VALUES, "fkv_prebuilt_storage_accounts".as_bytes())?;
                 write_txn.put(MISC_VALUES, "last_written".as_bytes(), &[0xff])?;
                 write_txn.commit()?;
                 *last_computed_fkv
