@@ -417,13 +417,16 @@ impl SyncError {
             | SyncError::BytecodeFileError
             | SyncError::NoLatestCanonical
             | SyncError::MissingFullsyncBatch
-            | SyncError::Snap(_)
             | SyncError::FileSystem(_) => false,
             // A timed-out actor request is transient (mailbox pressure or a
             // slow handler — the protocol macro hardwires a 5s timeout); a
             // stopped actor means p2p is shutting down and must stay fatal.
             SyncError::PeerTableError(ActorError::RequestTimeout) => true,
             SyncError::PeerTableError(ActorError::ActorStopped) => false,
+            // A stale pivot we couldn't refresh is a transient peer
+            // condition; every other snap error stays fatal.
+            SyncError::Snap(crate::snap::SnapError::PivotUpdateFailed) => true,
+            SyncError::Snap(_) => false,
             SyncError::Chain(_)
             | SyncError::Store(_)
             | SyncError::Send(_)

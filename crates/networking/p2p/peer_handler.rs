@@ -48,6 +48,49 @@ pub struct PeerHandler {
     pub initiator: ActorRef<RLPxInitiator>,
 }
 
+#[cfg(test)]
+impl PeerHandler {
+    /// PeerHandler over an empty peer table and a minimal P2P context, for
+    /// tests that exercise retry/timeout behavior without live peers.
+    pub(crate) fn new_for_test(store: ethrex_storage::Store) -> PeerHandler {
+        use crate::network::P2PContext;
+        use crate::peer_table::PeerTableServer;
+        use crate::types::{NetworkConfig, Node};
+        use ethrex_common::H512;
+        use std::net::{IpAddr, Ipv4Addr};
+        use std::sync::Arc;
+
+        let peer_table = PeerTableServer::spawn(H256::random(), 10, store.clone());
+        let signer = secp256k1::SecretKey::new(&mut rand::thread_rng());
+        let local_node = Node::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0, 0, H512::random());
+        let network_config = NetworkConfig {
+            bind_addr: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            tcp_port: 0,
+            udp_port: 0,
+        };
+        let blockchain = Arc::new(ethrex_blockchain::Blockchain::default_with_store(
+            store.clone(),
+        ));
+        // Long intervals keep the broadcaster/initiator timers idle in tests.
+        let context = P2PContext::new(
+            local_node,
+            network_config,
+            tokio_util::task::TaskTracker::new(),
+            signer,
+            peer_table.clone(),
+            store,
+            blockchain,
+            "test".to_string(),
+            None,
+            1_000_000,
+            1_000_000.0,
+        )
+        .expect("test p2p context");
+        let initiator = RLPxInitiator::spawn(context);
+        PeerHandler::new(peer_table, initiator)
+    }
+}
+
 pub enum BlockRequestOrder {
     OldToNew,
     NewToOld,
