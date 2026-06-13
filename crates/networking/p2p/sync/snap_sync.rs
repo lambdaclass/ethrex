@@ -3,7 +3,7 @@
 //! This module contains the logic for snap synchronization mode where state is
 //! fetched via snap p2p requests while blocks and receipts are fetched in parallel.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -672,17 +672,22 @@ pub async fn snap_sync(
             }
             // heal_state_trie_wrap returns false if we ran out of time before fully healing the trie
             // We just need to update the pivot and start again
-            if !heal_state_trie_wrap(
+            let mut newly_healed_accounts = HashSet::new();
+            let state_heal_complete = heal_state_trie_wrap(
                 pivot_header.state_root,
                 store.clone(),
                 peers,
                 calculate_staleness_timestamp(pivot_header.timestamp),
                 &mut state_leafs_healed,
-                &mut storage_accounts,
+                &mut newly_healed_accounts,
                 &mut code_hash_collector,
             )
-            .await?
-            {
+            .await?;
+            // Merge even after a partial pass: accounts healed before
+            // staleness hit must still be marked healed (and their recorded
+            // storage roots invalidated) for request_storage_ranges.
+            storage_accounts.merge_healed_accounts(newly_healed_accounts);
+            if !state_heal_complete {
                 continue;
             };
 
@@ -784,8 +789,19 @@ pub async fn snap_sync(
     debug!("Starting healing process");
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
-    let mut healing_done = false;
-    while !healing_done {
+    // Healing runs in rounds: while state healing is incomplete, both healers
+    // run concurrently, with the storage lane processing the cumulative
+    // healed-accounts snapshot taken at the end of the previous round. The
+    // lanes write disjoint column families through their own single-writer
+    // background tasks, and the state lane collects newly healed accounts
+    // into its own set, merged into `storage_accounts` only between rounds —
+    // so the lanes share no mutable state. The merge re-enqueues every
+    // account the state lane (re-)healed, guaranteeing a later storage pass
+    // re-processes it against its latest healed root. Once state healing is
+    // complete, catch-up storage passes run alone until one covers the whole
+    // healed set within the staleness window.
+    let mut state_heal_complete = false;
+    loop {
         // This if is an edge case for the skip snap sync scenario
         if block_is_stale(&pivot_header) {
             pivot_header = update_pivot(
@@ -796,30 +812,66 @@ pub async fn snap_sync(
                 diagnostics,
             )
             .await?;
+            // A new pivot means a new state root: the state trie must be
+            // re-healed before its account leaves can be trusted again.
+            state_heal_complete = false;
         }
-        healing_done = heal_state_trie_wrap(
-            pivot_header.state_root,
-            store.clone(),
-            peers,
-            calculate_staleness_timestamp(pivot_header.timestamp),
-            &mut global_state_leafs_healed,
-            &mut storage_accounts,
-            &mut code_hash_collector,
-        )
-        .await?;
-        if !healing_done {
-            continue;
+        let staleness_timestamp = calculate_staleness_timestamp(pivot_header.timestamp);
+        let state_heal_was_complete = state_heal_complete;
+        let mut newly_healed_accounts = HashSet::new();
+        let storage_snapshot = storage_accounts.healed_accounts.clone();
+        let storage_heal_complete = if state_heal_was_complete {
+            // State healing already finished for this pivot: storage healing
+            // is the remaining critical-path work, so flip the global step
+            // only now (the healers don't set it while running concurrently).
+            METRICS.current_step.set(CurrentStepValue::HealingStorage);
+            heal_storage_trie(
+                pivot_header.state_root,
+                storage_snapshot,
+                peers,
+                store.clone(),
+                HashMap::new(),
+                staleness_timestamp,
+                &mut global_storage_leafs_healed,
+            )
+            .await?
+        } else {
+            // The storage lane takes `&mut PeerHandler`, so it gets its own
+            // clone (a cheap handle over the shared peer table) while the
+            // state lane borrows `peers`. Both lanes get the same staleness
+            // deadline; on staleness both return incomplete and the loop
+            // re-pivots.
+            let mut storage_peers = peers.clone();
+            let (state_heal_result, storage_heal_result) = tokio::join!(
+                heal_state_trie_wrap(
+                    pivot_header.state_root,
+                    store.clone(),
+                    peers,
+                    staleness_timestamp,
+                    &mut global_state_leafs_healed,
+                    &mut newly_healed_accounts,
+                    &mut code_hash_collector,
+                ),
+                heal_storage_trie(
+                    pivot_header.state_root,
+                    storage_snapshot,
+                    &mut storage_peers,
+                    store.clone(),
+                    HashMap::new(),
+                    staleness_timestamp,
+                    &mut global_storage_leafs_healed,
+                )
+            );
+            state_heal_complete = state_heal_result?;
+            storage_heal_result?
+        };
+        storage_accounts.merge_healed_accounts(newly_healed_accounts);
+        // Done only when state healing was already complete at round entry
+        // (so no account leaf changed during the round) and the storage pass
+        // covered the full healed set within the staleness window.
+        if state_heal_was_complete && storage_heal_complete {
+            break;
         }
-        healing_done = heal_storage_trie(
-            pivot_header.state_root,
-            &storage_accounts,
-            peers,
-            store.clone(),
-            HashMap::new(),
-            calculate_staleness_timestamp(pivot_header.timestamp),
-            &mut global_storage_leafs_healed,
-        )
-        .await?;
     }
     *METRICS.heal_end_time.lock().await = Some(SystemTime::now());
 
@@ -1366,7 +1418,7 @@ async fn insert_accounts(
     use crate::sync::account_ingestor;
     use crate::utils::get_rocksdb_temp_accounts_dir;
     use ethrex_trie::trie_sorted::trie_from_sorted_accounts_wrap;
-    use ethrex_trie::{Nibbles, TrieDB, TrieError};
+    use ethrex_trie::{Nibbles, TrieError};
 
     /// How many account leaves to accumulate before flushing a
     /// FlatKeyValue batch through the trie backend.

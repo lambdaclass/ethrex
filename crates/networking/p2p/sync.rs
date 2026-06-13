@@ -333,6 +333,24 @@ pub struct AccountStorageRoots {
     pub healed_accounts: HashSet<H256>,
 }
 
+impl AccountStorageRoots {
+    /// Merges the accounts healed by a state-healing pass: marks them healed
+    /// and invalidates any storage root recorded for them, since the healed
+    /// leaf may have changed the root. State healing collects these into its
+    /// own set instead of mutating this struct directly, so a storage-healing
+    /// pass can run concurrently over a snapshot of `healed_accounts`; merging
+    /// between passes re-enqueues every re-healed account for the next
+    /// storage pass against its latest root.
+    pub fn merge_healed_accounts(&mut self, healed: HashSet<H256>) {
+        for account_hash in healed {
+            if let Some((root, _)) = self.accounts_with_storage_root.get_mut(&account_hash) {
+                *root = None;
+            }
+            self.healed_accounts.insert(account_hash);
+        }
+    }
+}
+
 #[derive(thiserror::Error, Debug)]
 pub enum SyncError {
     #[error(transparent)]

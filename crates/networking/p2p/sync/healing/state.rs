@@ -10,7 +10,7 @@
 
 use std::{
     cmp::Ordering as CmpOrdering,
-    collections::{BTreeMap, BinaryHeap, HashMap},
+    collections::{BTreeMap, BinaryHeap, HashMap, HashSet},
     sync::atomic::Ordering,
     time::{Duration, Instant},
 };
@@ -32,7 +32,7 @@ use crate::{
         constants::{HEALING_QUEUE_SOFT_LIMIT, NODE_BATCH_SIZE, SHOW_PROGRESS_INTERVAL_DURATION},
         request_state_trienodes,
     },
-    sync::{AccountStorageRoots, SyncError, code_collector::CodeHashCollector},
+    sync::{SyncError, code_collector::CodeHashCollector},
     utils::current_unix_time,
 };
 
@@ -74,7 +74,7 @@ pub async fn heal_state_trie_wrap(
     peers: &PeerHandler,
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
-    storage_accounts: &mut AccountStorageRoots,
+    newly_healed_accounts: &mut HashSet<H256>,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     let mut healing_done = false;
@@ -88,7 +88,7 @@ pub async fn heal_state_trie_wrap(
             staleness_timestamp,
             global_leafs_healed,
             HashMap::new(),
-            storage_accounts,
+            newly_healed_accounts,
             code_hash_collector,
         )
         .await?;
@@ -103,7 +103,10 @@ pub async fn heal_state_trie_wrap(
 
 /// Heals the trie given its state_root by fetching any missing nodes in it via p2p
 /// Returns true if healing was fully completed or false if we need to resume healing on the next sync cycle
-/// This method also stores modified storage roots in the db for heal_storage_trie
+/// Healed account leaves are collected into `newly_healed_accounts`; the caller
+/// merges them into its `AccountStorageRoots` once the pass returns, so a
+/// storage-healing pass running concurrently never aliases that shared state
+/// and re-processes these accounts (with their latest roots) on its next pass
 /// Note: downloaders only gets updated when heal_state_trie, once per snap cycle
 #[allow(clippy::too_many_arguments)]
 async fn heal_state_trie(
@@ -113,7 +116,7 @@ async fn heal_state_trie(
     staleness_timestamp: u64,
     global_leafs_healed: &mut u64,
     mut healing_queue: StateHealingQueue,
-    storage_accounts: &mut AccountStorageRoots,
+    newly_healed_accounts: &mut HashSet<H256>,
     code_hash_collector: &mut CodeHashCollector,
 ) -> Result<bool, SyncError> {
     // Add the current state trie root to the pending paths. `paths` is a
@@ -216,13 +219,13 @@ async fn heal_state_trie(
                                 code_hash_collector.flush_if_needed().await?;
                             }
 
-                            storage_accounts.healed_accounts.insert(account_hash);
-                            let old_value = storage_accounts
-                                .accounts_with_storage_root
-                                .get_mut(&account_hash);
-                            if let Some((old_root, _)) = old_value {
-                                *old_root = None;
-                            }
+                            // Collected for the caller: the merge into the
+                            // shared `AccountStorageRoots` (marking the account
+                            // healed and invalidating its recorded storage
+                            // root) happens after this pass returns, so a
+                            // concurrent storage-healing pass reads a stable
+                            // snapshot.
+                            newly_healed_accounts.insert(account_hash);
                         }
                     }
                     leafs_healed += nodes
