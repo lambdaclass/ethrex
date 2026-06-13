@@ -297,6 +297,12 @@ pub async fn sync_cycle_snap(
 
         debug!("Requesting Block Headers from {current_head}");
 
+        // The serial header walk is the critical path; the background
+        // backfill and pivot updates fetch headers too but must not write
+        // the global step.
+        METRICS
+            .current_step
+            .set(CurrentStepValue::DownloadingHeaders);
         let Some(mut block_headers) = peers
             .request_block_headers(current_head_number, sync_head)
             .await?

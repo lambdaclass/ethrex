@@ -1,6 +1,6 @@
 use crate::rlpx::initiator::RLPxInitiator;
 use crate::{
-    metrics::{CurrentStepValue, METRICS},
+    metrics::METRICS,
     peer_table::{
         PeerData, PeerDiagnostics, PeerTable, PeerTableServerProtocol as _, RequestPermit,
     },
@@ -134,9 +134,6 @@ impl PeerHandler {
         sync_head: H256,
     ) -> Result<Option<Vec<BlockHeader>>, PeerHandlerError> {
         let start_time = SystemTime::now();
-        METRICS
-            .current_step
-            .set(CurrentStepValue::DownloadingHeaders);
 
         let mut ret = Vec::<BlockHeader>::new();
 
