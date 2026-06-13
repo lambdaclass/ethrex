@@ -22,7 +22,7 @@ use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 /// `JUMPDEST` clone this (a refcount bump) instead of allocating a fresh empty
 /// `Arc` header each time. This matters because the per-tx `Code::default()`
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
-static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
+static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u8]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
@@ -35,7 +35,7 @@ pub struct Code {
     pub bytecode: Bytes,
     // Jump targets stored as a bit vector: bit i is set iff position i is a valid JUMPDEST
     // The size is ceil(bytecode.len() / 8) bytes
-    pub jump_targets: Vec<u8>,
+    pub jump_targets: Arc<[u8]>,
 }
 
 impl Code {
@@ -60,7 +60,7 @@ impl Code {
         }
     }
 
-    fn compute_jump_targets(code: &[u8]) -> Vec<u8> {
+    fn compute_jump_targets(code: &[u8]) -> Arc<[u8]> {
         let bitset_len = code.len().saturating_add(7) / 8;
         let mut targets = vec![0u8; bitset_len];
         let mut i = 0;
@@ -107,7 +107,7 @@ impl Code {
     pub fn size(&self) -> usize {
         let hash_size = size_of::<H256>();
         let bytes_size = size_of::<Bytes>();
-        let vec_size = size_of::<Vec<u8>>() + self.jump_targets.len();
+        let vec_size = size_of::<Arc<[u8]>>() + self.jump_targets.len();
         hash_size + bytes_size + vec_size
     }
 }

@@ -851,7 +851,7 @@ impl Store {
         let code = Code {
             hash: code_hash,
             bytecode,
-            jump_targets: <Vec<u8>>::decode(targets)?,
+            jump_targets: Arc::from(<Vec<u8>>::decode(targets)?),
         };
 
         // insert into cache and evict if needed
