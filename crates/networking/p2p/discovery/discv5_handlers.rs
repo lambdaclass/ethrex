@@ -25,7 +25,7 @@ use std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
-use tracing::{error, trace, warn};
+use tracing::{debug, trace, warn};
 
 use super::server::{DiscoveryServer, DiscoveryServerError};
 
@@ -57,7 +57,7 @@ impl DiscoveryServer {
             0x01 => self.discv5_handle_who_are_you(packet, from).await,
             0x02 => self.discv5_handle_handshake(packet, from).await,
             f => {
-                tracing::info!(protocol = "discv5", "Unexpected flag {f}");
+                tracing::trace!(protocol = "discv5", "Unexpected flag {f}");
                 Err(crate::discv5::messages::PacketCodecError::MalformedData.into())
             }
         }
@@ -354,7 +354,7 @@ impl DiscoveryServer {
         for (idx, target, node_id, node) in queries {
             let find_node_msg = self.discv5_build_find_node_for_target(target, &node);
             if let Err(e) = self.discv5_send_ordinary(find_node_msg, &node).await {
-                error!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
+                debug!(protocol = "discv5", sending = "FindNode", addr = ?node.udp_addr(), err=?e, "Error sending message");
                 self.peer_table.set_disposable(node_id)?;
                 METRICS.record_new_discarded_node();
                 if let Some(discv5) = &mut self.discv5
