@@ -1609,6 +1609,10 @@ async fn insert_storages(
     };
     use std::thread::scope;
 
+    /// One account's storage FlatKeyValue rows handed to the background writer:
+    /// (account hash, [(leaf path, value)]).
+    type FkvRowBatch = (H256, Vec<(Nibbles, Vec<u8>)>);
+
     /// How many storage leaves an account build accumulates before flushing a
     /// FlatKeyValue batch to the store.
     const FKV_EMISSION_BATCH_SIZE: usize = 100_000;
@@ -1695,6 +1699,36 @@ async fn insert_storages(
     // drained into the coverage list once the build pool has joined.
     let (completed_sender, completed_receiver) = unbounded::<H256>();
 
+    // FlatKeyValue rows are written by ONE background thread draining this
+    // channel, never by the parallel build threads. This keeps the build off
+    // the DB write lock (no cross-thread contention) and lets the large FKV
+    // write volume overlap the build in big, infrequent transactions instead
+    // of thousands of per-batch commits serialized across build threads.
+    let (fkv_row_tx, fkv_row_rx) = unbounded::<FkvRowBatch>();
+    let fkv_writer_store = store.clone();
+    let fkv_writer = std::thread::spawn(move || -> Result<(), StoreError> {
+        // Accumulate across accounts and commit in ~million-row transactions:
+        // ~1.6k commits for a full mainnet storage set vs ~16k from the old
+        // per-100k-per-thread path, single-threaded so there is no write-lock
+        // contention with anything.
+        const COMMIT_ROWS: usize = 1_000_000;
+        let mut pending: Vec<FkvRowBatch> = Vec::new();
+        let mut pending_rows = 0usize;
+        for (account_hash, rows) in fkv_row_rx.iter() {
+            pending_rows += rows.len();
+            pending.push((account_hash, rows));
+            if pending_rows >= COMMIT_ROWS {
+                fkv_writer_store
+                    .write_storage_flatkeyvalue_batch_sync(std::mem::take(&mut pending))?;
+                pending_rows = 0;
+            }
+        }
+        if !pending.is_empty() {
+            fkv_writer_store.write_storage_flatkeyvalue_batch_sync(pending)?;
+        }
+        Ok(())
+    });
+
     scope(|scope| {
         let pool: Arc<ThreadPool<'_>> = Arc::new(ThreadPool::new(thread_count, scope));
         for (account_hash, trie) in account_with_storage_and_tries.iter() {
@@ -1702,7 +1736,7 @@ async fn insert_storages(
             let buffer_sender = buffer_sender.clone();
             let buffer_receiver = buffer_receiver.clone();
             let completed_sender = completed_sender.clone();
-            let store = store.clone();
+            let fkv_row_tx = fkv_row_tx.clone();
             if counter >= thread_count - 1 {
                 let _ = receiver.recv();
                 counter -= 1;
@@ -1729,23 +1763,17 @@ async fn insert_storages(
                 // this account's rows exist so a later phase can reconcile
                 // and promote them.
                 let mut fkv_buffer: Vec<(Nibbles, Vec<u8>)> = Vec::new();
-                // `inspect` can't propagate errors, so the first flush
-                // failure is parked here and skips the coverage record.
-                let mut fkv_flush_error: Option<StoreError> = None;
                 let build_result = trie_from_sorted_accounts(
                     trie.db(),
                     &mut iter.inspect(|(slot_hash, value)| {
                         METRICS.storage_leaves_inserted.inc();
-                        if fkv_flush_error.is_none() {
-                            fkv_buffer
-                                .push((Nibbles::from_bytes(slot_hash.as_bytes()), value.clone()));
-                            if fkv_buffer.len() >= FKV_EMISSION_BATCH_SIZE
-                                && let Err(err) = store.write_storage_flatkeyvalue_batch_sync(
-                                    vec![(*account_hash, std::mem::take(&mut fkv_buffer))],
-                                )
-                            {
-                                fkv_flush_error = Some(err);
-                            }
+                        // Hand FKV rows to the background writer; this is a
+                        // cheap channel send, the build thread never touches
+                        // the DB write lock.
+                        fkv_buffer.push((Nibbles::from_bytes(slot_hash.as_bytes()), value.clone()));
+                        if fkv_buffer.len() >= FKV_EMISSION_BATCH_SIZE {
+                            let _ = fkv_row_tx
+                                .send((*account_hash, std::mem::take(&mut fkv_buffer)));
                         }
                     }),
                     pool_clone,
@@ -1758,30 +1786,15 @@ async fn insert_storages(
                     );
                 });
 
-                // Record coverage only when the build consumed every leaf and
-                // every FlatKeyValue batch (including the tail) committed:
-                // the post-sync verifier trusts listed accounts to have a
-                // complete set of rows.
-                if build_result.is_ok() && fkv_flush_error.is_none() {
-                    let tail_flush = if fkv_buffer.is_empty() {
-                        Ok(())
-                    } else {
-                        store.write_storage_flatkeyvalue_batch_sync(vec![(
-                            *account_hash,
-                            fkv_buffer,
-                        )])
-                    };
-                    match tail_flush {
-                        Ok(()) => {
-                            let _ = completed_sender.send(*account_hash);
-                        }
-                        Err(err) => fkv_flush_error = Some(err),
+                // The build consumed every leaf: hand off the tail rows and
+                // mark the account covered. The rows are written by the
+                // background writer; coverage is only honored if that writer
+                // finishes without error (checked after the pool joins).
+                if build_result.is_ok() {
+                    if !fkv_buffer.is_empty() {
+                        let _ = fkv_row_tx.send((*account_hash, fkv_buffer));
                     }
-                }
-                if let Some(err) = fkv_flush_error {
-                    error!(
-                        "failed to write storage FlatKeyValue rows for the account {account_hash:x}, err {err}; skipping its coverage record"
-                    );
+                    let _ = completed_sender.send(*account_hash);
                 }
                 let _ = sender.send(());
             });
@@ -1789,12 +1802,23 @@ async fn insert_storages(
         }
     });
 
-    // The scope joined every build thread, so each account hash in the
-    // channel had all of its FlatKeyValue rows committed before being sent;
-    // record the whole run's coverage in one append.
+    // The scope joined every build thread, so all FKV rows have been sent and
+    // every build thread's channel sender is dropped. Drop the last sender to
+    // close the channel, then join the writer so its rows are durable before
+    // recording coverage. Coverage is only honored if the writer succeeded;
+    // otherwise the post-sync generator regenerates storage rows.
     drop(completed_sender);
+    drop(fkv_row_tx);
+    let writer_result = fkv_writer
+        .join()
+        .map_err(|_| StoreError::Custom("storage FlatKeyValue writer thread panicked".into()))?;
     let completed_accounts: Vec<H256> = completed_receiver.try_iter().collect();
-    store.append_fkv_prebuilt_storage_accounts(&completed_accounts)?;
+    match writer_result {
+        Ok(()) => store.append_fkv_prebuilt_storage_accounts(&completed_accounts)?,
+        Err(err) => error!(
+            "background storage FlatKeyValue writer failed ({err}); skipping prebuilt coverage so the post-sync generator regenerates storage rows"
+        ),
+    }
 
     // close db before removing directory
     drop(snapshot);
