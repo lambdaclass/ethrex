@@ -125,8 +125,9 @@ flamegraph-levm-bench-generic:
 	mkdir -p flamegraph_levm_benchmark
 	cargo flamegraph --root --package revm_comparison --bin benchmark --output flamegraph_levm_benchmark/flamegraph_levm_$(name).svg -- levm $(name) $(repetitions) $(iterations)
 
-# Absolute target dir so the benchmark binary lands in this crate's target/
-# regardless of the directory the build command cd's into.
+# Absolute target dir so the benchmark binary lands in this crate's target/,
+# provided make is run from or with -C crates/vm/levm (the cd inside the recipe
+# is harmless since $(CURDIR) is expanded before it).
 LEVM_TARGET_DIR := $(CURDIR)/target
 
 build-revm-comparison:
