@@ -84,11 +84,22 @@ pub(crate) async fn run_storage_waves(
             break;
         }
 
-        // A stale pivot would only produce empty responses; wait for the
-        // account phase (or the post-build loop preparing to join us) to
-        // publish a fresher one.
+        // A stale pivot would only produce empty responses. While the account
+        // phase is still running, its dispatcher publishes fresher pivots, so
+        // we can wait for one. But once the feed is closed the account phase
+        // is over and NOBODY will publish again here — the post-build storage
+        // loop owns pivot updates from that point and is blocked waiting for
+        // us to return. Waiting on `changed()` then would deadlock (we wait
+        // for a pivot only the awaiting main thread could send). Carry the
+        // remaining work to the post-build loop instead.
         let mut pivot = pivot_rx.borrow().clone();
         if block_is_stale(&pivot) {
+            if !feed_open {
+                debug!(
+                    "Storage waves: pivot stale and feed closed; carrying remaining accounts to the post-build loop"
+                );
+                break;
+            }
             debug!("Storage waves waiting for a fresh pivot");
             if pivot_rx.changed().await.is_err() {
                 // Publisher dropped: leave remaining work to the carry.
@@ -133,6 +144,21 @@ pub(crate) async fn run_storage_waves(
                 carry.accounts_with_storage_root.insert(account, entry);
             }
         }
+    }
+
+    // Anything still pending when the loop exits (a stale-pivot break with the
+    // feed closed) is unfinished — hand it to the post-build storage loop,
+    // which re-pivots on its own. Without this, accounts left in `pending`
+    // would be silently dropped (never downloaded, never carried, never
+    // healed).
+    carry
+        .healed_accounts
+        .extend(pending.healed_accounts.drain());
+    for (account, entry) in std::mem::take(&mut pending.accounts_with_storage_root) {
+        carry
+            .accounts_with_storage_root
+            .entry(account)
+            .or_insert(entry);
     }
 
     let done: HashSet<H256> = attempts
