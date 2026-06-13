@@ -18,7 +18,7 @@ use ethrex_common::types::BlockHeader;
 use ethrex_storage::Store;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use tracing::{debug, info, warn};
 
 use super::block_is_stale;
@@ -45,12 +45,16 @@ pub(crate) struct StorageWaveOutcome {
 /// which remaining work is attempted once more and the rest is carried out.
 /// `pivot_rx` provides the freshest known pivot; when the borrowed pivot goes
 /// stale the runner waits for a newer one instead of re-pivoting itself.
+/// `storage_ingest_tx` announces each finished snapshot file to the
+/// background ingest task; the post-build loop shares the same channel, so
+/// this clone is dropped when the waves finish, not the whole sequence.
 pub(crate) async fn run_storage_waves(
     mut peers: PeerHandler,
     store: Store,
     snapshots_dir: PathBuf,
     mut feed_rx: UnboundedReceiver<Vec<(H256, H256)>>,
     mut pivot_rx: tokio::sync::watch::Receiver<BlockHeader>,
+    storage_ingest_tx: Option<UnboundedSender<(u64, PathBuf)>>,
 ) -> Result<StorageWaveOutcome, SyncError> {
     let mut chunk_index = 0u64;
     let mut seen: HashSet<H256> = HashSet::new();
@@ -105,6 +109,7 @@ pub(crate) async fn run_storage_waves(
             chunk_index,
             &mut pivot,
             store.clone(),
+            storage_ingest_tx.clone(),
         )
         .await?;
 

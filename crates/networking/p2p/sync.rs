@@ -12,6 +12,8 @@ mod full;
 mod healing;
 mod snap_sync;
 mod storage_feed;
+#[cfg(feature = "rocksdb")]
+mod storage_ingestor;
 
 use crate::metrics::METRICS;
 use crate::peer_handler::{BlockRequestOrder, PeerHandler, PeerHandlerError};

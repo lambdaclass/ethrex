@@ -5,8 +5,6 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
-#[cfg(feature = "rocksdb")]
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime};
@@ -525,12 +523,26 @@ pub async fn snap_sync(
         // healed state trie. Wave leftovers rejoin the post-build loop.
         let (storage_feed_tx, storage_feed_rx) = tokio::sync::mpsc::unbounded_channel();
         let (pivot_watch_tx, pivot_watch_rx) = tokio::sync::watch::channel(pivot_header.clone());
+        // Ingest each finished storage snapshot file into the temporary
+        // RocksDB while the downloads are still running, instead of ingesting
+        // the whole batch only inside `insert_storages`. Both producers (the
+        // wave runner below and the post-build loop) share the sender; the
+        // per-account trie build still runs once, in `insert_storages`, after
+        // the downloads and the ingest task both finish.
+        #[cfg(feature = "rocksdb")]
+        let (storage_ingest_tx, storage_ingest_handle) = {
+            let (tx, handle) = super::storage_ingestor::spawn_storage_snapshot_ingestor(datadir);
+            (Some(tx), handle)
+        };
+        #[cfg(not(feature = "rocksdb"))]
+        let storage_ingest_tx = None;
         let storage_waves = tokio::spawn(super::storage_feed::run_storage_waves(
             peers.clone(),
             store.clone(),
             account_storages_snapshots_dir.clone(),
             storage_feed_rx,
             pivot_watch_rx,
+            storage_ingest_tx.clone(),
         ));
         let storage_hooks = crate::snap::StorageDiscoveryHooks {
             feed: storage_feed_tx,
@@ -690,6 +702,7 @@ pub async fn snap_sync(
                     chunk_index,
                     &mut pivot_header,
                     store.clone(),
+                    storage_ingest_tx.clone(),
                 )
                 .await?;
             } else {
@@ -739,6 +752,20 @@ pub async fn snap_sync(
             .set(CurrentStepValue::InsertingStorageRanges);
         let account_storages_snapshots_dir = get_account_storages_snapshots_dir(datadir);
 
+        // Both producers are done (the wave runner was joined above and the
+        // download loop just ended); dropping the last sender closes the
+        // ingest channel so `insert_storages` can join the ingest task.
+        drop(storage_ingest_tx);
+        #[cfg(feature = "rocksdb")]
+        insert_storages(
+            store.clone(),
+            accounts_with_storage,
+            &account_storages_snapshots_dir,
+            datadir,
+            storage_ingest_handle,
+        )
+        .await?;
+        #[cfg(not(feature = "rocksdb"))]
         insert_storages(
             store.clone(),
             accounts_with_storage,
@@ -1443,7 +1470,9 @@ async fn insert_storages(
     accounts_with_storage: BTreeSet<H256>,
     account_storages_snapshots_dir: &Path,
     datadir: &Path,
+    ingest_handle: super::storage_ingestor::StorageIngestHandle,
 ) -> Result<(), SyncError> {
+    use crate::sync::storage_ingestor;
     use crate::utils::get_rocksdb_temp_storage_dir;
     use crossbeam::channel::{bounded, unbounded};
     use ethrex_trie::{
@@ -1486,18 +1515,25 @@ async fn insert_storages(
         }
     }
 
-    let mut db_options = rocksdb::Options::default();
-    db_options.create_if_missing(true);
-    let db = rocksdb::DB::open(&db_options, get_rocksdb_temp_storage_dir(datadir))
-        .map_err(|err: rocksdb::Error| SyncError::RocksDBError(err.into_string()))?;
-    let file_paths: Vec<PathBuf> = async_fs::read_dir_paths(account_storages_snapshots_dir).await?;
-    // Move SST files into the temp DB instead of copying them. The snapshot dir
-    // and the temp DB live under the same datadir, so rename succeeds and we
-    // avoid keeping two on-disk copies of the leaf data during ingest.
-    let mut ingest_opts = rocksdb::IngestExternalFileOptions::default();
-    ingest_opts.set_move_files(true);
-    db.ingest_external_file_opts(&ingest_opts, file_paths)
-        .map_err(|err| SyncError::RocksDBError(err.into_string()))?;
+    // The ingest task has been moving snapshot files into the temp DB since
+    // the storage downloads started; dropping the last sender closed the
+    // channel, so the join yields the DB with every received file already
+    // ingested. If the task died early, reopen the DB: every chunk it never
+    // ingested is still in the snapshot dir (sends are best-effort and
+    // `move_files` only removes ingested files), so the sweep below retries
+    // them and a persistent ingest error resurfaces from there.
+    let db = match ingest_handle.await? {
+        Ok(db) => db,
+        Err(err) => {
+            warn!(
+                "Storage snapshot ingest task failed ({err}); re-ingesting the remaining snapshot files"
+            );
+            storage_ingestor::open_temp_storage_db(datadir)?
+        }
+    };
+    // Ingest whatever is left in the snapshot dir: chunks whose send failed
+    // because the ingest task had died, or leftovers from a previous run.
+    storage_ingestor::ingest_remaining_snapshot_files(&db, account_storages_snapshots_dir).await?;
     let snapshot = db.snapshot();
 
     let account_with_storage_and_tries = accounts_with_storage

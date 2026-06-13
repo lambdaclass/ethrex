@@ -551,6 +551,13 @@ pub async fn request_bytecodes(
 /// Returns the list of hashed storage keys and values for each account's storage or None if:
 /// - There are no available peers (the node just started up or was rejected by all other nodes)
 /// - No peer returned a valid response in the given time and retry limits
+///
+/// With `storage_ingest_tx` set, each finished snapshot file is announced as
+/// `(chunk_index, path)` to the background ingest task so it can be ingested
+/// into the temp DB while the downloads are still running. Sends are
+/// best-effort: if the ingest task is gone the file stays in the snapshot
+/// dir and is picked up at build time.
+#[allow(clippy::too_many_arguments)]
 pub async fn request_storage_ranges(
     peers: &mut PeerHandler,
     account_storage_roots: &mut AccountStorageRoots,
@@ -558,6 +565,7 @@ pub async fn request_storage_ranges(
     mut chunk_index: u64,
     pivot_header: &mut BlockHeader,
     store: Store,
+    storage_ingest_tx: Option<tokio::sync::mpsc::UnboundedSender<(u64, PathBuf)>>,
 ) -> Result<u64, SnapError> {
     debug!("Starting request_storage_ranges function");
     // 1) split the range in chunks of same length
@@ -651,12 +659,25 @@ pub async fn request_storage_ranges(
                     .inspect_err(|err| error!("Failed to dump storage snapshot to file: {err:?}"))
                     .map_err(SnapError::from)?;
             }
+            let ingest_tx = storage_ingest_tx.clone();
             disk_joinset.spawn(async move {
                 let path = get_account_storages_snapshot_file(
                     &account_storages_snapshots_dir_cloned,
                     chunk_index,
                 );
-                dump_storages_to_file(&path, snapshot)
+                dump_storages_to_file(&path, snapshot)?;
+                // Best-effort: if the ingest task died, leave the file in
+                // the snapshot dir; the build step ingests whatever is
+                // still there, so the chunk is not lost.
+                if let Some(tx) = ingest_tx
+                    && tx.send((chunk_index, path)).is_err()
+                {
+                    warn!(
+                        chunk_index,
+                        "Storage snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+                    );
+                }
+                Ok(())
             });
 
             chunk_index += 1;
@@ -1036,6 +1057,17 @@ pub async fn request_storage_ranges(
                 chunk_index
             ))
         })?;
+        // This is the highest-numbered chunk of this round; earlier dump
+        // tasks may still be in flight (they are joined below), so the
+        // ingestor's reorder buffer holds this file until the prefix lands.
+        if let Some(tx) = &storage_ingest_tx
+            && tx.send((chunk_index, path)).is_err()
+        {
+            warn!(
+                chunk_index,
+                "Storage snapshot ingestor is gone; leaving the chunk on disk for build-time ingestion"
+            );
+        }
     }
     disk_joinset
         .join_all()
