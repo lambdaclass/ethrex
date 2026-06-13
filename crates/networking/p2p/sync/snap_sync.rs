@@ -1519,6 +1519,18 @@ async fn insert_accounts(
     // Ingest whatever is left in the snapshot dir: chunks whose send failed
     // because the ingest task had died, or leftovers from a previous run.
     account_ingestor::ingest_remaining_snapshot_files(&db, account_state_snapshots_dir).await?;
+    // Same bulk-load L0 pileup as the storage temp DB (compaction disabled
+    // during ingest). The build below is a single sequential scan, so it is
+    // less seek-amplified than the storage build, but it still merges across
+    // every overlapping L0 file on every step. Compact into a leveled layout
+    // first so the scan reads a normal level shape.
+    info!("Compacting the temporary account snapshot DB before building the account trie");
+    let compact_start = std::time::Instant::now();
+    db.compact_range(None::<&[u8]>, None::<&[u8]>);
+    info!(
+        elapsed_s = compact_start.elapsed().as_secs(),
+        "Compacted the temporary account snapshot DB"
+    );
     // Single pass: the trie build consumes the sorted leaves while the same
     // decode feeds code-hash collection and the storage-root map, instead of
     // a dedicated full iteration of the temp DB for the code hashes.
@@ -1670,6 +1682,22 @@ async fn insert_storages(
     // Ingest whatever is left in the snapshot dir: chunks whose send failed
     // because the ingest task had died, or leftovers from a previous run.
     storage_ingestor::ingest_remaining_snapshot_files(&db, account_storages_snapshots_dir).await?;
+    // The temp DB was bulk-loaded with auto-compaction disabled (to avoid an
+    // ingestion write-stall), so it holds thousands of overlapping L0 files.
+    // The build below opens a fresh iterator and seeks once per account; with
+    // every L0 file overlapping, each seek merges across all of them, so the
+    // per-account seeks dominate the build (measured at ~30% of samples in
+    // rocksdb's IndexBlockIter::SeekImpl, ~60-70% across all seek/iterator
+    // symbols, turning the storage build into a ~9h phase on mainnet). Compact
+    // once into a leveled layout first: a single ~100GB pass is far cheaper
+    // than millions of seeks each merging ~1.8k files.
+    info!("Compacting the temporary storage snapshot DB before building storage tries");
+    let compact_start = std::time::Instant::now();
+    db.compact_range(None::<&[u8]>, None::<&[u8]>);
+    info!(
+        elapsed_s = compact_start.elapsed().as_secs(),
+        "Compacted the temporary storage snapshot DB"
+    );
     let snapshot = db.snapshot();
 
     let account_with_storage_and_tries = accounts_with_storage

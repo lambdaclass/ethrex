@@ -27,10 +27,12 @@ pub(super) type AccountIngestHandle = JoinHandle<Result<rocksdb::DB, SyncError>>
 pub(super) fn open_temp_accounts_db(datadir: &Path) -> Result<rocksdb::DB, SyncError> {
     let mut db_options = rocksdb::Options::default();
     db_options.create_if_missing(true);
-    // Throwaway ingest DB read once in order to build the account trie.
-    // Bulk-load mode disables auto compaction and lifts the L0 stall/stop
-    // triggers, so incrementally ingesting many overlapping SST files cannot
-    // build a compaction backlog and throttle writes (see open_temp_storage_db).
+    // Throwaway ingest DB read once to build the account trie. Bulk-load mode
+    // disables auto compaction and lifts the L0 stall/stop triggers, so
+    // incrementally ingesting many overlapping SST files cannot build a
+    // compaction backlog and throttle writes (see open_temp_storage_db). The
+    // reader (`insert_accounts`) compacts once after ingestion, before the
+    // build scan, so it isn't merging across thousands of L0 files per step.
     db_options.prepare_for_bulk_load();
     db_options.create_if_missing(true);
     rocksdb::DB::open(&db_options, get_rocksdb_temp_accounts_dir(datadir))
