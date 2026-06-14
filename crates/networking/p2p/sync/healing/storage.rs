@@ -211,6 +211,18 @@ pub async fn heal_storage_trie(
     > = JoinSet::new();
 
     let mut nodes_to_write: HashMap<H256, Vec<(Nibbles, Node)>> = HashMap::new();
+    // Paths (acc_path, storage_path) of nodes committed to the in-memory
+    // membatch this pass but not yet durably in the DB. `determine_pending_children`
+    // must treat these as present: a node committed here is downloaded and
+    // hash-verified, and will be written, so re-checking it against the DB (which
+    // it hasn't reached yet) and re-enqueuing its subtree is pure wasted work —
+    // and that re-work is what keeps `download_queue` non-empty so `is_done`
+    // never fires and the pass never flushes/converges. `committed_paths` is the
+    // batch still accumulating in `nodes_to_write`; `writing_paths` is the batch
+    // handed to the in-flight write task, kept visible until that write is
+    // durable, so the presence check is race-free across the async flush.
+    let mut committed_paths: HashSet<(Nibbles, Nibbles)> = HashSet::new();
+    let mut writing_paths: HashSet<(Nibbles, Nibbles)> = HashSet::new();
     let mut db_joinset = tokio::task::JoinSet::new();
 
     // channel to send the tasks to the peers
@@ -267,8 +279,21 @@ pub async fn heal_storage_trie(
             let store = state.store.clone();
             // NOTE: we keep only a single task in the background to avoid out of order deletes
             if !db_joinset.is_empty() {
-                db_joinset.join_next().await;
+                // Propagate a write-task panic instead of swallowing it: the
+                // writing_paths rotation below assumes the joined write reached
+                // the DB. If it panicked, clearing writing_paths would drop paths
+                // that are in NEITHER the membatch NOR the DB, reopening the
+                // membatch-vs-DB gap this fix closes.
+                if let Some(res) = db_joinset.join_next().await {
+                    res.expect("storage healing db write task panicked");
+                }
             }
+            // The previous write (joined above) is now durable, so its paths are
+            // in the DB and no longer need to stay visible. The batch we're about
+            // to write must stay visible (in `writing_paths`) until ITS write is
+            // joined — on the next flush, or by `join_all` on is_done/is_stale.
+            writing_paths.clear();
+            std::mem::swap(&mut writing_paths, &mut committed_paths);
             db_joinset.spawn_blocking(move || {
                 let mut encoded_to_write = vec![];
                 let mut fkv_to_write = vec![];
@@ -363,10 +388,19 @@ pub async fn heal_storage_trie(
             Ok(trie_nodes) => trie_nodes,
             Err(TryRecvError::Empty) => {
                 state.empty_count += 1;
+                // No response is ready yet. `yield_now` does not suspend the
+                // worker when it has no other ready task, so a bare `continue`
+                // here busy-spins this loop at 100% CPU (re-running the dispatch,
+                // staleness, and flush-size checks millions of times/sec) while
+                // waiting on the network. Sleep briefly so the worker actually
+                // parks — peer round-trips are orders of magnitude longer than
+                // this, so it costs no throughput. Mirrors the no-peer backoff.
+                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
                 continue;
             }
             Err(TryRecvError::Disconnected) => {
                 state.disconnected_count += 1;
+                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
                 continue;
             }
         };
@@ -396,6 +430,8 @@ pub async fn heal_storage_trie(
                     &mut state.roots_healed,
                     &mut state.maximum_length_seen,
                     &mut nodes_to_write,
+                    &mut committed_paths,
+                    &writing_paths,
                 )
                 .expect("We shouldn't be getting store errors"); // TODO: if we have a store error we should stop
             }
@@ -626,9 +662,26 @@ fn process_node_responses(
     roots_healed: &mut usize,
     maximum_length_seen: &mut usize,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
+    committed_paths: &mut HashSet<(Nibbles, Nibbles)>,
+    writing_paths: &HashSet<(Nibbles, Nibbles)>,
 ) -> Result<(), StoreError> {
     while let Some(node_response) = node_processing_queue.pop() {
         trace!(?node_response, "We are processing node response");
+        // Idempotency guard. The download_queue is a no-dedup BinaryHeap and
+        // re-enqueues requests on partial/failed peer responses, so the same
+        // node can be delivered more than once. A node already committed this
+        // pass has had its parent decremented (and possibly cascaded out of
+        // healing_queue), so re-running commit_node would hit
+        // `remove(parent).expect(...)` on an already-removed parent and panic.
+        // Skip any response whose path is already in the membatch. (This also
+        // avoids double-counting a duplicate leaf below.)
+        let response_key = (
+            node_response.node_request.acc_path.clone(),
+            node_response.node_request.storage_path.clone(),
+        );
+        if committed_paths.contains(&response_key) || writing_paths.contains(&response_key) {
+            continue;
+        }
         if let Node::Leaf(_) = &node_response.node {
             *leafs_healed += 1;
             *global_leafs_healed += 1;
@@ -640,25 +693,31 @@ fn process_node_responses(
         );
 
         let (pending_children_nibbles, pending_children_count) =
-            determine_pending_children(&node_response, store).inspect_err(|err| {
-                debug!(
-                    error=?err,
-                    ?node_response,
-                    "Error in determine_pending_children"
-                )
-            })?;
-
-        if pending_children_count == 0 {
-            // We flush to the database this node
-            commit_node(&node_response, healing_queue, roots_healed, to_write).inspect_err(
-                |err| {
+            determine_pending_children(&node_response, store, committed_paths, writing_paths)
+                .inspect_err(|err| {
                     debug!(
                         error=?err,
                         ?node_response,
-                        "Error in commit_node"
+                        "Error in determine_pending_children"
                     )
-                },
-            )?;
+                })?;
+
+        if pending_children_count == 0 {
+            // We flush to the database this node
+            commit_node(
+                &node_response,
+                healing_queue,
+                roots_healed,
+                to_write,
+                committed_paths,
+            )
+            .inspect_err(|err| {
+                debug!(
+                    error=?err,
+                    ?node_response,
+                    "Error in commit_node"
+                )
+            })?;
         } else {
             let key = (
                 node_response.node_request.acc_path.clone(),
@@ -734,10 +793,20 @@ fn get_initial_downloads(
 pub fn determine_pending_children(
     node_response: &NodeResponse,
     store: &Store,
+    committed_paths: &HashSet<(Nibbles, Nibbles)>,
+    writing_paths: &HashSet<(Nibbles, Nibbles)>,
 ) -> Result<(Vec<NodeRequest>, usize), StoreError> {
     let mut paths = Vec::new();
     let mut count = 0;
     let node = node_response.node.clone();
+    let acc_path = &node_response.node_request.acc_path;
+    // A child committed to the membatch this pass (but not yet flushed to the
+    // DB) is present-and-verified; treat it as present so we neither re-read it
+    // from a DB it hasn't reached yet nor re-enqueue its subtree.
+    let in_membatch = |child_path: &Nibbles| {
+        let key = (acc_path.clone(), child_path.clone());
+        committed_paths.contains(&key) || writing_paths.contains(&key)
+    };
     let trie = store
         .open_direct_storage_trie(
             H256::from_slice(&node_response.node_request.acc_path.to_bytes()),
@@ -756,6 +825,9 @@ pub fn determine_pending_children(
                     .storage_path
                     .append_new(index as u8);
                 if !child.is_valid() {
+                    continue;
+                }
+                if in_membatch(&child_path) {
                     continue;
                 }
                 let validity = child
@@ -781,6 +853,9 @@ pub fn determine_pending_children(
         Node::Extension(node) => {
             let child_path = node_response.node_request.storage_path.concat(&node.prefix);
             if !node.child.is_valid() {
+                return Ok((vec![], 0));
+            }
+            if in_membatch(&child_path) {
                 return Ok((vec![], 0));
             }
             let validity = node
@@ -814,6 +889,7 @@ fn commit_node(
     healing_queue: &mut StorageHealingQueue,
     roots_healed: &mut usize,
     to_write: &mut HashMap<H256, Vec<(Nibbles, Node)>>,
+    committed_paths: &mut HashSet<(Nibbles, Nibbles)>,
 ) -> Result<(), StoreError> {
     let hashed_account = H256::from_slice(&node.node_request.acc_path.to_bytes());
 
@@ -821,6 +897,12 @@ fn commit_node(
         .entry(hashed_account)
         .or_default()
         .push((node.node_request.storage_path.clone(), node.node.clone()));
+    // Mark this path as present-in-membatch so a re-processed parent does not
+    // re-enqueue it before the membatch is flushed (see determine_pending_children).
+    committed_paths.insert((
+        node.node_request.acc_path.clone(),
+        node.node_request.storage_path.clone(),
+    ));
 
     // Special case, we have just commited the root, we stop
     if node.node_request.storage_path == node.node_request.parent {
@@ -836,9 +918,16 @@ fn commit_node(
         node.node_request.parent.clone(),
     );
 
-    let mut parent_entry = healing_queue
-        .remove(&parent_key)
-        .expect("We are missing the parent from the healing_queue!");
+    let Some(mut parent_entry) = healing_queue.remove(&parent_key) else {
+        // A missing parent can only mean this node was already committed this
+        // pass and its parent already cascaded out of the healing_queue (the
+        // parent commits only once all its children, including this one, have
+        // committed). So this is a duplicate node response that the
+        // process_node_responses idempotency guard didn't catch — its batch was
+        // already flushed and its paths cleared from the membatch sets.
+        // Re-committing is redundant; stop the cascade here instead of panicking.
+        return Ok(());
+    };
 
     parent_entry.pending_children_count -= 1;
 
@@ -848,6 +937,7 @@ fn commit_node(
             healing_queue,
             roots_healed,
             to_write,
+            committed_paths,
         )
     } else {
         healing_queue.insert(parent_key, parent_entry);
