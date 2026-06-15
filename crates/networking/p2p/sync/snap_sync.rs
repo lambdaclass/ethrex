@@ -126,7 +126,7 @@ pub async fn sync_cycle_snap(
         diag.current_phase = "headers".to_string();
         diag.sync_mode = "snap".to_string();
     }
-    info!(
+    debug!(
         "Syncing from current head {:?} to sync_head {:?}",
         current_head, sync_head
     );
@@ -154,7 +154,7 @@ pub async fn sync_cycle_snap(
                 return Ok(());
             }
             attempts += 1;
-            warn!(
+            debug!(
                 "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
             );
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -337,7 +337,6 @@ pub async fn snap_sync(
         // account_state_snapshots_dir
 
         diagnostics.write().await.current_phase = "account_ranges".to_string();
-        info!("Starting to download account ranges from peers");
         request_account_range(
             peers,
             H256::zero(),
@@ -348,7 +347,7 @@ pub async fn snap_sync(
             diagnostics,
         )
         .await?;
-        info!("Finish downloading account ranges from peers");
+        debug!("Finished downloading account ranges from peers");
 
         {
             let mut diag = diagnostics.write().await;
@@ -377,14 +376,14 @@ pub async fn snap_sync(
             &mut code_hash_collector,
         )
         .await?;
-        info!(
+        debug!(
             "Finished inserting account ranges, total storage accounts: {}",
             storage_accounts.accounts_with_storage_root.len()
         );
         *METRICS.account_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-        info!("Original state root: {state_root:?}");
-        info!("Computed state root after request_account_rages: {computed_state_root:?}");
+        debug!("Original state root: {state_root:?}");
+        debug!("Computed state root after request_account_ranges: {computed_state_root:?}");
 
         diagnostics.write().await.current_phase = "storage_ranges".to_string();
         *METRICS.storage_tries_download_start_time.lock().await = Some(SystemTime::now());
@@ -420,7 +419,7 @@ pub async fn snap_sync(
                 continue;
             };
 
-            info!(
+            debug!(
                 "Started request_storage_ranges with {} accounts with storage root unchanged",
                 storage_accounts.accounts_with_storage_root.len()
             );
@@ -454,14 +453,13 @@ pub async fn snap_sync(
                 }
 
                 warn!(
-                    "Storage could not be downloaded after multiple attempts. Marking for healing.
-                    This could impact snap sync time (healing may take a while)."
+                    "Storage could not be downloaded after multiple attempts. Marking for healing. This could impact snap sync time (healing may take a while)."
                 );
 
                 storage_accounts.accounts_with_storage_root.clear();
             }
 
-            info!(
+            debug!(
                 "Ended request_storage_ranges with {} accounts with storage root unchanged and not downloaded yet and with {} big/healed accounts",
                 storage_accounts.accounts_with_storage_root.len(),
                 // These accounts are marked as heals if they're a big account. This is
@@ -471,9 +469,9 @@ pub async fn snap_sync(
             if !block_is_stale(&pivot_header) {
                 break;
             }
-            info!("We stopped because of staleness, restarting loop");
+            debug!("Pivot became stale during storage download, restarting loop");
         }
-        info!("Finished request_storage_ranges");
+        debug!("Finished request_storage_ranges");
         *METRICS.storage_tries_download_end_time.lock().await = Some(SystemTime::now());
 
         diagnostics.write().await.current_phase = "storage_insertion".to_string();
@@ -493,12 +491,12 @@ pub async fn snap_sync(
 
         *METRICS.storage_tries_insert_end_time.lock().await = Some(SystemTime::now());
 
-        info!("Finished storing storage tries");
+        debug!("Finished storing storage tries");
     }
 
     diagnostics.write().await.current_phase = "healing".to_string();
     *METRICS.heal_start_time.lock().await = Some(SystemTime::now());
-    info!("Starting Healing Process");
+    debug!("Starting healing process");
     let mut global_state_leafs_healed: u64 = 0;
     let mut global_storage_leafs_healed: u64 = 0;
     let mut healing_done = false;
@@ -545,7 +543,7 @@ pub async fn snap_sync(
     debug_assert!(validate_state_root(store.clone(), pivot_header.state_root).await);
     debug_assert!(validate_storage_root(store.clone(), pivot_header.state_root).await);
 
-    info!("Finished healing");
+    debug!("Finished healing");
 
     // Finish code hash collection
     code_hash_collector.finish().await?;
@@ -557,7 +555,7 @@ pub async fn snap_sync(
     let mut code_hashes_to_download = Vec::new();
 
     diagnostics.write().await.current_phase = "bytecodes".to_string();
-    info!("Starting download code hashes from peers");
+    debug!("Starting download code hashes from peers");
     let code_hash_files = async_fs::read_dir_paths(&code_hashes_dir).await?;
     for file_path in code_hash_files {
         let snapshot_contents = async_fs::read_file(&file_path).await?;
@@ -570,7 +568,7 @@ pub async fn snap_sync(
                 code_hashes_to_download.push(hash);
 
                 if code_hashes_to_download.len() >= BYTECODE_CHUNK_SIZE {
-                    info!(
+                    debug!(
                         "Starting bytecode download of {} hashes",
                         code_hashes_to_download.len()
                     );
@@ -782,7 +780,7 @@ pub async fn update_pivot(
             rotation = rotation_count,
             "update_pivot: attempting with peer"
         );
-        info!(
+        debug!(
             "Trying to update pivot to {new_pivot_block_number} with peer {peer_id} (score: {peer_score})"
         );
 
@@ -797,7 +795,7 @@ pub async fn update_pivot(
                 peers.peer_table.record_success(peer_id)?;
                 #[cfg(feature = "metrics")]
                 ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("success");
-                info!("Successfully updated pivot");
+                info!("Snap sync pivot updated to block {}", pivot.number);
 
                 {
                     let mut diag = diagnostics.write().await;
@@ -829,7 +827,7 @@ pub async fn update_pivot(
             Ok(None) => {
                 peers.peer_table.record_failure(peer_id)?;
                 let peer_score = peers.peer_table.get_score(peer_id).await?;
-                warn!(
+                debug!(
                     "update_pivot: peer {peer_id} returned None (score: {peer_score}), excluding for this rotation"
                 );
                 #[cfg(feature = "metrics")]
@@ -838,7 +836,7 @@ pub async fn update_pivot(
             }
             Err(e) if e.is_recoverable() => {
                 peers.peer_table.record_failure(peer_id)?;
-                warn!("update_pivot: peer {peer_id} failed with {e}, excluding for this rotation");
+                debug!("update_pivot: peer {peer_id} failed with {e}, excluding for this rotation");
                 #[cfg(feature = "metrics")]
                 ethrex_metrics::sync::METRICS_SYNC.inc_pivot_update("peer_error");
                 excluded_peers.push(peer_id);
@@ -886,7 +884,7 @@ pub async fn validate_state_root(store: Store, state_root: H256) -> bool {
     .expect("We should be able to create threads");
 
     if validated.is_ok() {
-        info!("Succesfully validated tree, {state_root} found");
+        info!("Successfully validated tree, {state_root} found");
     } else {
         error!("We have failed the validation of the state tree");
         std::process::exit(1);
@@ -996,7 +994,7 @@ async fn insert_accounts(
     let mut computed_state_root = *EMPTY_TRIE_HASH;
     let snapshot_files = async_fs::read_dir_paths(account_state_snapshots_dir).await?;
     for snapshot_path in snapshot_files {
-        info!("Reading account file from {snapshot_path:?}");
+        debug!("Reading account file from {snapshot_path:?}");
         let snapshot_contents = async_fs::read_file(&snapshot_path).await?;
         let account_states_snapshot: Vec<(H256, AccountState)> =
             RLPDecode::decode(&snapshot_contents)
