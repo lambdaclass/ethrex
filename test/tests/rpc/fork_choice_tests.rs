@@ -125,3 +125,53 @@ async fn test_fcu_v3_finalized_ancestor_returns_valid_with_null_payload_id() {
         response["payloadId"]
     );
 }
+
+// At the Amsterdam activation timestamp, engine_forkchoiceUpdatedV3 must reject
+// otherwise-valid V3 payload attributes with UnsupportedFork; payload building
+// from that timestamp onward requires engine_forkchoiceUpdatedV4.
+#[tokio::test]
+async fn forkchoice_updated_v3_rejects_amsterdam_payload_attributes() {
+    let mut store = test_store().await;
+    let mut chain_config = store.get_chain_config();
+    let amsterdam_time = 24;
+    chain_config.amsterdam_time = Some(amsterdam_time);
+    store.set_chain_config(&chain_config).await.unwrap();
+
+    let genesis_header = store.get_block_header(0).unwrap().unwrap();
+    let genesis_hash = genesis_header.hash();
+    let block = new_block(&store, &genesis_header).await;
+    let block_hash = block.hash();
+    Blockchain::default_with_store(store.clone())
+        .add_block(block)
+        .unwrap();
+
+    let body = format!(
+        r#"{{
+            "jsonrpc": "2.0",
+            "method": "engine_forkchoiceUpdatedV3",
+            "params": [
+                {{
+                    "headBlockHash": "{block_hash:#x}",
+                    "safeBlockHash": "{genesis_hash:#x}",
+                    "finalizedBlockHash": "{genesis_hash:#x}"
+                }},
+                {{
+                    "timestamp": "{amsterdam_time:#x}",
+                    "prevRandao": "0x0000000000000000000000000000000000000000000000000000000000000001",
+                    "suggestedFeeRecipient": "0x0000000000000000000000000000000000000000",
+                    "withdrawals": [],
+                    "parentBeaconBlockRoot": "0x0000000000000000000000000000000000000000000000000000000000000002"
+                }}
+            ],
+            "id": 1
+        }}"#
+    );
+    let request: RpcRequest = serde_json::from_str(&body).expect("valid FCU request");
+    let context = default_context_with_storage(store).await;
+
+    let err = ForkChoiceUpdatedV3::call(&request, context)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, ethrex_rpc::utils::RpcErr::UnsupportedFork(_)));
+}
