@@ -2971,6 +2971,161 @@ impl Store {
         Ok(results)
     }
 
+    /// Batch lookup of storage slot values against a given state root.
+    ///
+    /// Each input tuple is `(account_hash, storage_root, slot)` where
+    /// `account_hash` is the keccak hash of the account address and `slot` is
+    /// the raw (un-hashed) storage key, matching the inputs available to
+    /// [`Self::get_storage_at_root_with_known_storage_root`].
+    ///
+    /// Fast path: for slots whose prefixed FKV leaf path falls within the FKV
+    /// cursor (and which are not present in the in-memory diff-layer cache),
+    /// values are fetched in a single `multi_get` on `STORAGE_FLATKEYVALUE`.
+    /// The batch is sorted by the prefixed FKV key (hashed order) before the
+    /// `multi_get` so that adjacent slots share RocksDB data blocks, removing
+    /// the random-order read amplification of per-slot lookups. Slots not yet
+    /// swept by the FKV generator fall back to per-slot trie walks via
+    /// [`Self::get_storage_at_root_with_known_storage_root`], which preserves the
+    /// exact FKV / trie / diff-cache ordering of the single-slot path.
+    ///
+    /// Results are returned in the same order as the input slots. A missing slot
+    /// (deleted or never written) yields `None`, identical to the single-get path.
+    pub fn get_storage_values_batch_by_root(
+        &self,
+        state_root: H256,
+        slots: &[(H256, H256, H256)],
+    ) -> Result<Vec<Option<U256>>, StoreError> {
+        if slots.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<U256>> = vec![None; slots.len()];
+        // Per-slot prefixed FKV leaf paths: account_hash nibbles + separator
+        // (17) + hashed-slot nibbles + leaf flag. Length 131. This is the exact
+        // key `BackendTrieDB::flatkeyvalue_computed` / `Trie::get` use for a
+        // storage leaf (see `apply_prefix`).
+        let leaf_paths: Vec<Vec<u8>> = slots
+            .iter()
+            .map(|(account_hash, _storage_root, slot)| {
+                let hashed_slot = hash_key_fixed(slot);
+                apply_prefix(Some(*account_hash), Nibbles::from_bytes(&hashed_slot)).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Same watermark check as the account batch and `BackendTrieDB`: a path
+        // is covered by FKV iff `last_written >= prefixed_path` compared as raw
+        // nibble bytes. `Nibbles` orders by its inner `data` vec, so the raw
+        // slice comparison is byte-identical to the `Nibbles >= Nibbles` check
+        // in `BackendTrieDB::flatkeyvalue_computed`.
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            // Diff-layer cache holds the authoritative latest value for this
+            // key at this state root, overriding both FKV and trie. Mirror the
+            // cache-first semantics of `TrieWrapper::get` / the account batch:
+            // an empty cached value means the slot was deleted -> None.
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(U256::decode(&value).map_err(StoreError::RLPDecode)?);
+                }
+                continue;
+            }
+            if fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            // Sort the FKV batch by the prefixed (hashed-order) key so adjacent
+            // slots land in the same 4KB RocksDB data blocks. This is the whole
+            // point of the batch: it removes the random-order amplification of
+            // issuing one point lookup per slot in execution order.
+            fkv_indices.sort_unstable_by(|&a, &b| leaf_paths[a].cmp(&leaf_paths[b]));
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            // Sharded parallel multi_get. A single `multi_get` runs the whole
+            // batch serially inside RocksDB (async_io is OFF in our build, so
+            // no io_uring => queue depth ~= 1), which on a cold NVMe is purely
+            // read-latency-bound: it touches few blocks (sorted) but serializes
+            // them. Splitting the SORTED keys into contiguous shards read by
+            // separate blocking threads keeps the per-shard block sharing while
+            // issuing the shards concurrently, so effective queue depth ~= shard
+            // count. On a bloated-account cold read this is ~4.7x a single
+            // multi_get and ~4.6x the per-slot `par_iter` baseline (coldbench).
+            // Shard count scales with batch size and is capped; small batches
+            // run a single in-line multi_get (no thread spawn). All shards share
+            // one read view (one snapshot) so the reads stay consistent.
+            const KEYS_PER_SHARD: usize = 256;
+            const MAX_SHARDS: usize = 64;
+            let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
+            let raw: Vec<Result<Option<Vec<u8>>, StoreError>> = if shards <= 1 {
+                read_view.multi_get(STORAGE_FLATKEYVALUE, &keys)
+            } else {
+                let chunk = keys.len().div_ceil(shards);
+                let rv = read_view.as_ref();
+                std::thread::scope(|scope| {
+                    let handles: Vec<_> = keys
+                        .chunks(chunk)
+                        .map(|ck| scope.spawn(move || rv.multi_get(STORAGE_FLATKEYVALUE, ck)))
+                        .collect();
+                    handles
+                        .into_iter()
+                        .flat_map(|h| h.join().expect("storage prefetch shard panicked"))
+                        .collect()
+                })
+            };
+            for (slot_idx, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot_idx] = Some(U256::decode(&encoded).map_err(StoreError::RLPDecode)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular single-slot path for any slot whose path
+            // hasn't been swept by the FKV generator yet. Reusing
+            // `get_storage_at_root_with_known_storage_root` guarantees the
+            // trie-walk fallback is byte-identical to the unbatched read,
+            // including its own per-slot FKV / EMPTY_TRIE_HASH handling.
+            // Parallelized to recover the per-slot fan-out the pre-batch
+            // `par_iter` prefetch path had.
+            let fetched: Result<Vec<(usize, Option<U256>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    let (account_hash, storage_root, slot) = slots[i];
+                    self.get_storage_at_root_with_known_storage_root(
+                        state_root,
+                        account_hash,
+                        storage_root,
+                        slot,
+                    )
+                    .map(|v| (i, v))
+                })
+                .collect();
+            for (i, v) in fetched? {
+                results[i] = v;
+            }
+        }
+
+        Ok(results)
+    }
+
     /// Constructs a merkle proof for the given account address against a given state.
     /// If storage_keys are provided, also constructs the storage proofs for those keys.
     ///

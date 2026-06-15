@@ -117,6 +117,18 @@ impl LevmDatabase for DynVmDatabase {
         )
     }
 
+    fn get_storage_values_batch(
+        &self,
+        keys: &[(CoreAddress, CoreH256)],
+    ) -> Result<Vec<CoreU256>, DatabaseError> {
+        let values = <dyn VmDatabase>::get_storage_slots_batch(self.as_ref(), keys)
+            .map_err(|e| DatabaseError::Custom(e.to_string()))?;
+        Ok(values
+            .into_iter()
+            .map(|opt| opt.unwrap_or_default())
+            .collect())
+    }
+
     fn get_block_hash(&self, block_number: u64) -> Result<CoreH256, DatabaseError> {
         <dyn VmDatabase>::get_block_hash(self.as_ref(), block_number)
             .map_err(|e| DatabaseError::Custom(e.to_string()))
