@@ -6,3 +6,4 @@ mod logs_bloom_validation_tests;
 mod rkyv_utils_tests;
 mod serde_utils_tests;
 mod utils_tests;
+mod withdrawal_rlp_tests;
