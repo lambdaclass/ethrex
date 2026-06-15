@@ -1239,7 +1239,8 @@ impl Blockchain {
         // Each call to compute_sharded_storage_root already saturates 16 cores,
         // so we process hot accounts sequentially. A parallel outer loop is a
         // future option if multi-hot-account blocks appear.
-        {
+        // Skip the state-trie open entirely on the common path (no hot accounts).
+        if !hot_indices.is_empty() {
             let state_trie = self.storage.open_state_trie(parent_state_root)?;
             for idx in &hot_indices {
                 let idx = *idx;
@@ -1248,8 +1249,8 @@ impl Blockchain {
                     Some(rlp) => AccountState::decode(&rlp)?.storage_root,
                     None => *EMPTY_TRIE_HASH,
                 };
-                // No sort needed: sharding buckets by nibble and trie inserts
-                // are order-independent, and the storage root is content-addressed.
+                // Slots are sorted by hashed key inside compute_sharded_storage_root
+                // to match Stage B's insert order (cache locality + identical node set).
                 let hashed_storage: Vec<(H256, U256)> = item
                     .added_storage
                     .iter()
@@ -3653,6 +3654,18 @@ pub fn compute_sharded_storage_root(
     storage_root: H256,
     hashed_storage: &[(H256, U256)],
 ) -> Result<(H256, Vec<TrieNode>), StoreError> {
+    // Sort by hashed key, matching the serial Stage B path (the per-account
+    // worker). The storage root is content-addressed so order is irrelevant to
+    // correctness, but inserting in key order walks the node arena sequentially
+    // (cache locality) and keeps the persisted node set bit-identical to Stage B.
+    // Applies to both the sharded path below and the serial fallbacks: bucketing
+    // by first nibble preserves the sorted order within each bucket.
+    // Stable sort: production inputs (a map) have unique keys, but a stable order
+    // preserves last-write-wins for any duplicate keys, matching sequential apply.
+    let mut sorted = hashed_storage.to_vec();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0));
+    let hashed_storage = sorted.as_slice();
+
     // Split slots into 16 buckets by the first nibble of the hashed key.
     let mut buckets: [Vec<(H256, U256)>; 16] = Default::default();
     for &(key, value) in hashed_storage {
