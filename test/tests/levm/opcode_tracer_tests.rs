@@ -92,7 +92,10 @@ fn trace_to_json(bytecode: Vec<u8>, cfg: OpcodeTracerConfig) -> Value {
         ),
     );
 
-    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
+    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase {
+        accounts,
+        ..Default::default()
+    }));
     let header = default_header();
     let tx = make_tx(contract_addr, sender_addr);
 
@@ -240,7 +243,10 @@ fn opcode_tracer_sstore_refund_on_clearing_step() {
         ),
     );
 
-    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase { accounts }));
+    let mut db = GeneralizedDatabase::new(Arc::new(TestDatabase {
+        accounts,
+        ..Default::default()
+    }));
     let header = default_header();
     let tx = make_tx(contract_addr, sender_addr);
 

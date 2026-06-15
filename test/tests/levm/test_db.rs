@@ -10,15 +10,15 @@ use rustc_hash::FxHashMap;
 ///
 /// Stores accounts in a `FxHashMap<Address, Account>` and implements the
 /// `Database` trait so it can back a `GeneralizedDatabase`.
+#[derive(Default)]
 pub struct TestDatabase {
     pub accounts: FxHashMap<Address, Account>,
+    pub chain_config: ChainConfig,
 }
 
 impl TestDatabase {
     pub fn new() -> Self {
-        Self {
-            accounts: FxHashMap::default(),
-        }
+        Self::default()
     }
 }
 
@@ -49,7 +49,7 @@ impl Database for TestDatabase {
     }
 
     fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-        Ok(ChainConfig::default())
+        Ok(self.chain_config)
     }
 
     fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
