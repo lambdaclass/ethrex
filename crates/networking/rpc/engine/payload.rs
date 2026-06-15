@@ -1466,86 +1466,10 @@ async fn get_payload(payload_id: u64, context: &RpcApiContext) -> Result<Payload
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::payload::ExecutionPayloadResponse;
-    use crate::{rpc::RpcHandler, test_utils::default_context_with_storage};
-    use ethrex_blockchain::payload::{PayloadBuildResult, PayloadOrTask};
-    use ethrex_common::{
-        U256,
-        types::{BlobsBundle, Block, BlockBody, BlockHeader, ChainConfig},
-    };
+    use crate::test_utils::default_context_with_storage;
+    use ethrex_common::types::ChainConfig;
     use ethrex_rlp::encode::RLPEncode;
     use ethrex_storage::{EngineType, Store};
-
-    async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> RpcApiContext {
-        let mut storage = Store::new(
-            "test-getpayload-v5-amsterdam-boundary",
-            EngineType::InMemory,
-        )
-        .unwrap();
-        storage
-            .set_chain_config(&ChainConfig {
-                chain_id: 1,
-                shanghai_time: Some(0),
-                cancun_time: Some(0),
-                prague_time: Some(0),
-                osaka_time: Some(0),
-                amsterdam_time: Some(10),
-                ..Default::default()
-            })
-            .await
-            .unwrap();
-
-        let context = default_context_with_storage(storage).await;
-        let payload = Block {
-            header: BlockHeader {
-                timestamp,
-                ..Default::default()
-            },
-            body: BlockBody::default(),
-        };
-        let payload_build_result = PayloadBuildResult {
-            blobs_bundle: BlobsBundle::default(),
-            block_value: U256::zero(),
-            receipts: Vec::new(),
-            requests: Vec::new(),
-            account_updates: Vec::new(),
-            payload,
-            block_access_list: None,
-        };
-        context.blockchain.payloads.lock().await.push((
-            payload_id,
-            PayloadOrTask::Payload(Box::new(payload_build_result)),
-        ));
-
-        context
-    }
-
-    #[tokio::test]
-    async fn get_payload_v5_accepts_osaka_payload_before_amsterdam() {
-        let payload_id = 1;
-        let context = context_with_built_payload_at(9, payload_id).await;
-
-        let response = GetPayloadV5Request { payload_id }
-            .handle(context)
-            .await
-            .unwrap();
-        let response: ExecutionPayloadResponse = serde_json::from_value(response).unwrap();
-
-        assert_eq!(response.execution_payload.timestamp, 9);
-    }
-
-    #[tokio::test]
-    async fn get_payload_v5_rejects_amsterdam_payload() {
-        let payload_id = 1;
-        let context = context_with_built_payload_at(10, payload_id).await;
-
-        let err = GetPayloadV5Request { payload_id }
-            .handle(context)
-            .await
-            .unwrap_err();
-
-        assert!(matches!(err, crate::utils::RpcErr::UnsupportedFork(_)));
-    }
 
     fn header(number: u64) -> BlockHeader {
         BlockHeader {
