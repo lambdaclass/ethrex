@@ -429,8 +429,11 @@ fn canonical_execution_witness_to_rpc(
     }
 }
 
+/// Validate the canonical input's `ChainConfig` and witness, then reconstruct
+/// the `Block` from the Amsterdam `NewPayloadRequest` it carries and execute it
+/// statelessly.
 #[cfg(feature = "eip-8025")]
-fn validate_eip8025_canonical_execution(
+pub fn validate_eip8025_canonical_execution(
     stateless_input: CanonicalStatelessInput,
     chain_config: ethrex_common::types::ChainConfig,
     crypto: Arc<dyn Crypto>,
@@ -538,8 +541,10 @@ fn validate_canonical_chain_config(
     Ok(())
 }
 
+/// Reconstruct the `Block` from a legacy `NewPayloadRequest` and execute it
+/// statelessly against the supplied `ExecutionWitness`.
 #[cfg(feature = "eip-8025")]
-fn validate_eip8025_execution(
+pub fn validate_eip8025_execution(
     new_payload_request: &ethrex_common::types::eip8025_ssz::NewPayloadRequest,
     execution_witness: ethrex_common::types::block_execution_witness::ExecutionWitness,
     crypto: Arc<dyn Crypto>,

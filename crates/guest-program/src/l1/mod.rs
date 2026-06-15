@@ -13,6 +13,8 @@ pub use input::{
 #[cfg(feature = "eip-8025")]
 pub use input::{ProgramInputDecodeError, ProgramInputEncodeError};
 pub use output::ProgramOutput;
-#[cfg(feature = "eip-8025")]
-pub use program::execute_decoded;
 pub use program::execution_program;
+#[cfg(feature = "eip-8025")]
+pub use program::{
+    execute_decoded, validate_eip8025_canonical_execution, validate_eip8025_execution,
+};
