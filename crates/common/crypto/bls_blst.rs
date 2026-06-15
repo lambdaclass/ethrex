@@ -133,10 +133,13 @@ fn p1_msm(points: &[blst_p1_affine], scalars: &[u8]) -> blst_p1 {
     let p: [*const blst_p1_affine; 2] = [points.as_ptr(), core::ptr::null()];
     let s: [*const u8; 2] = [scalars.as_ptr(), core::ptr::null()];
     let mut out = blst_p1::default();
-    // SAFETY: `npoints >= 1`, `scalars` is `npoints * 32` bytes, and scratch is
-    // sized by blst's own helper.
+    // SAFETY: `npoints >= 2` (the single-point and empty cases are handled by
+    // the caller), `scalars` is `npoints * 32` bytes, and scratch is sized by
+    // blst's own helper. The helper returns a byte count; `div_ceil(8)` rounds
+    // up to whole `u64` limbs so the buffer is never undersized on a target
+    // where the count isn't a multiple of 8.
     unsafe {
-        let mut scratch = vec![0u64; blst_p1s_mult_pippenger_scratch_sizeof(npoints) / 8];
+        let mut scratch = vec![0u64; blst_p1s_mult_pippenger_scratch_sizeof(npoints).div_ceil(8)];
         blst_p1s_mult_pippenger(
             &mut out,
             p.as_ptr(),
@@ -155,10 +158,13 @@ fn p2_msm(points: &[blst_p2_affine], scalars: &[u8]) -> blst_p2 {
     let p: [*const blst_p2_affine; 2] = [points.as_ptr(), core::ptr::null()];
     let s: [*const u8; 2] = [scalars.as_ptr(), core::ptr::null()];
     let mut out = blst_p2::default();
-    // SAFETY: `npoints >= 1`, `scalars` is `npoints * 32` bytes, and scratch is
-    // sized by blst's own helper.
+    // SAFETY: `npoints >= 2` (the single-point and empty cases are handled by
+    // the caller), `scalars` is `npoints * 32` bytes, and scratch is sized by
+    // blst's own helper. The helper returns a byte count; `div_ceil(8)` rounds
+    // up to whole `u64` limbs so the buffer is never undersized on a target
+    // where the count isn't a multiple of 8.
     unsafe {
-        let mut scratch = vec![0u64; blst_p2s_mult_pippenger_scratch_sizeof(npoints) / 8];
+        let mut scratch = vec![0u64; blst_p2s_mult_pippenger_scratch_sizeof(npoints).div_ceil(8)];
         blst_p2s_mult_pippenger(
             &mut out,
             p.as_ptr(),
