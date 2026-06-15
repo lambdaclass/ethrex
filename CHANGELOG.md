@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-15
+
+- Batch BAL storage-slot prefetch for storage-heavy blocks via a sharded parallel rocksdb `multi_get_cf` on the storage flat key-value table. The sorted FKV keys are split into contiguous shards read concurrently, so adjacent slots share data blocks while the reads run at high queue depth, recovering the cold-read throughput a single serial `multi_get` loses (it runs at queue depth 1 since `async_io` is off). Gated by batch size so it engages only on storage-heavy blocks (>= 49152 distinct cold slots, above what a block can reach under a 100M gas limit; relevant as Glamsterdam and later forks raise the limit, and for storage-bloat DoS hardening): normal blocks keep the warm-optimal per-slot parallel point-gets
+
 ### 2026-06-03
 
 - Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)
