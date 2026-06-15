@@ -1260,7 +1260,7 @@ async fn try_execute_payload(
             Ok(PayloadStatus::syncing())
         }
         Err(ChainError::InvalidBlock(error)) => {
-            warn!("Error executing block: {error}");
+            warn!(%block_hash, %block_number, "Error executing block: {error}");
             context
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
@@ -1271,7 +1271,7 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::EvmError(error)) => {
-            warn!("Error executing block: {error}");
+            warn!(%block_hash, %block_number, "Error executing block: {error}");
             context
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
@@ -1282,7 +1282,7 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::StoreError(error)) => {
-            warn!("Error storing block: {error}");
+            warn!(%block_hash, %block_number, "Error storing block: {error}");
             Err(RpcErr::Internal(error.to_string()))
         }
         Err(e) => {
