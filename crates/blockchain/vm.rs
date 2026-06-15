@@ -210,6 +210,59 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
+        name = "Storage read batch",
+        skip_all,
+        fields(namespace = "block_execution", n = keys.len())
+    )]
+    fn get_storage_slots_batch(
+        &self,
+        keys: &[(Address, H256)],
+    ) -> Result<Vec<Option<U256>>, EvmError> {
+        if keys.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Resolve the account state (hashed address + storage root) for each
+        // distinct address. This mirrors the per-slot `get_storage_slot` path,
+        // which opens the storage trie from the cached account entry. Slots for
+        // a non-existent account resolve to `None`, exactly as the single-get
+        // path returns `None` when the account entry is missing.
+        let mut entries: FxHashMap<Address, Option<AccountStateCacheEntry>> = FxHashMap::default();
+        for &(addr, _) in keys {
+            if let std::collections::hash_map::Entry::Vacant(slot) = entries.entry(addr) {
+                slot.insert(self.get_cached_account_state_entry(addr)?);
+            }
+        }
+
+        // Build the store-batch input for slots whose account exists, remembering
+        // the original index so results can be scattered back in input order.
+        let mut results: Vec<Option<U256>> = vec![None; keys.len()];
+        let mut batch_idx: Vec<usize> = Vec::with_capacity(keys.len());
+        let mut batch: Vec<(H256, H256, H256)> = Vec::with_capacity(keys.len());
+        for (i, &(addr, key)) in keys.iter().enumerate() {
+            if let Some(Some(entry)) = entries.get(&addr) {
+                batch_idx.push(i);
+                batch.push((entry.hashed_address, entry.state.storage_root, key));
+            }
+        }
+
+        if batch.is_empty() {
+            return Ok(results);
+        }
+
+        let fetched = self
+            .store
+            .get_storage_values_batch_by_root(self.state_root, &batch)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+        for (i, value) in batch_idx.into_iter().zip(fetched.into_iter()) {
+            results[i] = value;
+        }
+
+        Ok(results)
+    }
+
+    #[instrument(
+        level = "trace",
         name = "Block hash read",
         skip_all,
         fields(namespace = "block_execution")

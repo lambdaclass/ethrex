@@ -12,6 +12,10 @@
 
 ## Perf
 
+### 2026-06-15
+
+- Batch BAL storage-slot prefetch via a single sorted rocksdb `multi_get_cf` on the storage flat key-value table
+
 ### 2026-06-03
 
 - Short-circuit the `KECCAK256` opcode on zero-length input by returning the precomputed `keccak256("")` constant, skipping the permutation [#6775](https://github.com/lambdaclass/ethrex/pull/6775)

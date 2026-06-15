@@ -3,8 +3,6 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -36,6 +34,17 @@ pub trait Database: Send + Sync {
         addresses
             .iter()
             .map(|a| self.get_account_state(*a))
+            .collect()
+    }
+    /// Batch storage-slot lookup. Default: loop. Backends with a batched read
+    /// path (e.g. rocksdb `multi_get_cf` on the storage flat key-value table)
+    /// should override this and the caching layer above will dispatch to it.
+    fn get_storage_values_batch(
+        &self,
+        keys: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        keys.iter()
+            .map(|&(addr, key)| self.get_storage_value(addr, key))
             .collect()
     }
     /// Prefetch a batch of accounts into the cache. Default: sequential fallback.
@@ -216,19 +225,24 @@ impl Database for CachingDatabase {
         Ok(())
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<((Address, H256), U256)> = keys
-            .par_iter()
-            .map(|&(addr, key)| {
-                self.inner
-                    .get_storage_value(addr, key)
-                    .map(|v| ((addr, key), v))
-            })
-            .collect::<Result<_, _>>()?;
+        // Filter out already-cached slots before issuing the batch read.
+        let missing: Vec<(Address, H256)> = {
+            let cache = self.read_storage()?;
+            keys.iter()
+                .copied()
+                .filter(|k| !cache.contains_key(k))
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // Dispatch to inner's batch path. For the rocksdb-backed StoreVmDatabase
+        // this collapses into a single sorted multi_get on STORAGE_FLATKEYVALUE
+        // for the FKV-covered subset; default impl loops for other backends.
+        let values = self.inner.get_storage_values_batch(&missing)?;
         let mut cache = self.write_storage()?;
-        for (key, value) in fetched {
+        for (key, value) in missing.into_iter().zip(values.into_iter()) {
             cache.entry(key).or_insert(value);
         }
         Ok(())
