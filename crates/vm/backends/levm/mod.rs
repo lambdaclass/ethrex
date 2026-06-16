@@ -313,16 +313,6 @@ impl LEVM {
             receipts.push(receipt);
         }
 
-        if block.header.number == 87218600 {
-            eprintln!(
-                "BLOCK_GAS_FINAL block={} block_gas_used={} expected={} receipts={} cumulative={}",
-                block.header.number,
-                block_gas_used,
-                block.header.gas_used,
-                receipts.len(),
-                cumulative_gas_used,
-            );
-        }
         ::tracing::debug!(
             "BLOCK_GAS_TOTAL block={} block_gas_used={} expected={} receipts={}",
             block.header.number,

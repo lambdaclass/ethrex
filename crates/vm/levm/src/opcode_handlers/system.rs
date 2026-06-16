@@ -250,14 +250,24 @@ impl OpcodeHandler for OpCallCodeHandler {
             &data,
         );
 
-        // Generic call.
+        // CALLCODE checks the caller has sufficient balance but does NOT
+        // actually transfer: go-ethereum's CallCode calls CanTransfer but
+        // never calls Transfer. The value is available via CALLVALUE opcode only.
+        if !value.is_zero() {
+            let caller_balance = vm.db.get_account(vm.current_call_frame.to)?.info.balance;
+            if caller_balance < value {
+                vm.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
+                return Ok(OpcodeResult::Continue);
+            }
+        }
+
         vm.generic_call(
             gas_limit,
             value,
             vm.current_call_frame.to,
             vm.current_call_frame.to,
             code_address,
-            true,
+            false,
             vm.current_call_frame.is_static,
             data,
             return_offset,
