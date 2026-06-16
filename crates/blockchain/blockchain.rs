@@ -607,43 +607,43 @@ impl Blockchain {
         // Gated by `--no-bal-prefetch`: when the operator disables BAL-driven
         // prefetching, skip the synchronous storage warm too. The warmer thread
         // below already honors the same toggle.
+        // Synchronously warm the flat-KV storage values execution reads (SLOAD and
+        // SSTORE original values). This must be ready before exec starts, so it
+        // stays on the critical path. The trie-node prefetch instead serves the
+        // merkleizer, which runs concurrently with exec, so here we only PREPARE
+        // its input and run it on its own thread inside the scope below
+        // (`trie_prefetch_handle`), overlapping its cost with execution.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-        if self.options.bal_prefetch_enabled
-            && let Some(bal_ref) = bal.as_ref()
-        {
-            let slots = LEVM::bal_storage_slots(bal_ref);
-            if !slots.is_empty() {
-                let _ = caching_store.prefetch_storage(&slots);
-            }
+        let trie_prefetch_input: Option<(Vec<(Address, H256)>, Vec<Address>)> =
+            if self.options.bal_prefetch_enabled
+                && let Some(bal_ref) = bal.as_ref()
+            {
+                let slots = LEVM::bal_storage_slots(bal_ref);
+                if !slots.is_empty() {
+                    let _ = caching_store.prefetch_storage(&slots);
+                }
 
-            // Warm the MPT internal nodes the merkleizer will walk, from the same
-            // BAL working set (different CFs than the flat-KV warm above, which
-            // only serves execution). The merkle phase is otherwise 100% cold on
-            // the trie-node CFs. Synchronous + up front: never races the
-            // merkleizer, and touches CFs execution doesn't, so no exec contention
-            // either.
-            //
-            // Gated so ordinary merkle-light blocks (few touched slots/accounts,
-            // usually cache-warm) don't pay the probe cost. The payoff is on
-            // high-gas-limit blocks that touch a large number of distinct storage
-            // slots and/or accounts, for example many SSTOREs and value-transferring
-            // CALLs over cold state, where the merkle phase has to walk a large set
-            // of scattered, cold trie nodes. Sizing: a cold slot/account access costs
-            // ~2100 gas, so a block reaches at most ~gas_limit/2100 distinct
-            // accesses; 16384 (~34M gas of cold accesses) sits well above any
-            // ordinary block yet below the large-state blocks this targets, so it
-            // stays inert on normal traffic and fires only once merkle goes
-            // cold-read-bound. Scale with the gas limit. Tunable.
-            //
-            // SLOAD-dominated blocks are handled by the flat-KV warm above (reads
-            // don't touch the trie); this is the complementary write/account-update
-            // side, so the two cover different workloads without overlapping.
-            const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
-            let accounts = LEVM::bal_accounts(bal_ref);
-            if slots.len() + accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
-                let _ = self.storage.prefetch_trie_nodes(&slots, &accounts);
-            }
-        }
+                // The internal MPT nodes the merkleizer walks live in the trie-node
+                // CFs, which execution never reads. Gated so ordinary merkle-light
+                // blocks don't pay the probe cost; the payoff is on high-gas-limit
+                // blocks that touch many distinct storage slots and/or accounts (many
+                // SSTOREs and value-transferring CALLs over cold state), where merkle
+                // walks a large set of scattered, cold nodes. A cold slot/account
+                // access costs ~2100 gas, so a block reaches at most ~gas_limit/2100
+                // distinct accesses; 16384 (~34M gas of cold accesses) sits above
+                // ordinary blocks and below the large-state blocks this targets.
+                // Tunable. SLOAD-dominated blocks need no trie warming (reads don't
+                // touch the trie); the flat-KV warm above covers them.
+                const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
+                let accounts = LEVM::bal_accounts(bal_ref);
+                if slots.len() + accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+                    Some((slots, accounts))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
@@ -704,6 +704,30 @@ impl Blockchain {
                     .map_err(|e| {
                         ChainError::Custom(format!("Failed to spawn warmer thread: {e}"))
                     })?;
+
+                // Warm the merkleizer's trie-node reads concurrently with execution
+                // instead of up front. Touches different CFs than execution, so no
+                // exec contention; as a high-queue-depth batch it races ahead of the
+                // merkleizer's per-account walk so those reads land warm. Best-effort:
+                // any node it misses is just cold-read by the walk. The scope joins it
+                // before the block returns, but it shares the trie-node cold reads with
+                // the merkleizer at higher aggregate queue depth, so it completes
+                // within the exec/merkle window rather than extending it.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                let trie_prefetch_handle = match trie_prefetch_input {
+                    Some((slots, accounts)) => {
+                        let storage = &self.storage;
+                        std::thread::Builder::new()
+                            .name("block_executor_trie_prefetch".to_string())
+                            .spawn_scoped(s, move || {
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
+                            })
+                            .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
+                            .ok()
+                    }
+                    None => None,
+                };
+
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
                 // branch OR LEVM falls into the sequential path:
@@ -838,6 +862,15 @@ impl Blockchain {
                     .unwrap_or(Duration::ZERO);
                 #[cfg(any(not(feature = "rayon"), feature = "eip-8025"))]
                 let warmer_duration = Duration::ZERO;
+                // Best-effort prefetch: join so the scope's borrows end cleanly.
+                // The warming result is discarded, but surface a panic so a failing
+                // prefetch (e.g. a RocksDB error) is observable rather than silent.
+                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+                if let Some(h) = trie_prefetch_handle
+                    && let Err(e) = h.join()
+                {
+                    warn!("trie-node prefetch thread panicked (best-effort, ignored): {e:?}");
+                }
                 Ok((execution_result, merkleization_result, warmer_duration))
             })?;
         let (account_updates_list, streaming_witness, merkle_start_instant, merkle_end_instant) =
