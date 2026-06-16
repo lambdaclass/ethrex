@@ -52,9 +52,12 @@ impl RpcHandler for SetHeadRequest {
 
         // Point head, safe and finalized at the target block, rewinding the
         // canonical chain to it.
+        // apply_fork_choice refuses to rewind below the stored finalized block
+        // number. Surface this as BadParams so callers know they passed an
+        // invalid target rather than interpreting it as a server bug.
         apply_fork_choice(&context.storage, block_hash, block_hash, block_hash)
             .await
-            .map_err(|err| RpcErr::Internal(err.to_string()))?;
+            .map_err(|err| RpcErr::BadParams(format!("cannot set head: {err}")))?;
 
         Ok(Value::Null)
     }

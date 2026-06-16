@@ -1,3 +1,4 @@
+use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, Transaction};
 use ethrex_common::{Bytes, H256};
@@ -158,7 +159,17 @@ impl RpcHandler for BuildBlockV1Request {
                 .blockchain
                 .build_payload_with_transactions(payload, transactions),
         }
-        .map_err(|err| RpcErr::Internal(err.to_string()))?;
+        // Failures from a caller-supplied transaction list are user input, not
+        // server bugs: map them to BadParams (-32000) so a JSON-RPC client can
+        // distinguish a bad transaction from an internal failure (-32603).
+        .map_err(|err| match err {
+            ChainError::EvmError(error) => error.into(),
+            ChainError::InvalidTransaction(msg) => {
+                RpcErr::BadParams(format!("invalid transaction: {msg}"))
+            }
+            ChainError::Custom(msg) => RpcErr::BadParams(msg),
+            other => RpcErr::Internal(other.to_string()),
+        })?;
 
         let timestamp = result.payload.header.timestamp;
 
