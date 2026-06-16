@@ -713,7 +713,7 @@ pub fn fork_to_spec_id(fork: Fork) -> SpecId {
         Fork::BPO4 => SpecId::OSAKA,
         Fork::BPO5 => SpecId::OSAKA,
         Fork::Amsterdam => SpecId::OSAKA, // Amsterdam maps to OSAKA until revm adds AMSTERDAM SpecId
-        Fork::Hegota => SpecId::OSAKA, // Hegota maps to OSAKA until revm adds a newer SpecId
+        Fork::Hegota => SpecId::OSAKA,    // Hegota maps to OSAKA until revm adds a newer SpecId
     }
 }
 
