@@ -11,9 +11,12 @@ use ethrex_common::{
     types::{Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER, Genesis},
 };
 use ethrex_rpc::engine::fork_choice::{ForkChoiceUpdatedV3, ForkChoiceUpdatedV4};
+use ethrex_rpc::engine::payload::GetPayloadV5Request;
+use ethrex_rpc::rpc::RpcApiContext;
 use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
 use ethrex_rpc::types::fork_choice::PayloadAttributesV4;
+use ethrex_rpc::types::payload::ExecutionPayloadResponse;
 use ethrex_rpc::utils::{RpcErr, RpcRequest};
 use ethrex_storage::{EngineType, Store};
 
@@ -51,6 +54,64 @@ async fn new_block(store: &Store, parent: &BlockHeader) -> Block {
     let blockchain = Blockchain::default_with_store(store.clone());
     let block = create_payload(&args, store, Bytes::new()).unwrap();
     blockchain.build_payload(block).unwrap().payload
+}
+
+async fn context_with_built_payload_at(timestamp: u64, payload_id: u64) -> RpcApiContext {
+    let mut storage = test_store().await;
+    let mut chain_config = storage.get_chain_config();
+    chain_config.osaka_time = Some(0);
+    chain_config.amsterdam_time = Some(10);
+    storage.set_chain_config(&chain_config).await.unwrap();
+
+    let genesis_header = storage.get_block_header(0).unwrap().unwrap();
+    let args = BuildPayloadArgs {
+        parent: genesis_header.hash(),
+        timestamp,
+        fee_recipient: H160::random(),
+        random: H256::random(),
+        withdrawals: Some(Vec::new()),
+        beacon_root: Some(H256::random()),
+        slot_number: None,
+        version: 1,
+        elasticity_multiplier: ELASTICITY_MULTIPLIER,
+        gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+    };
+    let payload = create_payload(&args, &storage, Bytes::new()).unwrap();
+    let context = default_context_with_storage(storage).await;
+    context
+        .blockchain
+        .clone()
+        .initiate_payload_build(payload, payload_id)
+        .await;
+
+    context
+}
+
+#[tokio::test]
+async fn get_payload_v5_accepts_osaka_payload_before_amsterdam() {
+    let payload_id = 1;
+    let context = context_with_built_payload_at(9, payload_id).await;
+
+    let response = GetPayloadV5Request { payload_id }
+        .handle(context)
+        .await
+        .unwrap();
+    let response: ExecutionPayloadResponse = serde_json::from_value(response).unwrap();
+
+    assert_eq!(response.execution_payload.timestamp, 9);
+}
+
+#[tokio::test]
+async fn get_payload_v5_rejects_amsterdam_payload() {
+    let payload_id = 1;
+    let context = context_with_built_payload_at(10, payload_id).await;
+
+    let err = GetPayloadV5Request { payload_id }
+        .handle(context)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, RpcErr::UnsupportedFork(_)));
 }
 
 // Regression test for execution-apis PR #786: when engine_forkchoiceUpdatedV3
