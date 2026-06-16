@@ -2104,40 +2104,68 @@ impl LEVM {
         let base_blob_fee_per_gas =
             get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
 
+        // Dedicated warming pool, sized for storage-device queue depth rather than
+        // CPU count. Warming workers spend most of their time BLOCKED on cold state
+        // reads (~one NVMe random seek each), so running more workers than cores
+        // raises the number of in-flight reads toward the device ceiling — measured
+        // ~30x throughput at queue-depth 64 vs serial on datacenter NVMe. Opt-in via
+        // ETHREX_WARMER_THREADS; unset (or 0) keeps the previous behavior of warming
+        // on the global rayon pool (num_cpus).
+        static WARMER_POOL: std::sync::LazyLock<Option<rayon::ThreadPool>> =
+            std::sync::LazyLock::new(|| {
+                let n: usize = std::env::var("ETHREX_WARMER_THREADS").ok()?.parse().ok()?;
+                if n == 0 {
+                    return None;
+                }
+                // On the rare build failure, fall back to the global pool.
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(n)
+                    .thread_name(|i| format!("warmer-{i}"))
+                    .build()
+                    .ok()
+            });
+
         // Parallel across sender groups, sequential within each group. The stack pool is reused
         // across all groups a worker handles (it is `Send`).
-        sender_groups.into_par_iter().for_each_with(
-            Vec::with_capacity(STACK_LIMIT),
-            |stack_pool, (sender, txs)| {
-                if cancelled.load(Ordering::Relaxed) {
-                    return;
-                }
-                // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
-                // init; keep it local to this group's run, where it still amortizes the buffer
-                // alloc across the group's txs.
-                let mut memory_pool = Vec::with_capacity(1);
-                // Each sender group gets its own db instance for state propagation
-                let mut group_db = GeneralizedDatabase::new(store.clone());
-                // Execute transactions sequentially within sender group
-                // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
-                for tx in txs {
-                    let _ = Self::execute_tx_in_block(
-                        tx,
-                        sender,
-                        &block.header,
-                        &mut group_db,
-                        vm_type,
-                        base_blob_fee_per_gas,
-                        stack_pool,
-                        &mut memory_pool,
-                        true,
-                        crypto,
-                        evm_config,
-                        chain_id,
-                    );
-                }
-            },
-        );
+        let warm_groups = move || {
+            sender_groups.into_par_iter().for_each_with(
+                Vec::with_capacity(STACK_LIMIT),
+                |stack_pool, (sender, txs)| {
+                    if cancelled.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    // Memory holds an `Rc` (not `Send`), so its pool can't ride the `for_each_with`
+                    // init; keep it local to this group's run, where it still amortizes the buffer
+                    // alloc across the group's txs.
+                    let mut memory_pool = Vec::with_capacity(1);
+                    // Each sender group gets its own db instance for state propagation
+                    let mut group_db = GeneralizedDatabase::new(store.clone());
+                    // Execute transactions sequentially within sender group
+                    // This ensures nonce and balance changes from tx[N] are visible to tx[N+1]
+                    for tx in txs {
+                        let _ = Self::execute_tx_in_block(
+                            tx,
+                            sender,
+                            &block.header,
+                            &mut group_db,
+                            vm_type,
+                            base_blob_fee_per_gas,
+                            stack_pool,
+                            &mut memory_pool,
+                            true,
+                            crypto,
+                            evm_config,
+                            chain_id,
+                        );
+                    }
+                },
+            );
+        };
+        // Run on the dedicated high-queue-depth pool when configured, else the global pool.
+        match &*WARMER_POOL {
+            Some(pool) => pool.install(warm_groups),
+            None => warm_groups(),
+        }
 
         if cancelled.load(Ordering::Relaxed) {
             return Ok(());
