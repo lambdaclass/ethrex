@@ -3099,7 +3099,9 @@ impl Store {
         const MAX_PREFETCH_DEPTH: usize = 8;
 
         // STORAGE_TRIE_NODES: prefixes of apply_prefix(hashed_addr, hashed_slot).
-        let mut storage_keys: Vec<Vec<u8>> = Vec::with_capacity(storage_slots.len() * 4);
+        // Each input pushes MAX_PREFETCH_DEPTH+1 prefixes (depths 0..=max_d).
+        let mut storage_keys: Vec<Vec<u8>> =
+            Vec::with_capacity(storage_slots.len() * (MAX_PREFETCH_DEPTH + 1));
         for (address, slot) in storage_slots {
             let hashed_address = hash_address_fixed(address);
             let hashed_slot = hash_key_fixed(slot);
@@ -3112,7 +3114,8 @@ impl Store {
         }
 
         // ACCOUNT_TRIE_NODES: prefixes of the hashed address (no account prefix).
-        let mut account_keys: Vec<Vec<u8>> = Vec::with_capacity(accounts.len() * 4);
+        let mut account_keys: Vec<Vec<u8>> =
+            Vec::with_capacity(accounts.len() * (MAX_PREFETCH_DEPTH + 1));
         for address in accounts {
             let hashed_address = hash_address_fixed(address);
             let addr_nibbles = Nibbles::from_bytes(hashed_address.as_bytes());
