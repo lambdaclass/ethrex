@@ -13,7 +13,6 @@ path = "./lib.rs"
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", default-features = false, optional = true }
 kzg-rs = { workspace = true, optional = true }
-openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 ethereum-types = { version = "0.15.1", default-features = false }
 thiserror = { version = "2.0.9", default-features = false }
 
@@ -52,11 +51,13 @@ std = [
 blst = ["dep:blst", "std"]
 secp256k1 = ["dep:secp256k1", "std"]
 c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
-openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]
 
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
-openvm = ["openvm-kzg"]
+# No-op here: the OpenVM KZG backend (openvm-kzg) now lives in
+# ethrex-guest-program's OpenVm provider, not in this crate. Retained so the
+# `ethrex-common/openvm` feature chain still resolves.
+openvm = []
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
