@@ -694,35 +694,39 @@ mod tests {
     }
 }
 #[test]
-    fn migrate_3_to_4_jumpless_bytecode_produces_empty_bitvec() {
-        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+fn migrate_3_to_4_jumpless_bytecode_produces_empty_bitvec() {
+    let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
 
-        // No JUMPDEST opcodes — old targets empty, bitvec must also be empty.
-        let bytecode = Bytes::from(vec![0x60u8, 0x00, 0x50]); // PUSH1 0x00 POP
-        let old_targets: Vec<u32> = vec![];
-        let code_hash = H256::random();
+    // No JUMPDEST opcodes — old targets empty, bitvec must also be empty.
+    let bytecode = Bytes::from(vec![0x60u8, 0x00, 0x50]); // PUSH1 0x00 POP
+    let old_targets: Vec<u32> = vec![];
+    let code_hash = H256::random();
 
-        {
-            let mut buf = Vec::new();
-            bytecode.encode(&mut buf);
-            old_targets.encode(&mut buf);
-            let mut txn = backend.begin_write().unwrap();
-            txn.put(ACCOUNT_CODES, code_hash.as_bytes(), &buf).unwrap();
-            txn.commit().unwrap();
-        }
-
-        migrate_3_to_4(&backend).unwrap();
-
-        let txn = backend.begin_read().unwrap();
-        let val = txn
-            .get(ACCOUNT_CODES, code_hash.as_bytes())
-            .unwrap()
-            .expect("entry must still exist after migration");
-        let bytes = Bytes::from(val.to_vec());
-        let (bytecode_slice, targets_tail) = decode_bytes(&bytes).unwrap();
-        let new_bytecode = bytes.slice_ref(bytecode_slice);
-        let new_targets = <Vec<u8>>::decode(targets_tail).unwrap();
-
-        assert_eq!(new_bytecode, bytecode, "bytecode unchanged");
-        assert_eq!(new_targets, vec![0x00u8], "jumpless bytecode produces zeroed bitvec");
+    {
+        let mut buf = Vec::new();
+        bytecode.encode(&mut buf);
+        old_targets.encode(&mut buf);
+        let mut txn = backend.begin_write().unwrap();
+        txn.put(ACCOUNT_CODES, code_hash.as_bytes(), &buf).unwrap();
+        txn.commit().unwrap();
     }
+
+    migrate_3_to_4(&backend).unwrap();
+
+    let txn = backend.begin_read().unwrap();
+    let val = txn
+        .get(ACCOUNT_CODES, code_hash.as_bytes())
+        .unwrap()
+        .expect("entry must still exist after migration");
+    let bytes = Bytes::from(val.to_vec());
+    let (bytecode_slice, targets_tail) = decode_bytes(&bytes).unwrap();
+    let new_bytecode = bytes.slice_ref(bytecode_slice);
+    let new_targets = <Vec<u8>>::decode(targets_tail).unwrap();
+
+    assert_eq!(new_bytecode, bytecode, "bytecode unchanged");
+    assert_eq!(
+        new_targets,
+        vec![0x00u8],
+        "jumpless bytecode produces zeroed bitvec"
+    );
+}
