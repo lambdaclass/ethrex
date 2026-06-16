@@ -126,6 +126,8 @@ mod ssz_witness {
         ChainConfig(String),
         #[error("trie error: {0}")]
         Trie(#[from] TrieError),
+        #[error("witness contains no block headers; cannot derive state root")]
+        MissingHeaders,
     }
 
     fn to_ssz_list<const MAX: usize>(
@@ -195,19 +197,29 @@ mod ssz_witness {
             }
 
             // Parse parent header to get state root
-            let parent_header_bytes =
-                ssz_witness
-                    .block_headers_bytes
-                    .iter()
-                    .last()
-                    .ok_or_else(|| {
-                        ExecutionWitnessSszError::InvalidSszType(
-                            "no block headers in witness".to_string(),
-                        )
-                    })?;
-            let parent_header = BlockHeader::decode(&mut parent_header_bytes.as_ref())
-                .map_err(ExecutionWitnessSszError::RlpDecode)?;
-            let initial_state_root = parent_header.state_root;
+            if ssz_witness.block_headers_bytes.is_empty() {
+                return Err(ExecutionWitnessSszError::MissingHeaders);
+            }
+            if ssz_witness.first_block_number == 0 {
+                return Err(ExecutionWitnessSszError::InvalidSszType(
+                    "first_block_number must be > 0 (need parent header)".to_string(),
+                ));
+            }
+            let parent_number = ssz_witness.first_block_number - 1;
+            let mut initial_state_root = None;
+            for hb in &ssz_witness.block_headers_bytes {
+                let header = BlockHeader::decode(&mut hb.as_ref())
+                    .map_err(ExecutionWitnessSszError::RlpDecode)?;
+                if header.number == parent_number {
+                    initial_state_root = Some(header.state_root);
+                    break;
+                }
+            }
+            let initial_state_root = initial_state_root.ok_or_else(|| {
+                ExecutionWitnessSszError::InvalidSszType(format!(
+                    "header for block {parent_number} not found in witness"
+                ))
+            })?;
 
             // Embed state trie and collect account storage roots in one pass
             let (state_trie_root, storage_trie_roots) = if initial_state_root == *EMPTY_TRIE_HASH {
