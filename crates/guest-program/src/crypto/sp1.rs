@@ -1,9 +1,10 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
-use super::bls_portable::impl_portable_bls12_381;
 use super::shared::{
-    k256_ecrecover, k256_recover_signer, substrate_bn_g1_mul, substrate_bn_pairing_check,
+    bls12_381_fp2_to_g2, bls12_381_fp_to_g1, bls12_381_g1_add, bls12_381_g1_msm,
+    bls12_381_g2_add, bls12_381_g2_msm, bls12_381_pairing_check, k256_ecrecover,
+    k256_recover_signer, substrate_bn_g1_mul, substrate_bn_pairing_check,
 };
 
 /// SP1 crypto provider.
@@ -57,5 +58,57 @@ impl Crypto for Sp1Crypto {
             })
     }
 
-    impl_portable_bls12_381!();
+    fn bls12_381_g1_add(
+        &self,
+        a: ([u8; 48], [u8; 48]),
+        b: ([u8; 48], [u8; 48]),
+    ) -> Result<[u8; 96], CryptoError> {
+        bls12_381_g1_add(a, b)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn bls12_381_g1_msm(
+        &self,
+        pairs: &[(([u8; 48], [u8; 48]), [u8; 32])],
+    ) -> Result<[u8; 96], CryptoError> {
+        bls12_381_g1_msm(pairs)
+    }
+
+    fn bls12_381_g2_add(
+        &self,
+        a: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        b: ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+    ) -> Result<[u8; 192], CryptoError> {
+        bls12_381_g2_add(a, b)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn bls12_381_g2_msm(
+        &self,
+        pairs: &[(([u8; 48], [u8; 48], [u8; 48], [u8; 48]), [u8; 32])],
+    ) -> Result<[u8; 192], CryptoError> {
+        bls12_381_g2_msm(pairs)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn bls12_381_pairing_check(
+        &self,
+        pairs: &[(
+            ([u8; 48], [u8; 48]),
+            ([u8; 48], [u8; 48], [u8; 48], [u8; 48]),
+        )],
+    ) -> Result<bool, CryptoError> {
+        bls12_381_pairing_check(pairs)
+    }
+
+    fn bls12_381_fp_to_g1(&self, fp: &[u8; 48]) -> Result<[u8; 96], CryptoError> {
+        bls12_381_fp_to_g1(fp)
+    }
+
+    fn bls12_381_fp2_to_g2(
+        &self,
+        fp2: ([u8; 48], [u8; 48]),
+    ) -> Result<[u8; 192], CryptoError> {
+        bls12_381_fp2_to_g2(fp2)
+    }
 }
