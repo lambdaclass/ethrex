@@ -615,14 +615,16 @@ impl RpcHandler for GetPayloadV5Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp)
+            || chain_config.is_amsterdam_activated(payload_bundle.block.header.timestamp)
+        {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
 
-        // V5 supports BAL (Amsterdam fork, EIP-7928)
+        // V5 supports BAL before Amsterdam (EIP-7928)
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(
                 payload_bundle.block,
