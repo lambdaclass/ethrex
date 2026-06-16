@@ -39,9 +39,6 @@ let
       lockFile = ./Cargo.lock;
       outputHashes = {
         "bls12_381-0.8.0" = "sha256-tpKF3wxog7eH1oDbpjoFjYibvH6u2kiR/H2Ysazqeok=";
-        # libssz (EIP-8025 SSZ support, execution-apis #793) — git dep pulled in
-        # via ethrex-rpc; nix needs an explicit vendor hash for it.
-        "libssz-0.2.1" = "sha256-5btt/O1qqPnj6z3FKkCqWEtxqDPZ3Du62xnV6Sevfwc=";
       };
     };
 

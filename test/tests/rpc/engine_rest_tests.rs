@@ -2446,7 +2446,7 @@ mod forkchoice_update_type_tests {
     use ethrex_rpc::engine_rest::types::blobs::CELLS_PER_EXT_BLOB;
     use ethrex_rpc::engine_rest::types::common::{ForkchoiceState, from_optional, to_optional};
     use ethrex_rpc::engine_rest::types::forkchoice_update::*;
-    use ethrex_rpc::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
+    use ethrex_rpc::engine_rest::types::{amsterdam, cancun, paris};
     use libssz::{SszDecode, SszEncode};
     use libssz_types::SszBitvector;
 
