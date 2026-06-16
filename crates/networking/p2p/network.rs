@@ -796,7 +796,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        info!("Peers: {active_peers} (snap-capable: {snap_active_peers})");
         interval.tick().await;
     }
 }

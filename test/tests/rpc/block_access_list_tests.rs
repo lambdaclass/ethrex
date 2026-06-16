@@ -23,16 +23,30 @@ fn sample_bal() -> BlockAccessList {
     BlockAccessList::from_accounts(vec![account])
 }
 
+// A header (number 1) that commits to `bal` via `block_access_list_hash`.
+// All optional header fields preceding it are set so the header round-trips
+// through RLP — `encode_optional_field` is trailing-only, so a lone trailing
+// optional would otherwise be misdecoded into the first optional slot.
+fn header_committing_to(bal: &BlockAccessList) -> BlockHeader {
+    BlockHeader {
+        number: 1,
+        base_fee_per_gas: Some(0),
+        withdrawals_root: Some(H256::zero()),
+        blob_gas_used: Some(0),
+        excess_blob_gas: Some(0),
+        parent_beacon_block_root: Some(H256::zero()),
+        requests_hash: Some(H256::zero()),
+        block_access_list_hash: Some(bal.compute_hash()),
+        ..Default::default()
+    }
+}
+
 // Mirrors the `eth_getBlockAccessList` example in
 // execution-apis/src/eth/block.yaml (schema at
 // src/schemas/block-access-list.yaml). If this drifts, the endpoint is no
 // longer wire-compatible.
 #[tokio::test]
 async fn eth_get_block_access_list_matches_spec_example() {
-    let block_hash =
-        H256::from_str("0x1111111111111111111111111111111111111111111111111111111111111111")
-            .unwrap();
-
     let address = Address::from_str("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap();
     let slot = U256::zero();
     let slot_changes = vec![
@@ -50,6 +64,14 @@ async fn eth_get_block_access_list_matches_spec_example() {
     let bal = BlockAccessList::from_accounts(vec![account]);
 
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    // The endpoint validates the stored BAL against the header commitment, so the
+    // block's header must commit to this BAL's hash.
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
     storage
         .store_block_access_list(block_hash, &bal)
         .expect("store BAL");
@@ -119,17 +141,16 @@ async fn eth_get_block_access_list_unknown_hash_returns_null() {
 async fn payload_bodies_by_hash_v2_serves_stored_bal() {
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
 
+    // The header must commit to the stored BAL's hash (EIP-8159); the serve
+    // path validates the stored BAL against this commitment before returning it.
+    let bal = sample_bal();
     let block = Block {
-        header: BlockHeader {
-            number: 1,
-            ..Default::default()
-        },
+        header: header_committing_to(&bal),
         body: BlockBody::default(),
     };
     let block_hash = block.hash();
     storage.add_block(block).await.expect("store block");
 
-    let bal = sample_bal();
     storage
         .store_block_access_list(block_hash, &bal)
         .expect("store BAL");
@@ -157,11 +178,11 @@ async fn payload_bodies_by_hash_v2_serves_stored_bal() {
 async fn payload_bodies_by_range_v2_serves_stored_bal() {
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
 
+    // The header must commit to the stored BAL's hash (EIP-8159); the serve
+    // path validates the stored BAL against this commitment before returning it.
+    let bal = sample_bal();
     let block = Block {
-        header: BlockHeader {
-            number: 1,
-            ..Default::default()
-        },
+        header: header_committing_to(&bal),
         body: BlockBody::default(),
     };
     let block_hash = block.hash();
@@ -172,7 +193,6 @@ async fn payload_bodies_by_range_v2_serves_stored_bal() {
         .await
         .expect("forkchoice update");
 
-    let bal = sample_bal();
     storage
         .store_block_access_list(block_hash, &bal)
         .expect("store BAL");
@@ -192,6 +212,48 @@ async fn payload_bodies_by_range_v2_serves_stored_bal() {
             .unwrap()
         ]);
     assert_eq!(got, expected);
+}
+
+// Regression for glamsterdam-devnet-5 block 8501: a stored BAL whose hash does
+// not match the header commitment must NOT be served. Here the header commits
+// to `sample_bal()` but an empty BAL is stored under the block hash; the guard
+// must drop it (and regeneration short-circuits to None for this block), so the
+// body carries no BAL rather than a wrong one.
+#[tokio::test]
+async fn payload_bodies_by_hash_v2_drops_bal_not_matching_commitment() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    let bal = sample_bal();
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    // Store a BAL that does NOT match the header commitment (the 8501 bug).
+    storage
+        .store_block_access_list(block_hash, &BlockAccessList::from_accounts(vec![]))
+        .expect("store BAL");
+
+    let context = default_context_with_storage(storage).await;
+    let request = GetPayloadBodiesByHashV2Request {
+        hashes: vec![block_hash],
+    };
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                None
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(
+        got, expected,
+        "a stored BAL not matching the header commitment must not be served"
+    );
 }
 
 // Fallback path: when no BAL is stored, the handler must not re-execute a block

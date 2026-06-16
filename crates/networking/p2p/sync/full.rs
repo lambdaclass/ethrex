@@ -13,17 +13,20 @@ use ethrex_blockchain::{
 };
 use ethrex_common::{
     H256,
-    types::{Block, block_access_list::BlockAccessList},
+    types::{Block, BlockBody, BlockHeader, block_access_list::BlockAccessList},
 };
 use ethrex_storage::Store;
+use tokio::sync::RwLock;
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::peer_handler::{BlockRequestOrder, PeerHandler};
-use crate::snap::constants::{MAX_BLOCK_BODIES_TO_REQUEST, MAX_HEADER_FETCH_ATTEMPTS};
+use crate::peer_handler::{BlockRequestOrder, HeaderFetchOutcome, PeerHandler};
+use crate::snap::constants::{
+    MAX_BLOCK_BODIES_TO_REQUEST, MAX_BODY_FETCH_ATTEMPTS, MAX_HEADER_FETCH_ATTEMPTS,
+};
 
-use super::{EXECUTE_BATCH_SIZE, SyncError};
+use super::{EXECUTE_BATCH_SIZE, SyncDiagnostics, SyncError};
 
 /// Forkchoice heads older than this (in seconds) trigger a "consensus is behind"
 /// warning during sync. A synced consensus client always advertises a head only
@@ -53,6 +56,91 @@ fn humanize_secs(secs: u64) -> String {
     }
 }
 
+/// Request block bodies for `headers`, retrying with backoff when peers don't serve them.
+///
+/// Mirrors the header-fetch resilience loop: peers transiently failing to return bodies
+/// (a `None` from `request_block_bodies`) is not a fatal condition, especially on a
+/// degraded network. Returns `Ok(None)` only after all attempts are exhausted, signalling
+/// the caller to stop the cycle gracefully and wait for a fresh sync head rather than
+/// aborting the whole cycle with an error (which would discard the downloaded headers and
+/// re-walk them from scratch on every retry).
+async fn request_bodies_with_retry(
+    peers: &mut PeerHandler,
+    headers: &[BlockHeader],
+) -> Result<Option<Vec<BlockBody>>, SyncError> {
+    for attempt in 1..=MAX_BODY_FETCH_ATTEMPTS {
+        if let Some(bodies) = peers.request_block_bodies(headers).await? {
+            return Ok(Some(bodies));
+        }
+        // On the final attempt don't log "retrying" or sleep: the loop is about to give up.
+        // The caller emits the "bodies unavailable after retries" message. Mirrors the
+        // header-fetch loop, which checks the limit before sleeping.
+        if attempt == MAX_BODY_FETCH_ATTEMPTS {
+            break;
+        }
+        let from = headers.first().map(|h| h.number).unwrap_or_default();
+        let to = headers.last().map(|h| h.number).unwrap_or_default();
+        let eth_capable_peers = peers.eth_capable_peer_count().await;
+        warn!(
+            eth_capable_peers,
+            from,
+            to,
+            "Failed to fetch block bodies (attempt {attempt}/{MAX_BODY_FETCH_ATTEMPTS}), retrying in 2s"
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+    Ok(None)
+}
+
+/// A block is a valid full-sync resume point only if it is canonical AND its post-state is
+/// present on disk. Canonical-but-stateless blocks (e.g. a head canonicalized by an FCU
+/// before its state was computed; see `apply_fork_choice`) are NOT resume points: building
+/// on them fails forever with `state root missing`, so full sync must keep and re-execute
+/// them rather than skip them as "already canonical".
+pub fn is_resume_point(store: &Store, header: &BlockHeader) -> Result<bool, SyncError> {
+    Ok(store.is_canonical_sync(header.hash())? && store.has_state_root(header.state_root)?)
+}
+
+/// Index of the first resume point in a single newest->oldest header batch, or `None` if the
+/// batch contains none. The headers before that index are the missing blocks to execute; the
+/// header at that index is our executed/state head. State is retained only for a recent window
+/// down from the executed head (the layered store prunes older layers), so scanning newest->oldest
+/// the first canonical+stateful header is exactly that head — the stateless prefix above it is the
+/// not-yet-executed blocks, and everything below it within the retained window is also stateful.
+///
+/// Scanning the batch *interior* — rather than only checking the parent of the batch's oldest
+/// header — is what stops the walk-back overshooting its own stateful head down to genesis when
+/// that head sits in the middle of a batch (the batch's oldest block can be a canonical-but-
+/// pruned block below the retained-state window, which is not a resume point).
+///
+/// Gated to batches whose oldest block is at/below `local_head`: a batch entirely above our head
+/// is all unexecuted and cannot contain a resume point, so the per-header state lookups are
+/// skipped for it, keeping the deep-sync walk cheap.
+///
+/// Cost: up to O(N) `has_state_root` probes for a batch of length N (256-1024 in production), but
+/// typically 2-5 — the scan terminates at the state head, which sits at or just below the
+/// not-yet-executed prefix. The pathological full-batch walk only happens when the state head is
+/// far below the batch's newest header (a long canonical-but-stateless gap from an FCU-ahead-of-
+/// execution window); each probe is a single MPT root lookup.
+pub fn first_resume_point_in_batch(
+    store: &Store,
+    block_headers: &[BlockHeader],
+    local_head: u64,
+) -> Result<Option<usize>, SyncError> {
+    let Some(oldest) = block_headers.last() else {
+        return Ok(None);
+    };
+    if oldest.number > local_head {
+        return Ok(None);
+    }
+    for (index, header) in block_headers.iter().enumerate() {
+        if is_resume_point(store, header)? {
+            return Ok(Some(index));
+        }
+    }
+    Ok(None)
+}
+
 /// Performs full sync cycle - fetches and executes all blocks between current head and sync head
 ///
 /// # Returns
@@ -64,8 +152,16 @@ pub async fn sync_cycle_full(
     cancel_token: CancellationToken,
     mut sync_head: H256,
     store: Store,
+    diagnostics: &Arc<RwLock<SyncDiagnostics>>,
 ) -> Result<(), SyncError> {
-    info!("Syncing to sync_head {:?}", sync_head);
+    let local_head = store.get_latest_block_number().await?;
+    let eth_capable_peers = peers.eth_capable_peer_count().await;
+    info!(
+        local_head,
+        eth_capable_peers,
+        ?sync_head,
+        "Starting full sync cycle"
+    );
 
     // Check if the sync_head is a pending block, if so, gather all pending blocks belonging to its chain
     let mut pending_blocks = vec![];
@@ -76,6 +172,40 @@ pub async fn sync_cycle_full(
         }
         sync_head = block.header.parent_hash;
         pending_blocks.insert(0, block);
+    }
+
+    // If the gap to the forkchoice head is entirely covered by pending blocks (delivered
+    // via engine_newPayload), the rewound sync_head is already on our canonical chain with
+    // its post-state on disk: no peer data is needed. Skip the header/body download and
+    // execute the pending blocks directly. Without this, a node that receives every block
+    // through newPayload stalls behind head whenever peers don't serve headers: the
+    // header-fetch abort below returns without executing `pending_blocks`, each retry runs
+    // against a head that has moved further ahead, and the node trails the chain
+    // indefinitely, never reporting synced and answering every newPayload with SYNCING.
+    if !pending_blocks.is_empty() && store.is_canonical_sync(sync_head)? {
+        let parent_has_state = match store.get_block_header_by_hash(sync_head)? {
+            Some(parent) => store.has_state_root(parent.state_root)?,
+            None => false,
+        };
+        if parent_has_state {
+            info!(
+                "Executing {} pending blocks for full sync (gap fully covered by blocks from the consensus client, no peer download needed). First block hash: {:#?} Last block hash: {:#?}",
+                pending_blocks.len(),
+                pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+            );
+            add_blocks_in_batch(
+                blockchain.clone(),
+                cancel_token.clone(),
+                pending_blocks,
+                true,
+                store.clone(),
+                peers,
+            )
+            .await?;
+            store.clear_fullsync_headers().await?;
+            return Ok(());
+        }
     }
 
     // The consensus-provided forkchoice head, captured before `sync_head` is rewound
@@ -103,22 +233,35 @@ pub async fn sync_cycle_full(
 
     // Request and store all block headers from the advertised sync head
     loop {
-        let Some(mut block_headers) = peers
+        let outcome = peers
             .request_block_headers_from_hash(sync_head, BlockRequestOrder::NewToOld)
-            .await?
-        else {
-            if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+            .await?;
+        let mut block_headers = match outcome {
+            HeaderFetchOutcome::Headers(headers) => headers,
+            // No headers this round: `reason` (from `HeaderFetchOutcome::failure_reason`) says
+            // whether we couldn't find a peer to query or a peer was queried but didn't serve, so
+            // operators can tell connectivity apart from peers withholding data.
+            other => {
+                let reason = other.failure_reason();
+                let eth_capable_peers = peers.eth_capable_peer_count().await;
+                if attempts >= MAX_HEADER_FETCH_ATTEMPTS {
+                    warn!(
+                        eth_capable_peers,
+                        reason,
+                        ?sync_head,
+                        "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    );
+                    return Ok(());
+                }
+                attempts += 1;
                 warn!(
-                    "Sync failed to find target block header after {attempts} attempts, aborting to wait for a newer sync head"
+                    eth_capable_peers,
+                    reason,
+                    "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
                 );
-                return Ok(());
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
             }
-            attempts += 1;
-            warn!(
-                "Failed to fetch headers for sync head (attempt {attempts}/{MAX_HEADER_FETCH_ATTEMPTS}), retrying in 2s"
-            );
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            continue;
         };
         debug!("Sync Log 9: Received {} block headers", block_headers.len());
         // Reset failure counter on success so it tracks consecutive failures
@@ -127,8 +270,8 @@ pub async fn sync_cycle_full(
         let first_header = block_headers.first().ok_or(SyncError::NoBlocks)?;
         let last_header = block_headers.last().ok_or(SyncError::NoBlocks)?;
 
-        info!(
-            "Received {} block headers| First Number: {} Last Number: {}",
+        debug!(
+            "Received {} block headers | First Number: {} Last Number: {}",
             block_headers.len(),
             first_header.number,
             last_header.number,
@@ -163,22 +306,95 @@ pub async fn sync_cycle_full(
         }
 
         end_block_number = end_block_number.max(first_header.number);
-        start_block_number = last_header.number;
+        // This batch's newest block number, captured before `block_headers` is drained.
+        // `start_block_number` is finalized in the break branch below.
+        let batch_newest_number = first_header.number;
 
         sync_head = last_header.parent_hash;
-        if store.is_canonical_sync(sync_head)? || sync_head.is_zero() {
-            // Incoming chain merged with current chain
-            // Filter out already canonical blocks from batch
-            let mut first_canon_block = block_headers.len();
-            for (index, header) in block_headers.iter().enumerate() {
-                if store.is_canonical_sync(header.hash())? {
-                    first_canon_block = index;
-                    break;
-                }
+        // We can only resume execution from a block whose post-state is actually on disk.
+        // `is_canonical_sync` alone is insufficient: an FCU can canonicalize a head before
+        // its state is computed (`apply_fork_choice` gates only on the branch link block),
+        // so the canonical chain can extend past the executed-state head. Anchoring on such
+        // a canonical-but-stateless block makes execution fail forever with `state root
+        // missing`. A block is a valid resume point only if it is canonical AND stateful;
+        // canonical-but-stateless blocks are kept and re-executed to backfill their state.
+        let parent_is_resume_point = match store.get_block_header_by_hash(sync_head)? {
+            Some(parent) => is_resume_point(&store, &parent)?,
+            None => false,
+        };
+        // The batch may itself straddle our executed/state head — the walk has reached down
+        // into the region we have state for. Checking only `parent_is_resume_point` (the parent
+        // of the batch's OLDEST header) misses this: when our stateful head sits in the MIDDLE of
+        // a batch the parent check is false, so the walk blew past our own local head and kept
+        // descending all the way to genesis (the issue #9 overshoot). Scan the batch interior too.
+        let batch_resume_index = first_resume_point_in_batch(&store, &block_headers, local_head)?;
+        if parent_is_resume_point || batch_resume_index.is_some() || sync_head.is_zero() {
+            // Incoming chain merged with our executed state.
+            // Drop only the already-executed (canonical + stateful) prefix; keep any
+            // canonical-but-stateless blocks so they get re-executed. State is retained for a
+            // recent window down from the executed head, so the first canonical+stateful header
+            // scanning newest->oldest is exactly that state head.
+            let first_skippable = batch_resume_index.unwrap_or(block_headers.len());
+            block_headers.drain(first_skippable..block_headers.len());
+            match block_headers.last() {
+                Some(last_header) => start_block_number = last_header.number,
+                // Whole batch was already executed; the blocks we keep (if any) live in
+                // newer, already-stored batches that start one above this batch's newest.
+                None => start_block_number = batch_newest_number.saturating_add(1),
             }
-            block_headers.drain(first_canon_block..block_headers.len());
-            if let Some(last_header) = block_headers.last() {
-                start_block_number = last_header.number;
+            // Guard against resuming onto a base whose post-state is gone. Execution begins at
+            // `start_block_number`, whose parent (`start_block_number - 1`) must have its post-state
+            // on disk. That holds when we broke on a stateful resume point (the normal catch-up and
+            // the FCU-ahead backfill cases, where the parent is the executed/state head). It does NOT
+            // hold when the walk bottomed out at genesis (`sync_head.is_zero()`) after reconciling the
+            // consensus sync head only to a canonical block whose state was already pruned: the layered
+            // store keeps state for a recent window and drops genesis-era layers as the head advances
+            // (see `TrieLayerCache`), so a fork/deep-reorg head that diverges below that window has no
+            // stateful resume point and the walk descends to block 0. Re-executing from such a pruned
+            // base fails forever with `state root missing for block {parent}`. Detect it and pause the
+            // cycle gracefully (Ok) — mirroring the body-fetch exhaustion path — until a forkchoice head
+            // reconciles to a block whose state we still retain. (Pre-#6803 the walk anchored on the
+            // pruned canonical block and failed at block N; the stateful-resume-point gate now walks
+            // past it to genesis, so this guard is required to avoid a doomed re-exec from block 0.)
+            let resume_parent_number = start_block_number.saturating_sub(1);
+            let resume_parent_has_state = match store.get_block_header(resume_parent_number)? {
+                Some(parent) => store.has_state_root(parent.state_root)?,
+                None => false,
+            };
+            if !resume_parent_has_state {
+                let local_head = store.get_latest_block_number().await?;
+                warn!(
+                    resume_parent_number,
+                    local_head,
+                    "Full sync cannot resume: post-state for block {resume_parent_number} is absent \
+                     (pruned from the layered store, or never executed). The consensus sync head does \
+                     not reconcile to a block whose state we retain; pausing until a reconcilable \
+                     forkchoice head arrives. If this persists with no state above genesis, the datadir \
+                     needs a fresh resync (ethrex removedb)."
+                );
+                store.clear_fullsync_headers().await?;
+                return Ok(());
+            }
+            // If we are resuming at or below the canonical head, the canonical chain extends
+            // past the executed-state head: an FCU canonicalized blocks before their state
+            // was computed. Surface it explicitly; these canonical-but-stateless blocks are
+            // re-executed below, and the warning flags the underlying gap for investigation.
+            let canonical_head = store.get_latest_block_number().await?;
+            // `start_block_number - 1` is the highest block whose post-state is on
+            // disk (the executed/state head). Record it so `eth_syncing` reports real
+            // progress instead of the canonical pointer, which an FCU may have advanced
+            // past the executed state.
+            let state_head = start_block_number.saturating_sub(1);
+            diagnostics.write().await.executed_head = state_head;
+            if start_block_number <= canonical_head {
+                warn!(
+                    state_head,
+                    canonical_head,
+                    gap = canonical_head
+                        .saturating_add(1)
+                        .saturating_sub(start_block_number),
+                    "Full sync resuming below canonical head: re-executing canonical-but-stateless blocks (FCU canonicalized past executed state)"
+                );
             }
             // If the fullsync consists of a single batch of headers we can just keep them in memory instead of writing them to Store
             if single_batch {
@@ -212,7 +428,7 @@ pub async fn sync_cycle_full(
             while !batch_headers.is_empty() {
                 let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
                 let header_batch = &batch_headers[..end];
-                match download_peers.request_block_bodies(header_batch).await {
+                match request_bodies_with_retry(&mut download_peers, header_batch).await {
                     Ok(Some(bodies)) => {
                         debug!("Obtained: {} block bodies", bodies.len());
                         let block_batch = batch_headers
@@ -222,11 +438,18 @@ pub async fn sync_cycle_full(
                         blocks.extend(block_batch);
                     }
                     Ok(None) => {
-                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                        // Bodies unavailable after retries: stop gracefully (drop the sender)
+                        // so the executor finishes what it has and the cycle ends without an
+                        // error. The next forkchoice head will trigger a fresh attempt.
+                        let eth_capable_peers = download_peers.eth_capable_peer_count().await;
+                        warn!(
+                            eth_capable_peers,
+                            "Block bodies unavailable from peers after retries; pausing full sync until a new forkchoice head arrives"
+                        );
                         return;
                     }
                     Err(e) => {
-                        let _ = body_tx.send(Err(e.into())).await;
+                        let _ = body_tx.send(Err(e)).await;
                         return;
                     }
                 }
@@ -268,7 +491,7 @@ pub async fn sync_cycle_full(
             while !batch_headers.is_empty() {
                 let end = min(MAX_BLOCK_BODIES_TO_REQUEST, batch_headers.len());
                 let header_batch = &batch_headers[..end];
-                match download_peers.request_block_bodies(header_batch).await {
+                match request_bodies_with_retry(&mut download_peers, header_batch).await {
                     Ok(Some(bodies)) => {
                         debug!("Obtained: {} block bodies", bodies.len());
                         let block_batch = batch_headers
@@ -278,11 +501,18 @@ pub async fn sync_cycle_full(
                         blocks.extend(block_batch);
                     }
                     Ok(None) => {
-                        let _ = body_tx.send(Err(SyncError::BodiesNotFound)).await;
+                        // Bodies unavailable after retries: stop gracefully (drop the sender)
+                        // so the executor finishes what it has and the cycle ends without an
+                        // error. The next forkchoice head will trigger a fresh attempt.
+                        let eth_capable_peers = download_peers.eth_capable_peer_count().await;
+                        warn!(
+                            eth_capable_peers,
+                            "Block bodies unavailable from peers after retries; pausing full sync until a new forkchoice head arrives"
+                        );
                         return;
                     }
                     Err(e) => {
-                        let _ = body_tx.send(Err(e.into())).await;
+                        let _ = body_tx.send(Err(e)).await;
                         return;
                     }
                 }
@@ -294,10 +524,14 @@ pub async fn sync_cycle_full(
         }
     });
 
-    // Main loop: receive downloaded batches and execute them
+    // Main loop: receive downloaded batches and execute them. `reached_target` records
+    // whether we executed the final batch; if body downloads gave up early (the task
+    // returns without sending the final batch), it stays false so we don't falsely report
+    // catching up to the consensus head below.
+    let mut reached_target = false;
     while let Some(result) = body_rx.recv().await {
         let (blocks, final_batch) = result?;
-        info!(
+        debug!(
             "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
             blocks.len(),
             blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
@@ -312,37 +546,68 @@ pub async fn sync_cycle_full(
             peers,
         )
         .await?;
+        if final_batch {
+            reached_target = true;
+        }
     }
 
     // Ensure the download task completes and propagate any panics
     download_task.await?;
 
-    // Execute pending blocks
-    if !pending_blocks.is_empty() {
-        info!(
-            "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
-            pending_blocks.len(),
-            pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
-            pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
-        );
-        add_blocks_in_batch(
-            blockchain.clone(),
-            cancel_token.clone(),
-            pending_blocks,
-            true,
-            store.clone(),
-            peers,
-        )
-        .await?;
+    // Execute pending blocks, but only if the downloaded chain they build on was fully
+    // executed first. The oldest pending block's parent is the rewound `sync_head`, i.e. the
+    // newest downloaded header; if body downloads gave up early its post-state is absent and
+    // executing the pending blocks would fail with `state root missing`. Gate on actual state
+    // presence rather than `reached_target`: the common follow-head case has no gap to download
+    // (nothing is sent, so `reached_target` stays false) yet the parent state is already on disk.
+    if let Some(oldest_pending) = pending_blocks.first() {
+        let parent_has_state =
+            match store.get_block_header_by_hash(oldest_pending.header.parent_hash)? {
+                Some(parent) => store.has_state_root(parent.state_root)?,
+                None => false,
+            };
+        if !parent_has_state {
+            let local_head = store.get_latest_block_number().await?;
+            warn!(
+                local_head,
+                "Skipping {} pending block(s): the downloaded chain they build on was not fully executed (parent state absent); will retry on the next forkchoice update",
+                pending_blocks.len()
+            );
+        } else {
+            info!(
+                "Executing {} blocks for full sync. First block hash: {:#?} Last block hash: {:#?}",
+                pending_blocks.len(),
+                pending_blocks.first().ok_or(SyncError::NoBlocks)?.hash(),
+                pending_blocks.last().ok_or(SyncError::NoBlocks)?.hash()
+            );
+            add_blocks_in_batch(
+                blockchain.clone(),
+                cancel_token.clone(),
+                pending_blocks,
+                true,
+                store.clone(),
+                peers,
+            )
+            .await?;
+            reached_target = true;
+        }
     }
 
-    // If this cycle started behind, announce that we've caught up to the head the
-    // consensus client gave us, so the operator can tell idle-waiting from a hang.
+    // If this cycle started behind, report the outcome so the operator can tell idle-waiting
+    // from a hang. Only claim we caught up if we actually executed through to the target;
+    // if body downloads gave up early we say so instead of falsely reporting success.
     if started_behind {
         let local_head = store.get_latest_block_number().await?;
-        info!(
-            "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
-        );
+        if reached_target {
+            info!(
+                "Reached consensus-provided head at block {local_head}. Waiting for the next forkchoice update from the consensus client."
+            );
+        } else {
+            warn!(
+                local_head,
+                "Full sync paused before reaching the consensus-provided head (data unavailable from peers); will resume on the next forkchoice update"
+            );
+        }
     }
 
     store.clear_fullsync_headers().await?;
@@ -376,19 +641,17 @@ async fn add_blocks_in_batch(
     let blocks_hashes = blocks.iter().map(|block| block.hash()).collect::<Vec<_>>();
     let chain_config = store.get_chain_config();
     let bals: Vec<Option<BlockAccessList>> = {
-        // Only the final batch goes through `run_blocks_pipeline`, which is the
-        // path that actually consumes BALs. Non-final batches use
-        // `blockchain.add_blocks_in_batch()` which doesn't accept BALs, so
-        // fetching them for those batches just wastes a network round-trip.
-        let any_amsterdam = final_batch
-            && blocks
-                .iter()
-                .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
+        // Fetch BALs for every Amsterdam batch (not just the final one): both the
+        // batch path and `run_blocks_pipeline` now persist them, so peers can serve
+        // these blocks over eth/71 later without regenerating against pruned state.
+        let any_amsterdam = blocks
+            .iter()
+            .any(|b| chain_config.is_amsterdam_activated(b.header.timestamp));
         if any_amsterdam {
             match peers.request_block_access_lists(&blocks_hashes).await {
                 Ok(Some(bals)) if bals.len() == blocks.len() => bals,
                 _ => {
-                    debug!("[SYNCING] BAL fetch unavailable or failed, proceeding without BALs");
+                    debug!("BAL fetch unavailable or failed, proceeding without BALs");
                     vec![None; blocks.len()]
                 }
             }
@@ -437,17 +700,14 @@ async fn add_blocks_in_batch(
     let blocks_per_second = blocks_len as f64 / execution_time;
 
     info!(
-        "[SYNCING] Executed & stored {} blocks in {:.3} seconds.\n\
-        Started at block with hash {} (number {}).\n\
-        Finished at block with hash {} (number {}).\n\
-        Blocks per second: {:.3}",
+        "Executed and stored {} blocks in {:.3} seconds ({:.3} blocks/s). First block: {} ({}). Last block: {} ({}).",
         blocks_len,
         execution_time,
-        first_block_hash,
+        blocks_per_second,
         first_block_number,
-        last_block_hash,
+        first_block_hash,
         last_block_number,
-        blocks_per_second
+        last_block_hash
     );
     Ok(())
 }
@@ -474,7 +734,7 @@ async fn add_blocks(
     // them for the fallback. The clone cost is negligible (~1-5ms) vs batch
     // execution time (median ~29s on hoodi).
     match blockchain
-        .add_blocks_in_batch(blocks.clone(), cancel_token)
+        .add_blocks_in_batch(blocks.clone(), &bals, cancel_token)
         .await
     {
         Ok(()) => Ok(()),

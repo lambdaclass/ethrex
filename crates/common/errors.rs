@@ -39,4 +39,6 @@ pub enum InvalidBlockError {
     InvalidBlockFork,
     #[error("Transaction type {0:#x} is not allowed in an L1 block")]
     UnsupportedTransactionType(u8),
+    #[error("Transaction has invalid chain id: have {have}, want {want}")]
+    InvalidTransactionChainId { have: u64, want: u64 },
 }

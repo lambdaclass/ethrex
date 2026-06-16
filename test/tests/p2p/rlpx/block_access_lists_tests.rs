@@ -1,4 +1,5 @@
-use ethrex_common::types::block_access_list::BlockAccessList;
+use ethereum_types::Address;
+use ethrex_common::types::block_access_list::{AccountChanges, BalanceChange, BlockAccessList};
 use ethrex_p2p::rlpx::{
     eth::block_access_lists::{BlockAccessLists, OptionalBal},
     message::RLPxMessage,
@@ -60,4 +61,40 @@ fn optional_bal_none_encodes_as_0x80_sentinel() {
     let mut bytes = Vec::new();
     OptionalBal(None).encode(&mut bytes);
     assert_eq!(bytes, vec![0x80]);
+}
+
+/// EIP-8159 serve guard: a BAL is authoritative only if it matches the block
+/// header's `block_access_list_hash`. Regression for serving `0xc0` (empty)
+/// for a canonical block whose header commits to a non-empty BAL (block 8501
+/// on glamsterdam-devnet-5): an empty/stale BAL must NOT match a non-empty
+/// commitment, so the serve and persist paths degrade to `None` (→ `0x80`).
+#[test]
+fn matches_commitment_guards_stale_and_empty_bals() {
+    fn addr(b: u8) -> Address {
+        let mut a = Address::zero();
+        a.0[19] = b;
+        a
+    }
+
+    let real = BlockAccessList::from_accounts(vec![
+        AccountChanges::new(addr(1)).with_balance_changes(vec![BalanceChange::new(0, 100.into())]),
+    ]);
+    let commitment = real.compute_hash();
+
+    // The real BAL matches its own commitment.
+    assert!(real.matches_commitment(Some(commitment)));
+
+    // An empty BAL does NOT match a non-empty commitment (the 8501 bug).
+    let empty = BlockAccessList::from_accounts(vec![]);
+    assert!(!empty.matches_commitment(Some(commitment)));
+
+    // A different (stale) BAL does NOT match.
+    let stale = BlockAccessList::from_accounts(vec![AccountChanges::new(addr(2))]);
+    assert!(!stale.matches_commitment(Some(commitment)));
+
+    // A missing header commitment never matches.
+    assert!(!real.matches_commitment(None));
+
+    // An empty BAL matches the empty-BAL commitment (genuinely-empty block → 0xc0).
+    assert!(empty.matches_commitment(Some(empty.compute_hash())));
 }

@@ -47,7 +47,10 @@ impl StoreVmDatabase {
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
         {
-            return Err(EvmError::DB("state root missing".to_string()));
+            return Err(EvmError::DB(format!(
+                "state root missing for block {} (state_root {:#x})",
+                block_header.number, block_header.state_root
+            )));
         }
         Ok(StoreVmDatabase {
             store,
@@ -68,7 +71,10 @@ impl StoreVmDatabase {
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
         {
-            return Err(EvmError::DB("state root missing".to_string()));
+            return Err(EvmError::DB(format!(
+                "state root missing for block {} (state_root {:#x})",
+                block_header.number, block_header.state_root
+            )));
         }
         Ok(StoreVmDatabase {
             store,

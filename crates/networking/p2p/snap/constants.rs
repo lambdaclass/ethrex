@@ -122,6 +122,10 @@ pub const MAX_BLOCK_BODIES_TO_REQUEST: usize = 128;
 /// when no peer can serve headers at all.
 pub const MAX_HEADER_FETCH_ATTEMPTS: u64 = 10;
 
+/// Maximum attempts before giving up on a block-body download during full sync.
+/// Mirrors the header-fetch policy; split out so the two can diverge if needed.
+pub const MAX_BODY_FETCH_ATTEMPTS: u64 = MAX_HEADER_FETCH_ATTEMPTS;
+
 // =============================================================================
 // SNAP SYNC THRESHOLDS
 // =============================================================================

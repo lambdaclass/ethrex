@@ -39,7 +39,7 @@ use std::{
     sync::atomic::Ordering,
     time::{Duration, SystemTime},
 };
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 // Re-export DumpError from error module
 pub use super::error::DumpError;
@@ -139,7 +139,7 @@ pub async fn request_account_range(
     let (task_sender, mut task_receiver) =
         tokio::sync::mpsc::channel::<(Vec<AccountRangeUnit>, H256, Option<(H256, H256)>)>(1000);
 
-    info!("Starting to download account ranges from peers");
+    debug!("Starting to download account ranges from peers");
 
     *METRICS.account_tries_download_start_time.lock().await = Some(SystemTime::now());
 
@@ -234,7 +234,7 @@ pub async fn request_account_range(
 
         let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
             if completed_tasks >= chunk_count {
-                info!("All account ranges downloaded successfully");
+                debug!("All account ranges downloaded successfully");
                 break;
             }
             continue;
@@ -243,7 +243,7 @@ pub async fn request_account_range(
         let tx = task_sender.clone();
 
         if block_is_stale(pivot_header) {
-            info!("request_account_range became stale, updating pivot");
+            debug!("Pivot became stale during account range download, updating pivot");
             *pivot_header = update_pivot(
                 pivot_header.number,
                 pivot_header.timestamp,
@@ -287,12 +287,7 @@ pub async fn request_account_range(
 
         let path = get_account_state_snapshot_file(account_state_snapshots_dir, chunk_file);
         dump_accounts_to_file(&path, account_state_chunk)
-            .inspect_err(|err| {
-                error!(
-                    "We had an error dumping the last accounts to disk {}",
-                    err.error
-                )
-            })
+            .inspect_err(|err| error!("Failed to dump remaining accounts to disk: {}", err.error))
             .map_err(|_| {
                 SnapError::SnapshotDir(format!(
                     "Failed to write state snapshot chunk {}",
@@ -358,7 +353,7 @@ pub async fn request_bytecodes(
     }
     let (task_sender, mut task_receiver) = tokio::sync::mpsc::channel::<TaskResult>(1000);
 
-    info!("Starting to download bytecodes from peers");
+    debug!("Starting to download bytecodes from peers");
 
     METRICS
         .bytecodes_to_download
@@ -421,7 +416,7 @@ pub async fn request_bytecodes(
 
         let Some((chunk_start, chunk_end)) = tasks_queue_not_started.pop_front() else {
             if completed_tasks >= chunk_count {
-                info!("All bytecodes downloaded successfully");
+                debug!("All bytecodes downloaded successfully");
                 break;
             }
             continue;
@@ -487,7 +482,7 @@ pub async fn request_bytecodes(
     METRICS
         .downloaded_bytecodes
         .fetch_add(downloaded_count, Ordering::Relaxed);
-    info!(
+    debug!(
         "Finished downloading bytecodes, total bytecodes: {}",
         all_bytecode_hashes.len()
     );
@@ -602,7 +597,7 @@ pub async fn request_storage_ranges(
                     .await
                     .expect("Shouldn't be empty")
                     .expect("Shouldn't have a join error")
-                    .inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+                    .inspect_err(|err| error!("Failed to dump storage snapshot to file: {err:?}"))
                     .map_err(SnapError::from)?;
             }
             disk_joinset.spawn(async move {
@@ -917,7 +912,7 @@ pub async fn request_storage_ranges(
         }
 
         if block_is_stale(pivot_header) {
-            info!("request_storage_ranges became stale, breaking");
+            debug!("Pivot became stale during storage range download, stopping this round");
             break;
         }
 
@@ -992,7 +987,7 @@ pub async fn request_storage_ranges(
         .await
         .into_iter()
         .map(|result| {
-            result.inspect_err(|err| error!("We found this error while dumping to file {err:?}"))
+            result.inspect_err(|err| error!("Failed to dump storage snapshot to file: {err:?}"))
         })
         .collect::<Result<Vec<()>, DumpError>>()
         .map_err(SnapError::from)?;
@@ -1059,7 +1054,7 @@ pub async fn request_state_trienodes(
 
     for (index, node) in nodes.iter().enumerate() {
         if node.compute_hash(&NativeCrypto).finalize(&NativeCrypto) != paths[index].hash {
-            error!(
+            debug!(
                 "A peer is sending wrong data for the state trie node {:?}",
                 paths[index].path
             );
@@ -1183,7 +1178,7 @@ async fn request_account_range_worker(
                     (filtered, chunk_left)
                 }
                 Err(_) => {
-                    tracing::error!("Received invalid account range");
+                    tracing::debug!("Received invalid account range");
                     retry()
                 }
             }
@@ -1272,7 +1267,7 @@ async fn request_storage_ranges_worker(
         let last_slot_index = slots.len() - 1;
         for (i, next_account_slots) in slots.into_iter().enumerate() {
             if next_account_slots.is_empty() {
-                error!("Received empty storage range, skipping");
+                debug!("Received empty storage range, skipping");
                 validation_failed = true;
                 break;
             }
@@ -1285,7 +1280,7 @@ async fn request_storage_ranges_worker(
             let storage_root = match storage_roots.next() {
                 Some(root) => root,
                 None => {
-                    error!("No storage root for account {i}");
+                    debug!("No storage root for account {i}");
                     break 'outcome retry_outcome();
                 }
             };

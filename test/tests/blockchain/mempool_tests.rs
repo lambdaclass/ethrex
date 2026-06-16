@@ -549,6 +549,225 @@ fn blobs_bundle_insert_and_remove() {
     );
 }
 
+#[test]
+fn blob_txs_are_not_evicted_by_regular_tx_flood() {
+    // Regression: blob txs live in a dedicated sub-pool, so a flood of regular
+    // txs that fills (and evicts from) the regular pool must not reduce the set
+    // of retained blob txs. Pre-fix, blob txs shared the regular FIFO and were
+    // flushed out by regular-tx pressure, starving block building of blobs.
+    let regular_cap = 4;
+    let mempool = Mempool::new(regular_cap);
+
+    // Insert more blob txs than the regular cap, so the blob set can only be
+    // fully retained if blobs are NOT bound by the regular cap (bundle inserted
+    // first, mirroring add_blob_transaction_to_pool).
+    let blob_count = regular_cap + 2;
+    let mut blob_hashes = Vec::new();
+    for i in 0..blob_count {
+        let bundle = BlobsBundle {
+            blobs: vec![[i as u8; BYTES_PER_BLOB]],
+            commitments: vec![[i as u8; 48]],
+            proofs: vec![[i as u8; 48]],
+            version: 0,
+        };
+        let blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+            gas: 21_000,
+            to: Address::from_low_u64_be(1),
+            ..Default::default()
+        });
+        let blob_hash = H256::random();
+        let blob_sender = H160::random();
+        mempool.add_blobs_bundle(blob_hash, bundle).unwrap();
+        mempool
+            .add_transaction(
+                blob_hash,
+                blob_sender,
+                MempoolTransaction::new(blob_tx, blob_sender),
+            )
+            .expect("Failed to add blob transaction");
+        blob_hashes.push(blob_hash);
+    }
+
+    // Flood with regular txs far beyond the regular cap, tracking the first one
+    // so we can confirm the flood actually triggered regular-tx eviction.
+    let first_regular_hash = H256::random();
+    for i in 0..(regular_cap * 10) {
+        let tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+            to: TxKind::Call(Address::from_low_u64_be(2)),
+            ..Default::default()
+        });
+        let sender = H160::random();
+        let hash = if i == 0 {
+            first_regular_hash
+        } else {
+            H256::random()
+        };
+        mempool
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .expect("Failed to add regular transaction");
+    }
+
+    // The flood must have evicted regular txs (proving it exceeded the cap that
+    // pre-fix would also have flushed blobs).
+    assert!(
+        !mempool
+            .contains_tx(first_regular_hash)
+            .expect("contains_tx should succeed"),
+        "regular-tx flood did not evict regular txs; test is not exercising eviction"
+    );
+
+    // Despite the eviction, every blob tx must still be retained (100% blob
+    // retention vs a capped regular pool).
+    for blob_hash in blob_hashes {
+        assert!(
+            mempool
+                .contains_tx(blob_hash)
+                .expect("contains_tx should succeed"),
+            "blob tx {blob_hash:?} was evicted by a regular-tx flood"
+        );
+    }
+}
+
+// Inserts a 1-blob tx straight into the pool (bypassing validation) with the
+// given nonce and blob fee; returns its hash.
+fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        max_fee_per_blob_gas: blob_fee.into(),
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let hash = H256::random();
+    let sender = H160::random();
+    mempool.add_blobs_bundle(hash, bundle).unwrap();
+    mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("Failed to add blob transaction");
+    hash
+}
+
+// Like `add_blob_tx` but with an explicit sender; returns its hash.
+fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H256 {
+    let bundle = BlobsBundle {
+        blobs: vec![[0u8; BYTES_PER_BLOB]],
+        commitments: vec![[0u8; 48]],
+        proofs: vec![[0u8; 48]],
+        version: 0,
+    };
+    let tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        nonce,
+        gas: 21_000,
+        max_fee_per_blob_gas: 1.into(),
+        to: Address::from_low_u64_be(1),
+        ..Default::default()
+    });
+    let hash = H256::random();
+    mempool.add_blobs_bundle(hash, bundle).unwrap();
+    mempool
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .expect("Failed to add blob transaction");
+    hash
+}
+
+#[test]
+fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let sender = H160::random();
+    let blob0 = add_blob_tx_with_sender(&mempool, sender, 0);
+    let blob1 = add_blob_tx_with_sender(&mempool, sender, 1);
+
+    // A regular tx must not appear in the blob listing.
+    let plain = Transaction::EIP1559Transaction(EIP1559Transaction {
+        nonce: 0,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(1)),
+        ..Default::default()
+    });
+    let plain_hash = plain.hash();
+    mempool
+        .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
+        .unwrap();
+
+    let mut got = mempool.blob_txs().unwrap();
+    got.sort_by_key(|(_, _, nonce)| *nonce);
+    assert_eq!(got, vec![(blob0, sender, 0), (blob1, sender, 1)]);
+}
+
+#[test]
+fn blob_eviction_keeps_includable_low_nonce_tx() {
+    // When the blob sub-pool is over its cap, eviction must drop the least
+    // includable blob tx (highest nonce), not the earliest-inserted one. A FIFO
+    // would evict the first-added low-nonce tx (which is the includable one);
+    // the value/nonce-ordered policy keeps it.
+    let blob_cap = 4;
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST).with_max_blob_mempool_size(blob_cap);
+
+    // Insert FIRST (oldest): an includable low-nonce, high-fee blob tx.
+    let keep = add_blob_tx(&mempool, 0, 1000);
+
+    // Then flood the blob sub-pool past its cap with higher-nonce, low-fee txs.
+    for n in 0..(blob_cap as u64 + 4) {
+        add_blob_tx(&mempool, 100 + n, 1);
+    }
+
+    // FIFO would have evicted `keep` (oldest); the new policy must keep it.
+    assert!(
+        mempool
+            .contains_tx(keep)
+            .expect("contains_tx should succeed"),
+        "includable low-nonce blob tx was evicted in favor of high-nonce ones"
+    );
+}
+
+#[test]
+fn blob_eviction_offset_is_per_sender_not_cross_sender() {
+    // Regression: eviction ranks by nonce offset *within a sender*, not by raw
+    // cross-sender nonce. A high-throughput sender (e.g. a rollup sequencer)
+    // accumulates large on-wire nonces while staying perfectly includable; a
+    // raw cross-sender comparison would evict its txs first. The deepest-in-its-
+    // own-queue blob must be dropped instead.
+    let blob_cap = 4;
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST).with_max_blob_mempool_size(blob_cap);
+
+    // Sequencer: a single blob at a very high nonce (offset 0 from its own min).
+    let sequencer = H160::random();
+    let seq_tx = add_blob_tx_with_sender(&mempool, sequencer, 1_000_000);
+
+    // A backlogged sender with a deep, contiguous queue (offsets 0..=4).
+    let backlogged = H160::random();
+    let deep: Vec<H256> = (0..=4)
+        .map(|n| add_blob_tx_with_sender(&mempool, backlogged, n))
+        .collect();
+
+    // 6 blobs, cap 4 ⇒ 2 backlogged blobs evicted. The sequencer's high-nonce
+    // tx must survive: under the old cross-sender nonce key it had the globally
+    // highest nonce and would have been the first evicted.
+    assert!(
+        mempool.contains_tx(seq_tx).unwrap(),
+        "high-nonce sequencer blob was wrongly evicted by cross-sender nonce"
+    );
+    // Its lowest-offset (nonce 0) blob is the most includable and must stay.
+    assert!(
+        mempool.contains_tx(deep[0]).unwrap(),
+        "includable nonce-0 blob must stay"
+    );
+    let present_deep = deep
+        .iter()
+        .filter(|h| mempool.contains_tx(**h).unwrap())
+        .count();
+    assert_eq!(
+        present_deep, 3,
+        "two of the backlogged sender's blobs evicted"
+    );
+}
+
 mod alternates {
     use super::*;
     use ethrex_blockchain::mempool::MAX_ALTERNATES_PER_HASH;

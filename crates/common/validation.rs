@@ -7,7 +7,7 @@ use crate::constants::{GAS_PER_BLOB, MAX_RLP_BLOCK_SIZE, POST_OSAKA_GAS_LIMIT_CA
 use crate::errors::InvalidBlockError;
 use crate::types::requests::{EncodedRequests, Requests, compute_requests_hash};
 use crate::types::{
-    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt,
+    Block, BlockHeader, ChainConfig, EIP4844Transaction, Receipt, Transaction,
     compute_receipts_root_and_logs_bloom, validate_block_header, validate_cancun_header_fields,
     validate_prague_header_fields, validate_pre_cancun_header_fields,
 };
@@ -55,6 +55,32 @@ pub fn validate_block_pre_execution(
         verify_blob_gas_usage(block, chain_config)?;
     } else {
         validate_pre_cancun_header_fields(&block.header)?;
+    }
+
+    // A transaction's chain id is bound into its signature (EIP-155 / the typed-tx
+    // `chain_id` field), so the recovered sender is only valid for that chain. Reject any
+    // transaction whose chain id does not match this chain: other clients (geth's signer)
+    // reject it at block validation, so accepting one would split consensus. Legacy
+    // pre-EIP-155 transactions carry no chain id (`None`) and are left untouched.
+    //
+    // Privileged (L2) transactions are exempt: their sender comes from an unsigned `from`
+    // field, so chain id is not a signature-binding scalar for them, and on L2 it may name
+    // a different source chain (cross-chain deposits). On L1 they are rejected outright as
+    // an unsupported transaction type, so this exemption opens no L1 gap. The other L2-only
+    // type, `FeeTokenTransaction` (0x7d), is signature-recovered and therefore stays
+    // checked — on L2 it carries the L2 chain id; on L1 it is rejected as unsupported.
+    for tx in &block.body.transactions {
+        if matches!(tx, Transaction::PrivilegedL2Transaction(_)) {
+            continue;
+        }
+        if let Some(tx_chain_id) = tx.chain_id()
+            && tx_chain_id != chain_config.chain_id
+        {
+            return Err(InvalidBlockError::InvalidTransactionChainId {
+                have: tx_chain_id,
+                want: chain_config.chain_id,
+            });
+        }
     }
 
     Ok(())

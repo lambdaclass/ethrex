@@ -200,6 +200,17 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Block-invariant EVM config + chain id + base blob fee, computed once and
+        // reused by every tx (mirrors `execute_block_pipeline`): avoids a per-tx
+        // chain-config copy, fork/blob-schedule recompute, and `fake_exponential` call.
+        let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
+        let chain_id = chain_config.chain_id;
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+        // Stack/memory buffer pools reused across txs (each tx draws one and reclaims it).
+        let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
+        let mut shared_memory_pool = Vec::with_capacity(1);
+
         let n_txs = block.body.transactions.len();
         let mut receipts = Vec::with_capacity(n_txs);
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(n_txs);
@@ -254,7 +265,20 @@ impl LEVM {
                 }
             }
 
-            let report = Self::execute_tx(tx, tx_sender, &block.header, db, vm_type, crypto)?;
+            let report = Self::execute_tx_in_block(
+                tx,
+                tx_sender,
+                &block.header,
+                db,
+                vm_type,
+                base_blob_fee_per_gas,
+                &mut shared_stack_pool,
+                &mut shared_memory_pool,
+                false,
+                crypto,
+                evm_config,
+                chain_id,
+            )?;
 
             tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(), &report));
 
@@ -588,6 +612,10 @@ impl LEVM {
 
         Self::prepare_block(block, db, vm_type, crypto)?;
 
+        // Compute base blob fee once for the entire block (block-invariant).
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
+
         let mut shared_stack_pool = Vec::with_capacity(STACK_LIMIT);
         // Holds at most one root memory buffer at a time (each tx pops one and reclaims one).
         let mut shared_memory_pool = Vec::with_capacity(1);
@@ -648,6 +676,7 @@ impl LEVM {
                 &block.header,
                 db,
                 vm_type,
+                base_blob_fee_per_gas,
                 &mut shared_stack_pool,
                 &mut shared_memory_pool,
                 false,
@@ -1005,6 +1034,8 @@ impl LEVM {
         // parallel workers (both are `Copy` + `Send`/`Sync`).
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, header);
         let chain_id = chain_config.chain_id;
+        // Block-invariant base blob fee, computed once and shared across workers.
+        let base_blob_fee_per_gas = get_base_fee_per_blob_gas(header.excess_blob_gas, &evm_config)?;
         debug_assert!(
             is_amsterdam,
             "execute_block_parallel invoked on non-Amsterdam block"
@@ -1125,6 +1156,7 @@ impl LEVM {
                     header,
                     &mut tx_db,
                     vm_type,
+                    base_blob_fee_per_gas,
                     &mut stack_pool,
                     &mut memory_pool,
                     false,
@@ -2068,6 +2100,9 @@ impl LEVM {
         let chain_config = store.get_chain_config()?;
         let evm_config = EVMConfig::new_from_chain_config(&chain_config, &block.header);
         let chain_id = chain_config.chain_id;
+        // Block-invariant base blob fee, computed once and shared across workers.
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block.header.excess_blob_gas, &evm_config)?;
 
         // Parallel across sender groups, sequential within each group. The stack pool is reused
         // across all groups a worker handles (it is `Send`).
@@ -2092,6 +2127,7 @@ impl LEVM {
                         &block.header,
                         &mut group_db,
                         vm_type,
+                        base_blob_fee_per_gas,
                         stack_pool,
                         &mut memory_pool,
                         true,
@@ -2215,6 +2251,8 @@ impl LEVM {
         // `setup_env_with_config` instead. This single-tx entry point computes them here.
         let chain_config = db.store.get_chain_config()?;
         let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+        let base_blob_fee_per_gas =
+            get_base_fee_per_blob_gas(block_header.excess_blob_gas, &config)?;
         Self::setup_env_with_config(
             tx,
             tx_sender,
@@ -2222,6 +2260,7 @@ impl LEVM {
             config,
             chain_config.chain_id,
             vm_type,
+            base_blob_fee_per_gas,
         )
     }
 
@@ -2235,6 +2274,7 @@ impl LEVM {
         config: EVMConfig,
         chain_id: u64,
         vm_type: VMType,
+        base_blob_fee_per_gas: U256,
     ) -> Result<Environment, EvmError> {
         let gas_price: U256 = calculate_gas_price_for_tx(
             tx,
@@ -2257,7 +2297,7 @@ impl LEVM {
                 .unwrap_or(U256::zero()),
             chain_id: chain_id.into(),
             base_fee_per_gas: block_header.base_fee_per_gas.unwrap_or_default().into(),
-            base_blob_fee_per_gas: get_base_fee_per_blob_gas(block_excess_blob_gas, &config)?,
+            base_blob_fee_per_gas,
             gas_price,
             block_excess_blob_gas,
             block_blob_gas_used: block_header.blob_gas_used,
@@ -2306,6 +2346,7 @@ impl LEVM {
         block_header: &BlockHeader,
         db: &mut GeneralizedDatabase,
         vm_type: VMType,
+        base_blob_fee_per_gas: U256,
         stack_pool: &mut Vec<Stack>,
         memory_pool: &mut Vec<Memory>,
         disable_balance_check: bool,
@@ -2313,8 +2354,15 @@ impl LEVM {
         config: EVMConfig,
         chain_id: u64,
     ) -> Result<ExecutionReport, EvmError> {
-        let mut env =
-            Self::setup_env_with_config(tx, tx_sender, block_header, config, chain_id, vm_type)?;
+        let mut env = Self::setup_env_with_config(
+            tx,
+            tx_sender,
+            block_header,
+            config,
+            chain_id,
+            vm_type,
+            base_blob_fee_per_gas,
+        )?;
         env.disable_balance_check = disable_balance_check;
         // Draw the root frame's stack and memory buffer from the shared pools (and adopt the
         // stacks for sub-frames), then return them afterwards so the next tx reuses them instead

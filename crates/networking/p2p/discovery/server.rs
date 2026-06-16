@@ -115,7 +115,7 @@ impl DiscoveryServer {
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
     ) -> Result<(), DiscoveryServerError> {
-        info!("Starting unified discovery server");
+        debug!("Starting discovery server");
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");

@@ -543,6 +543,15 @@ impl BlockAccessList {
         Ok(())
     }
 
+    /// Returns true if this BAL matches the header's EIP-8159 commitment
+    /// (`block_access_list_hash`). Used to gate persisting/serving a BAL so a
+    /// stale or regenerated-against-wrong-state BAL is never handed to peers as
+    /// if it were authoritative; callers degrade to the `0x80` "unavailable"
+    /// sentinel on a `false` here.
+    pub fn matches_commitment(&self, commitment: Option<H256>) -> bool {
+        commitment == Some(self.compute_hash())
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self) -> H256 {
