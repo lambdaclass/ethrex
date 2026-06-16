@@ -609,35 +609,44 @@ impl Blockchain {
         // below already honors the same toggle.
         // Synchronously warm the flat-KV storage values execution reads (SLOAD and
         // SSTORE original values). This must be ready before exec starts, so it
-        // stays on the critical path. The trie-node prefetch instead serves the
-        // merkleizer, which runs concurrently with exec, so here we only PREPARE
-        // its input and run it on its own thread inside the scope below
-        // (`trie_prefetch_handle`), overlapping its cost with execution.
+        // stays on the critical path. It uses the full BAL access set, since
+        // execution genuinely reads every accessed slot.
+        #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+        if self.options.bal_prefetch_enabled
+            && let Some(bal_ref) = bal.as_ref()
+        {
+            let slots = LEVM::bal_storage_slots(bal_ref);
+            if !slots.is_empty() {
+                let _ = caching_store.prefetch_storage(&slots);
+            }
+        }
+
+        // Trie-node prefetch input, derived from the MERKLE WRITE SET, not the BAL
+        // access set. The merkleizer only walks accounts/slots that actually change;
+        // `optimistic_updates` (synthesize_bal_updates) already drops read-only
+        // accesses and read-only slots. Warming trie nodes for read-only accesses is
+        // pure waste that competes with execution for the same device, and gating on
+        // the access set regressed read-heavy blocks (value-0 CALLs to existing
+        // accounts, bloated SLOADs) that have little or no merkle work. The prefetch
+        // runs on its own thread inside the scope below (`trie_prefetch_handle`),
+        // overlapping execution. Gated so ordinary blocks skip it; the payoff is on
+        // blocks that WRITE many distinct slots or modify many accounts, where merkle
+        // walks a large set of scattered, cold nodes. Tunable.
         #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
         let trie_prefetch_input: Option<(Vec<(Address, H256)>, Vec<Address>)> =
             if self.options.bal_prefetch_enabled
-                && let Some(bal_ref) = bal.as_ref()
+                && let Some(updates) = optimistic_updates.as_ref()
             {
-                let slots = LEVM::bal_storage_slots(bal_ref);
-                if !slots.is_empty() {
-                    let _ = caching_store.prefetch_storage(&slots);
-                }
-
-                // The internal MPT nodes the merkleizer walks live in the trie-node
-                // CFs, which execution never reads. Gated so ordinary merkle-light
-                // blocks don't pay the probe cost; the payoff is on high-gas-limit
-                // blocks that touch many distinct storage slots and/or accounts (many
-                // SSTOREs and value-transferring CALLs over cold state), where merkle
-                // walks a large set of scattered, cold nodes. A cold slot/account
-                // access costs ~2100 gas, so a block reaches at most ~gas_limit/2100
-                // distinct accesses; 16384 (~34M gas of cold accesses) sits above
-                // ordinary blocks and below the large-state blocks this targets.
-                // Tunable. SLOAD-dominated blocks need no trie warming (reads don't
-                // touch the trie); the flat-KV warm above covers them.
                 const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
-                let accounts = LEVM::bal_accounts(bal_ref);
-                if slots.len() + accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
-                    Some((slots, accounts))
+                let mut write_slots: Vec<(Address, H256)> = Vec::new();
+                for (addr, item) in updates {
+                    for slot in item.added_storage.keys() {
+                        write_slots.push((*addr, *slot));
+                    }
+                }
+                let write_accounts: Vec<Address> = updates.keys().copied().collect();
+                if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+                    Some((write_slots, write_accounts))
                 } else {
                     None
                 }
