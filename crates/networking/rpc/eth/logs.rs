@@ -163,7 +163,7 @@ pub(crate) async fn fetch_logs_with_filter(
     // cannot force an unbounded `Vec<RpcLog>` over an attacker-chosen range.
     if max_block_range != 0 && to - from + 1 > max_block_range {
         return Err(RpcErr::BadParams(format!(
-            "Block range too large: requested {} blocks ({from}..={to}), max is {max_block_range}. Split the query into smaller ranges.",
+            "Block range too large: requested {} blocks ({from}..={to}), max is {max_block_range}. Split the query into smaller ranges, or raise/disable the limit with --rpc.max-log-block-range (0 = unlimited).",
             to - from + 1
         )));
     }
@@ -229,7 +229,7 @@ pub(crate) async fn fetch_logs_with_filter(
         // at the block reached, so the caller can split the query.
         if max_logs_per_response != 0 && logs.len() > max_logs_per_response {
             return Err(RpcErr::BadParams(format!(
-                "Query exceeds the maximum of {max_logs_per_response} logs (range {from}..={block_num} already matched {}). Narrow the block range or add address/topic filters.",
+                "Query exceeds the maximum of {max_logs_per_response} logs (range {from}..={block_num} already matched {}). Narrow the block range or add address/topic filters, or raise/disable the limit with --rpc.max-logs-per-response (0 = unlimited).",
                 logs.len()
             )));
         }

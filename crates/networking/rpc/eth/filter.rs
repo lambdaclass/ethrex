@@ -109,7 +109,7 @@ impl NewFilterRequest {
         // filter never hits the inactivity TTL).
         if max_active_filters != 0 && active_filters_guard.len() >= max_active_filters {
             return Err(RpcErr::Internal(format!(
-                "Active filter limit reached ({max_active_filters}); uninstall unused filters with eth_uninstallFilter before creating new ones"
+                "Active filter limit reached ({max_active_filters}); uninstall unused filters with eth_uninstallFilter, or raise/disable the limit with --rpc.max-active-filters (0 = unlimited)"
             )));
         }
         active_filters_guard.insert(
