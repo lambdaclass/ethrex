@@ -459,14 +459,11 @@ impl Mempool {
         // Must run under the write lock so the check and insert are atomic.
         if is_frame {
             let nonce = transaction.nonce();
-            if let Some(existing_hash) = inner.check_frame_tx_sender_pending(sender, nonce, hash)? {
-                // Same-nonce replacement: remove the old tx so the new one can
-                // take its slot. Price validation already ran in validate_transaction.
-                // This also releases the old tx's paymaster reservation, so the
-                // re-check below sees the post-removal state (a same-paymaster
-                // fee-bump is not falsely blocked by its own predecessor).
-                inner.remove_transaction_with_lock(&existing_hash)?;
-            }
+            // Same-nonce replacement: capture the old tx's hash WITHOUT removing
+            // it yet. Removal must be atomic with the re-check below so a
+            // rejected fee-bump never leaves the sender with neither the old nor
+            // the new tx. Price validation already ran in validate_transaction.
+            let existing_frame_hash = inner.check_frame_tx_sender_pending(sender, nonce, hash)?;
 
             // Paymaster availability + non-canonical-limit re-check under the
             // write lock. The check in `validate_transaction` is an unlocked
@@ -474,28 +471,52 @@ impl Mempool {
             // is what holds the limit and the availability invariant under
             // concurrent admissions for different senders sharing one paymaster
             // (the same TOCTOU class review fix 1.6 closed for the per-sender
-            // gate). Runs before any insertion so a rejection has no side effect.
+            // gate). Runs before any insertion or removal so a rejection has no
+            // side effect.
             if let Some(reservation) = &frame_reservation {
+                // Account for the impending removal of the old same-nonce tx: if
+                // it shares the new tx's paymaster, its reservation will be
+                // released the moment we remove it, so it must not block a
+                // same-paymaster fee-bump. Subtract the old tx's reserved cost
+                // (availability) and one pending slot (non-canonical limit).
+                let old_reservation = existing_frame_hash
+                    .as_ref()
+                    .and_then(|old_hash| inner.frame_tx_paymaster.get(old_hash))
+                    .filter(|old| old.paymaster == reservation.paymaster);
+
                 if !reservation.is_canonical {
-                    let pending = inner
+                    let mut pending = inner
                         .noncanonical_paymaster_pending
                         .get(&reservation.paymaster)
                         .copied()
                         .unwrap_or(0);
+                    if old_reservation.is_some_and(|old| !old.is_canonical) {
+                        pending = pending.saturating_sub(1);
+                    }
                     if pending >= FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER {
                         return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
                     }
                 }
-                let reserved = inner
+                let mut reserved = inner
                     .reserved_pending_cost
                     .get(&reservation.paymaster)
                     .copied()
                     .unwrap_or_default();
+                if let Some(old) = old_reservation {
+                    reserved = reserved.saturating_sub(old.reserved_cost);
+                }
                 if reservation.paymaster_balance.saturating_sub(reserved)
                     < reservation.reserved_cost
                 {
                     return Err(MempoolError::FrameTxPaymasterUnderfunded);
                 }
+            }
+
+            // Re-check passed: now remove the old tx (releasing its reservation)
+            // so the new one can take its slot. Done only after the re-check so a
+            // rejection leaves the original pending tx intact.
+            if let Some(old_hash) = existing_frame_hash {
+                inner.remove_transaction_with_lock(&old_hash)?;
             }
         }
 

@@ -195,6 +195,7 @@ impl OpcodeHandler for OpApproveHandler {
 
         // The executing contract must be the frame's target
         let current_frame = ctx
+            .tx
             .frames
             .get(ctx.current_frame_index)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
@@ -263,7 +264,8 @@ impl OpcodeHandler for OpTxParamHandler {
 }
 
 /// FRAMEDATALOAD (0xB1) -- Load one 32-byte word from a frame's data.
-/// Takes [offset, frameIndex] from the stack. Gas cost: 3.
+/// Stack: [offset, frameIndex] with offset on top (popped first); frameIndex is
+/// the deeper operand. Gas cost: 3.
 pub struct OpFrameDataLoadHandler;
 impl OpcodeHandler for OpFrameDataLoadHandler {
     #[inline(always)]
@@ -280,7 +282,11 @@ impl OpcodeHandler for OpFrameDataLoadHandler {
 
         let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let idx = index_to_usize(frame_index)?;
-        let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let frame = ctx
+            .tx
+            .frames
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         // Out-of-usize offsets are past-the-end: the word stays zero-filled.
         let mut word = [0u8; 32];
@@ -320,6 +326,9 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
 
         let new_memory_size = calculate_memory_size(mem_offset, length)?;
         let current_memory_size = vm.current_call_frame.memory.len();
+        // Charging memory-expansion gas before the frame-context guard below is
+        // intentional: the caller pays for the memory growth it requested even
+        // when the opcode then halts for running outside a frame tx.
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::framedatacopy(
                 new_memory_size,
@@ -341,7 +350,11 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
 
         let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let idx = index_to_usize(frame_index)?;
-        let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let frame = ctx
+            .tx
+            .frames
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let data = &frame.data;
         let mut buf = vec![0u8; length];
@@ -380,7 +393,11 @@ impl OpcodeHandler for OpFrameParamHandler {
 
         let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let idx = index_to_usize(frame_index)?;
-        let frame = ctx.frames.get(idx).ok_or(ExceptionalHalt::InvalidOpcode)?;
+        let frame = ctx
+            .tx
+            .frames
+            .get(idx)
+            .ok_or(ExceptionalHalt::InvalidOpcode)?;
 
         let param_id = u64::try_from(param_id).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let result: U256 = match param_id {
@@ -514,7 +531,7 @@ pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U
             bytes.copy_from_slice(ctx.sig_hash.as_bytes());
             Ok(U256::from_big_endian(&bytes))
         }
-        0x09 => Ok(U256::from(ctx.frames.len())),
+        0x09 => Ok(U256::from(ctx.tx.frames.len())),
         0x0A => Ok(U256::from(ctx.current_frame_index)),
         0x0B => Ok(U256::from(ctx.tx.signatures.len())),
         _ => Err(ExceptionalHalt::InvalidOpcode.into()),

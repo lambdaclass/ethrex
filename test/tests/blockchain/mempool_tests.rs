@@ -732,7 +732,7 @@ async fn mempool_rejects_frame_tx_with_blobs() {
     let mut frame_tx = minimal_valid_frame_tx();
     // Add a blob versioned hash; no sidecar transport exists for frame-tx
     // blobs yet, so admission must reject such txs as unsupported.
-    frame_tx.blob_versioned_hashes = vec![H256::random()];
+    frame_tx.blob_versioned_hashes = vec![H256::from([0xAB; 32])];
 
     let tx = Transaction::FrameTransaction(frame_tx);
     let validation = blockchain.validate_transaction(&tx, tx.sender(&NativeCrypto).unwrap());
@@ -1657,6 +1657,100 @@ async fn mempool_fee_bump_not_blocked_by_own_stale_reservation() {
     assert!(
         result.is_ok(),
         "fee-bump must not be falsely rejected by the old tx's own reservation; got {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mempool_fee_bump_rejected_leaves_original_intact() {
+    // Atomicity (review fix 2): when a same-nonce fee-bump fails the locked
+    // paymaster re-check, the old tx must NOT have been removed; the sender is
+    // left with the original pending tx, never with neither.
+    //
+    // Setup: balance covers exactly one high-fee tx. The low-fee tx is admitted
+    // first (reserving low_fee * gas). A COMPETING reservation for the SAME
+    // paymaster is then injected directly (a phantom sender, so no nonce
+    // conflict) to push `reserved_pending_cost` up. The fee-bump's adjusted
+    // re-check only excludes the OLD same-nonce tx's reservation, not the
+    // competing one, so availability fails and the bump is rejected. The
+    // injected reservation is marked canonical so it does not consume a
+    // non-canonical slot, isolating the AVAILABILITY rejection from the limit.
+    let low_fee = 100_000_000u64;
+    let high_fee = 200_000_000u64;
+    let gas = funded_frame_tx(high_fee, high_fee).total_gas_limit();
+    // Exactly covers one high-fee tx (high_fee * gas).
+    let balance = U256::from(high_fee) * U256::from(gas);
+    let store = setup_hegota_store_with_balance(balance).await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let paymaster = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    // 1. Admit the low-fee tx normally.
+    let low_tx = Transaction::FrameTransaction(funded_frame_tx(low_fee, low_fee));
+    let old_hash = blockchain
+        .add_transaction_to_pool(low_tx)
+        .await
+        .expect("low-fee frame tx must be admitted");
+
+    // 2. Inject a competing reservation for the SAME paymaster (canonical, so it
+    //    adds to `reserved_pending_cost` without touching the non-canonical
+    //    slot). reserved_cost = 1 is enough: with the old tx's reservation
+    //    excluded, the adjusted reserved is this 1 wei, and
+    //    `balance - 1 < high_fee * gas` fails.
+    let phantom_sender = Address::from_low_u64_be(0xCAFE_F00D);
+    let phantom_frame_tx = FrameTransaction {
+        chain_id: 0,
+        nonce: 7,
+        sender: phantom_sender,
+        frames: vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(phantom_sender),
+            gas_limit: 100,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }],
+        signatures: vec![],
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        max_fee_per_blob_gas: U256::zero(),
+        blob_versioned_hashes: vec![],
+        ..Default::default()
+    };
+    let phantom_tx = Transaction::FrameTransaction(phantom_frame_tx);
+    let phantom_hash = phantom_tx.hash();
+    blockchain
+        .mempool
+        .add_transaction(
+            phantom_hash,
+            phantom_sender,
+            MempoolTransaction::new(phantom_tx, phantom_sender),
+            Some(FramePaymasterReservation {
+                paymaster,
+                reserved_cost: U256::from(1u64),
+                is_canonical: true,
+                paymaster_balance: balance,
+            }),
+        )
+        .expect("phantom reservation must be directly inserted");
+
+    // 3. Submit the same-nonce fee-bump. The adjusted re-check excludes the old
+    //    tx's reservation but NOT the competing one, so availability fails.
+    let high_tx = Transaction::FrameTransaction(funded_frame_tx(high_fee, high_fee));
+    let result = blockchain.add_transaction_to_pool(high_tx).await;
+    assert!(
+        matches!(result, Err(MempoolError::FrameTxPaymasterUnderfunded)),
+        "fee-bump that does not fit must be rejected with FrameTxPaymasterUnderfunded; got {result:?}"
+    );
+
+    // 4. The original pending tx must still be in the pool (rejection was
+    //    atomic: the old tx was not removed).
+    let old_still_present = blockchain
+        .mempool
+        .contains_tx(old_hash)
+        .expect("contains_tx");
+    assert!(
+        old_still_present,
+        "original pending tx must remain after a rejected fee-bump"
     );
 }
 

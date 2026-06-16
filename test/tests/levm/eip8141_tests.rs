@@ -995,7 +995,6 @@ mod frame_tx_opcode_handler_tests {
         FrameTxContext {
             sender_approved: false,
             payer_address: None,
-            frames: Vec::new(),
             frame_results: Vec::new(),
             current_frame_index: 0,
             sig_hash: ethrex_common::H256::zero(),
@@ -1081,7 +1080,6 @@ mod frame_tx_opcode_handler_tests {
         let ctx = FrameTxContext {
             sender_approved: false,
             payer_address: None,
-            frames: Vec::new(),
             frame_results: Vec::new(),
             current_frame_index: 0,
             sig_hash: ethrex_common::H256::zero(),

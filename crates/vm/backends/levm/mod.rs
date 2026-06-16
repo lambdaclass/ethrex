@@ -30,7 +30,7 @@ use ethrex_common::{
     Address, U256,
     types::{
         AccessList, AccountUpdate, Block, BlockHeader, EIP1559Transaction, Fork, FrameReceipt,
-        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Receipt, Transaction, TxKind,
+        GWEI_TO_WEI, GenericTransaction, INITIAL_BASE_FEE, Log, Receipt, Transaction, TxKind,
         Withdrawal, requests::Requests,
     },
 };
@@ -85,6 +85,24 @@ use std::sync::mpsc::Sender;
 /// [LEVM::process_withdrawals]
 #[derive(Debug)]
 pub struct LEVM;
+
+/// Build the per-frame receipts (EIP-8141) for a frame transaction from an
+/// execution report's `frame_results`. Returns `None` when the report carries
+/// no frame results.
+fn frame_receipts_from(
+    frame_results: Option<Vec<(u8, u64, Vec<Log>)>>,
+) -> Option<Vec<FrameReceipt>> {
+    frame_results.map(|results| {
+        results
+            .into_iter()
+            .map(|(status, gas_used, logs)| FrameReceipt {
+                status,
+                gas_used,
+                logs,
+            })
+            .collect()
+    })
+}
 
 /// Checks that adding `tx_gas_limit` to `block_gas_used` doesn't exceed `block_gas_limit`.
 fn check_gas_limit(
@@ -328,16 +346,7 @@ impl LEVM {
             // For frame transactions, propagate payer and per-frame receipts
             if matches!(tx, Transaction::FrameTransaction(_)) {
                 receipt.payer = report.payer_address;
-                receipt.frame_receipts = report.frame_results.map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(status, gas_used, logs)| FrameReceipt {
-                            status,
-                            gas_used,
-                            logs,
-                        })
-                        .collect()
-                });
+                receipt.frame_receipts = frame_receipts_from(report.frame_results);
             }
 
             receipts.push(receipt);
@@ -750,16 +759,7 @@ impl LEVM {
             // For frame transactions, propagate payer and per-frame receipts
             if matches!(tx, Transaction::FrameTransaction(_)) {
                 receipt.payer = report.payer_address;
-                receipt.frame_receipts = report.frame_results.map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(status, gas_used, logs)| FrameReceipt {
-                            status,
-                            gas_used,
-                            logs,
-                        })
-                        .collect()
-                });
+                receipt.frame_receipts = frame_receipts_from(report.frame_results);
             }
 
             receipts.push(receipt);
@@ -1362,16 +1362,7 @@ impl LEVM {
             );
             if tx_type == TxType::Frame {
                 receipt.payer = report.payer_address;
-                receipt.frame_receipts = report.frame_results.map(|results| {
-                    results
-                        .into_iter()
-                        .map(|(status, gas_used, logs)| FrameReceipt {
-                            status,
-                            gas_used,
-                            logs,
-                        })
-                        .collect()
-                });
+                receipt.frame_receipts = frame_receipts_from(report.frame_results);
             }
             receipts.push(receipt);
         }

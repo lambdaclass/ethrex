@@ -498,8 +498,6 @@ pub struct FrameTxContext {
     /// single source of truth for whether payment has been approved: when this
     /// is `Some(_)`, the transaction has a `payer`; when `None`, it does not.
     pub payer_address: Option<Address>,
-    /// The frames in this transaction
-    pub frames: Vec<ethrex_common::types::Frame>,
     /// Per-frame execution results (status, gas_used, logs).
     /// `status` is a `FRAME_RECEIPT_STATUS_*` code (0 = failure, 1 = success,
     /// 3 = skipped due to failed atomic batch).
@@ -1217,7 +1215,6 @@ impl<'a> VM<'a> {
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
-            frames: frame_tx.frames.clone(),
             frame_results: Vec::new(),
             current_frame_index: 0,
             sig_hash,
@@ -1826,7 +1823,6 @@ impl<'a> VM<'a> {
         self.frame_tx_context = Some(FrameTxContext {
             sender_approved: false,
             payer_address: None,
-            frames: frame_tx.frames.clone(),
             frame_results: Vec::new(),
             current_frame_index: 0,
             sig_hash,
@@ -2823,7 +2819,6 @@ mod atomic_batch_approval_rollback_tests {
         FrameTxContext {
             sender_approved: false,
             payer_address: None,
-            frames: Vec::new(),
             frame_results: Vec::new(),
             current_frame_index: 0,
             sig_hash: ethrex_common::H256::zero(),

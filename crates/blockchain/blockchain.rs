@@ -93,7 +93,7 @@ use ethrex_vm::backends::CachingDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
-use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
+use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError, VmDatabase};
 use mempool::{
     FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, is_canonical_paymaster,
 };
@@ -2739,7 +2739,16 @@ impl Blockchain {
         // Validate transaction
         let (tx_to_replace, frame_reservation) =
             self.validate_transaction(&transaction, sender).await?;
-        if let Some(tx_to_replace) = tx_to_replace {
+        // For a frame tx, the same-nonce predecessor must NOT be removed here:
+        // `add_transaction` removes it only AFTER the locked paymaster re-check
+        // passes, so a rejected fee-bump leaves the original pending tx intact
+        // (atomic replacement, review fix 2). The hash `add_transaction` removes
+        // (via `check_frame_tx_sender_pending`) is the same same-nonce hash
+        // `find_tx_to_replace` returns, so the success path is unchanged.
+        let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
+        if let Some(tx_to_replace) = tx_to_replace
+            && !is_frame
+        {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
@@ -2857,7 +2866,7 @@ impl Blockchain {
             }
         };
 
-        for (hash, _sender, _paymaster) in pending {
+        for (hash, _sender, paymaster) in pending {
             let Some(mempool_tx) = self.mempool.get_mempool_transaction_by_hash(hash)? else {
                 continue;
             };
@@ -2894,11 +2903,44 @@ impl Blockchain {
             let evict = match self.new_evm(vm_db.clone()) {
                 Ok(mut vm) => {
                     match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None) {
-                        // Simulation passed: keep the tx. Availability is
-                        // re-checked lazily at the next block; an over-funded
-                        // paymaster draining is caught by the next pass or at
-                        // inclusion, never under-rejected here.
-                        Ok(outcome) => !outcome.passed,
+                        // Simulation passed for this tx in isolation. The
+                        // per-tx validation prefix only catches a single-tx
+                        // drain (its own APPROVE underflows). N txs sharing one
+                        // paymaster each simulate against the full post-block
+                        // balance, so collectively they can exceed it; we must
+                        // also re-check the aggregate availability invariant
+                        // that admission enforces. Per tx the needed condition
+                        // is `balance - (reserved - this_cost) >= this_cost`,
+                        // i.e. `balance >= reserved_pending_cost(paymaster)`.
+                        // Because evicting a tx decrements
+                        // `reserved_pending_cost` (single removal path), the
+                        // pass converges to `reserved <= balance` per paymaster
+                        // and never under-evicts. (All paymasters are
+                        // non-canonical today (OQ1); the per-paymaster pending
+                        // COUNT limit cannot be exceeded by a block, so only
+                        // the balance/reserved aggregate needs re-checking.)
+                        Ok(outcome) if outcome.passed => {
+                            // Best-effort post-block balance read. A read error
+                            // is treated as "keep the tx" (consistent with the
+                            // transient-failure handling above); never panic,
+                            // never fail the FCU.
+                            let balance = match vm_db.get_account_state(paymaster) {
+                                Ok(Some(state)) => state.balance,
+                                Ok(None) => U256::zero(),
+                                Err(_) => {
+                                    // Keep the tx on a transient read failure.
+                                    continue;
+                                }
+                            };
+                            // `reserved_pending_cost` is read live, not from the
+                            // snapshot: a tx admitted after the snapshot can raise
+                            // it above `balance` and over-evict a snapshotted tx.
+                            // That is benign for a best-effort mempool policy (the
+                            // newcomer passed its own locked availability check).
+                            balance < self.mempool.reserved_pending_cost(paymaster)?
+                        }
+                        // Simulation passed flag is false: evict.
+                        Ok(_) => true,
                         // A simulation error means the prefix can no longer be
                         // validated against the new state: evict (conservative).
                         Err(_) => true,
