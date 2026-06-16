@@ -280,6 +280,11 @@ pub async fn init_rpc_api(
         get_client_version(),
         log_filter_handler,
         opts.gas_limit,
+        ethrex_rpc::EthRpcLimits {
+            max_log_block_range: opts.rpc_max_log_block_range,
+            max_logs_per_response: opts.rpc_max_logs_per_response,
+            max_active_filters: opts.rpc_max_active_filters,
+        },
         opts.extra_data.clone(),
         opts.http_api.iter().copied().collect(),
     );

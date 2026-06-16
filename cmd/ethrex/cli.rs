@@ -423,6 +423,33 @@ pub struct Options {
     )]
     pub gas_limit: u64,
     #[arg(
+        long = "rpc.max-log-block-range",
+        default_value_t = ethrex_rpc::MAX_BLOCK_RANGE,
+        value_name = "BLOCKS",
+        help = "Max block span for a single eth_getLogs/eth_getFilterChanges query (0 = unlimited).",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_LOG_BLOCK_RANGE"
+    )]
+    pub rpc_max_log_block_range: u64,
+    #[arg(
+        long = "rpc.max-logs-per-response",
+        default_value_t = ethrex_rpc::MAX_LOGS_PER_RESPONSE,
+        value_name = "COUNT",
+        help = "Max logs returned by a single eth_getLogs/eth_getFilterChanges query (0 = unlimited).",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_LOGS_PER_RESPONSE"
+    )]
+    pub rpc_max_logs_per_response: usize,
+    #[arg(
+        long = "rpc.max-active-filters",
+        default_value_t = ethrex_rpc::MAX_ACTIVE_FILTERS,
+        value_name = "COUNT",
+        help = "Max concurrently-installed eth_* filters across all callers (0 = unlimited).",
+        help_heading = "RPC options",
+        env = "ETHREX_RPC_MAX_ACTIVE_FILTERS"
+    )]
+    pub rpc_max_active_filters: usize,
+    #[arg(
         long = "builder.max-blobs",
         value_name = "MAX_BLOBS",
         help = "EIP-7872: Maximum blobs per block for local building. Minimum of 1. Defaults to protocol max.",
@@ -524,6 +551,9 @@ impl Default for Options {
             lookup_interval: Default::default(),
             extra_data: get_minimal_client_version(),
             gas_limit: DEFAULT_BUILDER_GAS_CEIL,
+            rpc_max_log_block_range: ethrex_rpc::MAX_BLOCK_RANGE,
+            rpc_max_logs_per_response: ethrex_rpc::MAX_LOGS_PER_RESPONSE,
+            rpc_max_active_filters: ethrex_rpc::MAX_ACTIVE_FILTERS,
             max_blobs_per_block: None,
             precompute_witnesses: false,
             no_migrate: false,

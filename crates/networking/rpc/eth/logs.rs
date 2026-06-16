@@ -117,7 +117,13 @@ impl RpcHandler for LogsFilter {
         }
     }
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
-        let filtered_logs = fetch_logs_with_filter(self, context.storage).await?;
+        let filtered_logs = fetch_logs_with_filter(
+            self,
+            context.storage,
+            context.eth_limits.max_log_block_range,
+            context.eth_limits.max_logs_per_response,
+        )
+        .await?;
         serde_json::to_value(filtered_logs).map_err(|error| {
             tracing::error!("Log filtering request failed with: {error}");
             RpcErr::Internal("Failed to filter logs".to_string())
@@ -137,6 +143,8 @@ impl RpcHandler for LogsFilter {
 pub(crate) async fn fetch_logs_with_filter(
     filter: &LogsFilter,
     storage: Store,
+    max_block_range: u64,
+    max_logs_per_response: usize,
 ) -> Result<Vec<RpcLog>, RpcErr> {
     let from = filter
         .from_block
@@ -153,9 +161,9 @@ pub(crate) async fn fetch_logs_with_filter(
     }
     // Bound the block span before touching the database so a single request
     // cannot force an unbounded `Vec<RpcLog>` over an attacker-chosen range.
-    if MAX_BLOCK_RANGE != 0 && to - from + 1 > MAX_BLOCK_RANGE {
+    if max_block_range != 0 && to - from + 1 > max_block_range {
         return Err(RpcErr::BadParams(format!(
-            "Block range too large: requested {} blocks ({from}..={to}), max is {MAX_BLOCK_RANGE}. Split the query into smaller ranges.",
+            "Block range too large: requested {} blocks ({from}..={to}), max is {max_block_range}. Split the query into smaller ranges.",
             to - from + 1
         )));
     }
@@ -219,9 +227,9 @@ pub(crate) async fn fetch_logs_with_filter(
         // Bound peak memory: stop accumulating once the (address-filtered)
         // result set exceeds the cap and return a paginatable error pointing
         // at the block reached, so the caller can split the query.
-        if MAX_LOGS_PER_RESPONSE != 0 && logs.len() > MAX_LOGS_PER_RESPONSE {
+        if max_logs_per_response != 0 && logs.len() > max_logs_per_response {
             return Err(RpcErr::BadParams(format!(
-                "Query exceeds the maximum of {MAX_LOGS_PER_RESPONSE} logs (range {from}..={block_num} already matched {}). Narrow the block range or add address/topic filters.",
+                "Query exceeds the maximum of {max_logs_per_response} logs (range {from}..={block_num} already matched {}). Narrow the block range or add address/topic filters.",
                 logs.len()
             )));
         }
@@ -325,7 +333,9 @@ mod tests {
             address_filters: None,
             topics: vec![],
         };
-        let err = fetch_logs_with_filter(&filter, storage).await.unwrap_err();
+        let err = fetch_logs_with_filter(&filter, storage, MAX_BLOCK_RANGE, MAX_LOGS_PER_RESPONSE)
+            .await
+            .unwrap_err();
         assert!(
             matches!(err, RpcErr::BadParams(_)),
             "expected BadParams, got {err:?}"
@@ -344,7 +354,9 @@ mod tests {
             address_filters: None,
             topics: vec![],
         };
-        let err = fetch_logs_with_filter(&filter, storage).await.unwrap_err();
+        let err = fetch_logs_with_filter(&filter, storage, MAX_BLOCK_RANGE, MAX_LOGS_PER_RESPONSE)
+            .await
+            .unwrap_err();
         assert!(
             matches!(&err, RpcErr::Internal(msg) if msg.contains("body")),
             "expected to pass the range guard and fail on missing body, got {err:?}"
