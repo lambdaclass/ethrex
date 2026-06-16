@@ -3235,7 +3235,11 @@ impl Store {
                 .collect();
             handles
                 .into_iter()
-                .map(|h| h.join().expect("trie-node prefetch shard panicked"))
+                // Best-effort warming: a panicked shard contributes 0 hits rather
+                // than re-panicking. The caller treats this prefetch as best-effort
+                // (missing nodes are just cold-read by the walk), so a shard hiccup
+                // must not unwind block processing.
+                .map(|h| h.join().unwrap_or(0))
                 .sum::<usize>()
         });
         Ok(hits)
