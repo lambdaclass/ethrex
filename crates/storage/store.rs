@@ -2926,6 +2926,121 @@ impl Store {
         Ok(results)
     }
 
+    /// Best-effort warming of the MPT *internal* nodes the merkleizer will walk,
+    /// driven entirely by the BAL working set. The merkle phase reads trie nodes
+    /// from `STORAGE_TRIE_NODES` / `ACCOUNT_TRIE_NODES` (see `BackendTrieDB::get`)
+    /// by nibble path; the existing flat-KV prefetch warms only the leaf-value
+    /// CFs that *execution* reads, so every merkle-walk node read is otherwise
+    /// cold. This pulls those node blocks into the page/block cache up front so
+    /// the subsequent walk runs warm.
+    ///
+    /// The keys are not discovered by walking (a walk is QD1 and serial): the
+    /// internal nodes on the path to a leaf are all at *prefixes* of that leaf's
+    /// nibble path, so for every BAL leaf we speculatively probe every prefix up
+    /// to `MAX_PREFETCH_DEPTH`. Prefixes that are not real nodes are rejected by
+    /// the CF bloom filter in RAM (no disk read; measured ~free), and the shallow
+    /// prefixes collapse on dedup. This turns the cold merkle node reads into one
+    /// sorted, sharded, high-queue-depth `multi_get` per CF — the same lever that
+    /// fixed the flat-KV `sload` path, applied to the trie-node CFs.
+    ///
+    /// Results are discarded. Missing a node (e.g. one deeper than the probe
+    /// band) is harmless: the merkleizer just cold-reads it. Run this
+    /// synchronously up front (mirroring the flat-KV prefetch) so it never races
+    /// the merkleizer; it touches different CFs than execution, so it does not
+    /// contend with the executor either.
+    /// Returns the number of probed keys that hit a real stored node (warmed).
+    /// On the warm/no-op path this still reports coverage; a near-zero hit count
+    /// against a non-empty working set signals a key-encoding mismatch (the
+    /// effectiveness test asserts on this).
+    pub fn prefetch_trie_nodes(
+        &self,
+        storage_slots: &[(Address, H256)],
+        accounts: &[Address],
+    ) -> Result<usize, StoreError> {
+        // Probe band: nodes live at depth <= ~ceil(log16(trie_size)). 8 nibbles
+        // covers tries up to ~16^8 entries near-fully; any deeper node is simply
+        // cold-read by the walk, so under-covering only loses a little warming,
+        // never correctness. Tunable.
+        const MAX_PREFETCH_DEPTH: usize = 8;
+
+        // STORAGE_TRIE_NODES: prefixes of apply_prefix(hashed_addr, hashed_slot).
+        let mut storage_keys: Vec<Vec<u8>> = Vec::with_capacity(storage_slots.len() * 4);
+        for (address, slot) in storage_slots {
+            let hashed_address = hash_address_fixed(address);
+            let hashed_slot = hash_key_fixed(slot);
+            let slot_nibbles = Nibbles::from_bytes(&hashed_slot);
+            let max_d = MAX_PREFETCH_DEPTH.min(slot_nibbles.len());
+            for d in 0..=max_d {
+                let prefix = apply_prefix(Some(hashed_address), slot_nibbles.slice(0, d));
+                storage_keys.push(prefix.into_vec());
+            }
+        }
+
+        // ACCOUNT_TRIE_NODES: prefixes of the hashed address (no account prefix).
+        let mut account_keys: Vec<Vec<u8>> = Vec::with_capacity(accounts.len() * 4);
+        for address in accounts {
+            let hashed_address = hash_address_fixed(address);
+            let addr_nibbles = Nibbles::from_bytes(hashed_address.as_bytes());
+            let max_d = MAX_PREFETCH_DEPTH.min(addr_nibbles.len());
+            for d in 0..=max_d {
+                account_keys.push(addr_nibbles.slice(0, d).into_vec());
+            }
+        }
+
+        let hits = self.warm_trie_node_keys(STORAGE_TRIE_NODES, storage_keys)?
+            + self.warm_trie_node_keys(ACCOUNT_TRIE_NODES, account_keys)?;
+        Ok(hits)
+    }
+
+    /// Sorted, sharded, high-queue-depth `multi_get` over `keys` in `table`,
+    /// discarding results. Sorting makes adjacent keys share RocksDB data blocks;
+    /// sharding across blocking threads issues the reads at queue depth ~= shard
+    /// count (async_io is off, so a single multi_get runs at QD1). Mirrors the
+    /// storage flat-KV batch path. Dedups first so shared shallow prefixes are
+    /// read once.
+    fn warm_trie_node_keys(
+        &self,
+        table: &'static str,
+        mut keys: Vec<Vec<u8>>,
+    ) -> Result<usize, StoreError> {
+        if keys.is_empty() {
+            return Ok(0);
+        }
+        keys.sort_unstable();
+        keys.dedup();
+
+        const KEYS_PER_SHARD: usize = 256;
+        const MAX_SHARDS: usize = 64;
+        let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
+        let read_view = self.backend.begin_read()?;
+        let count_hits = |res: Vec<Result<Option<Vec<u8>>, StoreError>>| {
+            res.into_iter().filter(|r| matches!(r, Ok(Some(_)))).count()
+        };
+        if shards <= 1 {
+            let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
+            return Ok(count_hits(read_view.multi_get(table, &refs)));
+        }
+        let chunk = keys.len().div_ceil(shards);
+        let rv = read_view.as_ref();
+        let hits = std::thread::scope(|scope| {
+            let handles: Vec<_> = keys
+                .chunks(chunk)
+                .map(|ck| {
+                    scope.spawn(move || {
+                        let refs: Vec<&[u8]> = ck.iter().map(|k| k.as_slice()).collect();
+                        // Warm-only: keep cache population, just tally the hits.
+                        count_hits(rv.multi_get(table, &refs))
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().expect("trie-node prefetch shard panicked"))
+                .sum::<usize>()
+        });
+        Ok(hits)
+    }
+
     /// Constructs a merkle proof for the given account address against a given state.
     /// If storage_keys are provided, also constructs the storage proofs for those keys.
     ///
