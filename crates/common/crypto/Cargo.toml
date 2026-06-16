@@ -54,10 +54,6 @@ c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
 kzg-rs = ["dep:kzg-rs"]
 
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
-# No-op here: the OpenVM KZG backend (openvm-kzg) now lives in
-# ethrex-guest-program's OpenVm provider, not in this crate. Retained so the
-# `ethrex-common/openvm` feature chain still resolves.
-openvm = []
 
 [dev-dependencies]
 criterion = { version = "0.5.1", features = ["html_reports"] }
