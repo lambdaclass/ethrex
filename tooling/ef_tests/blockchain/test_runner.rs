@@ -27,6 +27,7 @@ fn merkle_pool() -> Arc<rayon::ThreadPool> {
 }
 #[cfg(feature = "stateless")]
 use ethrex_common::types::block_execution_witness::RpcExecutionWitness;
+use ethrex_crypto::NativeCrypto;
 use ethrex_common::{
     constants::EMPTY_KECCACK_HASH,
     types::{
@@ -590,7 +591,7 @@ async fn run_stateless_from_fixture(
                 format!("executionWitness parse failed for {test_key} block {block_number}: {e}")
             })?;
         let execution_witness = rpc_witness
-            .into_execution_witness(*chain_config, block_number)
+            .into_execution_witness(*chain_config, block_number, &NativeCrypto)
             .map_err(|e| {
                 format!("witness conversion failed for {test_key} block {block_number}: {e}")
             })?;
