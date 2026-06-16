@@ -1,17 +1,19 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
+use super::bls_portable::impl_portable_bls12_381;
 use super::shared::{
     k256_ecrecover, k256_recover_signer, substrate_bn_g1_mul, substrate_bn_pairing_check,
 };
 
 /// SP1 crypto provider.
 ///
-/// Uses k256 for ECDSA (secp256k1) and substrate-bn for BN254 ecmul/pairing.
-/// All other operations use the trait defaults (native libraries).
+/// Uses k256 for ECDSA (secp256k1), substrate-bn for BN254 ecmul/pairing, and
+/// the portable `bls12_381` backend for BLS12-381 (EIP-2537). All other
+/// operations use the trait defaults (native libraries).
 ///
 /// When building actual SP1 guest binaries, SP1's patched crate versions
-/// of k256 and substrate-bn are used transparently via Cargo patches.
+/// of k256, substrate-bn and bls12_381 are used transparently via Cargo patches.
 #[derive(Debug)]
 pub struct Sp1Crypto;
 
@@ -54,4 +56,6 @@ impl Crypto for Sp1Crypto {
                 }
             })
     }
+
+    impl_portable_bls12_381!();
 }

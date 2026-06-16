@@ -1,12 +1,14 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
+use super::bls_portable::impl_portable_bls12_381;
 use super::shared::{k256_ecrecover, k256_recover_signer, substrate_bn_pairing_check};
 
 /// RISC0 crypto provider.
 ///
-/// Uses k256 for ECDSA (secp256k1) and substrate-bn for BN254 pairing.
-/// All other operations use the trait defaults (native libraries).
+/// Uses k256 for ECDSA (secp256k1), substrate-bn for BN254 pairing, and the
+/// portable `bls12_381` backend for BLS12-381 (EIP-2537). All other operations
+/// use the trait defaults (native libraries).
 ///
 /// When building actual RISC0 guest binaries, RISC0's patched crate versions
 /// of k256 and substrate-bn are used transparently via Cargo patches.
@@ -30,4 +32,6 @@ impl Crypto for Risc0Crypto {
     fn bn254_pairing_check(&self, pairs: &[(&[u8], &[u8])]) -> Result<bool, CryptoError> {
         substrate_bn_pairing_check(pairs)
     }
+
+    impl_portable_bls12_381!();
 }

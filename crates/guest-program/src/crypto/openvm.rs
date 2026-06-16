@@ -1,12 +1,14 @@
 use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
+use super::bls_portable::impl_portable_bls12_381;
 use super::shared::{k256_ecrecover, k256_recover_signer};
 
 /// OpenVM crypto provider.
 ///
-/// Uses k256 for ECDSA (secp256k1).
-/// All other operations use the trait defaults (native libraries).
+/// Uses k256 for ECDSA (secp256k1) and the portable `bls12_381` backend for
+/// BLS12-381 (EIP-2537). All other operations use the trait defaults (native
+/// libraries).
 ///
 /// When building actual OpenVM guest binaries, OpenVM's patched crate version
 /// of k256 is used transparently via Cargo patches.
@@ -26,4 +28,6 @@ impl Crypto for OpenVmCrypto {
     fn recover_signer(&self, sig: &[u8; 65], msg: &[u8; 32]) -> Result<Address, CryptoError> {
         k256_recover_signer(sig, msg)
     }
+
+    impl_portable_bls12_381!();
 }
