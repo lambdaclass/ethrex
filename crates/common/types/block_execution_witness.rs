@@ -127,8 +127,9 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         }
         // Canonical witness ordering (EIP-8025, geth `ExtWitness`): state nodes
         // and codes sorted lexicographically and deduplicated (identical
-        // storage subtries would otherwise emit identical nodes twice),
-        // headers ascending by block number.
+        // storage subtries would otherwise emit identical nodes twice); headers
+        // ascending by block number and deduplicated (the same ancestor header
+        // can be referenced by more than one block).
         nodes.sort();
         nodes.dedup();
         let mut codes = value.codes;
@@ -141,6 +142,8 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
                 .map(|header| header.number)
                 .unwrap_or(u64::MAX)
         });
+        // Identical headers share a block number, so they are now adjacent.
+        headers.dedup();
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
             keys: Vec::new(),

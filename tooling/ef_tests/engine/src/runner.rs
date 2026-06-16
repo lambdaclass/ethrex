@@ -283,7 +283,9 @@ pub async fn run_fixture(
 /// `ExtWitness` shape — an RLP list `(headers, codes, state, keys)` with
 /// headers ascending by block number and codes/state sorted lexicographically —
 /// which is the same canonical ordering the EEST fixture witness carries, so
-/// the comparison is exact per section. `keys` must be empty.
+/// the comparison is exact per section. `keys` is optional in the fixture
+/// (geth emits it empty) and compared symmetrically: an absent section is
+/// treated as empty.
 fn check_witness_response(
     resp: &Value,
     payload: &FixturePayload,
@@ -318,13 +320,6 @@ fn check_witness_response(
     let witness = ExtWitness::decode(&witness_bytes)
         .map_err(|e| mismatch(format!("witness RLP decode failed: {e}")))?;
 
-    if !witness.keys.is_empty() {
-        return Err(mismatch(format!(
-            "expected empty keys section, got {} items",
-            witness.keys.len()
-        )));
-    }
-
     let got_headers: Vec<Vec<u8>> = witness.headers.iter().map(|h| h.encode_to_vec()).collect();
     let got_codes: Vec<Vec<u8>> = witness.codes.iter().map(|b| b.to_vec()).collect();
     let got_state: Vec<Vec<u8>> = witness.state.iter().map(|b| b.to_vec()).collect();
@@ -338,6 +333,16 @@ fn check_witness_response(
         if got != exp {
             return Err(mismatch(witness_diff_detail(section, &got, &exp)));
         }
+    }
+
+    // `keys` is optional in EEST fixtures (geth emits it empty). Compare it
+    // symmetrically — an absent fixture section counts as empty — so a non-empty
+    // `keys` is diffed like the other sections instead of being blindly
+    // rejected, and an empty response against a populated fixture is caught.
+    let got_keys: Vec<Vec<u8>> = witness.keys.iter().map(|b| b.to_vec()).collect();
+    let exp_keys = parse_optional_witness_hex_array(expected, "keys").map_err(mismatch)?;
+    if got_keys != exp_keys {
+        return Err(mismatch(witness_diff_detail("keys", &got_keys, &exp_keys)));
     }
     Ok(())
 }
@@ -357,6 +362,16 @@ fn parse_witness_hex_array(expected: &Value, key: &str) -> Result<Vec<Vec<u8>>, 
                 .map_err(|e| format!("hex decode failed in executionWitness '{key}': {e}"))
         })
         .collect()
+}
+
+/// Like [`parse_witness_hex_array`] but treats an absent or null section as an
+/// empty list. Used for the optional `keys` section, which EEST fixtures omit
+/// and geth emits empty.
+fn parse_optional_witness_hex_array(expected: &Value, key: &str) -> Result<Vec<Vec<u8>>, String> {
+    match expected.get(key) {
+        Some(v) if !v.is_null() => parse_witness_hex_array(expected, key),
+        _ => Ok(Vec::new()),
+    }
 }
 
 /// Compact diff summary for a mismatched witness section.
