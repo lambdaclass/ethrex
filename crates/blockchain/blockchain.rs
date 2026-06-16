@@ -615,6 +615,34 @@ impl Blockchain {
             if !slots.is_empty() {
                 let _ = caching_store.prefetch_storage(&slots);
             }
+
+            // Warm the MPT internal nodes the merkleizer will walk, from the same
+            // BAL working set (different CFs than the flat-KV warm above, which
+            // only serves execution). The merkle phase is otherwise 100% cold on
+            // the trie-node CFs. Synchronous + up front: never races the
+            // merkleizer, and touches CFs execution doesn't, so no exec contention
+            // either.
+            //
+            // Gated so ordinary merkle-light blocks (few touched slots/accounts,
+            // usually cache-warm) don't pay the probe cost. The payoff is on
+            // high-gas-limit blocks that touch a large number of distinct storage
+            // slots and/or accounts, for example many SSTOREs and value-transferring
+            // CALLs over cold state, where the merkle phase has to walk a large set
+            // of scattered, cold trie nodes. Sizing: a cold slot/account access costs
+            // ~2100 gas, so a block reaches at most ~gas_limit/2100 distinct
+            // accesses; 16384 (~34M gas of cold accesses) sits well above any
+            // ordinary block yet below the large-state blocks this targets, so it
+            // stays inert on normal traffic and fires only once merkle goes
+            // cold-read-bound. Scale with the gas limit. Tunable.
+            //
+            // SLOAD-dominated blocks are handled by the flat-KV warm above (reads
+            // don't touch the trie); this is the complementary write/account-update
+            // side, so the two cover different workloads without overlapping.
+            const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
+            let accounts = LEVM::bal_accounts(bal_ref);
+            if slots.len() + accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
+                let _ = self.storage.prefetch_trie_nodes(&slots, &accounts);
+            }
         }
 
         // Each thread that captures `bal` needs its own Arc clone (cheap pointer bump).
