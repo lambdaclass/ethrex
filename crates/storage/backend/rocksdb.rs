@@ -270,14 +270,13 @@ impl RocksDBBackend {
 
         for cf_name in &existing_cfs {
             if cf_name != "default" && !TABLES.contains(&cf_name.as_str()) {
-                warn!("Dropping obsolete column family: {}", cf_name);
                 let _ = self
                     .db
                     .drop_cf(cf_name)
-                    .inspect(|_| info!("Successfully dropped column family: {}", cf_name))
+                    .inspect(|_| info!("Dropped obsolete column family '{}'", cf_name))
                     .inspect_err(|e|
                         // Log error but don't fail — the database is still usable
-                        warn!("Failed to drop column family '{}': {}", cf_name, e));
+                        warn!("Failed to drop obsolete column family '{}': {}", cf_name, e));
             }
         }
     }
