@@ -2898,6 +2898,15 @@ impl Blockchain {
             ) {
                 return Err(MempoolError::InvalidFrameSignature);
             }
+
+            // EIP-8141 §Mempool: validate the prefix shape and structural rules.
+            // The full gas-budget check (prefix frame gas limits + sig cost ≤
+            // MAX_VERIFY_GAS) is the authoritative superset of the cheap
+            // sig-cost pre-filter above; both are kept for defence-in-depth.
+            let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
+            frame_tx
+                .validate_prefix_structure(&prefix)
+                .map_err(MempoolError::from)?;
         }
 
         // Wire size cap for non-blob txs: peer-policy default, not consensus.

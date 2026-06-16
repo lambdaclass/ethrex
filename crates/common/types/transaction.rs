@@ -1894,6 +1894,16 @@ pub const FRAME_SIG_SCHEME_P256: u8 = 1;
 /// so a frame tx whose `signature_verification_cost()` alone exceeds it can never
 /// satisfy the prefix budget and must be rejected at admission.
 pub const FRAME_TX_MAX_VERIFY_GAS: u64 = 100_000;
+/// EIP-8141 APPROVE scope-restriction values (bits 0-1 of `Frame.flags`).
+/// Used by VERIFY and PAY frames to declare which capabilities they grant.
+pub const APPROVE_PAYMENT: u8 = 0x1;
+pub const APPROVE_EXECUTION: u8 = 0x2;
+pub const APPROVE_EXECUTION_AND_PAYMENT: u8 = 0x3;
+/// Maximum number of pending frame txs using a non-canonical paymaster per
+/// paymaster address. Per OQ1, all paymasters are currently non-canonical
+/// (FRAME_CANONICAL_PAYMASTER_CODE_HASH is unresolved in the draft EIP), so
+/// this de-facto limits sponsored frame txs to 1 per paymaster in the pool.
+pub const FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER: u8 = 1;
 
 /// Returns the ENTRY_POINT `Address` (0x…00aa) used as caller for
 /// DEFAULT/VERIFY frames per EIP-8141.
@@ -2102,6 +2112,264 @@ impl FrameTransaction {
         }
         Ok(())
     }
+
+    /// Identify and return the validation prefix of this frame transaction.
+    ///
+    /// The validation prefix is the minimal leading subsequence of frames (ignoring
+    /// expiry-verifier frames) that establishes who pays for the transaction.
+    /// Four shapes are recognized (per EIP-8141 §Mempool):
+    ///
+    /// - `SelfVerify`: one VERIFY frame targeting `tx.sender` with scope `APPROVE_EXECUTION_AND_PAYMENT`.
+    /// - `DeploySelfVerify`: one DEFAULT frame (deploy) then one VERIFY frame as above.
+    /// - `OnlyVerifyPay`: one VERIFY frame (only_verify, scope `APPROVE_EXECUTION`) +
+    ///   one VERIFY frame (pay, scope `APPROVE_PAYMENT`).
+    /// - `DeployOnlyVerifyPay`: DEFAULT deploy frame + OnlyVerifyPay pair.
+    ///
+    /// Expiry-verifier frames (see `Frame::is_expiry_verifier`) are transparent; they
+    /// are skipped during shape matching but their indices are NOT included in
+    /// `frame_indices` (which holds only the semantically meaningful prefix frames).
+    pub fn validation_prefix(&self) -> Result<ValidationPrefix, FrameValidationError> {
+        // Collect non-expiry frame indices in order.
+        let non_expiry: Vec<usize> = self
+            .frames
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| !f.is_expiry_verifier())
+            .map(|(i, _)| i)
+            .collect();
+
+        // Helper to get a frame by its position in non_expiry.
+        let frame = |pos: usize| -> Option<&Frame> {
+            non_expiry.get(pos).and_then(|&idx| self.frames.get(idx))
+        };
+
+        let is_default = |pos: usize| -> bool {
+            frame(pos).is_some_and(|f| f.execution_mode() == FrameMode::Default)
+        };
+        let is_verify = |pos: usize| -> bool {
+            frame(pos).is_some_and(|f| f.execution_mode() == FrameMode::Verify)
+        };
+        let scope_of = |pos: usize| -> u8 { frame(pos).map_or(0, |f| f.scope_restriction()) };
+
+        if non_expiry.is_empty() {
+            return Err(FrameValidationError::UnrecognizedPrefix);
+        }
+
+        // Attempt to match each of the four shapes.
+        //
+        // Shape: DeployOnlyVerifyPay — DEFAULT + VERIFY(exec) + VERIFY(pay)
+        if is_default(0)
+            && is_verify(1)
+            && scope_of(1) == APPROVE_EXECUTION
+            && is_verify(2)
+            && scope_of(2) == APPROVE_PAYMENT
+        {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::DeployOnlyVerifyPay,
+                frame_indices: vec![non_expiry[0], non_expiry[1], non_expiry[2]],
+                deploy_index: Some(non_expiry[0]),
+                pay_index: Some(non_expiry[2]),
+            });
+        }
+
+        // Shape: DeploySelfVerify — DEFAULT + VERIFY(exec+pay)
+        if is_default(0) && is_verify(1) && scope_of(1) == APPROVE_EXECUTION_AND_PAYMENT {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::DeploySelfVerify,
+                frame_indices: vec![non_expiry[0], non_expiry[1]],
+                deploy_index: Some(non_expiry[0]),
+                pay_index: Some(non_expiry[1]),
+            });
+        }
+
+        // Shape: OnlyVerifyPay — VERIFY(exec) + VERIFY(pay)
+        if is_verify(0)
+            && scope_of(0) == APPROVE_EXECUTION
+            && is_verify(1)
+            && scope_of(1) == APPROVE_PAYMENT
+        {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::OnlyVerifyPay,
+                frame_indices: vec![non_expiry[0], non_expiry[1]],
+                deploy_index: None,
+                pay_index: Some(non_expiry[1]),
+            });
+        }
+
+        // Shape: SelfVerify — VERIFY(exec+pay)
+        if is_verify(0) && scope_of(0) == APPROVE_EXECUTION_AND_PAYMENT {
+            return Ok(ValidationPrefix {
+                shape: PrefixShape::SelfVerify,
+                frame_indices: vec![non_expiry[0]],
+                deploy_index: None,
+                pay_index: Some(non_expiry[0]),
+            });
+        }
+
+        Err(FrameValidationError::UnrecognizedPrefix)
+    }
+
+    /// Validate structural rules for the identified validation prefix.
+    ///
+    /// Checks:
+    /// - Deploy frame (if any) is at index 0 and uses DEFAULT execution mode.
+    /// - At most one deploy frame exists in the prefix.
+    /// - self_verify / only_verify / pay frames use VERIFY execution mode.
+    /// - Resolved target of each VERIFY frame matches `tx.sender` (target == None
+    ///   means sender; a non-None target must equal sender).
+    /// - Scope restriction matches the frame's role:
+    ///   self_verify → `APPROVE_EXECUTION_AND_PAYMENT`, only_verify → `APPROVE_EXECUTION`,
+    ///   pay → `APPROVE_PAYMENT`.
+    /// - No frame in the prefix has the atomic-batch flag set.
+    /// - Total gas budget: Σ(prefix frame gas_limits) + signature_verification_cost() ≤ MAX_VERIFY_GAS.
+    pub fn validate_prefix_structure(
+        &self,
+        prefix: &ValidationPrefix,
+    ) -> Result<(), FrameValidationError> {
+        let mut deploy_count = 0usize;
+
+        for &idx in &prefix.frame_indices {
+            let frame = &self.frames[idx];
+
+            if frame.is_atomic_batch() {
+                return Err(FrameValidationError::AtomicBatchInPrefix { frame_index: idx });
+            }
+
+            match prefix.deploy_index {
+                Some(deploy_idx) if deploy_idx == idx => {
+                    // This is the deploy frame.
+                    deploy_count += 1;
+                    if deploy_count > 1 {
+                        return Err(FrameValidationError::MultipleDeploys { frame_index: idx });
+                    }
+                    // The deploy must be first among prefix frames. `validation_prefix`
+                    // structurally guarantees this, but the raw frame index can be
+                    // non-zero when expiry-verifier frames precede the deploy — check
+                    // against the first element of `frame_indices`, not the raw index.
+                    if prefix.frame_indices.first() != Some(&idx) {
+                        return Err(FrameValidationError::DeployNotFirst { frame_index: idx });
+                    }
+                    if frame.execution_mode() != FrameMode::Default {
+                        return Err(FrameValidationError::DeployNotDefaultMode {
+                            frame_index: idx,
+                        });
+                    }
+                }
+                _ => {
+                    // VERIFY frame (self_verify, only_verify, or pay).
+                    if frame.execution_mode() != FrameMode::Verify {
+                        return Err(FrameValidationError::VerifyFrameNotVerifyMode {
+                            frame_index: idx,
+                        });
+                    }
+
+                    // Resolved target must be tx.sender (None means sender).
+                    let target_ok = match frame.target {
+                        None => true,
+                        Some(addr) => addr == self.sender,
+                    };
+                    if !target_ok {
+                        return Err(FrameValidationError::VerifyTargetNotSender {
+                            frame_index: idx,
+                        });
+                    }
+
+                    // Scope restriction must match role.
+                    let expected_scope = match prefix.shape {
+                        PrefixShape::SelfVerify | PrefixShape::DeploySelfVerify => {
+                            APPROVE_EXECUTION_AND_PAYMENT
+                        }
+                        PrefixShape::OnlyVerifyPay | PrefixShape::DeployOnlyVerifyPay => {
+                            // The only_verify frame comes before the pay frame.
+                            if prefix.pay_index == Some(idx) {
+                                APPROVE_PAYMENT
+                            } else {
+                                APPROVE_EXECUTION
+                            }
+                        }
+                    };
+                    if frame.scope_restriction() != expected_scope {
+                        return Err(FrameValidationError::WrongScopeRestriction {
+                            frame_index: idx,
+                            expected: expected_scope,
+                            actual: frame.scope_restriction(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Gas budget: prefix frame gas limits + signature cost ≤ MAX_VERIFY_GAS.
+        let prefix_gas: u64 = prefix
+            .frame_indices
+            .iter()
+            .map(|&i| self.frames[i].gas_limit)
+            .fold(0u64, |acc, g| acc.saturating_add(g));
+        let total_verify_gas = prefix_gas.saturating_add(self.signature_verification_cost());
+        if total_verify_gas > FRAME_TX_MAX_VERIFY_GAS {
+            return Err(FrameValidationError::VerifyGasBudgetExceeded {
+                actual: total_verify_gas,
+                limit: FRAME_TX_MAX_VERIFY_GAS,
+            });
+        }
+
+        Ok(())
+    }
+}
+
+/// The four recognized shapes of an EIP-8141 validation prefix (§Mempool).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PrefixShape {
+    /// Single VERIFY frame: sender verifies + authorizes payment for itself.
+    SelfVerify,
+    /// DEFAULT (deploy) frame, then VERIFY frame that verifies + authorizes payment.
+    DeploySelfVerify,
+    /// VERIFY(exec) + VERIFY(pay): separate verifier and paymaster.
+    OnlyVerifyPay,
+    /// DEFAULT (deploy) + VERIFY(exec) + VERIFY(pay).
+    DeployOnlyVerifyPay,
+}
+
+/// Identified validation prefix of an EIP-8141 frame transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValidationPrefix {
+    /// Recognized shape of this prefix.
+    pub shape: PrefixShape,
+    /// Frame indices (into `FrameTransaction.frames`) that form the prefix,
+    /// in order. Does not include expiry-verifier frames.
+    pub frame_indices: Vec<usize>,
+    /// Index of the deploy frame within `frames`, if this shape has one.
+    pub deploy_index: Option<usize>,
+    /// Index of the pay (or self_verify) frame within `frames`.
+    pub pay_index: Option<usize>,
+}
+
+/// Errors produced by `FrameTransaction::validation_prefix` and
+/// `FrameTransaction::validate_prefix_structure`.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum FrameValidationError {
+    #[error("frame transaction validation prefix does not match any recognized shape")]
+    UnrecognizedPrefix,
+    #[error("frame {frame_index}: prefix has more than one DEFAULT deploy frame")]
+    MultipleDeploys { frame_index: usize },
+    #[error("frame {frame_index}: deploy frame must be at index 0")]
+    DeployNotFirst { frame_index: usize },
+    #[error("frame {frame_index}: deploy frame must use DEFAULT execution mode")]
+    DeployNotDefaultMode { frame_index: usize },
+    #[error("frame {frame_index}: prefix VERIFY frame does not use VERIFY execution mode")]
+    VerifyFrameNotVerifyMode { frame_index: usize },
+    #[error("frame {frame_index}: VERIFY frame target is not tx.sender")]
+    VerifyTargetNotSender { frame_index: usize },
+    #[error("frame {frame_index}: scope restriction is {actual:#04x}, expected {expected:#04x}")]
+    WrongScopeRestriction {
+        frame_index: usize,
+        expected: u8,
+        actual: u8,
+    },
+    #[error("frame {frame_index}: prefix frame has atomic-batch flag set")]
+    AtomicBatchInPrefix { frame_index: usize },
+    #[error("prefix gas budget exceeded: {actual} > {limit} (MAX_VERIFY_GAS)")]
+    VerifyGasBudgetExceeded { actual: u64, limit: u64 },
 }
 
 impl RLPEncode for FrameTransaction {
@@ -5277,5 +5545,349 @@ mod tests {
             got, expected,
             "blob-gas term missing from cost_without_base_fee() for EIP-4844"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // EIP-8141 validation-prefix recognition and structural validation tests
+    // (task 1.7)
+    // -----------------------------------------------------------------------
+
+    fn sender_addr() -> Address {
+        Address::from_low_u64_be(0xABCD)
+    }
+
+    fn expiry_verifier_frame() -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: 0x00,
+            target: Some(frame_tx_expiry_verifier()),
+            gas_limit: 1_000,
+            value: U256::zero(),
+            data: Bytes::from(vec![0u8; 8]),
+        }
+    }
+
+    fn self_verify_frame() -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(sender_addr()),
+            gas_limit: 10_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }
+    }
+
+    fn only_verify_frame() -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION,
+            target: Some(sender_addr()),
+            gas_limit: 10_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }
+    }
+
+    fn pay_frame() -> Frame {
+        Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_PAYMENT,
+            target: Some(sender_addr()),
+            gas_limit: 10_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }
+    }
+
+    fn deploy_frame() -> Frame {
+        Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0x00,
+            target: None,
+            gas_limit: 50_000,
+            value: U256::zero(),
+            data: Bytes::from_static(b"deploy_bytecode"),
+        }
+    }
+
+    fn base_frame_tx_with_frames(frames: Vec<Frame>) -> FrameTransaction {
+        FrameTransaction {
+            sender: sender_addr(),
+            frames,
+            ..make_test_frame_tx()
+        }
+    }
+
+    // --- Passing shape tests ---
+
+    #[test]
+    fn prefix_shape_self_verify() {
+        let tx = base_frame_tx_with_frames(vec![self_verify_frame()]);
+        let prefix = tx.validation_prefix().expect("should recognize SelfVerify");
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        assert_eq!(prefix.frame_indices, vec![0]);
+        assert_eq!(prefix.deploy_index, None);
+        assert_eq!(prefix.pay_index, Some(0));
+        tx.validate_prefix_structure(&prefix)
+            .expect("SelfVerify structure should be valid");
+    }
+
+    #[test]
+    fn prefix_shape_deploy_self_verify() {
+        let tx = base_frame_tx_with_frames(vec![deploy_frame(), self_verify_frame()]);
+        let prefix = tx
+            .validation_prefix()
+            .expect("should recognize DeploySelfVerify");
+        assert_eq!(prefix.shape, PrefixShape::DeploySelfVerify);
+        assert_eq!(prefix.frame_indices, vec![0, 1]);
+        assert_eq!(prefix.deploy_index, Some(0));
+        assert_eq!(prefix.pay_index, Some(1));
+        tx.validate_prefix_structure(&prefix)
+            .expect("DeploySelfVerify structure should be valid");
+    }
+
+    #[test]
+    fn prefix_shape_only_verify_pay() {
+        let tx = base_frame_tx_with_frames(vec![only_verify_frame(), pay_frame()]);
+        let prefix = tx
+            .validation_prefix()
+            .expect("should recognize OnlyVerifyPay");
+        assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
+        assert_eq!(prefix.frame_indices, vec![0, 1]);
+        assert_eq!(prefix.deploy_index, None);
+        assert_eq!(prefix.pay_index, Some(1));
+        tx.validate_prefix_structure(&prefix)
+            .expect("OnlyVerifyPay structure should be valid");
+    }
+
+    #[test]
+    fn prefix_shape_deploy_only_verify_pay() {
+        let tx = base_frame_tx_with_frames(vec![deploy_frame(), only_verify_frame(), pay_frame()]);
+        let prefix = tx
+            .validation_prefix()
+            .expect("should recognize DeployOnlyVerifyPay");
+        assert_eq!(prefix.shape, PrefixShape::DeployOnlyVerifyPay);
+        assert_eq!(prefix.frame_indices, vec![0, 1, 2]);
+        assert_eq!(prefix.deploy_index, Some(0));
+        assert_eq!(prefix.pay_index, Some(2));
+        tx.validate_prefix_structure(&prefix)
+            .expect("DeployOnlyVerifyPay structure should be valid");
+    }
+
+    #[test]
+    fn prefix_shape_self_verify_with_interleaved_expiry_verifier() {
+        // Expiry-verifier frames are transparent: they are skipped during
+        // shape matching. The prefix should still be recognized as SelfVerify.
+        let tx = base_frame_tx_with_frames(vec![expiry_verifier_frame(), self_verify_frame()]);
+        let prefix = tx
+            .validation_prefix()
+            .expect("should recognize SelfVerify with leading expiry-verifier");
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        // frame_indices omits the expiry-verifier (index 0); self_verify is at index 1.
+        assert_eq!(prefix.frame_indices, vec![1]);
+        tx.validate_prefix_structure(&prefix)
+            .expect("SelfVerify with expiry-verifier should be structurally valid");
+    }
+
+    #[test]
+    fn prefix_shape_deploy_self_verify_with_expiry_verifier_between() {
+        // Expiry verifier between deploy and self-verify should be transparent.
+        let tx = base_frame_tx_with_frames(vec![
+            deploy_frame(),
+            expiry_verifier_frame(),
+            self_verify_frame(),
+        ]);
+        let prefix = tx
+            .validation_prefix()
+            .expect("should recognize DeploySelfVerify with interleaved expiry-verifier");
+        assert_eq!(prefix.shape, PrefixShape::DeploySelfVerify);
+        assert_eq!(prefix.frame_indices, vec![0, 2]);
+        assert_eq!(prefix.deploy_index, Some(0));
+        assert_eq!(prefix.pay_index, Some(2));
+        tx.validate_prefix_structure(&prefix)
+            .expect("DeploySelfVerify with expiry-verifier should be structurally valid");
+    }
+
+    #[test]
+    fn prefix_shape_deploy_self_verify_with_leading_expiry_verifier() {
+        // Expiry-verifier frame at raw index 0 means the deploy frame has raw
+        // index 1. `validate_prefix_structure` must not reject this with
+        // `DeployNotFirst` — the deploy IS first among non-expiry frames.
+        let tx = base_frame_tx_with_frames(vec![
+            expiry_verifier_frame(), // raw index 0 — skipped by shape matching
+            deploy_frame(),          // raw index 1 — first non-expiry frame
+            self_verify_frame(),     // raw index 2
+        ]);
+        let prefix = tx
+            .validation_prefix()
+            .expect("should recognize DeploySelfVerify with leading expiry-verifier");
+        assert_eq!(prefix.shape, PrefixShape::DeploySelfVerify);
+        assert_eq!(prefix.frame_indices, vec![1, 2]);
+        assert_eq!(prefix.deploy_index, Some(1));
+        assert_eq!(prefix.pay_index, Some(2));
+        tx.validate_prefix_structure(&prefix)
+            .expect("DeploySelfVerify with raw-index-1 deploy should be structurally valid");
+    }
+
+    // --- Rejection tests ---
+
+    #[test]
+    fn prefix_rejection_unrecognized_shape() {
+        // A single DEFAULT frame with no VERIFY frames cannot match any shape.
+        let tx = base_frame_tx_with_frames(vec![Frame {
+            mode: FrameMode::Default as u8,
+            flags: 0x00,
+            target: None,
+            gas_limit: 10_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }]);
+        assert_eq!(
+            tx.validation_prefix().unwrap_err(),
+            FrameValidationError::UnrecognizedPrefix
+        );
+    }
+
+    #[test]
+    fn prefix_rejection_deploy_not_first() {
+        // A VERIFY frame followed by a DEFAULT frame: the DEFAULT is not at index 0
+        // of non-expiry frames, so this doesn't match any shape that has a deploy.
+        // It also doesn't match SelfVerify (wrong scope) or OnlyVerifyPay (wrong scope).
+        // This is unrecognized.
+        let tx = base_frame_tx_with_frames(vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender_addr()),
+                gas_limit: 5_000,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+            deploy_frame(),
+        ]);
+        // Shape matching succeeds (SelfVerify — only the first frame matters for prefix).
+        let prefix = tx
+            .validation_prefix()
+            .expect("SelfVerify recognized (deploy after prefix is ignored)");
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        // Structure validation passes too (the deploy frame is not in the prefix).
+        tx.validate_prefix_structure(&prefix)
+            .expect("SelfVerify with trailing deploy is structurally valid");
+    }
+
+    #[test]
+    fn prefix_rejection_two_deploys_in_prefix() {
+        // DeployOnlyVerifyPay with two DEFAULT frames before the pair — the second
+        // DEFAULT would be at non-zero position, which doesn't match any shape.
+        // Shape matching: position 0 is DEFAULT, position 1 is DEFAULT (not VERIFY) —
+        // none of the four shapes matches.
+        let tx = base_frame_tx_with_frames(vec![
+            deploy_frame(),
+            deploy_frame(),
+            only_verify_frame(),
+            pay_frame(),
+        ]);
+        // Position 0=DEFAULT, position 1=DEFAULT → DeployOnlyVerifyPay needs
+        // pos 1 to be VERIFY(exec). Shape is unrecognized.
+        assert_eq!(
+            tx.validation_prefix().unwrap_err(),
+            FrameValidationError::UnrecognizedPrefix
+        );
+    }
+
+    #[test]
+    fn prefix_rejection_target_not_sender() {
+        let other = Address::from_low_u64_be(0xDEAD);
+        let mut frame = self_verify_frame();
+        frame.target = Some(other);
+        let tx = base_frame_tx_with_frames(vec![frame]);
+        let prefix = tx.validation_prefix().expect("shape recognized");
+        assert_eq!(
+            tx.validate_prefix_structure(&prefix).unwrap_err(),
+            FrameValidationError::VerifyTargetNotSender { frame_index: 0 }
+        );
+    }
+
+    #[test]
+    fn prefix_rejection_wrong_scope_self_verify() {
+        // SelfVerify frame must have scope APPROVE_EXECUTION_AND_PAYMENT (0x3),
+        // not APPROVE_EXECUTION (0x2).
+        let mut frame = self_verify_frame();
+        frame.flags = APPROVE_EXECUTION;
+        let tx = base_frame_tx_with_frames(vec![frame, pay_frame()]);
+        // With scope 0x2 at position 0 and APPROVE_PAYMENT at position 1, this
+        // matches OnlyVerifyPay shape (pos 0 = VERIFY(exec), pos 1 = VERIFY(pay)).
+        let prefix = tx.validation_prefix().expect("OnlyVerifyPay recognized");
+        assert_eq!(prefix.shape, PrefixShape::OnlyVerifyPay);
+        tx.validate_prefix_structure(&prefix)
+            .expect("OnlyVerifyPay structure is valid");
+        // Now single VERIFY with wrong scope for SelfVerify: only one VERIFY with
+        // APPROVE_EXECUTION means no SelfVerify shape.
+        let tx2 = base_frame_tx_with_frames(vec![Frame {
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION,
+            target: Some(sender_addr()),
+            gas_limit: 10_000,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }]);
+        assert_eq!(
+            tx2.validation_prefix().unwrap_err(),
+            FrameValidationError::UnrecognizedPrefix,
+            "VERIFY with APPROVE_EXECUTION alone is not a recognized shape"
+        );
+    }
+
+    #[test]
+    fn prefix_rejection_wrong_scope_only_verify_pay() {
+        // only_verify frame must have APPROVE_EXECUTION (0x2), not 0x3.
+        let mut verify = only_verify_frame();
+        verify.flags = APPROVE_EXECUTION_AND_PAYMENT;
+        // Both frames have scope 0x3: doesn't match OnlyVerifyPay (pos 0 needs 0x2),
+        // but matches SelfVerify (pos 0 has scope 0x3).
+        let tx = base_frame_tx_with_frames(vec![verify, pay_frame()]);
+        let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        // The structure is valid for SelfVerify (only the first frame is in the prefix).
+        tx.validate_prefix_structure(&prefix)
+            .expect("SelfVerify structure valid");
+    }
+
+    #[test]
+    fn prefix_rejection_atomic_batch_in_prefix() {
+        let mut frame = self_verify_frame();
+        frame.flags = APPROVE_EXECUTION_AND_PAYMENT | 0x04; // set atomic batch bit
+        // Need a following frame so static validation doesn't reject atomic batch on last frame.
+        let tx = base_frame_tx_with_frames(vec![frame, pay_frame()]);
+        // Shape: pos 0 has scope 0x3 (bits 0-1 of 0x07 = 0x3) and VERIFY mode → SelfVerify.
+        let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+        assert_eq!(prefix.shape, PrefixShape::SelfVerify);
+        assert_eq!(
+            tx.validate_prefix_structure(&prefix).unwrap_err(),
+            FrameValidationError::AtomicBatchInPrefix { frame_index: 0 }
+        );
+    }
+
+    #[test]
+    fn prefix_rejection_gas_budget_exceeded() {
+        // Give the self_verify frame a gas_limit that, combined with sig cost,
+        // exceeds MAX_VERIFY_GAS (100_000). Sig cost for one SECP256K1 = 2800.
+        let mut frame = self_verify_frame();
+        frame.gas_limit = FRAME_TX_MAX_VERIFY_GAS; // 100_000 alone already == limit
+        let mut tx = base_frame_tx_with_frames(vec![frame]);
+        // Ensure exactly one SECP256K1 sig so sig cost = 2800.
+        tx.signatures = vec![FrameSignature {
+            scheme: FRAME_SIG_SCHEME_SECP256K1,
+            signer: sender_addr(),
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0u8; 65]),
+        }];
+        let prefix = tx.validation_prefix().expect("SelfVerify recognized");
+        // 100_000 + 2_800 > 100_000 → budget exceeded.
+        assert!(matches!(
+            tx.validate_prefix_structure(&prefix).unwrap_err(),
+            FrameValidationError::VerifyGasBudgetExceeded { .. }
+        ));
     }
 }

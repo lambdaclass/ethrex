@@ -91,6 +91,11 @@ struct MempoolInner {
     max_blob_mempool_size: usize,
     // Max number of transactions to let the mempool order queue grow before pruning it
     mempool_prune_threshold: usize,
+    /// Tracks the currently pending frame transaction hash per sender (EIP-8141).
+    /// At most one pending frame tx per sender is allowed to avoid ordering
+    /// ambiguity and DoS. Populated on insert; cleared on removal.
+    /// Must be kept consistent with `remove_transaction_with_lock`.
+    pending_frame_tx_by_sender: FxHashMap<Address, H256>,
 }
 
 impl MempoolInner {
@@ -119,6 +124,18 @@ impl MempoolInner {
 
         self.txs_by_sender_nonce.remove(&(tx.sender(), tx.nonce()));
         self.broadcast_pool.remove(hash);
+
+        // Clear the per-sender frame tx tracking if this was the pending frame tx.
+        if matches!(tx.tx_type(), TxType::Frame) {
+            let sender = tx.sender();
+            if self
+                .pending_frame_tx_by_sender
+                .get(&sender)
+                .is_some_and(|h| h == hash)
+            {
+                self.pending_frame_tx_by_sender.remove(&sender);
+            }
+        }
 
         Ok(())
     }
@@ -235,6 +252,59 @@ impl MempoolInner {
 
         Ok(())
     }
+
+    /// Check whether a new frame transaction from `sender` at `nonce` can be
+    /// admitted under the one-pending-frame-tx-per-sender policy.
+    ///
+    /// - If no frame tx from `sender` is pending: permit (return `Ok(None)`).
+    /// - If a frame tx with the **same nonce** is pending: defer to fee-bump
+    ///   replacement (`find_tx_to_replace` handles price checks); return the
+    ///   existing hash so the caller can remove it first.
+    /// - If a frame tx with a **different nonce** is pending: reject with
+    ///   `FrameTxSenderAlreadyPending`.
+    ///
+    /// Must be called under the mempool write lock so the check and the
+    /// subsequent insert are atomic (no TOCTOU race).
+    fn check_frame_tx_sender_pending(
+        &self,
+        sender: Address,
+        nonce: u64,
+        incoming_hash: H256,
+    ) -> Result<Option<H256>, MempoolError> {
+        let Some(&existing_hash) = self.pending_frame_tx_by_sender.get(&sender) else {
+            return Ok(None);
+        };
+        if existing_hash == incoming_hash {
+            // Same tx already in pool (re-announced); not a conflict.
+            return Ok(None);
+        }
+        let existing_nonce = self
+            .txs_by_sender_nonce
+            .range((sender, 0)..)
+            .take_while(|((s, _), _)| *s == sender)
+            .find(|(_, h)| **h == existing_hash)
+            .map(|((_, n), _)| *n);
+        match existing_nonce {
+            Some(n) if n == nonce => {
+                // Same nonce: the incoming tx is a fee-bump replacement; let
+                // `find_tx_to_replace` validate the price bump.
+                Ok(Some(existing_hash))
+            }
+            Some(_) => {
+                // Different nonce: a live frame tx from this sender is already
+                // pending at a different nonce — reject.
+                Err(MempoolError::FrameTxSenderAlreadyPending)
+            }
+            None => {
+                // Stale entry: the tracked hash is no longer in txs_by_sender_nonce.
+                // All live removal paths go through remove_transaction_with_lock
+                // (which clears pending_frame_tx_by_sender), so this indicates map
+                // drift. Self-heal: permit the incoming tx. The stale entry will be
+                // overwritten at line 414 when the new tx is inserted.
+                Ok(None)
+            }
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -288,15 +358,30 @@ impl Mempool {
             .map_err(|error| StoreError::MempoolReadLock(error.to_string()))
     }
 
-    /// Add transaction to the pool without doing validity checks
+    /// Add transaction to the pool without doing validity checks, except for the
+    /// one-pending-frame-tx-per-sender policy which must run under this lock to
+    /// avoid a TOCTOU race (EIP-8141, review fix 1.6).
     pub fn add_transaction(
         &self,
         hash: H256,
         sender: Address,
         transaction: MempoolTransaction,
-    ) -> Result<(), StoreError> {
+    ) -> Result<(), MempoolError> {
         let mut inner = self.write()?;
+        let is_frame = matches!(transaction.tx_type(), TxType::Frame);
         let is_blob = matches!(transaction.tx_type(), TxType::EIP4844);
+
+        // One-pending-frame-tx-per-sender gate (EIP-8141 §Mempool, review fix 1.6).
+        // Must run under the write lock so the check and insert are atomic.
+        if is_frame {
+            let nonce = transaction.nonce();
+            if let Some(existing_hash) = inner.check_frame_tx_sender_pending(sender, nonce, hash)? {
+                // Same-nonce replacement: remove the old tx so the new one can
+                // take its slot. Price validation already ran in validate_transaction.
+                inner.remove_transaction_with_lock(&existing_hash)?;
+            }
+        }
+
         // Prune the regular order queue if it has grown too much
         if inner.txs_order.len() > inner.mempool_prune_threshold {
             // NOTE: we do this to avoid borrow checker errors
@@ -331,6 +416,12 @@ impl Mempool {
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
         inner.alternates.remove(&hash);
+
+        // Track per-sender pending frame tx for EIP-8141 admission gating.
+        if is_frame {
+            inner.pending_frame_tx_by_sender.insert(sender, hash);
+        }
+
         // Drop the write lock before notifying to avoid holding it while waking waiters
         drop(inner);
         // Bump `tx_seq` *after* releasing the write lock. The payload builder
