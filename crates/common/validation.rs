@@ -308,7 +308,7 @@ pub fn validate_block_access_list_size(
 
 /// Perform validations over the block's blob gas usage.
 /// Must be called only if the block has cancun activated.
-fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), InvalidBlockError> {
+pub fn verify_blob_gas_usage(block: &Block, config: &ChainConfig) -> Result<(), InvalidBlockError> {
     let mut blob_gas_used = 0_u32;
     let mut blobs_in_block = 0_u32;
     let max_blob_number_per_block = config
@@ -453,40 +453,5 @@ mod tests {
             verify_blob_gas_usage(&block, &config),
             Err(InvalidBlockError::BlobGasUsedMismatch)
         ));
-    }
-
-    // --- EIP-8141 frame tx blob gas accounting ---
-
-    #[test]
-    fn frame_tx_blob_gas_counts_correctly() {
-        let config = cancun_config();
-        let tx = Transaction::FrameTransaction(frame_tx_with_blobs(2));
-        let block = make_block(vec![tx], 2 * GAS_PER_BLOB as u64);
-        assert!(verify_blob_gas_usage(&block, &config).is_ok());
-    }
-
-    #[test]
-    fn frame_tx_blob_gas_mismatch_fails() {
-        let config = cancun_config();
-        let tx = Transaction::FrameTransaction(frame_tx_with_blobs(2));
-        // Header claims 0 but actual is 2 * GAS_PER_BLOB
-        let block = make_block(vec![tx], 0);
-        assert!(matches!(
-            verify_blob_gas_usage(&block, &config),
-            Err(InvalidBlockError::BlobGasUsedMismatch)
-        ));
-    }
-
-    #[test]
-    fn mixed_eip4844_and_frame_tx_blobs_counted_together() {
-        let config = cancun_config();
-        let eip4844_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
-            blob_versioned_hashes: vec![H256::zero()],
-            ..Default::default()
-        });
-        let frame_tx = Transaction::FrameTransaction(frame_tx_with_blobs(2));
-        let expected_gas = 3 * GAS_PER_BLOB as u64; // 1 EIP-4844 + 2 frame
-        let block = make_block(vec![eip4844_tx, frame_tx], expected_gas);
-        assert!(verify_blob_gas_usage(&block, &config).is_ok());
     }
 }

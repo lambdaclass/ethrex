@@ -31,7 +31,7 @@ fn index_to_usize(val: u64) -> Result<usize, VMError> {
 /// out-of-range offsets are treated as past-the-end rather than as an
 /// exceptional halt (per the EIP-8141 spec the load returns zero and the copy
 /// writes zero bytes).
-fn u256_to_offset(value: U256) -> Option<usize> {
+pub fn u256_to_offset(value: U256) -> Option<usize> {
     if value.0[1] != 0 || value.0[2] != 0 || value.0[3] != 0 {
         return None;
     }
@@ -486,7 +486,7 @@ impl OpcodeHandler for OpSigParamHandler {
 
 // -- Helper functions --
 
-fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
+pub fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256, VMError> {
     match param_id {
         0x00 => Ok(U256::from(0x06u8)), // tx_type (EIP-8141 = type 6)
         0x01 => Ok(U256::from(ctx.tx.nonce)),
@@ -521,7 +521,7 @@ fn load_tx_param(ctx: &crate::vm::FrameTxContext, param_id: u64) -> Result<U256,
     }
 }
 
-fn address_to_u256(addr: ethrex_common::Address) -> U256 {
+pub fn address_to_u256(addr: ethrex_common::Address) -> U256 {
     let mut bytes = [0u8; 32];
     bytes[12..].copy_from_slice(addr.as_bytes());
     U256::from_big_endian(&bytes)
@@ -598,239 +598,4 @@ fn execute_default_verify(
     ctx.approve_called_in_current_frame = true;
 
     Ok((true, 0, Vec::new()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bytes::Bytes;
-    use ethrex_common::types::{FrameSignature, FrameTransaction};
-
-    /// Mirrors the Underflow -> RevertOpcode mapping used inside apply_approve
-    /// so the invariant can be exercised without constructing a full VM.
-    fn map_underflow_to_revert(result: Result<(), InternalError>) -> Result<(), VMError> {
-        match result {
-            Ok(()) => Ok(()),
-            Err(InternalError::Underflow) => Err(VMError::RevertOpcode),
-            Err(e) => Err(VMError::Internal(e)),
-        }
-    }
-
-    #[test]
-    fn decrease_balance_underflow_maps_to_revert_opcode() {
-        let e = map_underflow_to_revert(Err(InternalError::Underflow));
-        assert!(matches!(e, Err(VMError::RevertOpcode)));
-    }
-
-    #[test]
-    fn non_underflow_internal_errors_still_propagate_as_internal() {
-        let e = map_underflow_to_revert(Err(InternalError::Overflow));
-        assert!(matches!(e, Err(VMError::Internal(InternalError::Overflow))));
-    }
-
-    #[test]
-    fn successful_decrease_balance_is_left_unchanged() {
-        let e = map_underflow_to_revert(Ok(()));
-        assert!(e.is_ok());
-    }
-
-    #[test]
-    fn u256_to_offset_accepts_values_that_fit_in_usize() {
-        assert_eq!(u256_to_offset(U256::zero()), Some(0));
-        assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
-        assert_eq!(
-            u256_to_offset(U256::from(u64::try_from(usize::MAX).unwrap_or(u64::MAX))),
-            Some(usize::MAX)
-        );
-    }
-
-    #[test]
-    fn u256_to_offset_rejects_values_that_overflow_usize() {
-        let big = U256::from(u64::MAX) + U256::one();
-        assert_eq!(u256_to_offset(big), None);
-        assert_eq!(u256_to_offset(U256::MAX), None);
-    }
-
-    #[test]
-    fn frameparam_0x08_returns_frame_value() {
-        // The 0x08 arm of OpFrameParamHandler maps directly to `frame.value`.
-        // Constructing a Frame mirrors what the handler reads so a refactor
-        // that swaps the field access (e.g. to a wrapper) is caught here.
-        let frame = ethrex_common::types::Frame {
-            mode: u8::from(ethrex_common::types::FrameMode::Sender),
-            flags: 0x00,
-            target: Some(Address::from_low_u64_be(0xCAFE)),
-            gas_limit: 100_000,
-            value: U256::from(1_234_567u64),
-            data: Bytes::new(),
-        };
-
-        // Exercise the same match arm the opcode evaluates (see
-        // `OpFrameParamHandler::eval` above, `0x08 => frame.value`).
-        let param_id: u64 = 0x08;
-        let result = match param_id {
-            0x08 => frame.value,
-            _ => unreachable!("param_id is 0x08"),
-        };
-        assert_eq!(result, U256::from(1_234_567u64));
-
-        // Zero-value frames must also round-trip through 0x08.
-        let zero_frame = ethrex_common::types::Frame {
-            value: U256::zero(),
-            ..frame
-        };
-        let zero_result = match param_id {
-            0x08 => zero_frame.value,
-            _ => unreachable!("param_id is 0x08"),
-        };
-        assert_eq!(zero_result, U256::zero());
-    }
-
-    /// Build a minimal FrameTxContext with one signature for SIGPARAM tests.
-    fn ctx_with_one_signature() -> crate::vm::FrameTxContext {
-        let signer = Address::from_low_u64_be(0xABCDEF);
-        let msg_bytes = Bytes::from(vec![0xdeu8; 32]);
-        let sig_bytes = Bytes::from(vec![0xFFu8; 65]);
-        let sig = FrameSignature {
-            scheme: 0x01,
-            signer,
-            msg: msg_bytes,
-            signature: sig_bytes,
-        };
-        let mut tx = FrameTransaction::default();
-        tx.signatures.push(sig);
-        crate::vm::FrameTxContext {
-            sender_approved: false,
-            payer_address: None,
-            frames: Vec::new(),
-            frame_results: Vec::new(),
-            current_frame_index: 0,
-            sig_hash: ethrex_common::H256::zero(),
-            tx,
-            approve_called_in_current_frame: false,
-            total_gas_limit: 0,
-        }
-    }
-
-    #[test]
-    fn sigparam_0x00_returns_signer() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        let result = address_to_u256(sig.signer);
-        let mut expected = [0u8; 32];
-        expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
-        assert_eq!(result, U256::from_big_endian(&expected));
-    }
-
-    #[test]
-    fn sigparam_0x01_returns_scheme() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        assert_eq!(U256::from(sig.scheme), U256::from(0x01u64));
-    }
-
-    #[test]
-    fn sigparam_0x02_returns_msg_word() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        let result = if sig.msg.is_empty() {
-            U256::zero()
-        } else {
-            U256::from_big_endian(&sig.msg)
-        };
-        assert_eq!(result, U256::from_big_endian(&[0xdeu8; 32]));
-    }
-
-    #[test]
-    fn sigparam_0x02_empty_msg_returns_zero() {
-        let signer = Address::from_low_u64_be(0x1234);
-        let sig = FrameSignature {
-            scheme: 0x00,
-            signer,
-            msg: Bytes::new(),
-            signature: Bytes::from(vec![0xAAu8; 65]),
-        };
-        let result = if sig.msg.is_empty() {
-            U256::zero()
-        } else {
-            U256::from_big_endian(&sig.msg)
-        };
-        assert_eq!(result, U256::zero());
-    }
-
-    #[test]
-    fn sigparam_0x03_returns_signature_len() {
-        let ctx = ctx_with_one_signature();
-        let sig = ctx.tx.signatures.first().unwrap();
-        assert_eq!(U256::from(sig.signature.len()), U256::from(65u64));
-    }
-
-    #[test]
-    fn sigparam_oob_index_returns_invalid_opcode() {
-        let ctx = ctx_with_one_signature();
-        // index 1 is out of bounds (only index 0 exists)
-        let result = ctx.tx.signatures.get(1);
-        assert!(
-            result.is_none(),
-            "OOB index should return None -> InvalidOpcode"
-        );
-    }
-
-    #[test]
-    fn txparam_0x0b_returns_signature_count() {
-        let ctx = ctx_with_one_signature();
-        let result = load_tx_param(&ctx, 0x0B).unwrap();
-        assert_eq!(result, U256::from(1u64));
-    }
-
-    #[test]
-    fn txparam_0x0b_zero_signatures() {
-        let ctx = crate::vm::FrameTxContext {
-            sender_approved: false,
-            payer_address: None,
-            frames: Vec::new(),
-            frame_results: Vec::new(),
-            current_frame_index: 0,
-            sig_hash: ethrex_common::H256::zero(),
-            tx: FrameTransaction::default(),
-            approve_called_in_current_frame: false,
-            total_gas_limit: 0,
-        };
-        let result = load_tx_param(&ctx, 0x0B).unwrap();
-        assert_eq!(result, U256::zero());
-    }
-
-    #[test]
-    fn framedataload_verify_frame_returns_real_data() {
-        // After the VERIFY-zeroing removal, loading data from a VERIFY frame
-        // should return the actual bytes in frame.data, not zero.
-        use bytes::Bytes;
-        let mut data = [0u8; 32];
-        data[0] = 0xCA;
-        data[31] = 0xFE;
-        let frame = ethrex_common::types::Frame {
-            mode: u8::from(ethrex_common::types::FrameMode::Verify),
-            flags: 0x03,
-            target: Some(Address::from_low_u64_be(0xAA)),
-            gas_limit: 50_000,
-            value: U256::zero(),
-            data: Bytes::from(data.to_vec()),
-        };
-        // Simulate the load logic (no VERIFY special-case any more)
-        let byte_offset: usize = 0;
-        let mut word = [0u8; 32];
-        let available = frame.data.len().saturating_sub(byte_offset);
-        let copy_len = available.min(32);
-        if let (Some(dst), Some(src)) = (
-            word.get_mut(..copy_len),
-            frame
-                .data
-                .get(byte_offset..byte_offset.saturating_add(copy_len)),
-        ) {
-            dst.copy_from_slice(src);
-        }
-        let result = U256::from_big_endian(&word);
-        assert_ne!(result, U256::zero(), "VERIFY frame data should be readable");
-        assert_eq!(result, U256::from_big_endian(&data));
-    }
 }

@@ -294,6 +294,12 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
                 vm.substate.add_accessed_address(address),
             )?)?;
 
+        // EIP-8141 mempool validation-trace: EXTCODESIZE target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
+
         // State access AFTER gas check passes (using optimized code length lookup)
         let account_code_length = vm.db.get_code_length(address)?.into();
 
@@ -329,6 +335,12 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
         // Record address touch for BAL (after gas check passes)
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {
             recorder.record_touched_address(address);
+        }
+
+        // EIP-8141 mempool validation-trace: EXTCODECOPY target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
         }
 
         // Ensure the account is loaded even for size=0, so that access tracking
@@ -370,6 +382,12 @@ impl OpcodeHandler for OpExtCodeHashHandler {
             .increase_consumed_gas(gas_cost::extcodehash(
                 vm.substate.add_accessed_address(address),
             )?)?;
+
+        // EIP-8141 mempool validation-trace: EXTCODEHASH target must exist and
+        // not be EIP-7702-delegated (sender exempt).
+        if vm.validation_observer.active {
+            vm.validation_check_extcode_target(address)?;
+        }
 
         let account = vm.db.get_account(address)?;
         let account_is_empty = account.is_empty();

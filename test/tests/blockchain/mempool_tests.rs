@@ -11,11 +11,11 @@ use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
 use ethrex_common::types::{
-    BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig, EIP1559Transaction, EIP4844Transaction,
-    FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1, FRAME_TX_EXPIRY_DATA_LENGTH,
-    FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature, FrameTransaction, Genesis,
-    MAX_TX_SIZE, MempoolTransaction, Transaction, TxKind, frame_tx_expiry_verifier,
-    kzg_commitment_to_versioned_hash,
+    APPROVE_EXECUTION_AND_PAYMENT, BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig,
+    EIP1559Transaction, EIP4844Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
+    FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
+    FrameTransaction, Genesis, MAX_TX_SIZE, MempoolTransaction, Transaction, TxKind,
+    frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
@@ -513,20 +513,25 @@ async fn setup_hegota_store() -> Store {
 
 /// A minimal, statically-valid 1-frame transaction with an empty signature list.
 fn minimal_valid_frame_tx() -> FrameTransaction {
+    let sender = Address::from_low_u64_be(0xABCD);
     FrameTransaction {
         chain_id: 0, // matches ChainConfig::default().chain_id
         nonce: 0,
-        sender: Address::from_low_u64_be(0xABCD),
+        sender,
+        // A single `self_verify` frame: VERIFY mode, targets the sender, and
+        // approves both execution and payment. This is the smallest frame
+        // structure that matches a recognized mempool validation prefix (a lone
+        // DEFAULT frame sets no payer and is correctly rejected).
         frames: vec![Frame {
-            mode: FrameMode::Default as u8,
-            flags: 0x00,
-            target: Some(Address::from_low_u64_be(0x1234)),
+            mode: FrameMode::Verify as u8,
+            flags: APPROVE_EXECUTION_AND_PAYMENT,
+            target: Some(sender),
             // Small per-frame gas so total_gas_limit() stays below the legacy
             // 21000 intrinsic floor: this tx is only admitted once the frame-tx
             // intrinsic-gas fix prices it correctly.
             gas_limit: 100,
             value: U256::zero(),
-            data: Bytes::from_static(b"call_data"),
+            data: Bytes::new(),
         }],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
@@ -742,24 +747,37 @@ async fn setup_hegota_store_ts1000() -> Store {
     store
 }
 
-/// Build a minimal frame tx carrying a single expiry verifier frame with the
-/// given `deadline`. The frame is a VERIFY frame targeting the expiry verifier
-/// address with exactly 8 bytes of big-endian deadline data and flags == 0.
+/// Build a minimal frame tx carrying an expiry verifier frame with the given
+/// `deadline`, followed by a `self_verify` frame. The expiry frame is a VERIFY
+/// frame targeting the expiry verifier address with exactly 8 bytes of
+/// big-endian deadline data and flags == 0. Expiry verifier frames are skipped
+/// for prefix matching, so the recognized prefix is the trailing `self_verify`.
 fn frame_tx_with_expiry(deadline: u64) -> FrameTransaction {
+    let sender = Address::from_low_u64_be(0xABCD);
     let mut data = [0u8; FRAME_TX_EXPIRY_DATA_LENGTH];
     data.copy_from_slice(&deadline.to_be_bytes());
     FrameTransaction {
         chain_id: 0,
         nonce: 0,
-        sender: Address::from_low_u64_be(0xABCD),
-        frames: vec![Frame {
-            mode: FrameMode::Verify as u8,
-            flags: 0x00,
-            target: Some(frame_tx_expiry_verifier()),
-            gas_limit: 100,
-            value: U256::zero(),
-            data: Bytes::from(data.to_vec()),
-        }],
+        sender,
+        frames: vec![
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: 0x00,
+                target: Some(frame_tx_expiry_verifier()),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::from(data.to_vec()),
+            },
+            Frame {
+                mode: FrameMode::Verify as u8,
+                flags: APPROVE_EXECUTION_AND_PAYMENT,
+                target: Some(sender),
+                gas_limit: 100,
+                value: U256::zero(),
+                data: Bytes::new(),
+            },
+        ],
         signatures: vec![],
         max_priority_fee_per_gas: 0,
         max_fee_per_gas: 0,

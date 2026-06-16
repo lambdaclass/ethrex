@@ -891,3 +891,1385 @@ fn frame_tx_happy_path_sstore_and_log() {
         "sender nonce must be 1 after APPROVE (scope 3 increments nonce once)"
     );
 }
+
+// ==================== frame_tx opcode handler unit tests ====================
+// (migrated from crates/vm/levm/src/opcode_handlers/frame_tx.rs)
+
+mod frame_tx_opcode_handler_tests {
+    use bytes::Bytes;
+    use ethrex_common::types::{FrameSignature, FrameTransaction};
+    use ethrex_common::{Address, U256};
+    use ethrex_levm::errors::{InternalError, VMError};
+    use ethrex_levm::opcode_handlers::frame_tx::{address_to_u256, load_tx_param, u256_to_offset};
+    use ethrex_levm::vm::FrameTxContext;
+
+    /// Mirrors the Underflow -> RevertOpcode mapping used inside apply_approve
+    /// so the invariant can be exercised without constructing a full VM.
+    fn map_underflow_to_revert(result: Result<(), InternalError>) -> Result<(), VMError> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(InternalError::Underflow) => Err(VMError::RevertOpcode),
+            Err(e) => Err(VMError::Internal(e)),
+        }
+    }
+
+    #[test]
+    fn decrease_balance_underflow_maps_to_revert_opcode() {
+        let e = map_underflow_to_revert(Err(InternalError::Underflow));
+        assert!(matches!(e, Err(VMError::RevertOpcode)));
+    }
+
+    #[test]
+    fn non_underflow_internal_errors_still_propagate_as_internal() {
+        let e = map_underflow_to_revert(Err(InternalError::Overflow));
+        assert!(matches!(e, Err(VMError::Internal(InternalError::Overflow))));
+    }
+
+    #[test]
+    fn successful_decrease_balance_is_left_unchanged() {
+        let e = map_underflow_to_revert(Ok(()));
+        assert!(e.is_ok());
+    }
+
+    #[test]
+    fn u256_to_offset_accepts_values_that_fit_in_usize() {
+        assert_eq!(u256_to_offset(U256::zero()), Some(0));
+        assert_eq!(u256_to_offset(U256::from(42u64)), Some(42));
+        assert_eq!(
+            u256_to_offset(U256::from(u64::try_from(usize::MAX).unwrap_or(u64::MAX))),
+            Some(usize::MAX)
+        );
+    }
+
+    #[test]
+    fn u256_to_offset_rejects_values_that_overflow_usize() {
+        let big = U256::from(u64::MAX) + U256::one();
+        assert_eq!(u256_to_offset(big), None);
+        assert_eq!(u256_to_offset(U256::MAX), None);
+    }
+
+    #[test]
+    fn frameparam_0x08_returns_frame_value() {
+        use ethrex_common::types::{Frame, FrameMode};
+        // The 0x08 arm of OpFrameParamHandler maps directly to `frame.value`.
+        let frame = Frame {
+            mode: u8::from(FrameMode::Sender),
+            flags: 0x00,
+            target: Some(Address::from_low_u64_be(0xCAFE)),
+            gas_limit: 100_000,
+            value: U256::from(1_234_567u64),
+            data: Bytes::new(),
+        };
+
+        let param_id: u64 = 0x08;
+        let result = match param_id {
+            0x08 => frame.value,
+            _ => unreachable!("param_id is 0x08"),
+        };
+        assert_eq!(result, U256::from(1_234_567u64));
+
+        let zero_frame = ethrex_common::types::Frame {
+            value: U256::zero(),
+            ..frame
+        };
+        let zero_result = match param_id {
+            0x08 => zero_frame.value,
+            _ => unreachable!("param_id is 0x08"),
+        };
+        assert_eq!(zero_result, U256::zero());
+    }
+
+    /// Build a minimal FrameTxContext with one signature for SIGPARAM tests.
+    fn ctx_with_one_signature() -> FrameTxContext {
+        let signer = Address::from_low_u64_be(0xABCDEF);
+        let msg_bytes = Bytes::from(vec![0xdeu8; 32]);
+        let sig_bytes = Bytes::from(vec![0xFFu8; 65]);
+        let sig = FrameSignature {
+            scheme: 0x01,
+            signer,
+            msg: msg_bytes,
+            signature: sig_bytes,
+        };
+        let mut tx = FrameTransaction::default();
+        tx.signatures.push(sig);
+        FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frames: Vec::new(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx,
+            approve_called_in_current_frame: false,
+            total_gas_limit: 0,
+        }
+    }
+
+    #[test]
+    fn sigparam_0x00_returns_signer() {
+        let ctx = ctx_with_one_signature();
+        let sig = ctx.tx.signatures.first().unwrap();
+        let result = address_to_u256(sig.signer);
+        let mut expected = [0u8; 32];
+        expected[12..].copy_from_slice(Address::from_low_u64_be(0xABCDEF).as_bytes());
+        assert_eq!(result, U256::from_big_endian(&expected));
+    }
+
+    #[test]
+    fn sigparam_0x01_returns_scheme() {
+        let ctx = ctx_with_one_signature();
+        let sig = ctx.tx.signatures.first().unwrap();
+        assert_eq!(U256::from(sig.scheme), U256::from(0x01u64));
+    }
+
+    #[test]
+    fn sigparam_0x02_returns_msg_word() {
+        let ctx = ctx_with_one_signature();
+        let sig = ctx.tx.signatures.first().unwrap();
+        let result = if sig.msg.is_empty() {
+            U256::zero()
+        } else {
+            U256::from_big_endian(&sig.msg)
+        };
+        assert_eq!(result, U256::from_big_endian(&[0xdeu8; 32]));
+    }
+
+    #[test]
+    fn sigparam_0x02_empty_msg_returns_zero() {
+        let signer = Address::from_low_u64_be(0x1234);
+        let sig = FrameSignature {
+            scheme: 0x00,
+            signer,
+            msg: Bytes::new(),
+            signature: Bytes::from(vec![0xAAu8; 65]),
+        };
+        let result = if sig.msg.is_empty() {
+            U256::zero()
+        } else {
+            U256::from_big_endian(&sig.msg)
+        };
+        assert_eq!(result, U256::zero());
+    }
+
+    #[test]
+    fn sigparam_0x03_returns_signature_len() {
+        let ctx = ctx_with_one_signature();
+        let sig = ctx.tx.signatures.first().unwrap();
+        assert_eq!(U256::from(sig.signature.len()), U256::from(65u64));
+    }
+
+    #[test]
+    fn sigparam_oob_index_returns_invalid_opcode() {
+        let ctx = ctx_with_one_signature();
+        // index 1 is out of bounds (only index 0 exists)
+        let result = ctx.tx.signatures.get(1);
+        assert!(
+            result.is_none(),
+            "OOB index should return None -> InvalidOpcode"
+        );
+    }
+
+    #[test]
+    fn txparam_0x0b_returns_signature_count() {
+        let ctx = ctx_with_one_signature();
+        let result = load_tx_param(&ctx, 0x0B).unwrap();
+        assert_eq!(result, U256::from(1u64));
+    }
+
+    #[test]
+    fn txparam_0x0b_zero_signatures() {
+        let ctx = FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frames: Vec::new(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash: ethrex_common::H256::zero(),
+            tx: FrameTransaction::default(),
+            approve_called_in_current_frame: false,
+            total_gas_limit: 0,
+        };
+        let result = load_tx_param(&ctx, 0x0B).unwrap();
+        assert_eq!(result, U256::zero());
+    }
+
+    #[test]
+    fn framedataload_verify_frame_returns_real_data() {
+        use ethrex_common::types::{Frame, FrameMode};
+        // After the VERIFY-zeroing removal, loading data from a VERIFY frame
+        // should return the actual bytes in frame.data, not zero.
+        let mut data = [0u8; 32];
+        data[0] = 0xCA;
+        data[31] = 0xFE;
+        let frame = Frame {
+            mode: u8::from(FrameMode::Verify),
+            flags: 0x03,
+            target: Some(Address::from_low_u64_be(0xAA)),
+            gas_limit: 50_000,
+            value: U256::zero(),
+            data: Bytes::from(data.to_vec()),
+        };
+        // Simulate the load logic (no VERIFY special-case any more)
+        let byte_offset: usize = 0;
+        let mut word = [0u8; 32];
+        let available = frame.data.len().saturating_sub(byte_offset);
+        let copy_len = available.min(32);
+        if let (Some(dst), Some(src)) = (
+            word.get_mut(..copy_len),
+            frame
+                .data
+                .get(byte_offset..byte_offset.saturating_add(copy_len)),
+        ) {
+            dst.copy_from_slice(src);
+        }
+        let result = U256::from_big_endian(&word);
+        assert_ne!(result, U256::zero(), "VERIFY frame data should be readable");
+        assert_eq!(result, U256::from_big_endian(&data));
+    }
+}
+
+// ==================== frame_tx_security_tests ====================
+// (migrated from crates/vm/levm/src/vm.rs)
+
+mod frame_tx_security_tests {
+    //! Regression tests for the security review of EIP-8141 Frame Transaction
+    //! execution. These tests lock in invariants whose violation previously
+    //! produced:
+    //!   (1) Log duplication across frames → receipts-root divergence.
+    //!   (2) Free money + nonce replay via `restore_cache_state()` undoing
+    //!       APPROVE-side state from an earlier successful frame.
+    //!   (3) Atomic-batch atomicity bypass: successful in-batch frame state
+    //!       persisted across a batch revert.
+    //!
+    //! Tests 2 and 3 depend on full VM execution of FrameTransactions and are
+    //! exercised end-to-end by the harness above in this file.
+    //! The unit tests below cover the Substate API invariant that underpins Fix 1.
+    use bytes::Bytes;
+    use ethrex_common::types::Log;
+    use ethrex_common::{Address, H256};
+    use ethrex_levm::vm::Substate;
+
+    fn mk_log(tag: u8) -> Log {
+        Log {
+            address: Address::from_low_u64_be(u64::from(tag)),
+            topics: vec![H256::from_low_u64_be(u64::from(tag))],
+            data: Bytes::from(vec![tag]),
+        }
+    }
+
+    fn log_tags(logs: &[Log]) -> Vec<u8> {
+        logs.iter()
+            .filter_map(|l| l.data.first().copied())
+            .collect()
+    }
+
+    /// `current_logs()` must return only the sub-substate's own logs, not
+    /// parent logs. This is the primitive that Fix 1 uses to avoid leaking
+    /// prior frames' logs into `frame_receipts[i].logs`.
+    #[test]
+    fn current_logs_excludes_parent_logs() {
+        let mut substate = Substate::default();
+
+        substate.add_log(mk_log(0xA0)); // parent log, emitted before any push
+        assert_eq!(log_tags(&substate.current_logs()), vec![0xA0]);
+
+        substate.push_backup();
+        // Post-push: the sub-substate is fresh.
+        assert!(substate.current_logs().is_empty());
+
+        substate.add_log(mk_log(0xB1));
+        substate.add_log(mk_log(0xB2));
+        // current_logs() returns this scope's logs only.
+        assert_eq!(log_tags(&substate.current_logs()), vec![0xB1, 0xB2]);
+
+        // extract_logs() (intentionally) returns parent+current. Verifies the
+        // distinction that Fix 1 relies on.
+        assert_eq!(log_tags(&substate.extract_logs()), vec![0xA0, 0xB1, 0xB2]);
+
+        // After commit, current_logs() includes the merged set because parent
+        // was folded in.
+        substate.commit_backup();
+        assert_eq!(log_tags(&substate.current_logs()), vec![0xA0, 0xB1, 0xB2]);
+    }
+
+    /// The exact sequence that Fix 1 replaces: when the previous buggy pattern
+    /// (commit_backup → extract_logs → re-add loop) runs across multiple
+    /// frames, later frames see duplicated logs from earlier frames.
+    ///
+    /// This test exists so that if anyone ever reintroduces that sequence,
+    /// the compounding growth is caught with a concrete trace.
+    #[test]
+    fn frame_per_frame_logs_do_not_duplicate_across_frames() {
+        let mut substate = Substate::default();
+
+        // Capture per-frame log deltas using the corrected sequence:
+        //   push_backup → emit → current_logs (snapshot) → commit_backup
+        let mut per_frame: Vec<Vec<Log>> = Vec::new();
+        for tag in [0x11u8, 0x22, 0x33] {
+            substate.push_backup();
+            substate.add_log(mk_log(tag));
+            // Snapshot this frame's logs BEFORE commit merges them into parent.
+            let this_frame = substate.current_logs();
+            substate.commit_backup();
+            per_frame.push(this_frame);
+        }
+
+        // Each frame's receipt should contain exactly its own log — no leaks.
+        assert_eq!(log_tags(per_frame.first().unwrap()), vec![0x11]);
+        assert_eq!(log_tags(per_frame.get(1).unwrap()), vec![0x22]);
+        assert_eq!(log_tags(per_frame.get(2).unwrap()), vec![0x33]);
+    }
+}
+
+// ==================== frame_value_transfer_tests ====================
+// (migrated from crates/vm/levm/src/vm.rs)
+
+mod frame_value_transfer_tests {
+    //! EIP-8141 top-level value-transfer invariants.
+    //!
+    //! The outer `execute_frame_tx` loop owns the `frame.value` transfer: it
+    //! balance-checks the sender, performs the transfer, and records an
+    //! EIP-7708 log (when sender != target, Amsterdam+). These tests pin the
+    //! balance-check predicate; the backup-unwind coverage for atomic batch
+    //! revert lives in the regression-test commit that follows.
+    use bytes::Bytes;
+    use ethrex_common::types::Log;
+    use ethrex_common::{Address, U256};
+    use ethrex_levm::vm::{Substate, frame_value_exceeds_balance};
+
+    #[test]
+    fn frame_value_transfers_from_sender_to_resolved_target_on_success() {
+        // A sufficiently funded sender must not revert — the transfer proceeds.
+        let sender_balance = U256::from(10u64).saturating_mul(U256::exp10(18)); // 10 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17)); // 0.1 ETH
+        assert!(!frame_value_exceeds_balance(sender_balance, value));
+
+        // Exact-balance transfer: sender has exactly `value` — still succeeds.
+        assert!(!frame_value_exceeds_balance(value, value));
+    }
+
+    #[test]
+    fn frame_value_transfer_reverts_on_insufficient_sender_balance() {
+        // Under-funded sender → revert path taken.
+        let balance = U256::from(5u64).saturating_mul(U256::exp10(16)); // 0.05 ETH
+        let value = U256::from(1u64).saturating_mul(U256::exp10(17)); // 0.10 ETH
+        assert!(frame_value_exceeds_balance(balance, value));
+
+        // Zero-balance / non-zero value → revert.
+        assert!(frame_value_exceeds_balance(U256::zero(), U256::one()));
+
+        // Balance just one less than value → revert.
+        let v = U256::from(1_000_000u64);
+        assert!(frame_value_exceeds_balance(v - U256::one(), v));
+    }
+
+    /// Regression test for the atomic-batch unwind: any state change
+    /// performed inside a backup scope (including the outer-owned value
+    /// transfer and the EIP-7708 log emitted alongside it) must be reverted
+    /// when the enclosing batch reverts. `execute_frame_tx` pushes a batch
+    /// backup before each atomic group and calls `revert_backup()` when any
+    /// in-batch frame fails; this test exercises the Substate primitive
+    /// that guarantees the log and state deltas do not leak past the
+    /// boundary.
+    #[test]
+    fn atomic_batch_revert_unwinds_in_batch_value_effects() {
+        let mut substate = Substate::default();
+
+        // Log emitted before the batch — should survive a batch revert.
+        substate.add_log(Log {
+            address: Address::from_low_u64_be(1),
+            topics: vec![],
+            data: Bytes::from_static(b"pre-batch"),
+        });
+
+        // Enter the atomic batch: push a backup before the first in-batch frame.
+        substate.push_backup();
+
+        // Frame 1 (SENDER atomic, successful): simulate the per-frame scope,
+        // emit the EIP-7708 transfer log produced by the outer value transfer,
+        // then commit the per-frame backup.
+        substate.push_backup();
+        substate.add_log(Log {
+            address: Address::from_low_u64_be(2),
+            topics: vec![],
+            data: Bytes::from_static(b"frame-1-transfer-log"),
+        });
+        substate.commit_backup();
+
+        // Frame 2 reverts: `execute_frame_tx` reverts the batch-level backup,
+        // which undoes every in-batch substate change including Frame 1's log.
+        substate.revert_backup();
+
+        let logs = substate.extract_logs();
+        let tags: Vec<&[u8]> = logs.iter().map(|l| l.data.as_ref()).collect();
+        assert_eq!(
+            tags,
+            vec![b"pre-batch".as_ref()],
+            "atomic-batch revert must unwind in-batch value-transfer effects"
+        );
+    }
+}
+
+// ==================== frame_tx_7702_delegation_tests ====================
+// (migrated from crates/vm/levm/src/vm.rs)
+
+mod frame_tx_7702_delegation_tests {
+    //! EIP-8141 §Execution step 1 (lines 348-351) requires that at frame entry,
+    //! if `resolved_target` has an EIP-7702 delegation indicator the frame
+    //! executes according to EIP-7702's delegated-code semantics — i.e. the
+    //! delegatee's code runs while ADDRESS/storage stay tied to the delegator.
+    //! Default code runs ONLY when the target has neither code nor a delegation.
+    //!
+    //! `execute_frame_tx` resolves this via `utils::eip7702_get_code` and then
+    //! gates the default-code branch on `bytecode.is_empty() && !is_delegation_7702`.
+    //! The tests below pin that decision table directly by invoking
+    //! `eip7702_get_code` on the four target shapes in §5 of the mitigation plan.
+    use bytes::Bytes;
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_common::{
+        Address, H256, U256,
+        types::{Account, AccountState, ChainConfig, Code, CodeMetadata},
+    };
+    use ethrex_levm::constants::SET_CODE_DELEGATION_BYTES;
+    use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
+    use ethrex_levm::errors::DatabaseError;
+    use ethrex_levm::utils::eip7702_get_code;
+    use ethrex_levm::vm::Substate;
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    /// Minimal in-memory store matching the shape used by `eip7708_tests.rs`.
+    struct TestStore {
+        accounts: FxHashMap<Address, Account>,
+    }
+
+    impl Database for TestStore {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: *EMPTY_TRIE_HASH,
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default())
+        }
+        fn get_storage_value(&self, _a: Address, _k: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _n: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(acc.code.clone());
+                }
+            }
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        #[expect(clippy::as_conversions, reason = "test helper")]
+                        length: acc.code.bytecode.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    fn addr(x: u64) -> Address {
+        Address::from_low_u64_be(x)
+    }
+
+    /// Build a 23-byte EIP-7702 delegation indicator pointing at `delegatee`.
+    fn delegation_indicator(delegatee: Address) -> Bytes {
+        let mut v = Vec::with_capacity(23);
+        v.extend_from_slice(&SET_CODE_DELEGATION_BYTES);
+        v.extend_from_slice(delegatee.as_bytes());
+        Bytes::from(v)
+    }
+
+    fn build_db(accounts: Vec<(Address, Account)>) -> GeneralizedDatabase {
+        let store = Arc::new(TestStore {
+            accounts: FxHashMap::default(),
+        });
+        let map: FxHashMap<Address, Account> = accounts.into_iter().collect();
+        GeneralizedDatabase::new_with_account_state(store, map)
+    }
+
+    /// The decision predicate from `execute_frame_tx`: default-code runs only when
+    /// the *resolved* bytecode is empty AND the target has no delegation.
+    fn runs_default_code(is_delegation_7702: bool, bytecode: &Code) -> bool {
+        bytecode.bytecode.is_empty() && !is_delegation_7702
+    }
+
+    /// Positive case: a 7702-delegated EOA must resolve to the delegatee's bytecode.
+    #[test]
+    fn delegated_sender_eoa_runs_delegatee_code_with_delegator_address() {
+        let delegator = addr(0xDE1E);
+        let delegatee = addr(0xC0DE);
+        let delegatee_code = Bytes::from(vec![0x60, 0xff, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
+        let delegator_account = Account::new(
+            U256::from(1_000_000_000u64),
+            Code::from_bytecode(
+                delegation_indicator(delegatee),
+                &ethrex_crypto::NativeCrypto,
+            ),
+            0,
+            FxHashMap::default(),
+        );
+        let delegatee_account = Account::new(
+            U256::zero(),
+            Code::from_bytecode(delegatee_code.clone(), &ethrex_crypto::NativeCrypto),
+            0,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![
+            (delegator, delegator_account),
+            (delegatee, delegatee_account),
+        ]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
+
+        assert!(
+            is_delegation,
+            "delegator must be detected as 7702-delegated"
+        );
+        assert_eq!(
+            code_address, delegatee,
+            "code_address must point at the delegatee, not the delegator"
+        );
+        assert_eq!(
+            code.bytecode, delegatee_code,
+            "returned bytecode must be the delegatee's code, not the 0xef0100 indicator"
+        );
+        assert!(
+            !runs_default_code(is_delegation, &code),
+            "7702 delegation to a non-empty delegatee must take the CallFrame branch, not default code"
+        );
+    }
+
+    /// Edge case: a 7702 delegation pointing at an address with no deployed code.
+    #[test]
+    fn delegated_eoa_with_empty_delegatee_succeeds_as_empty_code() {
+        let delegator = addr(0xDE1E);
+        let delegatee = addr(0xE117); // empty — no Account registered
+        let delegator_account = Account::new(
+            U256::from(1_000_000_000u64),
+            Code::from_bytecode(
+                delegation_indicator(delegatee),
+                &ethrex_crypto::NativeCrypto,
+            ),
+            0,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![(delegator, delegator_account)]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
+
+        assert!(is_delegation, "delegation indicator must still be detected");
+        assert_eq!(code_address, delegatee);
+        assert!(
+            code.bytecode.is_empty(),
+            "delegatee has no code, so resolved bytecode is empty"
+        );
+        assert!(
+            !runs_default_code(is_delegation, &code),
+            "empty-delegatee delegation must NOT route to default code — it must take the \
+             CallFrame branch and succeed as empty code (EIP-8141 §Execution lines 348-349)"
+        );
+    }
+
+    /// Regression: a plain EOA (no deployed code, no delegation indicator) must
+    /// still route into the default-code branch.
+    #[test]
+    fn undelegated_eoa_still_runs_default_code() {
+        let eoa_addr = addr(0xEAA0);
+        let eoa = Account::new(
+            U256::from(1_000_000_000u64),
+            Code::default(),
+            0,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![(eoa_addr, eoa)]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, eoa_addr).unwrap();
+
+        assert!(!is_delegation, "plain EOA has no delegation indicator");
+        assert_eq!(
+            code_address, eoa_addr,
+            "code_address falls back to the target when no delegation"
+        );
+        assert!(code.bytecode.is_empty(), "plain EOA has no code");
+        assert!(
+            runs_default_code(is_delegation, &code),
+            "plain EOA with no code and no delegation must take the default-code branch"
+        );
+    }
+
+    /// Regression: a target with real bytecode and no delegation must still
+    /// execute its own bytecode.
+    #[test]
+    fn contract_target_unaffected_by_delegation_resolver() {
+        let contract_addr = addr(0xC000);
+        let contract_code = Bytes::from(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]);
+        let contract_account = Account::new(
+            U256::zero(),
+            Code::from_bytecode(contract_code.clone(), &ethrex_crypto::NativeCrypto),
+            1,
+            FxHashMap::default(),
+        );
+
+        let mut db = build_db(vec![(contract_addr, contract_account)]);
+        let mut substate = Substate::default();
+
+        let (is_delegation, _access_cost, code_address, code) =
+            eip7702_get_code(&mut db, &mut substate, contract_addr).unwrap();
+
+        assert!(
+            !is_delegation,
+            "regular contract bytecode must not be mistaken for a delegation"
+        );
+        assert_eq!(
+            code_address, contract_addr,
+            "code_address is the target itself when no delegation"
+        );
+        assert_eq!(
+            code.bytecode, contract_code,
+            "regular contract bytecode passes through unchanged"
+        );
+        assert!(
+            !runs_default_code(is_delegation, &code),
+            "contract with code must take the CallFrame branch, not default code"
+        );
+    }
+}
+
+// ==================== validation_observer_tests ====================
+// (migrated from crates/vm/levm/src/vm.rs)
+
+mod validation_observer_tests {
+    //! EIP-8141 mempool validation-prefix simulation harness tests (Phase 2).
+    //!
+    //! These drive the real frame-execution machinery via
+    //! [`VM::run_frame_validation_prefix`] over signature-less frame
+    //! transactions (an empty signature list trivially passes
+    //! `validate_frame_signatures`, so these stay crypto-free while exercising
+    //! the actual dispatch loop, handlers and observer hooks).
+    use bytes::Bytes;
+    use ethrex_common::constants::EMPTY_TRIE_HASH;
+    use ethrex_common::types::Fork;
+    use ethrex_common::types::Transaction;
+    use ethrex_common::types::{
+        Account, AccountState, ChainConfig, Code, CodeMetadata, Frame, FrameTransaction,
+        frame_tx_expiry_verifier,
+    };
+    use ethrex_common::{Address, H256, U256};
+    use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
+    use ethrex_levm::environment::{EVMConfig, Environment};
+    use ethrex_levm::errors::DatabaseError;
+    use ethrex_levm::tracing::LevmCallTracer;
+    use ethrex_levm::validation_observer::FrameSimViolation;
+    use ethrex_levm::vm::{PrefixSimResult, VM, VMType};
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    /// Pins every banned-opcode byte literal used by
+    /// `check_validation_banned_opcode` to the canonical `Opcode` enum
+    /// discriminant.
+    #[test]
+    fn validation_observer_opcode_byte_pins() {
+        use ethrex_levm::opcodes::Opcode;
+        assert_eq!(u8::from(Opcode::ORIGIN), 0x32);
+        assert_eq!(u8::from(Opcode::GASPRICE), 0x3A);
+        assert_eq!(u8::from(Opcode::BLOCKHASH), 0x40);
+        assert_eq!(u8::from(Opcode::COINBASE), 0x41);
+        assert_eq!(u8::from(Opcode::TIMESTAMP), 0x42);
+        assert_eq!(u8::from(Opcode::NUMBER), 0x43);
+        assert_eq!(u8::from(Opcode::PREVRANDAO), 0x44);
+        assert_eq!(u8::from(Opcode::GASLIMIT), 0x45);
+        assert_eq!(u8::from(Opcode::BASEFEE), 0x48);
+        assert_eq!(u8::from(Opcode::BLOBHASH), 0x49);
+        assert_eq!(u8::from(Opcode::BLOBBASEFEE), 0x4A);
+        assert_eq!(u8::from(Opcode::INVALID), 0xFE);
+        assert_eq!(u8::from(Opcode::SELFDESTRUCT), 0xFF);
+        assert_eq!(u8::from(Opcode::BALANCE), 0x31);
+        assert_eq!(u8::from(Opcode::SELFBALANCE), 0x47);
+        assert_eq!(u8::from(Opcode::TLOAD), 0x5C);
+        assert_eq!(u8::from(Opcode::TSTORE), 0x5D);
+        assert_eq!(u8::from(Opcode::GAS), 0x5A);
+        assert_eq!(u8::from(Opcode::CALL), 0xF1);
+        assert_eq!(u8::from(Opcode::CALLCODE), 0xF2);
+        assert_eq!(u8::from(Opcode::DELEGATECALL), 0xF4);
+        assert_eq!(u8::from(Opcode::STATICCALL), 0xFA);
+    }
+
+    struct TestStore {
+        accounts: FxHashMap<Address, Account>,
+    }
+
+    impl Database for TestStore {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: *EMPTY_TRIE_HASH,
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default())
+        }
+        fn get_storage_value(&self, _a: Address, _k: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _n: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(ChainConfig::default())
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(acc.code.clone());
+                }
+            }
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        #[expect(clippy::as_conversions, reason = "test helper")]
+                        length: acc.code.bytecode.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    fn addr(x: u64) -> Address {
+        Address::from_low_u64_be(x)
+    }
+
+    fn build_db(accounts: Vec<(Address, Account)>) -> GeneralizedDatabase {
+        let store = Arc::new(TestStore {
+            accounts: FxHashMap::default(),
+        });
+        let map: FxHashMap<Address, Account> = accounts.into_iter().collect();
+        GeneralizedDatabase::new_with_account_state(store, map)
+    }
+
+    fn account_with_code(balance: u64, code: Bytes) -> Account {
+        Account::new(
+            U256::from(balance),
+            Code::from_bytecode(code, &ethrex_crypto::NativeCrypto),
+            0,
+            FxHashMap::default(),
+        )
+    }
+
+    fn hegota_env(sender: Address) -> Environment {
+        let config = EVMConfig::new(Fork::Hegota, EVMConfig::canonical_values(Fork::Hegota));
+        Environment {
+            origin: sender,
+            gas_limit: 30_000_000,
+            block_gas_limit: 30_000_000,
+            config,
+            ..Default::default()
+        }
+    }
+
+    fn frame_tx_for_obs(sender: Address, frames: Vec<Frame>) -> Transaction {
+        Transaction::FrameTransaction(FrameTransaction {
+            chain_id: 0,
+            nonce: 0,
+            sender,
+            frames,
+            signatures: Vec::new(),
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: Vec::new(),
+            ..Default::default()
+        })
+    }
+
+    fn verify_frame_obs(target: Address, gas_limit: u64, flags: u8, data: Bytes) -> Frame {
+        Frame {
+            mode: 1, // VERIFY
+            flags,
+            target: Some(target),
+            gas_limit,
+            value: U256::zero(),
+            data,
+        }
+    }
+
+    fn default_frame_obs(target: Address, gas_limit: u64, data: Bytes) -> Frame {
+        Frame {
+            mode: 0, // DEFAULT
+            flags: 0,
+            target: Some(target),
+            gas_limit,
+            value: U256::zero(),
+            data,
+        }
+    }
+
+    /// APPROVE scope `scope` then STOP: PUSH1 scope, PUSH1 0, PUSH1 0, APPROVE.
+    fn approve_code(scope: u8) -> Bytes {
+        Bytes::from(vec![
+            0x60, scope, // PUSH1 scope
+            0x60, 0x00, // PUSH1 0 (length)
+            0x60, 0x00, // PUSH1 0 (offset)
+            0xAA, // APPROVE
+            0x00, // STOP
+        ])
+    }
+
+    /// Run the prefix simulation for `tx` with the given prefix indices and
+    /// optional deploy index; returns the populated VM observer state and result.
+    fn run(
+        tx: &Transaction,
+        db: &mut GeneralizedDatabase,
+        sender: Address,
+        frame_indices: &[usize],
+        deploy_index: Option<usize>,
+    ) -> (PrefixSimResult, Option<FrameSimViolation>) {
+        let env = hegota_env(sender);
+        let mut vm = VM::new(
+            env,
+            db,
+            tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &ethrex_crypto::NativeCrypto,
+        )
+        .unwrap();
+        let result = vm
+            .run_frame_validation_prefix(frame_indices, deploy_index, None)
+            .unwrap();
+        (result, vm.validation_observer.violation.clone())
+    }
+
+    #[test]
+    fn passing_self_verify_sets_payer_and_no_violation() {
+        let sender = addr(0x5E11);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, approve_code(0x03)))]);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert!(violation.is_none(), "self_verify must not violate any rule");
+        assert!(!result.any_revert, "self_verify frame must not revert");
+        assert_eq!(
+            result.payer_address,
+            Some(sender),
+            "self_verify must set the sender as payer"
+        );
+    }
+
+    #[test]
+    fn timestamp_outside_expiry_verifier_is_banned() {
+        let sender = addr(0x7140);
+        // TIMESTAMP (0x42) then STOP — banned in a non-expiry VERIFY frame.
+        let code = Bytes::from(vec![0x42, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation,
+            Some(FrameSimViolation::BannedOpcode(0x42)),
+            "TIMESTAMP outside the expiry verifier must be a banned opcode"
+        );
+    }
+
+    #[test]
+    fn timestamp_inside_expiry_verifier_is_allowed() {
+        let sender = addr(0x7141);
+        let expiry = frame_tx_expiry_verifier();
+        // TIMESTAMP POP STOP — exercises TIMESTAMP without leaving stack residue.
+        let code = Bytes::from(vec![0x42, 0x50, 0x00]);
+        // 8-byte deadline data, far in the future.
+        let data = Bytes::from(vec![0xff; 8]);
+        let tx = frame_tx_for_obs(sender, vec![verify_frame_obs(expiry, 50_000, 0x00, data)]);
+        let mut db = build_db(vec![
+            (sender, account_with_code(0, Bytes::new())),
+            (expiry, account_with_code(0, code)),
+        ]);
+        let env = hegota_env(sender);
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &ethrex_crypto::NativeCrypto,
+        )
+        .unwrap();
+        let _ = vm.run_frame_validation_prefix(&[0], None, None).unwrap();
+        assert!(
+            vm.validation_observer.violation.is_none(),
+            "TIMESTAMP inside the expiry verifier must be allowed, got {:?}",
+            vm.validation_observer.violation
+        );
+    }
+
+    #[test]
+    fn sstore_outside_deploy_is_rejected() {
+        let sender = addr(0x55_00);
+        let code = Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![default_frame_obs(sender, 100_000, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation,
+            Some(FrameSimViolation::StateWriteOutsideDeploy),
+            "SSTORE outside the deploy frame must be rejected"
+        );
+    }
+
+    #[test]
+    fn sload_non_sender_is_rejected() {
+        let sender = addr(0x54_00);
+        let other = addr(0x54_FF);
+        // PUSH1 0, SLOAD, POP, STOP.
+        let code = Bytes::from(vec![0x60, 0x00, 0x54, 0x50, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(other, 100_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![
+            (sender, account_with_code(0, Bytes::new())),
+            (other, account_with_code(0, code)),
+        ]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation,
+            Some(FrameSimViolation::StorageReadNonSender),
+            "SLOAD of a non-sender account's storage must be rejected"
+        );
+    }
+
+    #[test]
+    fn call_to_nonexistent_address_is_rejected() {
+        let sender = addr(0xCA_11);
+        let ghost = addr(0xDEAD_BEEF);
+        let code = Bytes::from(vec![
+            0x60, 0x00, // retLen
+            0x60, 0x00, // retOffset
+            0x60, 0x00, // argsLen
+            0x60, 0x00, // argsOffset
+            0x73, // PUSH20 ghost address
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF, 0x61, 0xFF, 0xFF, // PUSH2 gas
+            0xFA, // STATICCALL
+            0x00, // STOP
+        ]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 200_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (_result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert_eq!(
+            violation,
+            Some(FrameSimViolation::CallToNonexistentOrDelegated(ghost)),
+            "CALL to a nonexistent address must be rejected"
+        );
+    }
+
+    #[test]
+    fn reverting_prefix_frame_fails_and_sets_no_payer() {
+        let sender = addr(0x5E_FF);
+        let code = Bytes::from(vec![0x60, 0x00, 0x60, 0x00, 0xFD]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert!(
+            violation.is_none(),
+            "a revert is a frame outcome, not a trace violation"
+        );
+        assert!(
+            result.any_revert,
+            "the reverting prefix frame must be flagged"
+        );
+        assert!(
+            result.payer_address.is_none(),
+            "a reverted prefix frame must not establish a payer"
+        );
+    }
+
+    #[test]
+    fn verify_without_approve_sets_no_payer() {
+        let sender = addr(0x5E_AB);
+        let code = Bytes::from(vec![0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let (result, violation) = run(&tx, &mut db, sender, &[0], None);
+        assert!(violation.is_none(), "a no-op VERIFY frame violates no rule");
+        assert!(!result.any_revert, "an empty VERIFY frame succeeds");
+        assert!(
+            result.payer_address.is_none(),
+            "a VERIFY frame that never APPROVEs must not establish a payer"
+        );
+    }
+
+    #[test]
+    fn sstore_to_sender_inside_deploy_frame_is_allowed() {
+        let sender = addr(0xDE_91);
+        // PUSH1 1, PUSH1 0, SSTORE, STOP.
+        let code = Bytes::from(vec![0x60, 0x01, 0x60, 0x00, 0x55, 0x00]);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![default_frame_obs(sender, 300_000, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, code))]);
+        let env = hegota_env(sender);
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &ethrex_crypto::NativeCrypto,
+        )
+        .unwrap();
+        let result = vm.run_frame_validation_prefix(&[0], Some(0), None).unwrap();
+        assert!(
+            vm.validation_observer.violation.is_none(),
+            "SSTORE to the sender inside the deploy frame must be allowed, got {:?}",
+            vm.validation_observer.violation
+        );
+        assert!(!result.any_revert, "the deploy frame SSTORE must succeed");
+        assert!(
+            vm.validation_observer
+                .touched_sender_slots
+                .contains(&H256::zero()),
+            "the SSTORE'd sender slot must be recorded"
+        );
+    }
+
+    #[test]
+    fn gas_not_immediately_before_call_is_banned() {
+        use ethrex_levm::validation_observer::ValidationObserver;
+        let sender = addr(0x6A_50);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, Bytes::new()))]);
+        let env = hegota_env(sender);
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &ethrex_crypto::NativeCrypto,
+        )
+        .unwrap();
+        vm.validation_observer = ValidationObserver::new(sender, None, frame_tx_expiry_verifier());
+        // GAS then a non-CALL opcode (ADD): the prior GAS is illegal.
+        vm.check_validation_banned_opcode(0x5A); // GAS
+        vm.check_validation_banned_opcode(0x01); // ADD
+        assert_eq!(
+            vm.validation_observer.violation,
+            Some(FrameSimViolation::BannedOpcode(0x5A)),
+            "GAS not immediately before a *CALL must be a banned opcode"
+        );
+    }
+
+    #[test]
+    fn gas_immediately_before_call_is_allowed() {
+        use ethrex_levm::validation_observer::ValidationObserver;
+        let sender = addr(0x6A_F1);
+        let tx = frame_tx_for_obs(
+            sender,
+            vec![verify_frame_obs(sender, 50_000, 0x03, Bytes::new())],
+        );
+        let mut db = build_db(vec![(sender, account_with_code(0, Bytes::new()))]);
+        let env = hegota_env(sender);
+        let mut vm = VM::new(
+            env,
+            &mut db,
+            &tx,
+            LevmCallTracer::disabled(),
+            VMType::L1,
+            &ethrex_crypto::NativeCrypto,
+        )
+        .unwrap();
+        vm.validation_observer = ValidationObserver::new(sender, None, frame_tx_expiry_verifier());
+        // GAS then CALL (0xF1): legal sequence.
+        vm.check_validation_banned_opcode(0x5A); // GAS
+        vm.check_validation_banned_opcode(0xF1); // CALL
+        assert!(
+            vm.validation_observer.violation.is_none(),
+            "GAS immediately before a *CALL must be allowed"
+        );
+    }
+}
+
+// ==================== frame_validation_prefix_tests ====================
+// (migrated from crates/vm/backends/levm/mod.rs)
+
+mod frame_validation_prefix_tests {
+    //! EIP-8141 mempool validation-prefix backend assertions (Phase 2). These
+    //! exercise [`LEVM::simulate_frame_validation_prefix`] over signature-less
+    //! frame transactions (an empty signature list trivially validates), where
+    //! the prefix establishes a payer through real APPROVE code (not the
+    //! signature-gated default-code path).
+    use bytes::Bytes;
+    use ethrex_common::types::Transaction;
+    use ethrex_common::types::{
+        Account, AccountState, BlockHeader, ChainConfig, Code, CodeMetadata, Frame,
+        FrameTransaction, PrefixShape, ValidationPrefix,
+    };
+    use ethrex_common::{Address, H256, U256};
+    use ethrex_crypto::NativeCrypto;
+    use ethrex_levm::db::{Database, gen_db::GeneralizedDatabase};
+    use ethrex_levm::errors::DatabaseError;
+    use ethrex_levm::vm::VMType;
+    use ethrex_vm::backends::levm::LEVM;
+    use rustc_hash::FxHashMap;
+    use std::sync::Arc;
+
+    struct Store {
+        chain_config: ChainConfig,
+        accounts: FxHashMap<Address, Account>,
+    }
+
+    impl Database for Store {
+        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
+            Ok(self
+                .accounts
+                .get(&address)
+                .map(|acc| AccountState {
+                    nonce: acc.info.nonce,
+                    balance: acc.info.balance,
+                    storage_root: *ethrex_common::constants::EMPTY_TRIE_HASH,
+                    code_hash: acc.info.code_hash,
+                })
+                .unwrap_or_default())
+        }
+        fn get_storage_value(&self, _: Address, _: H256) -> Result<U256, DatabaseError> {
+            Ok(U256::zero())
+        }
+        fn get_block_hash(&self, _: u64) -> Result<H256, DatabaseError> {
+            Ok(H256::zero())
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Ok(self.chain_config.clone())
+        }
+        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(acc.code.clone());
+                }
+            }
+            Ok(Code::default())
+        }
+        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            for acc in self.accounts.values() {
+                if acc.info.code_hash == code_hash {
+                    return Ok(CodeMetadata {
+                        length: acc.code.bytecode.len() as u64,
+                    });
+                }
+            }
+            Ok(CodeMetadata { length: 0 })
+        }
+    }
+
+    fn hegota_chain_config() -> ChainConfig {
+        ChainConfig {
+            shanghai_time: Some(0),
+            cancun_time: Some(0),
+            prague_time: Some(0),
+            osaka_time: Some(0),
+            amsterdam_time: Some(0),
+            hegota_time: Some(0),
+            ..Default::default()
+        }
+    }
+
+    fn addr(x: u64) -> Address {
+        Address::from_low_u64_be(x)
+    }
+
+    fn account(balance: u64, code: Bytes) -> Account {
+        Account::new(
+            U256::from(balance),
+            Code::from_bytecode(code, &NativeCrypto),
+            0,
+            FxHashMap::default(),
+        )
+    }
+
+    /// APPROVE scope `scope` then STOP.
+    fn approve_code(scope: u8) -> Bytes {
+        Bytes::from(vec![
+            0x60, scope, // PUSH1 scope
+            0x60, 0x00, // PUSH1 0 (length)
+            0x60, 0x00, // PUSH1 0 (offset)
+            0xAA, // APPROVE
+            0x00, // STOP
+        ])
+    }
+
+    fn db_with(accounts: Vec<(Address, Account)>) -> GeneralizedDatabase {
+        let map: FxHashMap<Address, Account> = accounts.into_iter().collect();
+        GeneralizedDatabase::new_with_account_state(
+            Arc::new(Store {
+                chain_config: hegota_chain_config(),
+                accounts: FxHashMap::default(),
+            }),
+            map,
+        )
+    }
+
+    fn frame(mode: u8, flags: u8, target: Address, gas_limit: u64) -> Frame {
+        Frame {
+            mode,
+            flags,
+            target: Some(target),
+            gas_limit,
+            value: U256::zero(),
+            data: Bytes::new(),
+        }
+    }
+
+    fn frame_tx_prefix(sender: Address, frames: Vec<Frame>) -> Transaction {
+        Transaction::FrameTransaction(FrameTransaction {
+            chain_id: 0,
+            nonce: 0,
+            sender,
+            frames,
+            signatures: Vec::new(),
+            max_priority_fee_per_gas: 0,
+            max_fee_per_gas: 0,
+            max_fee_per_blob_gas: U256::zero(),
+            blob_versioned_hashes: Vec::new(),
+            ..Default::default()
+        })
+    }
+
+    fn header() -> BlockHeader {
+        BlockHeader {
+            timestamp: 0,
+            gas_limit: 30_000_000,
+            ..Default::default()
+        }
+    }
+
+    /// A deploy frame that leaves the sender codeless, followed by a pay frame
+    /// that DOES establish a payer (via a paymaster's APPROVE_PAYMENT code), must
+    /// fail validation with `DeployInstalledNoCode`.
+    #[test]
+    fn deploy_leaving_sender_codeless_fails_validation() {
+        let sender = addr(0xDEAD_01);
+        let paymaster = addr(0xBEEF_01);
+        let frames = vec![
+            frame(0, 0x00, sender, 50_000),
+            frame(1, 0x01, paymaster, 50_000),
+        ];
+        let tx = frame_tx_prefix(sender, frames);
+        let mut db = db_with(vec![
+            (sender, account(0, Bytes::new())),
+            (paymaster, account(0, approve_code(0x01))),
+        ]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::DeployOnlyVerifyPay,
+            frame_indices: vec![0, 1],
+            deploy_index: Some(0),
+            pay_index: Some(1),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            !outcome.passed,
+            "a deploy frame leaving the sender codeless must fail validation"
+        );
+        assert_eq!(
+            outcome.violation.as_deref(),
+            Some("DeployInstalledNoCode"),
+            "the failure must be DeployInstalledNoCode, got {:?}",
+            outcome.violation
+        );
+    }
+
+    /// A self_verify prefix that establishes a payer (the sender's APPROVE(3)
+    /// code) and installs no deploy frame must pass validation.
+    #[test]
+    fn self_verify_prefix_passes_validation() {
+        let sender = addr(0x5E_11_01);
+        let frames = vec![frame(1, 0x03, sender, 50_000)];
+        let tx = frame_tx_prefix(sender, frames);
+        let mut db = db_with(vec![(sender, account(0, approve_code(0x03)))]);
+        let prefix = ValidationPrefix {
+            shape: PrefixShape::SelfVerify,
+            frame_indices: vec![0],
+            deploy_index: None,
+            pay_index: Some(0),
+        };
+        let outcome = LEVM::simulate_frame_validation_prefix(
+            &tx,
+            &header(),
+            &mut db,
+            VMType::L1,
+            &NativeCrypto,
+            &prefix,
+            None,
+        )
+        .expect("simulation runs");
+        assert!(
+            outcome.passed,
+            "a self_verify prefix that sets a payer must pass, got {:?}",
+            outcome.violation
+        );
+        assert_eq!(outcome.accessed_paymaster, Some((sender, false)));
+    }
+}

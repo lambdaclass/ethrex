@@ -265,6 +265,26 @@ impl Evm {
         LEVM::simulate_tx_from_generic(tx, header, &mut self.db, self.vm_type, self.crypto.as_ref())
     }
 
+    /// EIP-8141 mempool validation-prefix simulation (local peer policy).
+    /// Wraps [`LEVM::simulate_frame_validation_prefix`].
+    pub fn simulate_frame_validation_prefix(
+        &mut self,
+        tx: &Transaction,
+        header: &BlockHeader,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        canonical_paymaster_code_hash: Option<ethrex_common::H256>,
+    ) -> Result<FrameValidationOutcome, EvmError> {
+        LEVM::simulate_frame_validation_prefix(
+            tx,
+            header,
+            &mut self.db,
+            self.vm_type,
+            self.crypto.as_ref(),
+            prefix,
+            canonical_paymaster_code_hash,
+        )
+    }
+
     pub fn create_access_list(
         &mut self,
         tx: &GenericTransaction,
@@ -306,6 +326,29 @@ impl Evm {
             }
         }
     }
+}
+
+/// Outcome of an EIP-8141 mempool validation-prefix simulation
+/// ([`Evm::simulate_frame_validation_prefix`]). A local peer policy result, not
+/// a consensus value.
+#[derive(Clone, Debug)]
+pub struct FrameValidationOutcome {
+    /// Whether the validation prefix passed every trace rule and produced a
+    /// payer without reverting within the verify-gas budget.
+    pub passed: bool,
+    /// The first validation-trace violation observed, if any (rendered to a
+    /// string for the admission error). `None` when `passed` is true.
+    pub violation: Option<String>,
+    /// The transaction's max cost (TXPARAM 0x06): the largest amount the payer
+    /// may be charged. Used by the paymaster reservation accounting (Phase 3).
+    pub max_cost: ethrex_common::U256,
+    /// The paymaster accessed by the prefix and whether its code matched the
+    /// canonical paymaster hash. `None` when no distinct paymaster was
+    /// identified (e.g. self-funded self_verify).
+    pub accessed_paymaster: Option<(Address, bool)>,
+    /// Sender storage slots touched during the prefix, recorded for the
+    /// admission-time revalidation affected-set (Phase 3).
+    pub touched_sender_slots: Vec<ethrex_common::H256>,
 }
 
 #[derive(Clone, Debug)]

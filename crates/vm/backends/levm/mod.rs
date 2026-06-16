@@ -1,7 +1,7 @@
 pub mod db;
 mod tracing;
 
-use super::{BlockExecutionResult, TxGasBreakdown};
+use super::{BlockExecutionResult, FrameValidationOutcome, TxGasBreakdown};
 use crate::system_contracts::{
     BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, EXPIRY_VERIFIER_PREDEPLOY,
     EXPIRY_VERIFIER_RUNTIME_BYTECODE, HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS,
@@ -9,7 +9,6 @@ use crate::system_contracts::{
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::H256;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_common::constants::EMPTY_KECCAK_HASH;
@@ -60,6 +59,7 @@ use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
 use ethrex_levm::utils::get_base_fee_per_blob_gas;
 use ethrex_levm::utils::intrinsic_gas_dimensions;
+use ethrex_levm::validation_observer::FrameSimViolation;
 use ethrex_levm::vm::VMType;
 use ethrex_levm::{
     Environment,
@@ -2452,6 +2452,166 @@ impl LEVM {
         vm.execute()
             .map(|value| value.into())
             .map_err(VMError::into)
+    }
+
+    /// EIP-8141 mempool validation-prefix simulation (local peer policy, never
+    /// consensus). Builds a VM like [`LEVM::execute_tx`] over a fresh
+    /// simulation database, activates the [`ValidationObserver`] for the
+    /// transaction's sender, runs ONLY the validation-prefix frames, and applies
+    /// the admission assertions:
+    ///   - no prefix frame reverted;
+    ///   - each verify/pay frame that must APPROVE did (the prefix established a
+    ///     payer);
+    ///   - the deploy frame (if any) left non-empty code at the sender;
+    ///   - total simulated prefix gas <= MAX_VERIFY_GAS;
+    ///   - no validation-trace rule was violated.
+    ///
+    /// `canonical_paymaster_code_hash` is the pinned canonical paymaster code
+    /// hash, when known (always `None` today, OQ1).
+    #[allow(clippy::too_many_arguments)]
+    pub fn simulate_frame_validation_prefix(
+        tx: &Transaction,
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+        prefix: &ethrex_common::types::ValidationPrefix,
+        _canonical_paymaster_code_hash: Option<H256>,
+    ) -> Result<FrameValidationOutcome, EvmError> {
+        use ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS;
+
+        let frame_tx = match tx {
+            Transaction::FrameTransaction(ft) => ft,
+            _ => {
+                return Err(EvmError::Custom(
+                    "simulate_frame_validation_prefix requires a frame transaction".to_string(),
+                ));
+            }
+        };
+        let sender = frame_tx.sender;
+
+        let env = Self::setup_env(tx, sender, block_header, db, vm_type)?;
+        let mut vm = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)?;
+
+        // OQ1: no canonical paymaster is resolvable, so the canonical pay-frame
+        // exemption never fires (always `None`).
+        let canonical_pay_frame: Option<usize> = None;
+
+        let sim = match vm.run_frame_validation_prefix(
+            &prefix.frame_indices,
+            prefix.deploy_index,
+            canonical_pay_frame,
+        ) {
+            Ok(sim) => sim,
+            Err(err) => {
+                // A preamble / VM error means the prefix cannot be validated;
+                // treat it as a (conservative) rejection rather than failing the
+                // whole admission pipeline.
+                return Ok(FrameValidationOutcome {
+                    passed: false,
+                    violation: Some(EvmError::from(err).to_string()),
+                    max_cost: Self::frame_tx_max_cost(frame_tx),
+                    accessed_paymaster: None,
+                    touched_sender_slots: Vec::new(),
+                });
+            }
+        };
+
+        let max_cost = Self::frame_tx_max_cost(frame_tx);
+        let touched_sender_slots = vm.validation_observer.touched_sender_slots.clone();
+        // The payer established by the prefix is the paymaster (OQ2: the
+        // APPROVE-payment address is treated uniformly as "paymaster", including
+        // the self-funded sender). Its canonical flag is always false (OQ1: no
+        // canonical paymaster bytecode is resolvable), which is also why
+        // `_canonical_paymaster_code_hash` is unused. The observer carries no
+        // distinct paymaster, so derive it from the established payer.
+        let accessed_paymaster = sim.payer_address.map(|payer| (payer, false));
+
+        // Assertion: a recorded trace violation fails validation.
+        if let Some(violation) = &vm.validation_observer.violation {
+            return Ok(FrameValidationOutcome {
+                passed: false,
+                violation: Some(format!("{violation:?}")),
+                max_cost,
+                accessed_paymaster,
+                touched_sender_slots,
+            });
+        }
+
+        // Assertion: no prefix frame reverted.
+        if sim.any_revert {
+            return Ok(FrameValidationOutcome {
+                passed: false,
+                violation: Some("validation prefix frame reverted".to_string()),
+                max_cost,
+                accessed_paymaster,
+                touched_sender_slots,
+            });
+        }
+
+        // Assertion: the prefix established a payer (verify/pay frames must
+        // APPROVE-payment; otherwise the transaction has no payer).
+        if sim.payer_address.is_none() {
+            return Ok(FrameValidationOutcome {
+                passed: false,
+                violation: Some("validation prefix did not establish a payer".to_string()),
+                max_cost,
+                accessed_paymaster,
+                touched_sender_slots,
+            });
+        }
+
+        // Assertion: a deploy frame must leave non-empty code at the sender.
+        if prefix.deploy_index.is_some() {
+            let code = vm.db.get_account_code(sender).map_err(VMError::from)?;
+            if code.bytecode.is_empty() {
+                return Ok(FrameValidationOutcome {
+                    passed: false,
+                    violation: Some(format!("{:?}", FrameSimViolation::DeployInstalledNoCode)),
+                    max_cost,
+                    accessed_paymaster,
+                    touched_sender_slots,
+                });
+            }
+        }
+
+        // Assertion: total simulated prefix gas within the verify-gas budget.
+        if sim.total_gas_used > FRAME_TX_MAX_VERIFY_GAS {
+            return Ok(FrameValidationOutcome {
+                passed: false,
+                violation: Some(format!(
+                    "validation prefix gas {} exceeds MAX_VERIFY_GAS {}",
+                    sim.total_gas_used, FRAME_TX_MAX_VERIFY_GAS
+                )),
+                max_cost,
+                accessed_paymaster,
+                touched_sender_slots,
+            });
+        }
+
+        Ok(FrameValidationOutcome {
+            passed: true,
+            violation: None,
+            max_cost,
+            accessed_paymaster,
+            touched_sender_slots,
+        })
+    }
+
+    /// TXPARAM 0x06 max cost for a frame transaction:
+    /// `max_fee_per_gas * total_gas_limit + len(blob_hashes) * 131072 * max_fee_per_blob_gas`
+    /// (mirrors `load_tx_param` 0x06 in `opcode_handlers/frame_tx.rs`), saturating.
+    fn frame_tx_max_cost(frame_tx: &ethrex_common::types::FrameTransaction) -> U256 {
+        // Intentionally saturating (not checked): the TXPARAM 0x06 consensus handler
+        // uses checked_mul/checked_add and halts on overflow (frame_tx.rs:499-509). Here
+        // we compute a reservation ceiling for the mempool, so saturating to U256::MAX
+        // on overflow is conservative — it just makes the reservation larger, not smaller.
+        let gas_cost = U256::from(frame_tx.max_fee_per_gas)
+            .saturating_mul(U256::from(frame_tx.total_gas_limit()));
+        let blob_cost = U256::from(frame_tx.blob_versioned_hashes.len())
+            .saturating_mul(U256::from(131072u64))
+            .saturating_mul(frame_tx.max_fee_per_blob_gas);
+        gas_cost.saturating_add(blob_cost)
     }
 
     pub fn get_state_transitions(

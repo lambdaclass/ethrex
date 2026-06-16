@@ -23,6 +23,7 @@ use crate::{
         self, SIZE_PRECOMPILES_CANCUN, SIZE_PRECOMPILES_PRAGUE, SIZE_PRECOMPILES_PRE_CANCUN,
     },
     tracing::LevmCallTracer,
+    validation_observer::ValidationObserver,
 };
 use bytes::Bytes;
 use ethrex_common::{
@@ -480,7 +481,7 @@ impl Substate {
 /// reverts the frame if the sender's balance is strictly less than the
 /// amount being sent. Factored out so the decision can be unit-tested
 /// without bringing up a full VM state.
-pub(crate) fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U256) -> bool {
+pub fn frame_value_exceeds_balance(sender_balance: U256, frame_value: U256) -> bool {
     sender_balance < frame_value
 }
 
@@ -537,6 +538,19 @@ impl FrameTxContext {
     }
 }
 
+/// Result of [`VM::simulate_validation_prefix`] (EIP-8141 mempool simulation).
+#[derive(Debug, Clone)]
+pub struct PrefixSimResult {
+    /// Whether any prefix frame reverted (fatal for validation).
+    pub any_revert: bool,
+    /// The payer established by the prefix, if any.
+    pub payer_address: Option<Address>,
+    /// Whether the sender was approved by a verify/pay frame.
+    pub sender_approved: bool,
+    /// Total simulated gas used across the prefix frames.
+    pub total_gas_used: u64,
+}
+
 pub struct VM<'a> {
     /// Stack of parent call frames (for nested calls).
     pub call_frames: Vec<CallFrame>,
@@ -560,6 +574,11 @@ pub struct VM<'a> {
     pub tracer: LevmCallTracer,
     /// Opcode (EIP-3155) tracer.  Disabled by default; zero overhead when inactive.
     pub opcode_tracer: LevmOpcodeTracer,
+    /// EIP-8141 mempool validation-trace observer. Disabled by default; active
+    /// only during `simulate_frame_validation_prefix`. Read only behind
+    /// `if self.validation_observer.active`, so an inactive observer adds one
+    /// branch to the dispatch loop and nothing more (mirrors `opcode_tracer`).
+    pub validation_observer: ValidationObserver,
     /// Debug mode for development diagnostics.
     pub debug_mode: DebugMode,
     /// Pool of reusable stacks to reduce allocations.
@@ -906,6 +925,7 @@ impl<'a> VM<'a> {
             storage_original_values: FxHashMap::default(),
             tracer,
             opcode_tracer: LevmOpcodeTracer::disabled(),
+            validation_observer: ValidationObserver::disabled(),
             debug_mode: DebugMode::disabled(),
             stack_pool: Vec::new(),
             vm_type,
@@ -1733,6 +1753,330 @@ impl<'a> VM<'a> {
         Ok(report)
     }
 
+    /// EIP-8141 mempool entry point: set up the frame-tx context and observer,
+    /// then simulate the validation prefix.
+    ///
+    /// Performs the frame-tx preamble (static constraints, nonce, fee sanity,
+    /// `FrameTxContext` init, outer-signature validation) — the same checks
+    /// `execute_frame_tx` runs before any frame — then activates the
+    /// [`ValidationObserver`](crate::validation_observer::ValidationObserver) for
+    /// `sender` with the prefix's `deploy_index`, runs the prefix via
+    /// [`VM::simulate_validation_prefix`], and returns the raw simulation
+    /// result. Does NOT charge or refund gas. `canonical_paymaster_pay_frame`
+    /// is the index of a canonical paymaster's pay frame (always `None` today,
+    /// OQ1); when set, the access-restriction skip fires for that frame.
+    pub fn run_frame_validation_prefix(
+        &mut self,
+        frame_indices: &[usize],
+        deploy_index: Option<usize>,
+        canonical_paymaster_pay_frame: Option<usize>,
+    ) -> Result<PrefixSimResult, VMError> {
+        use crate::validation_observer::ValidationObserver;
+
+        if self.env.config.fork < Fork::Hegota {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::FrameTxPreFork,
+            ));
+        }
+
+        let frame_tx = match &self.tx {
+            Transaction::FrameTransaction(ft) => ft.clone(),
+            _ => {
+                return Err(VMError::Internal(InternalError::Custom(
+                    "run_frame_validation_prefix called on non-frame tx".to_string(),
+                )));
+            }
+        };
+
+        let sender = frame_tx.sender;
+
+        if frame_tx.validate_static_constraints().is_err() {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
+        let sender_info = self.db.get_account(sender)?.info.clone();
+        if sender_info.nonce != frame_tx.nonce {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::NonceMismatch {
+                    expected: sender_info.nonce,
+                    actual: frame_tx.nonce,
+                },
+            ));
+        }
+
+        if frame_tx.max_priority_fee_per_gas > frame_tx.max_fee_per_gas {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::PriorityGreaterThanMaxFeePerGas {
+                    priority_fee: U256::from(frame_tx.max_priority_fee_per_gas),
+                    max_fee_per_gas: U256::from(frame_tx.max_fee_per_gas),
+                },
+            ));
+        }
+
+        if U256::from(frame_tx.max_fee_per_gas) < self.env.base_fee_per_gas {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InsufficientMaxFeePerGas,
+            ));
+        }
+
+        let sig_hash = frame_tx.compute_sig_hash();
+        let total_gas_limit = frame_tx.total_gas_limit();
+        self.frame_tx_context = Some(FrameTxContext {
+            sender_approved: false,
+            payer_address: None,
+            frames: frame_tx.frames.clone(),
+            frame_results: Vec::new(),
+            current_frame_index: 0,
+            sig_hash,
+            tx: frame_tx.clone(),
+            approve_called_in_current_frame: false,
+            total_gas_limit,
+        });
+
+        if !validate_frame_signatures(
+            &frame_tx.signatures,
+            sig_hash,
+            self.env.config.fork,
+            self.crypto,
+        ) {
+            return Err(VMError::TxValidation(
+                crate::errors::TxValidationError::InvalidFrameTransaction,
+            ));
+        }
+
+        let expiry_verifier = ethrex_common::types::frame_tx_expiry_verifier();
+        let mut observer = ValidationObserver::new(sender, deploy_index, expiry_verifier);
+        observer.canonical_paymaster_pay_frame = canonical_paymaster_pay_frame;
+        self.validation_observer = observer;
+
+        self.simulate_validation_prefix(frame_indices)
+    }
+
+    /// EIP-8141 mempool validation-prefix simulation (local peer policy).
+    ///
+    /// Runs ONLY the validation-prefix frames (the verify/pay/deploy frames that
+    /// must execute before the transaction's payer is established) of a frame
+    /// transaction, under an active [`ValidationObserver`](crate::validation_observer::ValidationObserver),
+    /// then stops as soon as the payer has been set. Reuses the real frame
+    /// execution primitives (`eip7702_get_code`, `execute_default_code`,
+    /// `run_execution`, substate backups, value transfer) over the DEFAULT/VERIFY
+    /// subset that prefixes are restricted to (Phase 1 structural rules forbid
+    /// SENDER and atomic-batch frames in the prefix), so it dispatches real
+    /// opcodes through the real handlers — not a separate mini-EVM.
+    ///
+    /// `frame_indices` are the prefix frame indices (in order), as identified by
+    /// `FrameTransaction::validation_prefix`; expiry-verifier frames interleaved
+    /// in the prefix are run too (they may appear between prefix frames). The
+    /// caller must have set `frame_tx_context` and activated the observer.
+    ///
+    /// Returns [`PrefixSimResult`] describing the outcome. Does NOT charge fees
+    /// or refund gas (mempool simulation only); state changes accumulate in the
+    /// shared `db` and are discarded by the caller (a fresh simulation database).
+    pub fn simulate_validation_prefix(
+        &mut self,
+        frame_indices: &[usize],
+    ) -> Result<PrefixSimResult, VMError> {
+        let frame_tx = match &self.tx {
+            Transaction::FrameTransaction(ft) => ft.clone(),
+            _ => {
+                return Err(VMError::Internal(InternalError::Custom(
+                    "simulate_validation_prefix called on non-frame tx".to_string(),
+                )));
+            }
+        };
+
+        let sender = frame_tx.sender;
+        let entry_point = ethrex_common::types::frame_tx_entry_point();
+
+        let mut total_gas_used: u64 = 0;
+        let mut any_revert = false;
+        // The highest prefix-frame index we must run before stopping. We run the
+        // prefix in source order, executing every frame from 0 up to and
+        // including the last prefix index (covering interleaved expiry frames).
+        let last_prefix_idx = frame_indices.iter().copied().max();
+
+        for (frame_idx, frame) in frame_tx.frames.iter().enumerate() {
+            // Stop once the whole prefix has run (and the payer break below).
+            if let Some(stop) = last_prefix_idx {
+                if frame_idx > stop {
+                    break;
+                }
+            } else {
+                break;
+            }
+
+            // Each independent prefix frame starts with a clean call-frame backup
+            // so a later frame's failure only reverts its own effects.
+            self.current_call_frame.call_frame_backup.clear();
+
+            let ctx =
+                self.frame_tx_context
+                    .as_mut()
+                    .ok_or(VMError::Internal(InternalError::Custom(
+                        "missing frame tx context".to_string(),
+                    )))?;
+            ctx.current_frame_index = frame_idx;
+            ctx.approve_called_in_current_frame = false;
+
+            let target = frame.target.unwrap_or(sender);
+
+            // Sync observer per-frame fields before the frame runs.
+            self.validation_observer.current_frame_index = frame_idx;
+            self.validation_observer.current_frame_mode = frame.mode;
+
+            // Prefix frames are DEFAULT (deploy) or VERIFY only; both run with
+            // ENTRY_POINT as caller (DEFAULT not static, VERIFY static).
+            let (caller, is_static) = match frame.execution_mode() {
+                FrameMode::Default => (entry_point, false),
+                FrameMode::Verify => (entry_point, true),
+                FrameMode::Sender => {
+                    // Structural rules exclude SENDER frames from the prefix.
+                    return Err(VMError::Internal(InternalError::Custom(
+                        "SENDER frame in validation prefix".to_string(),
+                    )));
+                }
+            };
+
+            self.env.origin = caller;
+
+            let (is_delegation_7702, _access_cost, code_address, bytecode) =
+                crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
+
+            self.substate.push_backup();
+
+            let value_transfer_reverted = if !frame.value.is_zero() {
+                let sender_balance = self.db.get_account(sender)?.info.balance;
+                frame_value_exceeds_balance(sender_balance, frame.value)
+            } else {
+                false
+            };
+
+            let (frame_success, frame_gas_used) = if value_transfer_reverted {
+                self.substate.revert_backup();
+                self.restore_cache_state()?;
+                (false, frame.gas_limit)
+            } else if bytecode.bytecode.is_empty() && !is_delegation_7702 {
+                // Default-code path (target has neither code nor a delegation).
+                if !frame.value.is_zero() {
+                    self.transfer(sender, target, frame.value)?;
+                }
+                use crate::opcode_handlers::frame_tx::execute_default_code;
+                match execute_default_code(self, frame, target) {
+                    Ok((success, gas_used, _logs)) => {
+                        if success {
+                            self.substate.commit_backup();
+                            (true, gas_used)
+                        } else {
+                            self.substate.revert_backup();
+                            self.restore_cache_state()?;
+                            (false, gas_used)
+                        }
+                    }
+                    Err(_) => {
+                        self.substate.revert_backup();
+                        self.restore_cache_state()?;
+                        (false, frame.gas_limit)
+                    }
+                }
+            } else {
+                // Normal code execution via a child CallFrame.
+                let call_frame = CallFrame::new(
+                    caller,
+                    target,
+                    code_address,
+                    bytecode,
+                    frame.value,
+                    frame.data.clone(),
+                    is_static,
+                    frame.gas_limit,
+                    0,
+                    false,
+                    false,
+                    0,
+                    0,
+                    self.stack_pool.pop().unwrap_or_default(),
+                    Memory::default(),
+                );
+
+                let saved_call_frame = mem::replace(&mut self.current_call_frame, call_frame);
+                let saved_call_frames = mem::take(&mut self.call_frames);
+
+                if !frame.value.is_zero() {
+                    self.transfer(sender, target, frame.value)?;
+                }
+
+                let frame_result = self.run_execution();
+
+                let result = match frame_result {
+                    Ok(ctx_result) => {
+                        let gas_used = ctx_result.gas_used;
+                        if ctx_result.is_success() {
+                            self.substate.commit_backup();
+                            (true, gas_used)
+                        } else {
+                            self.substate.revert_backup();
+                            self.restore_cache_state()?;
+                            (false, gas_used)
+                        }
+                    }
+                    Err(_e) => {
+                        self.substate.revert_backup();
+                        self.restore_cache_state()?;
+                        (false, frame.gas_limit)
+                    }
+                };
+
+                let finished_frame = mem::replace(&mut self.current_call_frame, saved_call_frame);
+                self.call_frames = saved_call_frames;
+                self.stack_pool.push(finished_frame.stack);
+
+                result
+            };
+
+            total_gas_used = total_gas_used
+                .checked_add(frame_gas_used)
+                .ok_or(VMError::Internal(InternalError::Overflow))?;
+
+            if !frame_success {
+                any_revert = true;
+            }
+
+            // A reverted prefix frame is fatal: the transaction can never reach a
+            // valid payer through a reverted verify/pay/deploy frame.
+            if !frame_success {
+                break;
+            }
+
+            self.substate.clear_transient_storage();
+
+            // Stop as soon as the payer has been set (the prefix is complete).
+            if self
+                .frame_tx_context
+                .as_ref()
+                .and_then(|c| c.payer_address)
+                .is_some()
+            {
+                break;
+            }
+        }
+
+        let ctx =
+            self.frame_tx_context
+                .as_ref()
+                .ok_or(VMError::Internal(InternalError::Custom(
+                    "missing frame tx context".to_string(),
+                )))?;
+
+        Ok(PrefixSimResult {
+            any_revert,
+            payer_address: ctx.payer_address,
+            sender_approved: ctx.sender_approved,
+            total_gas_used,
+        })
+    }
+
     /// Must run after `prepare_execution` so EIP-7702 delegation is already resolved into
     /// `bytecode`.
     #[inline(always)]
@@ -1817,6 +2161,13 @@ impl<'a> VM<'a> {
             let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
             self.advance_pc(1)?;
+
+            // EIP-8141 mempool validation-trace observer (single branch on the
+            // fast path when inactive). Enforces the banned-opcode set and the
+            // sequential `GAS`-before-`*CALL` rule before the handler runs.
+            if self.validation_observer.active {
+                self.check_validation_banned_opcode(opcode);
+            }
 
             // Hoist the active flag to avoid reading it twice per opcode.
             let tracer_active = self.opcode_tracer.active;
@@ -1928,6 +2279,200 @@ impl<'a> VM<'a> {
             // Handle interaction between child and parent callframe.
             self.handle_return(&result)?;
         }
+    }
+
+    /// EIP-8141 validation-trace banned-opcode check (mempool simulation only).
+    ///
+    /// Called once per dispatch-loop iteration, AFTER the opcode is fetched and
+    /// BEFORE the handler runs, gated by `self.validation_observer.active`. Byte
+    /// values are pinned against `opcodes.rs`.
+    ///
+    /// Static bans: `ORIGIN`, `GASPRICE`, `BLOCKHASH`, `COINBASE`, `TIMESTAMP`
+    /// (except when the current frame's target is EXPIRY_VERIFIER), `NUMBER`,
+    /// `PREVRANDAO`, `GASLIMIT`, `BASEFEE`, `BLOBHASH`, `BLOBBASEFEE`, `INVALID`,
+    /// `SELFDESTRUCT`, `BALANCE`, `SELFBALANCE`, `TLOAD`, `TSTORE`, and `CALLCODE`
+    /// in non-deploy prefix frames (ERC-7562 bans CALLCODE in validation;
+    /// DELEGATECALL is allowed subject to the CALL-family trace rules in the
+    /// handlers). `SSTORE`/`CREATE`/`CREATE2` are allowed only inside the deploy
+    /// frame and are enforced in their handlers (state-write rules), not here.
+    ///
+    /// Sequential `GAS` rule: `GAS` is allowed only immediately before a
+    /// `*CALL` (`CALL`/`CALLCODE`/`DELEGATECALL`/`STATICCALL`). We detect this by
+    /// remembering `last_opcode`: if the previous iteration was `GAS` and this
+    /// opcode is NOT a `*CALL`, the prior `GAS` was illegal.
+    pub fn check_validation_banned_opcode(&mut self, opcode: u8) {
+        use crate::validation_observer::FrameSimViolation;
+
+        // Opcode bytes, pinned against `opcodes.rs`. The literal values are
+        // asserted equal to the `Opcode` enum discriminants by
+        // `validation_observer_opcode_byte_pins` below (avoids a `const`-context
+        // `as` cast, which the workspace clippy config denies).
+        const ORIGIN: u8 = 0x32;
+        const GASPRICE: u8 = 0x3A;
+        const BLOCKHASH: u8 = 0x40;
+        const COINBASE: u8 = 0x41;
+        const TIMESTAMP: u8 = 0x42;
+        const NUMBER: u8 = 0x43;
+        const PREVRANDAO: u8 = 0x44;
+        const GASLIMIT: u8 = 0x45;
+        const BASEFEE: u8 = 0x48;
+        const BLOBHASH: u8 = 0x49;
+        const BLOBBASEFEE: u8 = 0x4A;
+        const INVALID: u8 = 0xFE;
+        const SELFDESTRUCT: u8 = 0xFF;
+        const BALANCE: u8 = 0x31;
+        const SELFBALANCE: u8 = 0x47;
+        const TLOAD: u8 = 0x5C;
+        const TSTORE: u8 = 0x5D;
+        const GAS: u8 = 0x5A;
+        const CALL: u8 = 0xF1;
+        const CALLCODE: u8 = 0xF2;
+        const DELEGATECALL: u8 = 0xF4;
+        const STATICCALL: u8 = 0xFA;
+
+        let is_call_family = matches!(opcode, CALL | CALLCODE | DELEGATECALL | STATICCALL);
+
+        // Sequential GAS rule: a `GAS` on the previous iteration is only legal if
+        // THIS opcode is a `*CALL`. Evaluate before updating `last_opcode`.
+        if self.validation_observer.last_opcode == GAS && !is_call_family {
+            self.validation_observer
+                .record_violation(FrameSimViolation::BannedOpcode(GAS));
+        }
+
+        // Carry `GAS` forward for the next iteration's check; reset otherwise.
+        self.validation_observer.last_opcode = if opcode == GAS { GAS } else { 0 };
+
+        let banned = match opcode {
+            ORIGIN | GASPRICE | BLOCKHASH | COINBASE | NUMBER | PREVRANDAO | GASLIMIT | BASEFEE
+            | BLOBHASH | BLOBBASEFEE | INVALID | SELFDESTRUCT | BALANCE | SELFBALANCE | TLOAD
+            | TSTORE => true,
+            // TIMESTAMP is permitted only when the currently executing contract
+            // IS the EXPIRY_VERIFIER predeploy (checked by code_address so the
+            // rule tracks the executing contract at every call depth, not just the
+            // top-level frame target). A nested call FROM an expiry frame INTO
+            // another contract is correctly banned; a nested call INTO the
+            // predeploy from any frame is correctly allowed.
+            TIMESTAMP => {
+                self.current_call_frame.code_address != self.validation_observer.expiry_verifier
+            }
+            // CALLCODE is banned in non-deploy prefix frames (ERC-7562).
+            CALLCODE => !self.validation_observer.in_deploy_frame(),
+            _ => false,
+        };
+
+        if banned {
+            self.validation_observer
+                .record_violation(FrameSimViolation::BannedOpcode(opcode));
+        }
+    }
+
+    /// EIP-8141 validation-trace `SLOAD` check (mempool simulation only).
+    ///
+    /// `SLOAD` is allowed only when the storage owner (`address`, the executing
+    /// frame's `to`) is the transaction sender. Records the touched slot for the
+    /// admission-time revalidation affected-set.
+    pub fn validation_check_sload(&mut self, address: Address, slot: H256) {
+        use crate::validation_observer::FrameSimViolation;
+        if self.validation_observer.in_canonical_pay_frame() {
+            return;
+        }
+        if address == self.validation_observer.sender {
+            self.validation_observer.touched_sender_slots.push(slot);
+        } else {
+            self.validation_observer
+                .record_violation(FrameSimViolation::StorageReadNonSender);
+        }
+    }
+
+    /// EIP-8141 validation-trace `SSTORE` check (mempool simulation only).
+    ///
+    /// `SSTORE` is allowed only inside the deploy frame AND only when the storage
+    /// owner (`address`, the executing frame's `to`) is the transaction sender.
+    pub fn validation_check_sstore(&mut self, address: Address, slot: H256) {
+        use crate::validation_observer::FrameSimViolation;
+        if self.validation_observer.in_canonical_pay_frame() {
+            return;
+        }
+        if self.validation_observer.in_deploy_frame() && address == self.validation_observer.sender
+        {
+            self.validation_observer.touched_sender_slots.push(slot);
+        } else {
+            self.validation_observer
+                .record_violation(FrameSimViolation::StateWriteOutsideDeploy);
+        }
+    }
+
+    /// EIP-8141 validation-trace state-creation check for `CREATE`/`CREATE2`
+    /// (mempool simulation only). Contract creation is a state write permitted
+    /// only inside the deploy frame.
+    pub fn validation_check_create(&mut self) {
+        use crate::validation_observer::FrameSimViolation;
+        if self.validation_observer.in_canonical_pay_frame() {
+            return;
+        }
+        if !self.validation_observer.in_deploy_frame() {
+            self.validation_observer
+                .record_violation(FrameSimViolation::StateWriteOutsideDeploy);
+        }
+    }
+
+    /// EIP-8141 validation-trace `CALL*`/`EXTCODE*` target check (mempool
+    /// simulation only).
+    ///
+    /// The target must be an existing account or a precompile and must NOT be
+    /// EIP-7702-delegated, except the sender running its own default code (the
+    /// sender is exempt — its existence is a transaction precondition and it may
+    /// have no code). `is_delegation_7702` is the flag already computed by
+    /// `eip7702_get_code` in the CALL-family handlers, threaded in to avoid a
+    /// second delegation resolution (and the `&mut VM` / `&mut db` borrow
+    /// conflict a dispatch-loop stack-peek would create).
+    pub fn validation_check_call_target(
+        &mut self,
+        target: Address,
+        is_delegation_7702: bool,
+    ) -> Result<(), VMError> {
+        use crate::validation_observer::FrameSimViolation;
+        if self.validation_observer.in_canonical_pay_frame() {
+            return Ok(());
+        }
+        // The sender is always a legitimate target (its existence is a tx
+        // precondition; it may legitimately have no code).
+        if target == self.validation_observer.sender {
+            return Ok(());
+        }
+        // A delegated target is disallowed in validation.
+        if is_delegation_7702 {
+            self.validation_observer
+                .record_violation(FrameSimViolation::CallToNonexistentOrDelegated(target));
+            return Ok(());
+        }
+        // Precompiles are always valid targets.
+        if precompiles::is_precompile(&target, self.env.config.fork, self.vm_type) {
+            return Ok(());
+        }
+        // Otherwise the target must be an existing (non-empty) account.
+        if self.db.get_account(target)?.is_empty() {
+            self.validation_observer
+                .record_violation(FrameSimViolation::CallToNonexistentOrDelegated(target));
+        }
+        Ok(())
+    }
+
+    /// EIP-8141 validation-trace `EXTCODE*` target check (mempool simulation
+    /// only). Like [`VM::validation_check_call_target`], but resolves the
+    /// EIP-7702 delegation flag itself (the EXTCODE handlers do not call
+    /// `eip7702_get_code`). The `substate.add_accessed_address` warming the
+    /// EXTCODE gas already performed has happened; resolving here only follows a
+    /// delegation indicator to read its flag, mirroring the CALL-family path.
+    pub fn validation_check_extcode_target(&mut self, target: Address) -> Result<(), VMError> {
+        if self.validation_observer.in_canonical_pay_frame()
+            || target == self.validation_observer.sender
+        {
+            return Ok(());
+        }
+        let (is_delegation_7702, _access_cost, _code_address, _bytecode) =
+            crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
+        self.validation_check_call_target(target, is_delegation_7702)
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.
@@ -2222,451 +2767,6 @@ impl Substate {
         );
 
         Ok(substate)
-    }
-}
-
-#[cfg(test)]
-mod frame_tx_security_tests {
-    //! Regression tests for the security review of EIP-8141 Frame Transaction
-    //! execution. These tests lock in invariants whose violation previously
-    //! produced:
-    //!   (1) Log duplication across frames → receipts-root divergence.
-    //!   (2) Free money + nonce replay via `restore_cache_state()` undoing
-    //!       APPROVE-side state from an earlier successful frame.
-    //!   (3) Atomic-batch atomicity bypass: successful in-batch frame state
-    //!       persisted across a batch revert.
-    //!
-    //! Tests 2 and 3 depend on full VM execution of FrameTransactions and are
-    //! exercised end-to-end by the harness in `test/tests/levm/eip8141_tests.rs`.
-    //! The unit tests below cover the Substate API invariant that underpins Fix 1.
-    use super::*;
-    use bytes::Bytes;
-    use ethrex_common::{Address, H256};
-
-    fn mk_log(tag: u8) -> Log {
-        Log {
-            address: Address::from_low_u64_be(u64::from(tag)),
-            topics: vec![H256::from_low_u64_be(u64::from(tag))],
-            data: Bytes::from(vec![tag]),
-        }
-    }
-
-    fn log_tags(logs: &[Log]) -> Vec<u8> {
-        logs.iter()
-            .filter_map(|l| l.data.first().copied())
-            .collect()
-    }
-
-    /// `current_logs()` must return only the sub-substate's own logs, not
-    /// parent logs. This is the primitive that Fix 1 uses to avoid leaking
-    /// prior frames' logs into `frame_receipts[i].logs`.
-    #[test]
-    fn current_logs_excludes_parent_logs() {
-        let mut substate = Substate::default();
-
-        substate.add_log(mk_log(0xA0)); // parent log, emitted before any push
-        assert_eq!(log_tags(&substate.current_logs()), vec![0xA0]);
-
-        substate.push_backup();
-        // Post-push: the sub-substate is fresh.
-        assert!(substate.current_logs().is_empty());
-
-        substate.add_log(mk_log(0xB1));
-        substate.add_log(mk_log(0xB2));
-        // current_logs() returns this scope's logs only.
-        assert_eq!(log_tags(&substate.current_logs()), vec![0xB1, 0xB2]);
-
-        // extract_logs() (intentionally) returns parent+current. Verifies the
-        // distinction that Fix 1 relies on.
-        assert_eq!(log_tags(&substate.extract_logs()), vec![0xA0, 0xB1, 0xB2]);
-
-        // After commit, current_logs() includes the merged set because parent
-        // was folded in.
-        substate.commit_backup();
-        assert_eq!(log_tags(&substate.current_logs()), vec![0xA0, 0xB1, 0xB2]);
-    }
-
-    /// The exact sequence that Fix 1 replaces: when the previous buggy pattern
-    /// (commit_backup → extract_logs → re-add loop) runs across multiple
-    /// frames, later frames see duplicated logs from earlier frames.
-    ///
-    /// This test exists so that if anyone ever reintroduces that sequence,
-    /// the compounding growth is caught with a concrete trace.
-    #[test]
-    fn frame_per_frame_logs_do_not_duplicate_across_frames() {
-        let mut substate = Substate::default();
-
-        // Capture per-frame log deltas using the corrected sequence:
-        //   push_backup → emit → current_logs (snapshot) → commit_backup
-        let mut per_frame: Vec<Vec<Log>> = Vec::new();
-        for tag in [0x11u8, 0x22, 0x33] {
-            substate.push_backup();
-            substate.add_log(mk_log(tag));
-            // Snapshot this frame's logs BEFORE commit merges them into parent.
-            let this_frame = substate.current_logs();
-            substate.commit_backup();
-            per_frame.push(this_frame);
-        }
-
-        // Each frame's receipt should contain exactly its own log — no leaks.
-        assert_eq!(log_tags(per_frame.first().unwrap()), vec![0x11]);
-        assert_eq!(log_tags(per_frame.get(1).unwrap()), vec![0x22]);
-        assert_eq!(log_tags(per_frame.get(2).unwrap()), vec![0x33]);
-    }
-}
-
-#[cfg(test)]
-mod frame_value_transfer_tests {
-    //! EIP-8141 top-level value-transfer invariants.
-    //!
-    //! The outer `execute_frame_tx` loop owns the `frame.value` transfer: it
-    //! balance-checks the sender, performs the transfer, and records an
-    //! EIP-7708 log (when sender != target, Amsterdam+). These tests pin the
-    //! balance-check predicate; the backup-unwind coverage for atomic batch
-    //! revert lives in the regression-test commit that follows.
-    use super::*;
-    use ethrex_common::U256;
-
-    #[test]
-    fn frame_value_transfers_from_sender_to_resolved_target_on_success() {
-        // A sufficiently funded sender must not revert — the transfer proceeds.
-        let sender_balance = U256::from(10u64).saturating_mul(U256::exp10(18)); // 10 ETH
-        let value = U256::from(1u64).saturating_mul(U256::exp10(17)); // 0.1 ETH
-        assert!(!frame_value_exceeds_balance(sender_balance, value));
-
-        // Exact-balance transfer: sender has exactly `value` — still succeeds.
-        assert!(!frame_value_exceeds_balance(value, value));
-    }
-
-    #[test]
-    fn frame_value_transfer_reverts_on_insufficient_sender_balance() {
-        // Under-funded sender → revert path taken.
-        let balance = U256::from(5u64).saturating_mul(U256::exp10(16)); // 0.05 ETH
-        let value = U256::from(1u64).saturating_mul(U256::exp10(17)); // 0.10 ETH
-        assert!(frame_value_exceeds_balance(balance, value));
-
-        // Zero-balance / non-zero value → revert.
-        assert!(frame_value_exceeds_balance(U256::zero(), U256::one()));
-
-        // Balance just one less than value → revert.
-        let v = U256::from(1_000_000u64);
-        assert!(frame_value_exceeds_balance(v - U256::one(), v));
-    }
-
-    /// Regression test for the atomic-batch unwind: any state change
-    /// performed inside a backup scope (including the outer-owned value
-    /// transfer and the EIP-7708 log emitted alongside it) must be reverted
-    /// when the enclosing batch reverts. `execute_frame_tx` pushes a batch
-    /// backup before each atomic group and calls `revert_backup()` when any
-    /// in-batch frame fails; this test exercises the Substate primitive
-    /// that guarantees the log and state deltas do not leak past the
-    /// boundary.
-    #[test]
-    fn atomic_batch_revert_unwinds_in_batch_value_effects() {
-        use ethrex_common::Address;
-
-        let mut substate = Substate::default();
-
-        // Log emitted before the batch — should survive a batch revert.
-        substate.add_log(Log {
-            address: Address::from_low_u64_be(1),
-            topics: vec![],
-            data: Bytes::from_static(b"pre-batch"),
-        });
-
-        // Enter the atomic batch: push a backup before the first in-batch frame.
-        substate.push_backup();
-
-        // Frame 1 (SENDER atomic, successful): simulate the per-frame scope,
-        // emit the EIP-7708 transfer log produced by the outer value transfer,
-        // then commit the per-frame backup.
-        substate.push_backup();
-        substate.add_log(Log {
-            address: Address::from_low_u64_be(2),
-            topics: vec![],
-            data: Bytes::from_static(b"frame-1-transfer-log"),
-        });
-        substate.commit_backup();
-
-        // Frame 2 reverts: `execute_frame_tx` reverts the batch-level backup,
-        // which undoes every in-batch substate change including Frame 1's log.
-        substate.revert_backup();
-
-        let logs = substate.extract_logs();
-        let tags: Vec<&[u8]> = logs.iter().map(|l| l.data.as_ref()).collect();
-        assert_eq!(
-            tags,
-            vec![b"pre-batch".as_ref()],
-            "atomic-batch revert must unwind in-batch value-transfer effects"
-        );
-    }
-}
-
-#[cfg(test)]
-mod frame_tx_7702_delegation_tests {
-    //! EIP-8141 §Execution step 1 (lines 348-351) requires that at frame entry,
-    //! if `resolved_target` has an EIP-7702 delegation indicator the frame
-    //! executes according to EIP-7702's delegated-code semantics — i.e. the
-    //! delegatee's code runs while ADDRESS/storage stay tied to the delegator.
-    //! Default code runs ONLY when the target has neither code nor a delegation.
-    //!
-    //! `execute_frame_tx` resolves this via `utils::eip7702_get_code` and then
-    //! gates the default-code branch on `bytecode.is_empty() && !is_delegation_7702`.
-    //! The tests below pin that decision table directly by invoking
-    //! `eip7702_get_code` on the four target shapes in §5 of the mitigation plan.
-    //! They intentionally stay at the helper + predicate level rather than
-    //! spinning up a full frame-tx VM: the production change is a one-line
-    //! helper swap plus a predicate tweak, and a predicate-level test is the
-    //! tightest regression guard against the 0xef-as-opcode halt bug that
-    //! motivated the fix.
-    use crate::db::{Database, gen_db::GeneralizedDatabase};
-    use crate::errors::DatabaseError;
-    use crate::utils::eip7702_get_code;
-    use crate::vm::Substate;
-    use bytes::Bytes;
-    use ethrex_common::constants::EMPTY_TRIE_HASH;
-    use ethrex_common::{
-        Address, H256, U256,
-        types::{Account, AccountState, ChainConfig, Code, CodeMetadata},
-    };
-    use rustc_hash::FxHashMap;
-    use std::sync::Arc;
-
-    /// Minimal in-memory store matching the shape used by `eip7708_tests.rs`.
-    struct TestStore {
-        accounts: FxHashMap<Address, Account>,
-    }
-
-    impl Database for TestStore {
-        fn get_account_state(&self, address: Address) -> Result<AccountState, DatabaseError> {
-            Ok(self
-                .accounts
-                .get(&address)
-                .map(|acc| AccountState {
-                    nonce: acc.info.nonce,
-                    balance: acc.info.balance,
-                    storage_root: *EMPTY_TRIE_HASH,
-                    code_hash: acc.info.code_hash,
-                })
-                .unwrap_or_default())
-        }
-        fn get_storage_value(&self, _a: Address, _k: H256) -> Result<U256, DatabaseError> {
-            Ok(U256::zero())
-        }
-        fn get_block_hash(&self, _n: u64) -> Result<H256, DatabaseError> {
-            Ok(H256::zero())
-        }
-        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-            Ok(ChainConfig::default())
-        }
-        fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
-            for acc in self.accounts.values() {
-                if acc.info.code_hash == code_hash {
-                    return Ok(acc.code.clone());
-                }
-            }
-            Ok(Code::default())
-        }
-        fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
-            for acc in self.accounts.values() {
-                if acc.info.code_hash == code_hash {
-                    return Ok(CodeMetadata {
-                        #[expect(clippy::as_conversions, reason = "test helper")]
-                        length: acc.code.bytecode.len() as u64,
-                    });
-                }
-            }
-            Ok(CodeMetadata { length: 0 })
-        }
-    }
-
-    fn addr(x: u64) -> Address {
-        Address::from_low_u64_be(x)
-    }
-
-    /// Build a 23-byte EIP-7702 delegation indicator pointing at `delegatee`.
-    fn delegation_indicator(delegatee: Address) -> Bytes {
-        use crate::constants::SET_CODE_DELEGATION_BYTES;
-        let mut v = Vec::with_capacity(23);
-        v.extend_from_slice(&SET_CODE_DELEGATION_BYTES);
-        v.extend_from_slice(delegatee.as_bytes());
-        Bytes::from(v)
-    }
-
-    fn build_db(accounts: Vec<(Address, Account)>) -> GeneralizedDatabase {
-        let store = Arc::new(TestStore {
-            accounts: FxHashMap::default(),
-        });
-        let map: FxHashMap<Address, Account> = accounts.into_iter().collect();
-        GeneralizedDatabase::new_with_account_state(store, map)
-    }
-
-    /// The decision predicate from `execute_frame_tx`: default-code runs only when
-    /// the *resolved* bytecode is empty AND the target has no delegation. This mirrors
-    /// the exact `else if` condition in `vm.rs::execute_frame_tx` after the H2 fix.
-    fn runs_default_code(is_delegation_7702: bool, bytecode: &Code) -> bool {
-        bytecode.bytecode.is_empty() && !is_delegation_7702
-    }
-
-    /// Positive case: a 7702-delegated EOA must resolve to the delegatee's bytecode,
-    /// not the 0xef0100 indicator. Before the H2 fix, the indicator was run as
-    /// bytecode and 0xef halted the frame; verifying `is_delegation_7702 == true`
-    /// and that the returned code matches the delegatee's code pins both the helper
-    /// contract and the predicate routing.
-    #[test]
-    fn delegated_sender_eoa_runs_delegatee_code_with_delegator_address() {
-        let delegator = addr(0xDE1E);
-        let delegatee = addr(0xC0DE);
-        let delegatee_code = Bytes::from(vec![0x60, 0xff, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3]);
-        let delegator_account = Account::new(
-            U256::from(1_000_000_000u64),
-            Code::from_bytecode(
-                delegation_indicator(delegatee),
-                &ethrex_crypto::NativeCrypto,
-            ),
-            0,
-            FxHashMap::default(),
-        );
-        let delegatee_account = Account::new(
-            U256::zero(),
-            Code::from_bytecode(delegatee_code.clone(), &ethrex_crypto::NativeCrypto),
-            0,
-            FxHashMap::default(),
-        );
-
-        let mut db = build_db(vec![
-            (delegator, delegator_account),
-            (delegatee, delegatee_account),
-        ]);
-        let mut substate = Substate::default();
-
-        let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
-
-        assert!(
-            is_delegation,
-            "delegator must be detected as 7702-delegated"
-        );
-        assert_eq!(
-            code_address, delegatee,
-            "code_address must point at the delegatee, not the delegator"
-        );
-        assert_eq!(
-            code.bytecode, delegatee_code,
-            "returned bytecode must be the delegatee's code, not the 0xef0100 indicator"
-        );
-        assert!(
-            !runs_default_code(is_delegation, &code),
-            "7702 delegation to a non-empty delegatee must take the CallFrame branch, not default code"
-        );
-    }
-
-    /// Edge case called out in plan §5 row 3: a 7702 delegation pointing at an
-    /// address with no deployed code. Resolved bytecode is empty, but the spec
-    /// requires the frame to execute the empty code successfully — NOT fall
-    /// through to default code. The predicate guard `&& !is_delegation_7702`
-    /// exists for exactly this case; without it, a delegation to an empty
-    /// delegatee would accidentally run default-code authentication logic.
-    #[test]
-    fn delegated_eoa_with_empty_delegatee_succeeds_as_empty_code() {
-        let delegator = addr(0xDE1E);
-        let delegatee = addr(0xE117); // empty — no Account registered
-        let delegator_account = Account::new(
-            U256::from(1_000_000_000u64),
-            Code::from_bytecode(
-                delegation_indicator(delegatee),
-                &ethrex_crypto::NativeCrypto,
-            ),
-            0,
-            FxHashMap::default(),
-        );
-
-        let mut db = build_db(vec![(delegator, delegator_account)]);
-        let mut substate = Substate::default();
-
-        let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, delegator).unwrap();
-
-        assert!(is_delegation, "delegation indicator must still be detected");
-        assert_eq!(code_address, delegatee);
-        assert!(
-            code.bytecode.is_empty(),
-            "delegatee has no code, so resolved bytecode is empty"
-        );
-        assert!(
-            !runs_default_code(is_delegation, &code),
-            "empty-delegatee delegation must NOT route to default code — it must take the \
-             CallFrame branch and succeed as empty code (EIP-8141 §Execution lines 348-349)"
-        );
-    }
-
-    /// Regression: a plain EOA (no deployed code, no delegation indicator) must
-    /// still route into the default-code branch. This pins that the H2 fix
-    /// didn't over-broaden the resolved-delegation path.
-    #[test]
-    fn undelegated_eoa_still_runs_default_code() {
-        let eoa_addr = addr(0xEAA0);
-        let eoa = Account::new(
-            U256::from(1_000_000_000u64),
-            Code::default(),
-            0,
-            FxHashMap::default(),
-        );
-
-        let mut db = build_db(vec![(eoa_addr, eoa)]);
-        let mut substate = Substate::default();
-
-        let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, eoa_addr).unwrap();
-
-        assert!(!is_delegation, "plain EOA has no delegation indicator");
-        assert_eq!(
-            code_address, eoa_addr,
-            "code_address falls back to the target when no delegation"
-        );
-        assert!(code.bytecode.is_empty(), "plain EOA has no code");
-        assert!(
-            runs_default_code(is_delegation, &code),
-            "plain EOA with no code and no delegation must take the default-code branch"
-        );
-    }
-
-    /// Regression: a target with real bytecode and no delegation must still
-    /// execute its own bytecode. Guards against a mis-route that would happen
-    /// if the helper mis-identified a non-indicator code as a delegation.
-    #[test]
-    fn contract_target_unaffected_by_delegation_resolver() {
-        let contract_addr = addr(0xC000);
-        let contract_code = Bytes::from(vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x00]); // PUSH1 1 PUSH1 2 ADD STOP
-        let contract_account = Account::new(
-            U256::zero(),
-            Code::from_bytecode(contract_code.clone(), &ethrex_crypto::NativeCrypto),
-            1,
-            FxHashMap::default(),
-        );
-
-        let mut db = build_db(vec![(contract_addr, contract_account)]);
-        let mut substate = Substate::default();
-
-        let (is_delegation, _access_cost, code_address, code) =
-            eip7702_get_code(&mut db, &mut substate, contract_addr).unwrap();
-
-        assert!(
-            !is_delegation,
-            "regular contract bytecode must not be mistaken for a delegation"
-        );
-        assert_eq!(
-            code_address, contract_addr,
-            "code_address is the target itself when no delegation"
-        );
-        assert_eq!(
-            code.bytecode, contract_code,
-            "regular contract bytecode passes through unchanged"
-        );
-        assert!(
-            !runs_default_code(is_delegation, &code),
-            "contract with code must take the CallFrame branch, not default code"
-        );
     }
 }
 
