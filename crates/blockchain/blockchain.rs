@@ -3209,31 +3209,43 @@ impl Blockchain {
                     .unwrap_or_else(U256::zero);
                 let reserved = self.mempool.reserved_pending_cost(paymaster)?;
 
-                if is_canonical {
-                    // Canonical paymaster: balance minus reservations minus the
-                    // pending withdrawal amount (OQ3: ethrex has no paymaster
-                    // withdrawal queue, so the withdrawal amount is treated as 0)
-                    // must cover the max cost.
-                    let withdrawal_amount = U256::zero();
-                    let available = paymaster_balance
-                        .saturating_sub(reserved)
-                        .saturating_sub(withdrawal_amount);
-                    if available < max_cost {
-                        return Err(MempoolError::FrameTxPaymasterUnderfunded);
-                    }
-                } else {
-                    // Non-canonical paymaster: balance minus reservations must
-                    // cover the max cost, AND at most
-                    // FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER pending txs may
-                    // be sponsored by this paymaster.
-                    let available = paymaster_balance.saturating_sub(reserved);
-                    if available < max_cost {
-                        return Err(MempoolError::FrameTxPaymasterUnderfunded);
-                    }
-                    if self.mempool.noncanonical_paymaster_pending(paymaster)?
-                        >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
-                    {
-                        return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
+                // Fee-bump exemption: a same-nonce replacement removes the old tx
+                // (releasing its reservation and noncanonical slot) before the new
+                // one is inserted. This UNLOCKED pre-filter still counts the old
+                // tx's reservation, so it would falsely reject the bump on both
+                // availability and the per-paymaster limit. Skip the whole
+                // pre-filter for replacements; the locked re-check in
+                // `add_transaction` runs AFTER the old tx is removed and is the
+                // authoritative guard. The pre-filter only avoids running the EVM
+                // simulation's downstream work for clearly-rejectable fresh txs.
+                let is_fee_bump_replacement = tx_to_replace_hash.is_some();
+                if !is_fee_bump_replacement {
+                    if is_canonical {
+                        // Canonical paymaster: balance minus reservations minus the
+                        // pending withdrawal amount (OQ3: ethrex has no paymaster
+                        // withdrawal queue, so the withdrawal amount is treated as
+                        // 0) must cover the max cost.
+                        let withdrawal_amount = U256::zero();
+                        let available = paymaster_balance
+                            .saturating_sub(reserved)
+                            .saturating_sub(withdrawal_amount);
+                        if available < max_cost {
+                            return Err(MempoolError::FrameTxPaymasterUnderfunded);
+                        }
+                    } else {
+                        // Non-canonical paymaster: balance minus reservations must
+                        // cover the max cost, AND at most
+                        // FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER pending txs
+                        // may be sponsored by this paymaster.
+                        let available = paymaster_balance.saturating_sub(reserved);
+                        if available < max_cost {
+                            return Err(MempoolError::FrameTxPaymasterUnderfunded);
+                        }
+                        if self.mempool.noncanonical_paymaster_pending(paymaster)?
+                            >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
+                        {
+                            return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
+                        }
                     }
                 }
 
