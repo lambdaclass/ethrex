@@ -2094,7 +2094,7 @@ mod frame_validation_prefix_tests {
             Ok(H256::zero())
         }
         fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
-            Ok(self.chain_config.clone())
+            Ok(self.chain_config)
         }
         fn get_account_code(&self, code_hash: H256) -> Result<Code, DatabaseError> {
             for acc in self.accounts.values() {
@@ -2202,8 +2202,8 @@ mod frame_validation_prefix_tests {
     /// fail validation with `DeployInstalledNoCode`.
     #[test]
     fn deploy_leaving_sender_codeless_fails_validation() {
-        let sender = addr(0xDEAD_01);
-        let paymaster = addr(0xBEEF_01);
+        let sender = addr(0xDEAD01);
+        let paymaster = addr(0xBEEF01);
         let frames = vec![
             frame(0, 0x00, sender, 50_000),
             frame(1, 0x01, paymaster, 50_000),

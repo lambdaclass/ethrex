@@ -371,39 +371,13 @@ pub fn get_total_blob_gas(tx: &EIP4844Transaction) -> u32 {
 mod tests {
     use super::*;
     use crate::H256;
-    use crate::types::{
-        Block, BlockBody, BlockHeader, ChainConfig, Frame, FrameMode, FrameTransaction, Transaction,
-    };
-    use bytes::Bytes;
+    use crate::types::{Block, BlockBody, BlockHeader, ChainConfig, Transaction};
 
     /// Minimal cancun-active ChainConfig: only cancun_time set (= 0), default
     /// blob schedule (max = 6 blobs per block).
     fn cancun_config() -> ChainConfig {
         ChainConfig {
             cancun_time: Some(0),
-            ..Default::default()
-        }
-    }
-
-    /// A minimal FrameTransaction with the given number of blob versioned hashes.
-    fn frame_tx_with_blobs(n_blobs: usize) -> FrameTransaction {
-        FrameTransaction {
-            chain_id: 0,
-            nonce: 0,
-            sender: Default::default(),
-            frames: vec![Frame {
-                mode: FrameMode::Default as u8,
-                flags: 0x00,
-                target: None,
-                gas_limit: 0,
-                value: Default::default(),
-                data: Bytes::new(),
-            }],
-            signatures: vec![],
-            max_priority_fee_per_gas: 0,
-            max_fee_per_gas: 0,
-            max_fee_per_blob_gas: Default::default(),
-            blob_versioned_hashes: (0..n_blobs).map(|_| H256::zero()).collect(),
             ..Default::default()
         }
     }
