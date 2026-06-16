@@ -725,14 +725,26 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        // The parallel Amsterdam validation path uses the header BAL directly
-                        // to drive execution; it doesn't rebuild a BAL, so produced_bal is None.
-                        // BAL correctness on that path is enforced inside
-                        // execute_block_pipeline (header-BAL index/size/withdrawal-index
-                        // checks plus unread_storage_reads / unaccessed_pure_accounts).
-                        // The sequential Amsterdam path rebuilds a BAL and returns
-                        // Some(produced_bal), so the hash check below runs. Pre-Amsterdam
-                        // blocks never record a BAL, so produced_bal is None there too.
+                        // EIP-7928 block_access_list_hash commitment check.
+                        //
+                        // Sequential Amsterdam path: rebuilds a BAL and returns
+                        // Some(produced_bal), so the full hash+index+size check runs here.
+                        //
+                        // Parallel Amsterdam path: uses the header BAL directly to drive
+                        // execution and returns produced_bal = None. The header BAL's
+                        // index/size are already validated inside execute_block_pipeline,
+                        // and content-equivalence (unread_storage_reads /
+                        // unaccessed_pure_accounts) plus the state_root comparison prove the
+                        // header BAL is the canonical one. The one thing those checks do NOT
+                        // bind is the header commitment itself, so we must compare
+                        // keccak(rlp(header_bal)) against header.block_access_list_hash here;
+                        // otherwise a block with a content-valid BAL but a forged commitment
+                        // is accepted on this path while every spec-conformant client (and
+                        // our own sequential/batch paths) rejects it. This is a pure hash
+                        // compare on a BAL already in memory; the parallel exec optimization
+                        // (no BAL rebuild) is preserved.
+                        //
+                        // Pre-Amsterdam blocks never record a BAL, so both arms are skipped.
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -740,6 +752,11 @@ impl Blockchain {
                                 bal,
                                 block.body.transactions.len(),
                             )?;
+                        } else if let Some(header_bal) = bal
+                            && chain_config.is_amsterdam_activated(block.header.timestamp)
+                            && !header_bal.matches_commitment(block.header.block_access_list_hash)
+                        {
+                            return Err(InvalidBlockError::BlockAccessListHashMismatch.into());
                         }
 
                         let exec_end_instant = Instant::now();
@@ -1057,10 +1074,12 @@ impl Blockchain {
 
     /// Validation path synthesizes `BalSynthesisItem`s from the input BAL pre-execution and
     /// merkleizes optimistically in parallel with EVM execution. Two gates guard the result:
-    /// (1) `validate_block_access_list_hash` against the produced BAL post-execution, and
-    /// (2) the downstream `state_root` comparison against the block header. A missing
-    /// `produced_bal` on this path is treated as a hard error so gate (1) is never silently
-    /// skipped. On any mismatch the optimistic merkle output is discarded via `?` on the
+    /// (1) the EIP-7928 `block_access_list_hash` commitment check, and
+    /// (2) the downstream `state_root` comparison against the block header. The parallel
+    /// path returns `produced_bal = None` (the header BAL drives execution rather than being
+    /// rebuilt), so gate (1) compares `keccak(rlp(header_bal))` against the header commitment
+    /// directly in the execution thread; the sequential path runs the same gate against the
+    /// rebuilt BAL. On any mismatch the optimistic merkle output is discarded via `?` on the
     /// execution thread's join result.
     #[instrument(
         level = "trace",
