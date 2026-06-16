@@ -139,6 +139,14 @@ pub enum MempoolError {
     FrameTxVerifyGasBudgetExceeded,
     #[error("A pending frame transaction from this sender is already in the pool")]
     FrameTxSenderAlreadyPending,
+    #[error("Frame transaction validation-prefix simulation failed: {0}")]
+    FrameTxValidationFailed(String),
+    #[error("Frame transaction paymaster has insufficient balance to cover the reserved max cost")]
+    FrameTxPaymasterUnderfunded,
+    #[error(
+        "Non-canonical paymaster already sponsors the maximum number of pending frame transactions"
+    )]
+    FrameTxNonCanonicalPaymasterLimit,
 }
 
 impl From<FrameValidationError> for MempoolError {

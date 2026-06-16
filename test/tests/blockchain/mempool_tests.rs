@@ -6,7 +6,9 @@ use ethrex_blockchain::constants::{
     TX_INIT_CODE_WORD_GAS_COST,
 };
 use ethrex_blockchain::error::MempoolError;
-use ethrex_blockchain::mempool::{Mempool, transaction_intrinsic_gas};
+use ethrex_blockchain::mempool::{
+    FramePaymasterReservation, Mempool, is_canonical_paymaster, transaction_intrinsic_gas,
+};
 use ethrex_crypto::NativeCrypto;
 use rustc_hash::FxHashMap;
 
@@ -14,12 +16,13 @@ use ethrex_common::types::{
     APPROVE_EXECUTION_AND_PAYMENT, BYTES_PER_BLOB, BlobsBundle, BlockHeader, ChainConfig,
     EIP1559Transaction, EIP4844Transaction, FRAME_SIG_SCHEME_P256, FRAME_SIG_SCHEME_SECP256K1,
     FRAME_TX_EXPIRY_DATA_LENGTH, FRAME_TX_MAX_VERIFY_GAS, Frame, FrameMode, FrameSignature,
-    FrameTransaction, Genesis, MAX_TX_SIZE, MempoolTransaction, Transaction, TxKind,
-    frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
+    FrameTransaction, Genesis, GenesisAccount, MAX_TX_SIZE, MempoolTransaction, Transaction,
+    TxKind, frame_tx_expiry_verifier, kzg_commitment_to_versioned_hash,
 };
 use ethrex_common::{Address, Bytes, H160, H256, U256};
 use ethrex_storage::error::StoreError;
 use ethrex_storage::{EngineType, Store};
+use std::collections::BTreeMap;
 
 const MEMPOOL_MAX_SIZE_TEST: usize = 10_000;
 
@@ -454,10 +457,10 @@ fn test_filter_mempool_transactions() {
     let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
     let filter = |tx: &Transaction| -> bool { matches!(tx, Transaction::EIP4844Transaction(_)) };
     mempool
-        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone())
+        .add_transaction(blob_tx_hash, blob_tx_sender, blob_tx.clone(), None)
         .unwrap();
     mempool
-        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx)
+        .add_transaction(plain_tx_hash, plain_tx_sender, plain_tx, None)
         .unwrap();
     let txs = mempool.filter_transactions_with_filter_fn(&filter).unwrap();
     assert_eq!(
@@ -489,9 +492,24 @@ fn blobs_bundle_loadtest() {
 // EIP-8141 frame transaction mempool admission tests
 // ---------------------------------------------------------------------------
 
+/// The address used as the sender by [`minimal_valid_frame_tx`]. Genesis seeds
+/// it with APPROVE(scope=3) code so its `self_verify` validation prefix
+/// establishes a payer (itself, OQ2) during admission simulation.
+const FRAME_TX_SELF_SENDER: u64 = 0xABCD;
+
+/// APPROVE(scope) then STOP: `PUSH1 scope; PUSH1 0; PUSH1 0; APPROVE; STOP`.
+/// A VERIFY frame whose target runs this code calls APPROVE with the given
+/// scope, which is what the validation-prefix simulation requires to recognize
+/// a payer (an empty/codeless target would establish none and be rejected).
+fn approve_code(scope: u8) -> Bytes {
+    Bytes::from(vec![0x60, scope, 0x60, 0x00, 0x60, 0x00, 0xAA, 0x00])
+}
+
 /// In-memory store whose genesis head has the Hegota fork active (so frame txs
 /// pass the FrameTxPreFork gate) and a real state trie root (so account lookups
-/// during admission succeed instead of erroring on a missing trie root).
+/// during admission succeed instead of erroring on a missing trie root). The
+/// `minimal_valid_frame_tx` sender is seeded with APPROVE(3) code so its
+/// `self_verify` prefix simulation establishes a payer and is admitted.
 async fn setup_hegota_store() -> Store {
     let genesis = Genesis {
         config: ChainConfig {
@@ -501,6 +519,17 @@ async fn setup_hegota_store() -> Store {
             ..Default::default()
         },
         gas_limit: 100_000_000,
+        alloc: [(
+            Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+            GenesisAccount {
+                code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                storage: BTreeMap::new(),
+                balance: U256::zero(),
+                nonce: 0,
+            },
+        )]
+        .into_iter()
+        .collect(),
         ..Default::default()
     };
     let mut store = Store::new("hegota-test", EngineType::InMemory).expect("Storage setup");
@@ -596,6 +625,83 @@ async fn mempool_accepts_small_frame_tx() {
         validation.await.is_ok(),
         "minimal valid frame tx should be admitted"
     );
+}
+
+#[test]
+fn frame_tx_reservation_maps_clear_after_add_and_remove() {
+    // EIP-8141 task 3.2: a frame tx's reservation must be fully accounted on
+    // insert across ALL four tracking maps, and the single removal path must
+    // clean every one of them (no leak, no double-decrement). Drive the
+    // `Mempool` directly so we can assert the map sizes before and after.
+    let mempool = Mempool::new(MEMPOOL_MAX_SIZE_TEST);
+    let frame_tx = minimal_valid_frame_tx();
+    let sender = frame_tx.sender;
+    let paymaster = sender; // self-funded self_verify: payer == sender (OQ2)
+    let tx = Transaction::FrameTransaction(frame_tx);
+    let hash = tx.hash();
+
+    // Every map starts empty.
+    assert_eq!(
+        mempool.frame_tracking_map_sizes().unwrap(),
+        (0, 0, 0, 0),
+        "frame tracking maps must start empty"
+    );
+
+    let reservation = FramePaymasterReservation {
+        paymaster,
+        reserved_cost: U256::from(1_000u64),
+        is_canonical: false,
+        paymaster_balance: U256::from(1_000_000u64),
+    };
+    mempool
+        .add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(tx, sender),
+            Some(reservation),
+        )
+        .expect("add frame tx with reservation");
+
+    // After insert all four maps carry exactly one entry.
+    assert_eq!(
+        mempool.frame_tracking_map_sizes().unwrap(),
+        (1, 1, 1, 1),
+        "all four frame tracking maps must record the pending frame tx"
+    );
+    assert_eq!(
+        mempool.reserved_pending_cost(paymaster).unwrap(),
+        U256::from(1_000u64)
+    );
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(paymaster).unwrap(),
+        1
+    );
+
+    // Removal through the single removal path cleans every map.
+    mempool.remove_transaction(&hash).expect("remove frame tx");
+    assert_eq!(
+        mempool.frame_tracking_map_sizes().unwrap(),
+        (0, 0, 0, 0),
+        "all four frame tracking maps must return to empty after removal"
+    );
+    assert_eq!(
+        mempool.reserved_pending_cost(paymaster).unwrap(),
+        U256::zero()
+    );
+    assert_eq!(
+        mempool.noncanonical_paymaster_pending(paymaster).unwrap(),
+        0
+    );
+}
+
+#[test]
+fn is_canonical_paymaster_is_false_for_all_codes_oq1_interim() {
+    // OQ1 interim: no canonical paymaster bytecode is pinned, so every paymaster
+    // is treated as non-canonical. This guards the documented interim until the
+    // canonical code hash is resolved upstream.
+    assert!(!is_canonical_paymaster(&[]));
+    assert!(!is_canonical_paymaster(&[0x60, 0x00]));
+    assert!(!is_canonical_paymaster(&[0xAA; 64]));
 }
 
 #[tokio::test]
@@ -737,6 +843,38 @@ async fn setup_hegota_store_ts1000() -> Store {
         },
         gas_limit: 100_000_000,
         timestamp: 1000, // head.timestamp == 1000
+        alloc: [
+            (
+                Address::from_low_u64_be(FRAME_TX_SELF_SENDER),
+                GenesisAccount {
+                    code: approve_code(APPROVE_EXECUTION_AND_PAYMENT),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+            (
+                frame_tx_expiry_verifier(),
+                GenesisAccount {
+                    // Canonical EIP-8141 expiry verifier runtime bytecode (spec
+                    // commit 0b197156): reverts unless calldata is exactly 8
+                    // bytes and the 8-byte BE deadline is >= block.timestamp.
+                    // Seeded so the interleaved expiry-verifier frame executes
+                    // (instead of hitting codeless default code) during the
+                    // admission simulation.
+                    code: Bytes::from_static(&[
+                        0x60, 0x08, 0x36, 0x14, 0x60, 0x0a, 0x57, 0x5f, 0x5f, 0xfd, 0x5b, 0x5f,
+                        0x35, 0x60, 0xc0, 0x1c, 0x42, 0x11, 0x60, 0x16, 0x57, 0x00, 0x5b, 0x5f,
+                        0x5f, 0xfd,
+                    ]),
+                    storage: BTreeMap::new(),
+                    balance: U256::zero(),
+                    nonce: 0,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
         ..Default::default()
     };
     let mut store = Store::new("hegota-ts1000-test", EngineType::InMemory).expect("Storage setup");
@@ -880,7 +1018,7 @@ fn blobs_bundle_insert_and_remove() {
             .unwrap();
 
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
             .expect("Failed to add blob transaction");
     }
 
@@ -942,6 +1080,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
                 blob_hash,
                 blob_sender,
                 MempoolTransaction::new(blob_tx, blob_sender),
+                None,
             )
             .expect("Failed to add blob transaction");
         blob_hashes.push(blob_hash);
@@ -962,7 +1101,7 @@ fn blob_txs_are_not_evicted_by_regular_tx_flood() {
             H256::random()
         };
         mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
             .expect("Failed to add regular transaction");
     }
 
@@ -1007,7 +1146,7 @@ fn add_blob_tx(mempool: &Mempool, nonce: u64, blob_fee: u64) -> H256 {
     let sender = H160::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
         .expect("Failed to add blob transaction");
     hash
 }
@@ -1030,7 +1169,7 @@ fn add_blob_tx_with_sender(mempool: &Mempool, sender: Address, nonce: u64) -> H2
     let hash = H256::random();
     mempool.add_blobs_bundle(hash, bundle).unwrap();
     mempool
-        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+        .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
         .expect("Failed to add blob transaction");
     hash
 }
@@ -1051,7 +1190,12 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
     });
     let plain_hash = plain.hash();
     mempool
-        .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
+        .add_transaction(
+            plain_hash,
+            sender,
+            MempoolTransaction::new(plain, sender),
+            None,
+        )
         .unwrap();
 
     let mut got = mempool.blob_txs().unwrap();

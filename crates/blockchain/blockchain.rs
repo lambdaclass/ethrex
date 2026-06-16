@@ -94,7 +94,9 @@ use ethrex_vm::backends::CachingDatabase;
 use ethrex_vm::backends::levm::LEVM;
 use ethrex_vm::backends::levm::db::DatabaseLogger;
 use ethrex_vm::{BlockExecutionResult, DynVmDatabase, Evm, EvmError};
-use mempool::Mempool;
+use mempool::{
+    FRAME_CANONICAL_PAYMASTER_CODE_HASH, FramePaymasterReservation, Mempool, is_canonical_paymaster,
+};
 use payload::PayloadOrTask;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::hash_map::Entry;
@@ -2690,15 +2692,21 @@ impl Blockchain {
         let sender = transaction.sender(&NativeCrypto)?;
 
         // Validate transaction
-        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+        let (tx_to_replace, frame_reservation) =
+            self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = tx_to_replace {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
         // Add blobs bundle before the transaction so that when add_transaction
         // notifies payload builders the blob data is already available.
         self.mempool.add_blobs_bundle(hash, blobs_bundle)?;
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            frame_reservation,
+        )?;
         Ok(hash)
     }
 
@@ -2729,13 +2737,19 @@ impl Blockchain {
         }
         let sender = transaction.sender(&NativeCrypto)?;
         // Validate transaction
-        if let Some(tx_to_replace) = self.validate_transaction(&transaction, sender).await? {
+        let (tx_to_replace, frame_reservation) =
+            self.validate_transaction(&transaction, sender).await?;
+        if let Some(tx_to_replace) = tx_to_replace {
             self.remove_transaction_from_pool(&tx_to_replace)?;
         }
 
         // Add transaction to storage
-        self.mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(transaction, sender))?;
+        self.mempool.add_transaction(
+            hash,
+            sender,
+            MempoolTransaction::new(transaction, sender),
+            frame_reservation,
+        )?;
 
         Ok(hash)
     }
@@ -2783,6 +2797,105 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Re-simulate pending frame transactions (EIP-8141) whose validity may have
+    /// changed because of a newly canonical `block`, evicting any that no longer
+    /// pass. A local peer policy: it never affects consensus or block-building.
+    ///
+    /// Included frame txs are already released by
+    /// `remove_block_transactions_from_pool`, so this only revisits txs that are
+    /// still pending. To bound the work, it builds the set of accounts the block
+    /// could have mutated (every tx's sender and `Call` target, the block's
+    /// coinbase, and every withdrawal recipient) and re-simulates a pending frame
+    /// tx only when its sender, one of its touched sender storage slots' owning
+    /// account (the sender, since SLOAD/SSTORE are sender-restricted), or its
+    /// referenced paymaster falls in that set. When no frame tx is pending the
+    /// whole pass is a no-op.
+    ///
+    /// Evictions go through the normal removal path
+    /// (`remove_transaction_with_lock`), which cleans every reservation map.
+    ///
+    /// Reorg re-add of reservations for re-queued txs is OUT OF SCOPE: txs from a
+    /// re-orged-out block are not re-admitted here, so their reservations are not
+    /// reconstructed (ties to existing TODO #797). A subsequent re-submission
+    /// re-runs full admission and re-reserves.
+    pub fn revalidate_frame_txs_after_block(&self, block: &Block) -> Result<(), StoreError> {
+        let pending = self.mempool.pending_frame_txs()?;
+        // No-op when no frame tx is pending.
+        if pending.is_empty() {
+            return Ok(());
+        }
+
+        // Re-simulate every pending frame tx against the new head. We do NOT try
+        // to narrow the set to "accounts the block touched": a pending tx's
+        // sender storage can change via an internal CALL from an unrelated block
+        // tx, so a candidate set derived from tx envelopes (senders, Call
+        // targets) would miss those and under-evict. Frame txs are bounded to
+        // ~one per sender, so an unconditional rescan is cheap, and the policy's
+        // invariant (never under-reject) takes precedence over the optimization.
+        //
+        // The head to simulate against is the just-applied block (its header
+        // carries the post-execution state root).
+        for (hash, _sender, _paymaster) in pending {
+            let Some(mempool_tx) = self.mempool.get_mempool_transaction_by_hash(hash)? else {
+                continue;
+            };
+            let tx = mempool_tx.transaction().clone();
+            let Transaction::FrameTransaction(frame_tx) = &tx else {
+                continue;
+            };
+
+            // Drop a tx whose expiry deadline is now behind the new head.
+            if frame_tx
+                .expiry_deadline()
+                .is_some_and(|deadline| deadline < block.header.timestamp)
+            {
+                self.mempool.remove_transaction(&hash)?;
+                continue;
+            }
+
+            // Re-derive the prefix and re-simulate against the new head state.
+            let prefix = match frame_tx.validation_prefix() {
+                Ok(prefix) => prefix,
+                Err(_) => {
+                    // Structurally invalid against the current rules: evict.
+                    self.mempool.remove_transaction(&hash)?;
+                    continue;
+                }
+            };
+
+            let evict = match StoreVmDatabase::new(self.storage.clone(), block.header.clone()) {
+                Ok(vm_db) => match self.new_evm(vm_db) {
+                    Ok(mut vm) => {
+                        match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None)
+                        {
+                            // Simulation passed: keep the tx. Availability is
+                            // re-checked lazily at the next block; an over-funded
+                            // paymaster draining is caught by the next pass or at
+                            // inclusion, never under-rejected here.
+                            Ok(outcome) => !outcome.passed,
+                            // A simulation error means the prefix can no longer be
+                            // validated against the new state: evict (conservative).
+                            Err(_) => true,
+                        }
+                    }
+                    Err(_) => true,
+                },
+                Err(err) => {
+                    // State unavailable for this head: do not evict (avoid
+                    // under-rejecting on a transient read failure); log and skip.
+                    warn!("Failed to build head-state VM for frame-tx revalidation: {err}");
+                    false
+                }
+            };
+
+            if evict {
+                self.mempool.remove_transaction(&hash)?;
+            }
+        }
+
+        Ok(())
+    }
+
     /*
 
     SOME VALIDATIONS THAT WE COULD INCLUDE
@@ -2814,16 +2927,20 @@ impl Blockchain {
     5. Ensure the transactor is able to add a new transaction. The number of transactions sent by an account may be limited by a certain configured value
 
     */
-    /// Returns the hash of the transaction to replace in case the nonce already exists
+    /// Returns the hash of the transaction to replace in case the nonce already
+    /// exists, plus the paymaster reservation to apply on insert for frame
+    /// transactions (EIP-8141). The reservation is computed here but applied in
+    /// the locked section of `add_transaction`, so a frame tx that fails any
+    /// later admission check never leaks a reservation.
     pub async fn validate_transaction(
         &self,
         tx: &Transaction,
         sender: Address,
-    ) -> Result<Option<H256>, MempoolError> {
+    ) -> Result<(Option<H256>, Option<FramePaymasterReservation>), MempoolError> {
         let nonce = tx.nonce();
 
         if matches!(tx, &Transaction::PrivilegedL2Transaction(_)) {
-            return Ok(None);
+            return Ok((None, None));
         }
 
         // Frame transactions: skip balance/EOA checks (payer unknown until execution)
@@ -2855,6 +2972,11 @@ impl Blockchain {
             return Err(MempoolError::FrameTxExpired);
         }
 
+        // Paymaster reservation to apply on insert (EIP-8141). Computed below for
+        // frame txs after simulation + availability pass; `None` for every other
+        // tx type and threaded to the locked insert in `add_transaction`.
+        let mut frame_reservation: Option<FramePaymasterReservation> = None;
+
         if let Transaction::FrameTransaction(frame_tx) = tx {
             // EIP-8141 static constraints at admission (mirrors the VM check)
             // so malformed frame txs never occupy pool slots.
@@ -2879,7 +3001,8 @@ impl Blockchain {
             // signature-verification cost alone exceeds the budget — such a tx can
             // never satisfy the validation-prefix gas limit, and this bounds the
             // crypto work done by validate_frame_signatures below. (The full
-            // validation-prefix simulation policy is not yet implemented.)
+            // validation-prefix simulation runs below over a throwaway head-state
+            // VM and is the authoritative gas-budget check.)
             if frame_tx.signature_verification_cost()
                 > ethrex_common::types::FRAME_TX_MAX_VERIFY_GAS
             {
@@ -3018,7 +3141,116 @@ impl Blockchain {
             return Err(MempoolError::InvalidChainId(config.chain_id));
         }
 
-        Ok(tx_to_replace_hash)
+        // EIP-8141 §Mempool: run the validation-trace simulation + paymaster
+        // availability accounting LAST, after the cheap stateless and nonce/fee
+        // checks have passed, so a malformed nonce / fee / size never pays for an
+        // EVM simulation.
+        if let Transaction::FrameTransaction(frame_tx) = tx {
+            // Re-derive the (pure) prefix; structural validity was already
+            // checked above, so this cannot fail here.
+            let prefix = frame_tx.validation_prefix().map_err(MempoolError::from)?;
+
+            // Run the validation-trace simulation over a FRESH, throwaway
+            // `StoreVmDatabase` at the canonical head (the same state source the
+            // payload builder uses). This is a local peer policy: it never
+            // touches consensus or block-building, may over-reject, and must
+            // never under-reject. The observer enforces the ERC-7562-style trace
+            // rules; the outcome reports whether the prefix established a payer
+            // within the verify-gas budget and which sender slots / paymaster it
+            // touched.
+            let vm_db = StoreVmDatabase::new(self.storage.clone(), header.clone())
+                .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+            let mut vm = self
+                .new_evm(vm_db)
+                .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+            // OQ1: no canonical paymaster bytecode is resolvable, so no canonical
+            // code hash is passed (the canonical-pay-frame exemption never fires).
+            let outcome = vm
+                .simulate_frame_validation_prefix(tx, &header, &prefix, None)
+                .map_err(|err| MempoolError::FrameTxValidationFailed(err.to_string()))?;
+            if !outcome.passed {
+                return Err(MempoolError::FrameTxValidationFailed(
+                    outcome
+                        .violation
+                        .unwrap_or_else(|| "validation prefix did not pass".to_string()),
+                ));
+            }
+
+            // Paymaster availability accounting (EIP-8141). The simulation
+            // identified the payer (paymaster) and whether its code matched the
+            // canonical paymaster hash (always false today, OQ1). Reserve the
+            // tx's max cost against the paymaster's head balance, summed with all
+            // other pending reservations for that paymaster so concurrently
+            // pending sponsored txs cannot collectively overdraw it.
+            let max_cost = outcome.max_cost;
+            if let Some((paymaster, code_is_canonical)) = outcome.accessed_paymaster {
+                // OQ1: re-derive the canonical flag from the paymaster's head
+                // code so the (currently always-false) determination lives in
+                // one place. The storage read is skipped entirely until the
+                // canonical bytecode hash is pinned upstream (the sentinel),
+                // since `is_canonical_paymaster` can only return false until then.
+                let is_canonical = if FRAME_CANONICAL_PAYMASTER_CODE_HASH == H256::zero() {
+                    code_is_canonical
+                } else {
+                    let paymaster_code = self
+                        .storage
+                        .get_code_by_account_address(header_no, paymaster)
+                        .await?
+                        .map(|code| code.bytecode)
+                        .unwrap_or_default();
+                    code_is_canonical || is_canonical_paymaster(&paymaster_code)
+                };
+
+                let paymaster_balance = self
+                    .storage
+                    .get_account_info(header_no, paymaster)
+                    .await?
+                    .map(|info| info.balance)
+                    .unwrap_or_else(U256::zero);
+                let reserved = self.mempool.reserved_pending_cost(paymaster)?;
+
+                if is_canonical {
+                    // Canonical paymaster: balance minus reservations minus the
+                    // pending withdrawal amount (OQ3: ethrex has no paymaster
+                    // withdrawal queue, so the withdrawal amount is treated as 0)
+                    // must cover the max cost.
+                    let withdrawal_amount = U256::zero();
+                    let available = paymaster_balance
+                        .saturating_sub(reserved)
+                        .saturating_sub(withdrawal_amount);
+                    if available < max_cost {
+                        return Err(MempoolError::FrameTxPaymasterUnderfunded);
+                    }
+                } else {
+                    // Non-canonical paymaster: balance minus reservations must
+                    // cover the max cost, AND at most
+                    // FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER pending txs may
+                    // be sponsored by this paymaster.
+                    let available = paymaster_balance.saturating_sub(reserved);
+                    if available < max_cost {
+                        return Err(MempoolError::FrameTxPaymasterUnderfunded);
+                    }
+                    if self.mempool.noncanonical_paymaster_pending(paymaster)?
+                        >= ethrex_common::types::FRAME_TX_MAX_PENDING_NONCANONICAL_PAYMASTER
+                    {
+                        return Err(MempoolError::FrameTxNonCanonicalPaymasterLimit);
+                    }
+                }
+
+                // Defer the increment to `add_transaction`, which re-checks
+                // availability + the non-canonical limit under the write lock
+                // (this unlocked check is a pre-filter). A tx failing any later
+                // admission check must not leak a reservation.
+                frame_reservation = Some(FramePaymasterReservation {
+                    paymaster,
+                    reserved_cost: max_cost,
+                    is_canonical,
+                    paymaster_balance,
+                });
+            }
+        }
+
+        Ok((tx_to_replace_hash, frame_reservation))
     }
 
     /// Marks the node's chain as up to date with the current chain
@@ -3725,7 +3957,7 @@ mod p2p_serve_tests {
         // exercise only the P2P serve path.
         blockchain
             .mempool
-            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender))
+            .add_transaction(hash, sender, MempoolTransaction::new(tx, sender), None)
             .expect("failed to add frame tx to mempool");
 
         let served = blockchain

@@ -290,6 +290,16 @@ async fn handle_forkchoice(
                     context
                         .blockchain
                         .remove_block_transactions_from_pool(&block)?;
+                    // Re-simulate pending frame txs (EIP-8141) whose validity may
+                    // have changed because of this block, evicting any that no
+                    // longer pass. Best-effort housekeeping (local peer policy):
+                    // a failure must not fail an otherwise-successful FCU, so log
+                    // and continue. Mirrors the stale-blob sweep below.
+                    if let Err(err) = context.blockchain.revalidate_frame_txs_after_block(&block) {
+                        warn!(
+                            "Failed to revalidate pending frame txs from mempool after fork choice: {err}"
+                        );
+                    }
                     // Reset blob sub-pool against on-chain nonces (head-block
                     // pruning above misses stale blobs from non-head blocks).
                     // Best-effort housekeeping: a state-read failure here must
