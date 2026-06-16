@@ -262,25 +262,21 @@ fn block_bloom_matches(
         return false;
     }
 
-    topics.iter().all(|topic_filter| {
-        let allowed: Vec<&H256> = match topic_filter {
-            TopicFilter::Topic(topic) => topic.iter().collect(),
-            TopicFilter::Topics(sub_topics) => {
-                // A `None` alternative means "any topic" at this position, making
-                // the whole position a wildcard: it must not constrain the bloom.
-                // Without this, `topics: [[null, T]]` would skip blocks that match
-                // via the wildcard, dropping valid logs.
-                if sub_topics.iter().any(|t| t.is_none()) {
-                    return true;
-                }
-                sub_topics.iter().flatten().collect()
-            }
-        };
-        // An empty set of allowed topics is a wildcard for this position.
-        allowed.is_empty()
-            || allowed
-                .iter()
-                .any(|topic| bloom.contains_input(BloomInput::Raw(topic.as_bytes())))
+    let topic_in_bloom =
+        |topic: &H256| bloom.contains_input(BloomInput::Raw(topic.as_bytes()));
+    topics.iter().all(|topic_filter| match topic_filter {
+        // A wildcard position imposes no constraint.
+        TopicFilter::Topic(None) => true,
+        TopicFilter::Topic(Some(topic)) => topic_in_bloom(topic),
+        // An empty alternatives list, or one containing any `None`, is a
+        // wildcard for this position (the `None` means "any topic" — without
+        // it, `topics: [[null, T]]` would skip blocks matching via the wildcard
+        // and drop valid logs). Otherwise OR over the concrete alternatives.
+        TopicFilter::Topics(sub_topics) => {
+            sub_topics.is_empty()
+                || sub_topics.iter().any(Option::is_none)
+                || sub_topics.iter().flatten().any(topic_in_bloom)
+        }
     })
 }
 
