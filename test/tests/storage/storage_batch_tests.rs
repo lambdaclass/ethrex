@@ -179,6 +179,65 @@ async fn run_parity_test(engine_type: EngineType) {
     }
 }
 
+/// Effectiveness of the BAL-driven trie-node prefetch (`prefetch_trie_nodes`):
+/// the speculative prefix probes must actually hit the real stored internal
+/// nodes. A key-encoding mismatch (wrong nibble order, stray leaf flag, wrong
+/// `apply_prefix` wrapping) would turn every probe into a bloom miss and warm
+/// nothing, so we assert it hits a substantial node set for a storage-heavy
+/// account plus its state-trie path. The slot keys used here match the genesis
+/// seeding (`H256::from_low_u64_be(i)` == `U256::from(i)` big-endian).
+async fn run_prefetch_effectiveness_test(engine_type: EngineType) {
+    let nonce: u64 = H256::random().to_low_u64_be();
+    let path = format!("trie-prefetch-test-db-{nonce}");
+    if !matches!(engine_type, EngineType::InMemory) && std::path::Path::new(&path).exists() {
+        std::fs::remove_dir_all(&path).expect("clean test db dir");
+    }
+
+    let contract = Address::from_low_u64_be(0xC0FFEE);
+    let mut store = Store::new(&path, engine_type).expect("create test store");
+    let genesis = seed_genesis(contract);
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+
+    let slots: Vec<(Address, H256)> = (0..POPULATED_SLOTS)
+        .map(|i| (contract, H256::from_low_u64_be(i)))
+        .collect();
+    let accounts = vec![contract];
+
+    let hits = store
+        .prefetch_trie_nodes(&slots, &accounts)
+        .expect("prefetch trie nodes");
+
+    // A correct encoding warms the storage trie's branch nodes (hundreds for
+    // 2048 random-hashed slots) plus the contract's state-trie path. A broken
+    // encoding hits at most the two root nodes (depth 0). 64 cleanly separates
+    // the two outcomes.
+    assert!(
+        hits >= 64,
+        "trie-node prefetch hit only {hits} real nodes for {POPULATED_SLOTS} slots; \
+         expected hundreds. A near-zero count means the probe key encoding does \
+         not match the stored node keys"
+    );
+
+    drop(store);
+    if !matches!(engine_type, EngineType::InMemory) && std::path::Path::new(&path).exists() {
+        std::fs::remove_dir_all(&path).expect("clean test db dir");
+    }
+}
+
+#[tokio::test]
+async fn trie_node_prefetch_effectiveness_in_memory() {
+    run_prefetch_effectiveness_test(EngineType::InMemory).await;
+}
+
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn trie_node_prefetch_effectiveness_rocksdb() {
+    run_prefetch_effectiveness_test(EngineType::RocksDB).await;
+}
+
 #[tokio::test]
 async fn storage_batch_parity_in_memory() {
     run_parity_test(EngineType::InMemory).await;
