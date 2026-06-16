@@ -61,6 +61,8 @@ openvm = [
     "dep:openvm-stark-sdk",
     "dep:openvm-continuations",
 ]
+lambdavm = ["ethrex-guest-program/lambdavm"]
+lambdavm-build-elf = ["lambdavm", "ethrex-guest-program/lambdavm-build-elf"]
 profiling = ["sp1-sdk?/profiling"]
 
 gpu = ["risc0-zkvm?/cuda", "sp1-sdk?/cuda", "openvm-sdk?/cuda"]

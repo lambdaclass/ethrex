@@ -1,4 +1,4 @@
-.PHONY: sp1 risc0 zisk openvm l2-sp1 l2-risc0 l2-zisk l2-openvm clean help
+.PHONY: sp1 risc0 zisk openvm lambdavm l2-sp1 l2-risc0 l2-zisk l2-openvm l2-lambdavm clean help
 
 # Build flags
 CARGO_FLAGS := --release -p ethrex-guest-program
@@ -13,16 +13,18 @@ help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "L1 Targets:"
-	@echo "  sp1       Build SP1 guest"
-	@echo "  risc0     Build RISC0 guest"
-	@echo "  zisk      Build ZisK guest"
-	@echo "  openvm    Build OpenVM guest"
+	@echo "  sp1        Build SP1 guest"
+	@echo "  risc0      Build RISC0 guest"
+	@echo "  zisk       Build ZisK guest"
+	@echo "  openvm     Build OpenVM guest"
+	@echo "  lambdavm   Build LambdaVM guest"
 	@echo ""
 	@echo "L2 Targets:"
-	@echo "  l2-sp1    Build SP1 guest with L2 support"
-	@echo "  l2-risc0  Build RISC0 guest with L2 support"
-	@echo "  l2-zisk   Build ZisK guest with L2 support"
-	@echo "  l2-openvm Build OpenVM guest with L2 support"
+	@echo "  l2-sp1      Build SP1 guest with L2 support"
+	@echo "  l2-risc0    Build RISC0 guest with L2 support"
+	@echo "  l2-zisk     Build ZisK guest with L2 support"
+	@echo "  l2-openvm   Build OpenVM guest with L2 support"
+	@echo "  l2-lambdavm Build LambdaVM guest with L2 support"
 	@echo ""
 	@echo "Options:"
 	@echo "  REPRODUCIBLE=1    Use Docker for reproducible builds"
@@ -45,6 +47,9 @@ zisk:
 openvm:
 	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features openvm-build-elf
 
+lambdavm:
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features lambdavm-build-elf
+
 # L2 targets
 l2-sp1:
 	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features sp1-build-elf,l2
@@ -58,5 +63,8 @@ l2-zisk:
 l2-openvm:
 	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features openvm-build-elf,l2
 
+l2-lambdavm:
+	$(ENV_PREFIX) cargo check $(CARGO_FLAGS) --features lambdavm-build-elf,l2
+
 clean:
-	rm -rf bin/sp1/out bin/risc0/out bin/zisk/out bin/openvm/out
+	rm -rf bin/sp1/out bin/risc0/out bin/zisk/out bin/openvm/out bin/lambdavm/out

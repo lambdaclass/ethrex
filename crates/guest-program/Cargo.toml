@@ -31,6 +31,8 @@ k256 = { workspace = true, optional = true }
 substrate-bn = { version = "0.6.0", optional = true }
 # Must match ZISK_VERSION in .github/actions/install-zisk/action.yml.
 ziskos = { git = "https://github.com/0xPolygonHermez/zisk.git", tag = "v0.16.1", optional = true, default-features = false, features = ["inputcpy"] }
+# Must match LAMBDA_VM_COMMIT in .github/actions/install-lambdavm/action.yml.
+lambda-vm-syscalls = { git = "https://github.com/yetanotherco/lambda_vm.git", rev = "8af4e92e6e75638746fe9924f6bac715ffac9cb6", optional = true }
 
 [build-dependencies]
 hex.workspace = true
@@ -53,6 +55,7 @@ zisk = [
     "ethrex-common/zisk", "ethrex-vm/zisk", "ethrex-l2-common/zisk",
 ]
 openvm = ["dep:k256", "ethrex-l2-common/secp256k1"]
+lambdavm = ["dep:k256", "dep:lambda-vm-syscalls", "ethrex-l2-common/secp256k1"]
 
 # Build-ELF features: base + build tooling for compiling guest ELFs.
 # Used by the prover host. Enabling these triggers the build script which
@@ -61,6 +64,7 @@ sp1-build-elf = ["sp1", "dep:sp1-build", "dep:sp1-sdk"]
 risc0-build-elf = ["risc0", "dep:risc0-build"]
 zisk-build-elf = ["zisk"]
 openvm-build-elf = ["openvm"]
+lambdavm-build-elf = ["lambdavm"]
 
 l2 = []
 eip-8025 = [
