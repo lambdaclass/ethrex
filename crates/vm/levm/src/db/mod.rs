@@ -272,14 +272,16 @@ impl Database for CachingDatabase {
         // collapses (a sorted serial multi_get regressed bloated SLOAD ~4.5x).
         // The sharded batch path restores it (sorted shards share RocksDB data
         // blocks and run at high queue depth) and hardens validation against
-        // storage-bloat DoS. It costs ~28% on a warm batch, so gate on batch
-        // size. A cold SLOAD is 2100 gas, so a block reaches at most
-        // ~gas_limit/2100 distinct slots: ~28.6k at today's 60M limit and ~47.6k
-        // even at a 100M limit -- both below this gate, so it stays inert on
-        // normal mainnet through Glamsterdam's gas-limit increase, and BAL makes
-        // the large-state-access blocks it targets practical to validate. Scale
-        // this with the gas limit. Tunable.
-        const BLOATED_BATCH_THRESHOLD: usize = 49_152;
+        // storage-bloat DoS. The gate counts MISSING (uncached, i.e. cold) slots,
+        // not total accesses, so a warm block never reaches it however many slots
+        // it touches; that is what keeps the path off normal traffic. The sharded
+        // win is already present once a block has this many cold slots (a cold
+        // benchmark shows ~1.4x at 16k and growing with size), while the warm cost
+        // it trades against is a few ms and effectively cannot fire, since warm
+        // slots are not counted here. 16384 cold slots (~34M gas of cold reads)
+        // sits above ordinary cold-block behavior yet below the large-state blocks
+        // this targets. Tunable.
+        const BLOATED_BATCH_THRESHOLD: usize = 16_384;
 
         let values = if missing.len() >= BLOATED_BATCH_THRESHOLD {
             // Dispatch to inner's batch path. For the rocksdb-backed
