@@ -148,6 +148,32 @@ impl CachingDatabase {
             .map(|&(addr, key)| self.inner.get_storage_value(addr, key))
             .collect()
     }
+
+    /// Per-account parallel point-gets, in `missing` order. Warm-optimal fan-out
+    /// for normal-sized prefetch batches; large batches use the sorted sharded
+    /// multi_get instead (see `prefetch_accounts`).
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn point_get_accounts_many(
+        &self,
+        missing: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        missing
+            .par_iter()
+            .map(|&addr| self.inner.get_account_state(addr))
+            .collect()
+    }
+
+    #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
+    fn point_get_accounts_many(
+        &self,
+        missing: &[Address],
+    ) -> Result<Vec<AccountState>, DatabaseError> {
+        missing
+            .iter()
+            .map(|&addr| self.inner.get_account_state(addr))
+            .collect()
+    }
 }
 
 fn poison_error_to_db_error<T>(err: PoisonError<T>) -> DatabaseError {
@@ -240,10 +266,21 @@ impl Database for CachingDatabase {
         if missing.is_empty() {
             return Ok(());
         }
-        // Dispatch to inner's batch path. For the rocksdb-backed StoreVmDatabase
-        // this collapses into a single multi_get on ACCOUNT_FLATKEYVALUE for the
-        // FKV-covered subset; default impl loops for other backends.
-        let states = self.inner.get_account_states_batch(&missing)?;
+        // Same gate as `prefetch_storage`: a large set of distinct COLD accounts is
+        // queue-depth bound. The inner batch path on the rocksdb-backed
+        // StoreVmDatabase used a single multi_get (queue depth 1, async_io off),
+        // which collapses on cold account-heavy blocks (coldbench: ~13x slower than
+        // the sharded batch). Route large/cold sets to the (now sharded) batch and
+        // small/warm sets to parallel point-gets. The gate counts MISSING (cold)
+        // accounts, so warm blocks stay on the point-get path however many accounts
+        // they touch. Tunable.
+        const BLOATED_BATCH_THRESHOLD: usize = 16_384;
+
+        let states = if missing.len() >= BLOATED_BATCH_THRESHOLD {
+            self.inner.get_account_states_batch(&missing)?
+        } else {
+            self.point_get_accounts_many(&missing)?
+        };
         let mut cache = self.write_accounts()?;
         for (addr, state) in missing.into_iter().zip(states.into_iter()) {
             cache.entry(addr).or_insert(state);
