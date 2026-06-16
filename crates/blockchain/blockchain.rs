@@ -2833,6 +2833,16 @@ impl Blockchain {
         // ~one per sender, so an unconditional rescan is cheap, and the policy's
         // invariant (never under-reject) takes precedence over the optimization.
         //
+        // TODO: when frame-tx volume warrants it, replace the unconditional
+        // rescan with a sound per-tx input-check: snapshot each tx's validation
+        // read-set at admission (sender account, touched sender storage slots
+        // with values, paymaster account) and here re-read only those at the new
+        // head, re-simulating just the txs whose inputs changed. This needs the
+        // validation observer to record slot values (not only keys). The block's
+        // AccountUpdates are not available at this FCU hook (they are produced
+        // during a prior newPayload execution), so an AccountUpdates-derived set
+        // is not an option here without new per-block persistence.
+        //
         // The head to simulate against is the just-applied block (its header
         // carries the post-execution state root). Build the read-through state
         // view once for the whole pass; `new_evm` gives each tx its own mutable
