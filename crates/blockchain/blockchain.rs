@@ -2834,7 +2834,19 @@ impl Blockchain {
         // invariant (never under-reject) takes precedence over the optimization.
         //
         // The head to simulate against is the just-applied block (its header
-        // carries the post-execution state root).
+        // carries the post-execution state root). Build the read-through state
+        // view once for the whole pass; `new_evm` gives each tx its own mutable
+        // cache, so the per-tx simulations stay isolated. If the head state can't
+        // be opened we keep the simulation step disabled (None) but still apply
+        // the expiry and structural drops below, which don't need state.
+        let vm_db = match StoreVmDatabase::new(self.storage.clone(), block.header.clone()) {
+            Ok(vm_db) => Some(vm_db),
+            Err(err) => {
+                warn!("Failed to build head-state VM for frame-tx revalidation: {err}");
+                None
+            }
+        };
+
         for (hash, _sender, _paymaster) in pending {
             let Some(mempool_tx) = self.mempool.get_mempool_transaction_by_hash(hash)? else {
                 continue;
@@ -2863,29 +2875,26 @@ impl Blockchain {
                 }
             };
 
-            let evict = match StoreVmDatabase::new(self.storage.clone(), block.header.clone()) {
-                Ok(vm_db) => match self.new_evm(vm_db) {
-                    Ok(mut vm) => {
-                        match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None)
-                        {
-                            // Simulation passed: keep the tx. Availability is
-                            // re-checked lazily at the next block; an over-funded
-                            // paymaster draining is caught by the next pass or at
-                            // inclusion, never under-rejected here.
-                            Ok(outcome) => !outcome.passed,
-                            // A simulation error means the prefix can no longer be
-                            // validated against the new state: evict (conservative).
-                            Err(_) => true,
-                        }
+            // Without a head-state view we cannot re-simulate; keep the tx
+            // (don't under-reject on a transient state-read failure). The
+            // expiry and structural drops above already ran.
+            let Some(vm_db) = &vm_db else {
+                continue;
+            };
+            let evict = match self.new_evm(vm_db.clone()) {
+                Ok(mut vm) => {
+                    match vm.simulate_frame_validation_prefix(&tx, &block.header, &prefix, None) {
+                        // Simulation passed: keep the tx. Availability is
+                        // re-checked lazily at the next block; an over-funded
+                        // paymaster draining is caught by the next pass or at
+                        // inclusion, never under-rejected here.
+                        Ok(outcome) => !outcome.passed,
+                        // A simulation error means the prefix can no longer be
+                        // validated against the new state: evict (conservative).
+                        Err(_) => true,
                     }
-                    Err(_) => true,
-                },
-                Err(err) => {
-                    // State unavailable for this head: do not evict (avoid
-                    // under-rejecting on a transient read failure); log and skip.
-                    warn!("Failed to build head-state VM for frame-tx revalidation: {err}");
-                    false
                 }
+                Err(_) => true,
             };
 
             if evict {

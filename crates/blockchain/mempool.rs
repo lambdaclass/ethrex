@@ -151,7 +151,7 @@ struct MempoolInner {
     /// At most one pending frame tx per sender is allowed to avoid ordering
     /// ambiguity and DoS. Populated on insert; cleared on removal.
     /// Must be kept consistent with `remove_transaction_with_lock`.
-    pending_frame_tx_by_sender: FxHashMap<Address, H256>,
+    pending_frame_tx_by_sender: FxHashMap<Address, (H256, u64)>,
     /// Sum of reserved max-cost (TXPARAM 0x06) per paymaster across all pending
     /// frame txs that paymaster sponsors (EIP-8141). Admission checks a
     /// paymaster's balance against this running total so concurrently-pending
@@ -205,7 +205,7 @@ impl MempoolInner {
             if self
                 .pending_frame_tx_by_sender
                 .get(&sender)
-                .is_some_and(|h| h == hash)
+                .is_some_and(|(h, _)| h == hash)
             {
                 self.pending_frame_tx_by_sender.remove(&sender);
             }
@@ -370,38 +370,22 @@ impl MempoolInner {
         nonce: u64,
         incoming_hash: H256,
     ) -> Result<Option<H256>, MempoolError> {
-        let Some(&existing_hash) = self.pending_frame_tx_by_sender.get(&sender) else {
+        let Some(&(existing_hash, existing_nonce)) = self.pending_frame_tx_by_sender.get(&sender)
+        else {
             return Ok(None);
         };
         if existing_hash == incoming_hash {
             // Same tx already in pool (re-announced); not a conflict.
             return Ok(None);
         }
-        let existing_nonce = self
-            .txs_by_sender_nonce
-            .range((sender, 0)..)
-            .take_while(|((s, _), _)| *s == sender)
-            .find(|(_, h)| **h == existing_hash)
-            .map(|((_, n), _)| *n);
-        match existing_nonce {
-            Some(n) if n == nonce => {
-                // Same nonce: the incoming tx is a fee-bump replacement; let
-                // `find_tx_to_replace` validate the price bump.
-                Ok(Some(existing_hash))
-            }
-            Some(_) => {
-                // Different nonce: a live frame tx from this sender is already
-                // pending at a different nonce — reject.
-                Err(MempoolError::FrameTxSenderAlreadyPending)
-            }
-            None => {
-                // Stale entry: the tracked hash is no longer in txs_by_sender_nonce.
-                // All live removal paths go through remove_transaction_with_lock
-                // (which clears pending_frame_tx_by_sender), so this indicates map
-                // drift. Self-heal: permit the incoming tx. The stale entry will be
-                // overwritten at line 414 when the new tx is inserted.
-                Ok(None)
-            }
+        if existing_nonce == nonce {
+            // Same nonce: the incoming tx is a fee-bump replacement; let
+            // `find_tx_to_replace` validate the price bump.
+            Ok(Some(existing_hash))
+        } else {
+            // Different nonce: a live frame tx from this sender is already
+            // pending at a different nonce, reject.
+            Err(MempoolError::FrameTxSenderAlreadyPending)
         }
     }
 }
@@ -543,16 +527,18 @@ impl Mempool {
             }
             inner.txs_order.push_back(hash);
         }
-        inner
-            .txs_by_sender_nonce
-            .insert((sender, transaction.nonce()), hash);
+        let tx_nonce = transaction.nonce();
+        inner.txs_by_sender_nonce.insert((sender, tx_nonce), hash);
         inner.transaction_pool.insert(hash, transaction);
         inner.broadcast_pool.insert(hash);
         inner.alternates.remove(&hash);
 
         // Track per-sender pending frame tx for EIP-8141 admission gating.
+        // Storing the nonce alongside the hash keeps the conflict check O(1).
         if is_frame {
-            inner.pending_frame_tx_by_sender.insert(sender, hash);
+            inner
+                .pending_frame_tx_by_sender
+                .insert(sender, (hash, tx_nonce));
 
             // Increment the paymaster reservation maps for this frame tx. The
             // reservation was computed during admission (validate_transaction)
