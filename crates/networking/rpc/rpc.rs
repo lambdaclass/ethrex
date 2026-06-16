@@ -1196,12 +1196,19 @@ pub async fn map_engine_requests(
         "engine_forkchoiceUpdatedV2" => ForkChoiceUpdatedV2::call(req, context).await,
         "engine_forkchoiceUpdatedV3" => ForkChoiceUpdatedV3::call(req, context).await,
         "engine_forkchoiceUpdatedV4" => ForkChoiceUpdatedV4::call(req, context).await,
+        // The newPayload handlers carry the largest futures of any engine arm
+        // (block execution + optional witness collection). Because this `match`
+        // awaits each arm inline, the future of `map_engine_requests` is sized to
+        // its largest arm and shared by every engine request. Box these arms so
+        // they live on the heap instead of inflating the stack frame that even a
+        // lightweight `forkchoiceUpdated` poll must reserve — otherwise a single
+        // poll overflows the 2 MB tokio worker stack in unoptimized debug builds.
         "engine_newPayloadWithWitnessV5" => {
-            NewPayloadWithWitnessV5Request::call(req, context).await
+            Box::pin(NewPayloadWithWitnessV5Request::call(req, context)).await
         }
-        "engine_newPayloadV5" => NewPayloadV5Request::call(req, context).await,
-        "engine_newPayloadV4" => NewPayloadV4Request::call(req, context).await,
-        "engine_newPayloadV3" => NewPayloadV3Request::call(req, context).await,
+        "engine_newPayloadV5" => Box::pin(NewPayloadV5Request::call(req, context)).await,
+        "engine_newPayloadV4" => Box::pin(NewPayloadV4Request::call(req, context)).await,
+        "engine_newPayloadV3" => Box::pin(NewPayloadV3Request::call(req, context)).await,
         "engine_newPayloadV2" => NewPayloadV2Request::call(req, context).await,
         "engine_newPayloadV1" => NewPayloadV1Request::call(req, context).await,
         "engine_exchangeTransitionConfigurationV1" => {
