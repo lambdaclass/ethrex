@@ -16,6 +16,21 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::collections::HashSet;
 
+/// Maximum number of blocks a single `eth_getLogs` / `eth_getFilterChanges`
+/// query may span. Without it, one request resolves an attacker-chosen
+/// `fromBlock..=toBlock` and materializes a `Vec<RpcLog>` (plus a second
+/// `serde_json::Value` copy) over the whole range, with no upper bound on
+/// memory. Mirrors the range caps other clients ship (Besu 5_000, Erigon
+/// 1_000, reth 100_000) and the existing `MAX_BLOCK_COUNT` guard used by
+/// `eth_feeHistory`. `0` disables the cap.
+pub const MAX_BLOCK_RANGE: u64 = 5_000;
+
+/// Maximum number of logs a single query may accumulate before it is rejected
+/// with a paginatable error. Bounds peak memory independently of the block
+/// span and matches the de-facto default across reth, Nethermind and Erigon
+/// (20_000). `0` disables the cap.
+pub const MAX_LOGS_PER_RESPONSE: usize = 20_000;
+
 #[derive(Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum AddressFilter {
@@ -136,6 +151,14 @@ pub(crate) async fn fetch_logs_with_filter(
     if (from..=to).is_empty() {
         return Err(RpcErr::BadParams("Empty range".to_string()));
     }
+    // Bound the block span before touching the database so a single request
+    // cannot force an unbounded `Vec<RpcLog>` over an attacker-chosen range.
+    if MAX_BLOCK_RANGE != 0 && to - from + 1 > MAX_BLOCK_RANGE {
+        return Err(RpcErr::BadParams(format!(
+            "Block range too large: requested {} blocks ({from}..={to}), max is {MAX_BLOCK_RANGE}. Split the query into smaller ranges.",
+            to - from + 1
+        )));
+    }
     let address_filter: HashSet<_> = match &filter.address_filters {
         Some(AddressFilter::Single(address)) => std::iter::once(address).collect(),
         Some(AddressFilter::Many(addresses)) => addresses.iter().collect(),
@@ -192,6 +215,15 @@ pub(crate) async fn fetch_logs_with_filter(
                     block_log_index += 1;
                 }
             }
+        }
+        // Bound peak memory: stop accumulating once the (address-filtered)
+        // result set exceeds the cap and return a paginatable error pointing
+        // at the block reached, so the caller can split the query.
+        if MAX_LOGS_PER_RESPONSE != 0 && logs.len() > MAX_LOGS_PER_RESPONSE {
+            return Err(RpcErr::BadParams(format!(
+                "Query exceeds the maximum of {MAX_LOGS_PER_RESPONSE} logs (range {from}..={block_num} already matched {}). Narrow the block range or add address/topic filters.",
+                logs.len()
+            )));
         }
     }
     // Now that we have the logs filtered by address,
@@ -279,5 +311,43 @@ mod tests {
             "{request:?}"
         );
         assert_eq!(request.topics, vec![TopicFilter::Topic(Some(H256::zero()))]);
+    }
+
+    #[tokio::test]
+    async fn get_logs_rejects_oversized_block_range() {
+        use ethrex_storage::{EngineType, Store};
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        // `Number(_)` resolves without touching the DB, so the range cap is hit
+        // before any block access.
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(0),
+            to_block: BlockIdentifier::Number(MAX_BLOCK_RANGE + 5),
+            address_filters: None,
+            topics: vec![],
+        };
+        let err = fetch_logs_with_filter(&filter, storage).await.unwrap_err();
+        assert!(
+            matches!(err, RpcErr::BadParams(_)),
+            "expected BadParams, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_logs_allows_max_block_range() {
+        use ethrex_storage::{EngineType, Store};
+        let storage = Store::new("in-mem", EngineType::InMemory).unwrap();
+        // Exactly MAX_BLOCK_RANGE blocks (1..=MAX_BLOCK_RANGE) is allowed; it
+        // fails later on the missing body, not on the range guard.
+        let filter = LogsFilter {
+            from_block: BlockIdentifier::Number(1),
+            to_block: BlockIdentifier::Number(MAX_BLOCK_RANGE),
+            address_filters: None,
+            topics: vec![],
+        };
+        let err = fetch_logs_with_filter(&filter, storage).await.unwrap_err();
+        assert!(
+            matches!(&err, RpcErr::Internal(msg) if msg.contains("body")),
+            "expected to pass the range guard and fail on missing body, got {err:?}"
+        );
     }
 }

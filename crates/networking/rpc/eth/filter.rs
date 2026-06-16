@@ -20,6 +20,14 @@ use serde_json::{Value, json};
 
 use super::logs::{LogsFilter, fetch_logs_with_filter};
 
+/// Maximum number of concurrently-installed `eth_*` filters across all callers.
+/// The filter registry is process-global and, unlike WebSocket subscriptions
+/// (capped at `MAX_TOTAL_SUBSCRIPTIONS`), HTTP filters are not tied to a
+/// connection — so without this bound a client can install unbounded filters
+/// and keep them alive past the inactivity TTL by polling. Mirrors the
+/// subscription total to keep the two surfaces symmetric.
+pub const MAX_ACTIVE_FILTERS: usize = 10_000;
+
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
     pub request_data: LogsFilter,
@@ -95,6 +103,14 @@ impl NewFilterRequest {
             filters.clear_poison();
             poisoned_guard.into_inner()
         });
+        // Cap the global filter registry. HTTP filters are not connection-scoped,
+        // so this is the only bound on how many a client can accumulate (a polled
+        // filter never hits the inactivity TTL).
+        if active_filters_guard.len() >= MAX_ACTIVE_FILTERS {
+            return Err(RpcErr::Internal(format!(
+                "Active filter limit reached ({MAX_ACTIVE_FILTERS}); uninstall unused filters with eth_uninstallFilter before creating new ones"
+            )));
+        }
         active_filters_guard.insert(
             id,
             (
@@ -601,5 +617,57 @@ mod tests {
         );
 
         server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn new_filter_rejected_at_capacity() {
+        use super::{MAX_ACTIVE_FILTERS, NewFilterRequest};
+        use crate::utils::RpcErr;
+
+        let mut storage = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        let genesis: Genesis =
+            serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
+        storage
+            .add_initial_state(genesis)
+            .await
+            .expect("Fatal: could not add test genesis");
+
+        // Pre-fill the registry to capacity.
+        let mut map = HashMap::new();
+        for i in 0..MAX_ACTIVE_FILTERS as u64 {
+            map.insert(
+                i,
+                (
+                    Instant::now(),
+                    PollableFilter {
+                        last_block_number: 0,
+                        filter_data: LogsFilter {
+                            from_block: BlockIdentifier::Number(0),
+                            to_block: BlockIdentifier::Number(0),
+                            address_filters: None,
+                            topics: vec![],
+                        },
+                    },
+                ),
+            );
+        }
+        let filters: ActiveFilters = Arc::new(Mutex::new(map));
+
+        let req = NewFilterRequest {
+            request_data: LogsFilter {
+                from_block: BlockIdentifier::Number(0),
+                to_block: BlockIdentifier::Number(0),
+                address_filters: None,
+                topics: vec![],
+            },
+        };
+        let err = req
+            .handle(storage, filters.clone())
+            .await
+            .expect_err("filter creation must be refused at capacity");
+        assert!(matches!(err, RpcErr::Internal(_)), "got {err:?}");
+        // The registry did not grow past the cap.
+        assert_eq!(filters.lock().unwrap().len(), MAX_ACTIVE_FILTERS);
     }
 }
