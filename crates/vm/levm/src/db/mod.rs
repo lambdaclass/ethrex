@@ -3,8 +3,6 @@ use ethrex_common::{
     Address, H256, U256,
     types::{AccountState, ChainConfig, Code, CodeMetadata},
 };
-#[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
 use std::sync::{Arc, OnceLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
@@ -36,6 +34,17 @@ pub trait Database: Send + Sync {
         addresses
             .iter()
             .map(|a| self.get_account_state(*a))
+            .collect()
+    }
+    /// Batch storage-slot lookup. Default: loop. Backends with a batched read
+    /// path (e.g. rocksdb `multi_get_cf` on the storage flat key-value table)
+    /// should override this and the caching layer above will dispatch to it.
+    fn get_storage_values_batch(
+        &self,
+        keys: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        keys.iter()
+            .map(|&(addr, key)| self.get_storage_value(addr, key))
             .collect()
     }
     /// Prefetch a batch of accounts into the cache. Default: sequential fallback.
@@ -112,6 +121,32 @@ impl CachingDatabase {
 
     fn write_code(&self) -> Result<RwLockWriteGuard<'_, CodeCache>, DatabaseError> {
         self.code.write().map_err(poison_error_to_db_error)
+    }
+
+    /// Per-slot parallel point-gets, in `missing` order. Warm-optimal fan-out
+    /// for normal-sized prefetch batches; bloated batches use the sorted batch
+    /// multi_get instead (see `prefetch_storage`).
+    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
+    fn point_get_storage_many(
+        &self,
+        missing: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+        missing
+            .par_iter()
+            .map(|&(addr, key)| self.inner.get_storage_value(addr, key))
+            .collect()
+    }
+
+    #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
+    fn point_get_storage_many(
+        &self,
+        missing: &[(Address, H256)],
+    ) -> Result<Vec<U256>, DatabaseError> {
+        missing
+            .iter()
+            .map(|&(addr, key)| self.inner.get_storage_value(addr, key))
+            .collect()
     }
 }
 
@@ -216,19 +251,49 @@ impl Database for CachingDatabase {
         Ok(())
     }
 
-    #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
     fn prefetch_storage(&self, keys: &[(Address, H256)]) -> Result<(), DatabaseError> {
-        // Fetch from inner in parallel (no lock contention), then single write-lock to populate cache.
-        let fetched: Vec<((Address, H256), U256)> = keys
-            .par_iter()
-            .map(|&(addr, key)| {
-                self.inner
-                    .get_storage_value(addr, key)
-                    .map(|v| ((addr, key), v))
-            })
-            .collect::<Result<_, _>>()?;
+        // Filter out already-cached slots before issuing the batch read.
+        let missing: Vec<(Address, H256)> = {
+            let cache = self.read_storage()?;
+            keys.iter()
+                .copied()
+                .filter(|k| !cache.contains_key(k))
+                .collect()
+        };
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // Warm is the common case: a normal block touches relatively few storage
+        // slots and they are usually cache-resident, where per-slot point-gets
+        // (parallel fan-out) are warm-optimal. A block that instead reads a large
+        // number of distinct COLD slots is queue-depth bound: a per-slot fan-out
+        // is capped at ncpu reads in flight, and a single serial multi_get runs
+        // at queue depth 1 (async_io is off in our build), so cold throughput
+        // collapses (a sorted serial multi_get regressed bloated SLOAD ~4.5x).
+        // The sharded batch path restores it (sorted shards share RocksDB data
+        // blocks and run at high queue depth) and hardens validation against
+        // storage-bloat DoS. The gate counts MISSING (uncached, i.e. cold) slots,
+        // not total accesses, so a warm block never reaches it however many slots
+        // it touches; that is what keeps the path off normal traffic. The sharded
+        // win is already present once a block has this many cold slots (a cold
+        // benchmark shows ~1.4x at 16k and growing with size), while the warm cost
+        // it trades against is a few ms and effectively cannot fire, since warm
+        // slots are not counted here. 16384 cold slots (~34M gas of cold reads)
+        // sits above ordinary cold-block behavior yet below the large-state blocks
+        // this targets. Tunable.
+        const BLOATED_BATCH_THRESHOLD: usize = 16_384;
+
+        let values = if missing.len() >= BLOATED_BATCH_THRESHOLD {
+            // Dispatch to inner's batch path. For the rocksdb-backed
+            // StoreVmDatabase this is a sharded parallel multi_get on
+            // STORAGE_FLATKEYVALUE for the FKV-covered subset; the default impl
+            // loops for other backends.
+            self.inner.get_storage_values_batch(&missing)?
+        } else {
+            self.point_get_storage_many(&missing)?
+        };
         let mut cache = self.write_storage()?;
-        for (key, value) in fetched {
+        for (key, value) in missing.into_iter().zip(values.into_iter()) {
             cache.entry(key).or_insert(value);
         }
         Ok(())
