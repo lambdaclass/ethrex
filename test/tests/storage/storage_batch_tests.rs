@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
-    types::{Genesis, GenesisAccount},
+    types::{AccountState, Genesis, GenesisAccount},
 };
 use ethrex_storage::{EngineType, Store, hash_address};
 
@@ -247,4 +247,126 @@ async fn storage_batch_parity_in_memory() {
 #[tokio::test]
 async fn storage_batch_parity_rocksdb() {
     run_parity_test(EngineType::RocksDB).await;
+}
+
+// ---- account-batch parity ----
+//
+// `Store::get_account_states_batch_by_root` (the sharded account prefetch read)
+// must return byte-identical results to the per-account single-get path
+// (`get_account_state_by_root`) the executor reads through, across both the
+// FKV-swept (sharded multi_get) and FKV-unswept (trie fallback) states.
+
+/// Enough seeded accounts that the FKV batch spans several 256-key shards
+/// (interleaved with absent addresses doubles the query set), exercising the
+/// parallel-shard path rather than only the single-shard fallback.
+const POPULATED_ACCOUNTS: u64 = 2048;
+
+/// Genesis with `POPULATED_ACCOUNTS` non-empty EOAs at distinct addresses, each
+/// with a distinct nonzero balance and nonce so a key/value swap is caught.
+fn seed_genesis_accounts() -> (Genesis, Vec<Address>) {
+    const GENESIS_EXECUTION_API: &str =
+        include_str!("../../../fixtures/genesis/execution-api.json");
+    let mut genesis: Genesis =
+        serde_json::from_str(GENESIS_EXECUTION_API).expect("deserialize execution-api genesis");
+
+    let mut addrs = Vec::with_capacity(POPULATED_ACCOUNTS as usize);
+    for i in 0..POPULATED_ACCOUNTS {
+        let addr = Address::from_low_u64_be(0x0010_0000 + i);
+        genesis.alloc.insert(
+            addr,
+            GenesisAccount {
+                balance: U256::from(i) + U256::from(1),
+                code: Bytes::new(),
+                storage: BTreeMap::new(),
+                nonce: i + 1,
+            },
+        );
+        addrs.push(addr);
+    }
+    (genesis, addrs)
+}
+
+/// Assert the batched account helper matches the per-account single-get path
+/// exactly, including the absent-account (`None`) case.
+fn assert_account_parity(store: &Store, state_root: H256, populated: &[Address]) {
+    // Interleave each populated address with an absent one so the parity check
+    // covers both the present and the never-written branches.
+    let mut query: Vec<Address> = Vec::with_capacity(populated.len() * 2);
+    for (i, a) in populated.iter().enumerate() {
+        query.push(*a);
+        query.push(Address::from_low_u64_be(0x9000_0000 + i as u64));
+    }
+
+    let single: Vec<Option<AccountState>> = query
+        .iter()
+        .map(|a| {
+            store
+                .get_account_state_by_root(state_root, *a)
+                .expect("single-get account")
+        })
+        .collect();
+
+    let batched = store
+        .get_account_states_batch_by_root(state_root, &query)
+        .expect("batched accounts");
+
+    assert_eq!(
+        batched.len(),
+        single.len(),
+        "batched result length must match single-get length"
+    );
+    for (i, a) in query.iter().enumerate() {
+        assert_eq!(
+            batched[i], single[i],
+            "account {a:?} (index {i}) mismatch: batched={:?} single={:?}",
+            batched[i], single[i]
+        );
+    }
+
+    assert!(
+        batched.iter().any(|v| v.is_some()),
+        "expected at least one present account"
+    );
+    assert!(
+        batched.iter().any(|v| v.is_none()),
+        "expected at least one absent account to be None"
+    );
+}
+
+async fn run_account_parity_test(engine_type: EngineType) {
+    let nonce: u64 = H256::random().to_low_u64_be();
+    let path = format!("account-batch-test-db-{nonce}");
+    if !matches!(engine_type, EngineType::InMemory) && std::path::Path::new(&path).exists() {
+        std::fs::remove_dir_all(&path).expect("clean test db dir");
+    }
+
+    let mut store = Store::new(&path, engine_type).expect("create test store");
+    let (genesis, addrs) = seed_genesis_accounts();
+    let state_root = genesis.get_block().header.state_root;
+    store
+        .add_initial_state(genesis)
+        .await
+        .expect("add genesis state");
+
+    // State A: FKV not yet generated -> trie fallback for every account.
+    assert_account_parity(&store, state_root, &addrs);
+    // State B: FKV fully swept -> sorted, sharded multi_get for every account.
+    wait_for_full_fkv(&store);
+    assert_account_parity(&store, state_root, &addrs);
+
+    drop(store);
+    if !matches!(engine_type, EngineType::InMemory) && std::path::Path::new(&path).exists() {
+        std::fs::remove_dir_all(&path).expect("clean test db dir");
+    }
+}
+
+#[tokio::test]
+async fn account_batch_parity_in_memory() {
+    run_account_parity_test(EngineType::InMemory).await;
+}
+
+#[cfg(feature = "rocksdb")]
+#[tokio::test]
+async fn account_batch_parity_rocksdb() {
+    run_account_parity_test(EngineType::RocksDB).await;
 }
