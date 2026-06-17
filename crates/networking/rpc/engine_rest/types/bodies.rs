@@ -19,8 +19,15 @@ use super::shanghai::Withdrawal;
 /// bodies response (`MAX_BODIES_REQUEST = 2**5`); matches the consensoor CL.
 pub const MAX_BODIES_PER_REQUEST: usize = 32;
 
-/// `POST /{fork}/bodies/hash` request body: a bare `List[Hash32, MAX_BODIES_REQUEST]`.
+/// Inner block-hash list wrapped by `BodiesByHashRequest`.
 pub type BlockHashList = SszList<[u8; 32], MAX_BODIES_PER_REQUEST>;
+
+/// `POST /{fork}/bodies/hash` request. Per execution-apis #793 the request is a
+/// single-field SSZ **container** wrapping the list, NOT a bare top-level list.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodiesByHashRequest {
+    pub block_hashes: BlockHashList,
+}
 
 // ── Per-fork ExecutionPayloadBody ─────────────────────────────────────────────
 
@@ -143,13 +150,22 @@ impl BodyEntryAmsterdam {
     }
 }
 
-// ── Response aliases (bare top-level lists, per the CL) ───────────────────────
+// ── Response containers (single-field, per execution-apis #793) ───────────────
 //
 // Shared by both `POST /{fork}/bodies/hash` and `GET /{fork}/bodies` (range).
 
-/// Paris bodies response.
-pub type BodiesResponseParis = SszList<BodyEntryParis, MAX_BODIES_PER_REQUEST>;
+/// Paris bodies response: `{ entries: List[BodyEntryParis, N] }`.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodiesResponseParis {
+    pub entries: SszList<BodyEntryParis, MAX_BODIES_PER_REQUEST>,
+}
 /// Shanghai/Cancun/Prague/Osaka bodies response.
-pub type BodiesResponseShanghai = SszList<BodyEntryShanghai, MAX_BODIES_PER_REQUEST>;
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodiesResponseShanghai {
+    pub entries: SszList<BodyEntryShanghai, MAX_BODIES_PER_REQUEST>,
+}
 /// Amsterdam bodies response.
-pub type BodiesResponseAmsterdam = SszList<BodyEntryAmsterdam, MAX_BODIES_PER_REQUEST>;
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BodiesResponseAmsterdam {
+    pub entries: SszList<BodyEntryAmsterdam, MAX_BODIES_PER_REQUEST>,
+}

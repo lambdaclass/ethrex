@@ -945,9 +945,11 @@ pub fn bodies_range_ssz_paris(
             })
         })
         .collect();
-    entries_vec
-        .try_into()
-        .expect("bodies fit MAX_BODIES_PER_REQUEST")
+    ethrex_rpc::engine_rest::types::bodies::BodiesResponseParis {
+        entries: entries_vec
+            .try_into()
+            .expect("bodies fit MAX_BODIES_PER_REQUEST"),
+    }
 }
 
 /// SSZ-side bodies response for the shanghai → osaka paths (Shanghai shape).
@@ -968,9 +970,11 @@ pub fn bodies_range_ssz_shanghai(
             })
         })
         .collect();
-    entries_vec
-        .try_into()
-        .expect("bodies fit MAX_BODIES_PER_REQUEST")
+    ethrex_rpc::engine_rest::types::bodies::BodiesResponseShanghai {
+        entries: entries_vec
+            .try_into()
+            .expect("bodies fit MAX_BODIES_PER_REQUEST"),
+    }
 }
 
 /// JSON-side Amsterdam bodies response (`…BodiesByRangeV2`): adds a per-body
@@ -1020,9 +1024,11 @@ pub fn bodies_range_ssz_amsterdam(
             })
         })
         .collect();
-    entries_vec
-        .try_into()
-        .expect("bodies fit MAX_BODIES_PER_REQUEST")
+    ethrex_rpc::engine_rest::types::bodies::BodiesResponseAmsterdam {
+        entries: entries_vec
+            .try_into()
+            .expect("bodies fit MAX_BODIES_PER_REQUEST"),
+    }
 }
 
 #[allow(dead_code)]
@@ -1116,7 +1122,9 @@ pub fn blobs_v1_response_ssz(
             })
         })
         .collect();
-    entries.try_into().expect("n <= MAX_BLOBS_REQUEST")
+    ethrex_rpc::engine_rest::types::blobs::BlobsV1Response {
+        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
+    }
 }
 
 /// SSZ-side `/blobs/v1` all-miss response: zero-padded full-size entries.
@@ -1127,7 +1135,9 @@ pub fn blobs_v1_response_ssz_allmiss(
     use ethrex_rpc::engine_rest::types::blobs::BlobV1Entry;
 
     let entries: Vec<BlobV1Entry> = (0..n).map(|_| BlobV1Entry::unavailable()).collect();
-    entries.try_into().expect("n <= MAX_BLOBS_REQUEST")
+    ethrex_rpc::engine_rest::types::blobs::BlobsV1Response {
+        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
+    }
 }
 
 /// JSON-side v1 all-miss response: `n` nulls.
@@ -1200,7 +1210,9 @@ pub fn blobs_v2_response_ssz(
             })
         })
         .collect();
-    entries.try_into().expect("n <= MAX_BLOBS_REQUEST")
+    ethrex_rpc::engine_rest::types::blobs::BlobsV2Response {
+        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
+    }
 }
 
 /// SSZ-side `/blobs/v3` all-miss response: every entry `available == false`
@@ -1214,7 +1226,9 @@ pub fn blobs_v3_response_ssz_allmiss(
     use ethrex_rpc::engine_rest::types::blobs::BlobV2Entry;
 
     let entries: Vec<BlobV2Entry> = (0..n).map(|_| BlobV2Entry::unavailable()).collect();
-    entries.try_into().expect("n <= MAX_BLOBS_REQUEST")
+    ethrex_rpc::engine_rest::types::blobs::BlobsV3Response {
+        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
+    }
 }
 
 /// JSON-side v3 all-miss response: `n` nulls.
@@ -1267,5 +1281,7 @@ pub fn blobs_v4_response_ssz(
             }
         })
         .collect();
-    entries.try_into().expect("n <= MAX_BLOBS_REQUEST")
+    ethrex_rpc::engine_rest::types::blobs::BlobsV4Response {
+        entries: entries.try_into().expect("n <= MAX_BLOBS_REQUEST"),
+    }
 }

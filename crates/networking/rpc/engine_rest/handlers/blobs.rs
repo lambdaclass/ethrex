@@ -1,7 +1,10 @@
 //! /blobs/v{1..4} — blob retrieval from mempool, per execution-apis #793.
 //!
-//! Requests are a bare `List[VersionedHash]` (v1/v2/v3) or a `BlobsRequestV4`
-//! container (v4). Responses are a bare `List[BlobV*Entry]`. `/blobs/v2` is
+//! Requests are single-field SSZ containers wrapping a `List[VersionedHash]`
+//! (`BlobsV1Request`/`BlobsV2Request`) or the `BlobsRequestV4` container (v4) —
+//! per execution-apis #793, NOT bare top-level lists. Responses are likewise
+//! single-field containers (`BlobsV*Response { entries: List[BlobV*Entry] }`).
+//! `/blobs/v2` is
 //! all-or-nothing: if any requested blob is missing the handler returns
 //! `204 No Content` instead of emitting unavailable entries. `/blobs/v3`
 //! surfaces missing blobs per entry. `/blobs/v4` requires per-cell data that
@@ -17,8 +20,8 @@ use crate::engine_rest::extractors::Ssz;
 use crate::engine_rest::handlers::capabilities::BLOBS_MAX_COUNT;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::blobs::{
-    BlobAndProofV1, BlobAndProofV2, BlobV1Entry, BlobV2Entry, BlobsRequestV4, BlobsV1Response,
-    BlobsV2Response, BlobsV3Response, VersionedHashList,
+    BlobAndProofV1, BlobAndProofV2, BlobV1Entry, BlobV2Entry, BlobsRequestV4, BlobsV1Request,
+    BlobsV1Response, BlobsV2Request, BlobsV2Response, BlobsV3Response,
 };
 use crate::rpc::RpcApiContext;
 
@@ -32,10 +35,7 @@ fn request_hashes(versioned_hashes: &[[u8; 32]]) -> Result<Vec<H256>, ProblemJso
     Ok(versioned_hashes.iter().map(|h| H256::from(*h)).collect())
 }
 
-pub async fn blobs_v1(
-    State(ctx): State<RpcApiContext>,
-    Ssz(req): Ssz<VersionedHashList>,
-) -> Response {
+pub async fn blobs_v1(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV1Request>) -> Response {
     // Osaka gate (mirror JSON-RPC getBlobsV1, engine/blobs.rs): /blobs/v1 serves
     // whole-blob proofs and is only valid pre-Osaka. After Osaka a blob carries
     // cell proofs, so the `proofs[0]` below would be a cell proof rather than a
@@ -60,7 +60,7 @@ pub async fn blobs_v1(
         Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
     }
 
-    let hashes = match request_hashes(&req) {
+    let hashes = match request_hashes(&req.versioned_hashes) {
         Ok(h) => h,
         Err(p) => return p.into_response(),
     };
@@ -92,19 +92,16 @@ pub async fn blobs_v1(
         entries.push(entry);
     }
 
-    match TryInto::<BlobsV1Response>::try_into(entries) {
-        Ok(resp) => SszBody(resp).into_response(),
+    match entries.try_into() {
+        Ok(entries) => SszBody(BlobsV1Response { entries }).into_response(),
         Err(_) => ProblemJson::internal("blobs response exceeds MAX_BLOBS_REQUEST").into_response(),
     }
 }
 
 /// `/blobs/v2` — all-or-nothing (Osaka). If any requested blob is missing the
 /// EL MUST return `204 No Content`, mirroring `engine_getBlobsV2`'s `null`.
-pub async fn blobs_v2(
-    State(ctx): State<RpcApiContext>,
-    Ssz(req): Ssz<VersionedHashList>,
-) -> Response {
-    let hashes = match request_hashes(&req) {
+pub async fn blobs_v2(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV2Request>) -> Response {
+    let hashes = match request_hashes(&req.versioned_hashes) {
         Ok(h) => h,
         Err(p) => return p.into_response(),
     };
@@ -141,8 +138,8 @@ pub async fn blobs_v2(
         }
     }
 
-    match TryInto::<BlobsV2Response>::try_into(entries) {
-        Ok(resp) => SszBody(resp).into_response(),
+    match entries.try_into() {
+        Ok(entries) => SszBody(BlobsV2Response { entries }).into_response(),
         Err(_) => ProblemJson::internal("blobs response exceeds MAX_BLOBS_REQUEST").into_response(),
     }
 }
@@ -150,11 +147,8 @@ pub async fn blobs_v2(
 /// `/blobs/v3` — partial responses (Osaka). Missing blobs surface as
 /// `available == false` entries; `204 No Content` is reserved for "EL cannot
 /// serve the request at all".
-pub async fn blobs_v3(
-    State(ctx): State<RpcApiContext>,
-    Ssz(req): Ssz<VersionedHashList>,
-) -> Response {
-    let hashes = match request_hashes(&req) {
+pub async fn blobs_v3(State(ctx): State<RpcApiContext>, Ssz(req): Ssz<BlobsV2Request>) -> Response {
+    let hashes = match request_hashes(&req.versioned_hashes) {
         Ok(h) => h,
         Err(p) => return p.into_response(),
     };
@@ -186,8 +180,8 @@ pub async fn blobs_v3(
         entries.push(entry);
     }
 
-    match TryInto::<BlobsV3Response>::try_into(entries) {
-        Ok(resp) => SszBody(resp).into_response(),
+    match entries.try_into() {
+        Ok(entries) => SszBody(BlobsV3Response { entries }).into_response(),
         Err(_) => ProblemJson::internal("blobs response exceeds MAX_BLOBS_REQUEST").into_response(),
     }
 }

@@ -29,8 +29,22 @@ pub const MAX_BLOBS_REQUEST: usize = 128;
 
 // ── Requests ──────────────────────────────────────────────────────────────────
 
-/// `/blobs/v1`, `/blobs/v2`, `/blobs/v3` request: a bare `List[VersionedHash, N]`.
+/// Inner versioned-hash list wrapped by the v1/v2/v3 request containers.
 pub type VersionedHashList = SszList<[u8; 32], MAX_BLOBS_REQUEST>;
+
+/// `/blobs/v1` request. Per execution-apis #793 the request is a single-field
+/// SSZ **container** wrapping the list (a 4-byte offset precedes the hashes on
+/// the wire), NOT a bare top-level list.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BlobsV1Request {
+    pub versioned_hashes: VersionedHashList,
+}
+
+/// `/blobs/v2` and `/blobs/v3` request — same single-field container as v1.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BlobsV2Request {
+    pub versioned_hashes: VersionedHashList,
+}
 
 /// `/blobs/v4` request: versioned hashes + a `CELLS_PER_EXT_BLOB`-bit bitarray
 /// selecting which cell indices to return.
@@ -127,14 +141,23 @@ impl BlobV2Entry {
     }
 }
 
-// ── Response aliases (bare top-level lists, per the CL) ────────────────────────
+// ── Response containers (single-field, per execution-apis #793) ───────────────
 
-/// `/blobs/v1` response.
-pub type BlobsV1Response = SszList<BlobV1Entry, MAX_BLOBS_REQUEST>;
+/// `/blobs/v1` response: `{ entries: List[BlobV1Entry, N] }`.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BlobsV1Response {
+    pub entries: SszList<BlobV1Entry, MAX_BLOBS_REQUEST>,
+}
 /// `/blobs/v2` response (all-or-nothing; every entry is `available`).
-pub type BlobsV2Response = SszList<BlobV2Entry, MAX_BLOBS_REQUEST>;
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BlobsV2Response {
+    pub entries: SszList<BlobV2Entry, MAX_BLOBS_REQUEST>,
+}
 /// `/blobs/v3` response (partial; missing blobs surface as `available == false`).
-pub type BlobsV3Response = SszList<BlobV2Entry, MAX_BLOBS_REQUEST>;
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
+pub struct BlobsV3Response {
+    pub entries: SszList<BlobV2Entry, MAX_BLOBS_REQUEST>,
+}
 
 // ── `/blobs/v4` types ─────────────────────────────────────────────────────────
 //
@@ -163,5 +186,8 @@ pub struct BlobV4Entry {
     pub contents: BlobCellsAndProofs,
 }
 
-/// `/blobs/v4` response.
-pub type BlobsV4Response = SszList<BlobV4Entry, MAX_BLOBS_REQUEST>;
+/// `/blobs/v4` response: `{ entries: List[BlobV4Entry, N] }`.
+#[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode)]
+pub struct BlobsV4Response {
+    pub entries: SszList<BlobV4Entry, MAX_BLOBS_REQUEST>,
+}

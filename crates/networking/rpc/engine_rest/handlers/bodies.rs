@@ -16,7 +16,7 @@ use crate::engine_rest::fork_path::ForkPath;
 use crate::engine_rest::handlers::capabilities::BODIES_MAX_COUNT;
 use crate::engine_rest::responses::SszBody;
 use crate::engine_rest::types::bodies::{
-    BlockHashList, BodiesResponseAmsterdam, BodiesResponseParis, BodiesResponseShanghai,
+    BodiesByHashRequest, BodiesResponseAmsterdam, BodiesResponseParis, BodiesResponseShanghai,
     BodyAmsterdam, BodyEntryAmsterdam, BodyEntryParis, BodyEntryShanghai, BodyParis, BodyShanghai,
 };
 use crate::engine_rest::types::common::Bytes20;
@@ -28,8 +28,9 @@ use crate::rpc::RpcApiContext;
 pub async fn bodies_by_hash(
     ForkPath(fork): ForkPath,
     State(ctx): State<RpcApiContext>,
-    Ssz(hashes): Ssz<BlockHashList>,
+    Ssz(req): Ssz<BodiesByHashRequest>,
 ) -> Response {
+    let hashes = &req.block_hashes;
     if hashes.len() > BODIES_MAX_COUNT as usize {
         return ProblemJson::payload_too_large(&format!(
             "request exceeds BODIES_MAX_COUNT ({BODIES_MAX_COUNT})"
@@ -146,8 +147,8 @@ async fn build_bodies_response(
                 };
                 entries.push(entry);
             }
-            match TryInto::<BodiesResponseParis>::try_into(entries) {
-                Ok(resp) => SszBody(resp).into_response(),
+            match entries.try_into() {
+                Ok(entries) => SszBody(BodiesResponseParis { entries }).into_response(),
                 Err(_) => bodies_overflow().into_response(),
             }
         }
@@ -165,8 +166,8 @@ async fn build_bodies_response(
                 };
                 entries.push(entry);
             }
-            match TryInto::<BodiesResponseShanghai>::try_into(entries) {
-                Ok(resp) => SszBody(resp).into_response(),
+            match entries.try_into() {
+                Ok(entries) => SszBody(BodiesResponseShanghai { entries }).into_response(),
                 Err(_) => bodies_overflow().into_response(),
             }
         }
@@ -204,8 +205,8 @@ async fn build_bodies_response(
                 };
                 entries.push(entry);
             }
-            match TryInto::<BodiesResponseAmsterdam>::try_into(entries) {
-                Ok(resp) => SszBody(resp).into_response(),
+            match entries.try_into() {
+                Ok(entries) => SszBody(BodiesResponseAmsterdam { entries }).into_response(),
                 Err(_) => bodies_overflow().into_response(),
             }
         }

@@ -1887,7 +1887,7 @@ mod helpers_tests {
 
 mod bodies_types_tests {
     use ethrex_rpc::engine_rest::types::bodies::{
-        BlockHashList, BodyAmsterdam, BodyParis, BodyShanghai,
+        BodiesByHashRequest, BodyAmsterdam, BodyParis, BodyShanghai,
     };
     use ethrex_rpc::engine_rest::types::common::Bytes20;
     use ethrex_rpc::engine_rest::types::shanghai::Withdrawal;
@@ -1936,11 +1936,13 @@ mod bodies_types_tests {
 
     #[test]
     fn bodies_by_hash_request_roundtrips() {
-        let req: BlockHashList = vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
+        let req = BodiesByHashRequest {
+            block_hashes: vec![[1u8; 32], [2u8; 32]].try_into().unwrap(),
+        };
         let bytes = req.to_ssz();
-        let back = BlockHashList::from_ssz_bytes(&bytes).unwrap();
-        assert_eq!(back.len(), 2);
-        assert_eq!(back[0], [1u8; 32]);
+        let back = BodiesByHashRequest::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back.block_hashes.len(), 2);
+        assert_eq!(back.block_hashes[0], [1u8; 32]);
     }
 }
 
@@ -1949,7 +1951,7 @@ mod bodies_by_hash_tests {
     use axum::http::StatusCode;
     use bytes::Bytes;
     use ethrex_rpc::engine_rest::router;
-    use ethrex_rpc::engine_rest::types::bodies::BlockHashList;
+    use ethrex_rpc::engine_rest::types::bodies::BodiesByHashRequest;
     use ethrex_rpc::test_utils::{
         add_eip1559_tx_blocks, default_context_with_storage, setup_store,
     };
@@ -1974,7 +1976,9 @@ mod bodies_by_hash_tests {
             .unwrap()
             .expect("block 1 should exist");
 
-        let req_body: BlockHashList = vec![block1_hash.0, [0xFFu8; 32]].try_into().unwrap();
+        let req_body = BodiesByHashRequest {
+            block_hashes: vec![block1_hash.0, [0xFFu8; 32]].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
 
         let req = axum::http::Request::builder()
@@ -2006,7 +2010,9 @@ mod bodies_by_hash_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body: BlockHashList = vec![].try_into().unwrap();
+        let req_body = BodiesByHashRequest {
+            block_hashes: vec![].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
 
         let req = axum::http::Request::builder()
@@ -2029,7 +2035,9 @@ mod bodies_by_hash_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body: BlockHashList = vec![].try_into().unwrap();
+        let req_body = BodiesByHashRequest {
+            block_hashes: vec![].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
 
         let req = axum::http::Request::builder()
@@ -2138,16 +2146,18 @@ mod bodies_by_range_tests {
 
 mod blobs_types_tests {
     use ethrex_rpc::engine_rest::types::blobs::{
-        BlobAndProofV1, BlobAndProofV2, BlobsRequestV4, VersionedHashList,
+        BlobAndProofV1, BlobAndProofV2, BlobsRequestV4, BlobsV2Request,
     };
     use libssz::{SszDecode, SszEncode};
 
     #[test]
     fn blobs_request_roundtrips() {
-        let req: VersionedHashList = vec![[1u8; 32], [2u8; 32]].try_into().unwrap();
+        let req = BlobsV2Request {
+            versioned_hashes: vec![[1u8; 32], [2u8; 32]].try_into().unwrap(),
+        };
         let bytes = req.to_ssz();
-        let back = VersionedHashList::from_ssz_bytes(&bytes).unwrap();
-        assert_eq!(back.len(), 2);
+        let back = BlobsV2Request::from_ssz_bytes(&bytes).unwrap();
+        assert_eq!(back.versioned_hashes.len(), 2);
     }
 
     #[test]
@@ -2201,11 +2211,13 @@ mod blobs_types_tests {
             }),
             BlobV1Entry::unavailable(),
         ];
-        let resp: BlobsV1Response = entries.try_into().unwrap();
+        let resp = BlobsV1Response {
+            entries: entries.try_into().unwrap(),
+        };
         let bytes = resp.to_ssz();
         let back = BlobsV1Response::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, resp);
-        assert_eq!(back.len(), 2);
+        assert_eq!(back.entries.len(), 2);
     }
 
     #[test]
@@ -2229,7 +2241,9 @@ mod blobs_types_tests {
                 proofs: vec![absent_proof, present_proof].try_into().unwrap(),
             },
         };
-        let resp: BlobsV4Response = vec![entry].try_into().unwrap();
+        let resp = BlobsV4Response {
+            entries: vec![entry].try_into().unwrap(),
+        };
         let bytes = resp.to_ssz();
         let back = BlobsV4Response::from_ssz_bytes(&bytes).unwrap();
         assert_eq!(back, resp);
@@ -2240,7 +2254,7 @@ mod blobs_v1_tests {
     use super::test_helpers::auth_token;
     use bytes::Bytes;
     use ethrex_rpc::engine_rest::router;
-    use ethrex_rpc::engine_rest::types::blobs::VersionedHashList;
+    use ethrex_rpc::engine_rest::types::blobs::BlobsV1Request;
     use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
     use libssz::SszEncode;
     use tower::ServiceExt;
@@ -2260,7 +2274,9 @@ mod blobs_v1_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body: VersionedHashList = vec![[0xFFu8; 32]].try_into().unwrap();
+        let req_body = BlobsV1Request {
+            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2286,7 +2302,9 @@ mod blobs_v1_tests {
         let app = router(ctx);
         let token = auth_token(&secret).await;
 
-        let req_body: VersionedHashList = vec![].try_into().unwrap();
+        let req_body = BlobsV1Request {
+            versioned_hashes: vec![].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2304,7 +2322,7 @@ mod blobs_v2v3_tests {
     use super::test_helpers::auth_token;
     use bytes::Bytes;
     use ethrex_rpc::engine_rest::router;
-    use ethrex_rpc::engine_rest::types::blobs::VersionedHashList;
+    use ethrex_rpc::engine_rest::types::blobs::BlobsV2Request;
     use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
     use libssz::SszEncode;
     use tower::ServiceExt;
@@ -2323,7 +2341,9 @@ mod blobs_v2v3_tests {
         // (execution-apis #793 §POST /blobs/v2), not a per-slot null.
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
-        let req_body: VersionedHashList = vec![[0xFFu8; 32]].try_into().unwrap();
+        let req_body = BlobsV2Request {
+            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
@@ -2340,7 +2360,9 @@ mod blobs_v2v3_tests {
     async fn v3_unknown_hash_returns_200_with_none_position() {
         let (app, secret) = build_app().await;
         let token = auth_token(&secret).await;
-        let req_body: VersionedHashList = vec![[0xFFu8; 32]].try_into().unwrap();
+        let req_body = BlobsV2Request {
+            versioned_hashes: vec![[0xFFu8; 32]].try_into().unwrap(),
+        };
         let body = req_body.to_ssz();
         let req = axum::http::Request::builder()
             .method("POST")
