@@ -39,7 +39,12 @@ const DISCV4_MIN_PACKET_SIZE: usize = 98;
 // Shared constants
 const REVALIDATION_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const PRUNE_INTERVAL: Duration = Duration::from_secs(5);
-const CHANGE_FIND_NODE_MESSAGE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Lookup interval bounds for iterative lookups. Each iterative lookup
+/// generates ~16 FindNode messages (vs 1 in the old approach), so we use
+/// longer intervals to produce similar per-second traffic.
+const ITERATIVE_LOOKUP_INITIAL_MS: f64 = 500.0; // 6 FindNode/sec at startup (alpha=3 × 2 ticks/sec)
+const ITERATIVE_LOOKUP_INTERVAL_MS: f64 = 10_000.0; // ~6 lookups/min at steady-state
 
 #[derive(Debug, Error)]
 pub enum DiscoveryServerError {
@@ -73,7 +78,6 @@ pub trait DiscoveryServerProtocol: Send + Sync {
     fn lookup_v4(&self) -> Result<(), ActorError>;
     fn lookup_v5(&self) -> Result<(), ActorError>;
     fn enr_lookup(&self) -> Result<(), ActorError>;
-    fn change_find_node_message(&self) -> Result<(), ActorError>;
     fn prune(&self) -> Result<(), ActorError>;
     fn shutdown(&self) -> Result<(), ActorError>;
 }
@@ -111,7 +115,7 @@ impl DiscoveryServer {
         bootnodes: Vec<Node>,
         config: DiscoveryConfig,
     ) -> Result<(), DiscoveryServerError> {
-        info!("Starting unified discovery server");
+        debug!("Starting discovery server");
 
         let mut local_node_record = NodeRecord::from_node(&local_node, INITIAL_ENR_SEQ, &signer)
             .expect("Failed to create local node record");
@@ -127,12 +131,8 @@ impl DiscoveryServer {
                 count = bootnodes.len(),
                 "Adding bootnodes"
             );
-            peer_table.new_contacts(
-                bootnodes.clone(),
-                local_node.node_id(),
-                DiscoveryProtocol::Discv4,
-            )?;
-            Some(Discv4State::new(&signer))
+            peer_table.new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv4)?;
+            Some(Discv4State::default())
         } else {
             None
         };
@@ -143,11 +143,7 @@ impl DiscoveryServer {
                 count = bootnodes.len(),
                 "Adding bootnodes"
             );
-            peer_table.new_contacts(
-                bootnodes.clone(),
-                local_node.node_id(),
-                DiscoveryProtocol::Discv5,
-            )?;
+            peer_table.new_contacts(bootnodes.clone(), DiscoveryProtocol::Discv5)?;
             Some(Discv5State::default())
         } else {
             None
@@ -208,11 +204,6 @@ impl DiscoveryServer {
                 REVALIDATION_CHECK_INTERVAL,
                 ctx.clone(),
                 discovery_server_protocol::RevalidateV4,
-            );
-            send_interval(
-                CHANGE_FIND_NODE_MESSAGE_INTERVAL,
-                ctx.clone(),
-                discovery_server_protocol::ChangeFindNodeMessage,
             );
             let _ = ctx.send(discovery_server_protocol::LookupV4);
             let _ = ctx.send(discovery_server_protocol::EnrLookup);
@@ -316,17 +307,6 @@ impl DiscoveryServer {
         );
         let interval = self.get_lookup_interval().await;
         send_after(interval, ctx.clone(), discovery_server_protocol::EnrLookup);
-    }
-
-    #[send_handler]
-    async fn handle_change_find_node_message(
-        &mut self,
-        _msg: discovery_server_protocol::ChangeFindNodeMessage,
-        _ctx: &Context<Self>,
-    ) {
-        if let Some(discv4) = &mut self.discv4 {
-            discv4.find_node_message = Discv4State::random_message(&self.signer);
-        }
     }
 
     #[send_handler]
@@ -438,8 +418,8 @@ impl DiscoveryServer {
             .unwrap_or_default();
         lookup_interval_function(
             peer_completion,
-            self.config.initial_lookup_interval,
-            super::LOOKUP_INTERVAL_MS,
+            ITERATIVE_LOOKUP_INITIAL_MS,
+            ITERATIVE_LOOKUP_INTERVAL_MS,
         )
     }
 }

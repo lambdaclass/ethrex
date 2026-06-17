@@ -1,12 +1,45 @@
 use ethrex_common::types::block_access_list::{
     AccountChanges, BalanceChange, BlockAccessList, NonceChange, SlotChange, StorageChange,
 };
+use ethrex_common::types::{Block, BlockBody, BlockHeader};
 use ethrex_common::{Address, H256, U256};
+use ethrex_rpc::engine::payload::{
+    GetPayloadBodiesByHashV2Request, GetPayloadBodiesByRangeV2Request,
+};
 use ethrex_rpc::map_eth_requests;
+use ethrex_rpc::rpc::RpcHandler;
 use ethrex_rpc::test_utils::default_context_with_storage;
+use ethrex_rpc::types::payload::ExecutionPayloadBodyV2;
 use ethrex_rpc::utils::RpcRequest;
 use ethrex_storage::{EngineType, Store};
 use std::str::FromStr;
+
+// A small, structurally valid BAL used by the payload-body serving tests.
+fn sample_bal() -> BlockAccessList {
+    let address = Address::from_str("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap();
+    let account = AccountChanges::new(address)
+        .with_nonce_changes(vec![NonceChange::new(0, 1)])
+        .with_balance_changes(vec![BalanceChange::new(0, U256::from(1u64))]);
+    BlockAccessList::from_accounts(vec![account])
+}
+
+// A header (number 1) that commits to `bal` via `block_access_list_hash`.
+// All optional header fields preceding it are set so the header round-trips
+// through RLP — `encode_optional_field` is trailing-only, so a lone trailing
+// optional would otherwise be misdecoded into the first optional slot.
+fn header_committing_to(bal: &BlockAccessList) -> BlockHeader {
+    BlockHeader {
+        number: 1,
+        base_fee_per_gas: Some(0),
+        withdrawals_root: Some(H256::zero()),
+        blob_gas_used: Some(0),
+        excess_blob_gas: Some(0),
+        parent_beacon_block_root: Some(H256::zero()),
+        requests_hash: Some(H256::zero()),
+        block_access_list_hash: Some(bal.compute_hash()),
+        ..Default::default()
+    }
+}
 
 // Mirrors the `eth_getBlockAccessList` example in
 // execution-apis/src/eth/block.yaml (schema at
@@ -14,10 +47,6 @@ use std::str::FromStr;
 // longer wire-compatible.
 #[tokio::test]
 async fn eth_get_block_access_list_matches_spec_example() {
-    let block_hash =
-        H256::from_str("0x1111111111111111111111111111111111111111111111111111111111111111")
-            .unwrap();
-
     let address = Address::from_str("0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b").unwrap();
     let slot = U256::zero();
     let slot_changes = vec![
@@ -35,6 +64,14 @@ async fn eth_get_block_access_list_matches_spec_example() {
     let bal = BlockAccessList::from_accounts(vec![account]);
 
     let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+    // The endpoint validates the stored BAL against the header commitment, so the
+    // block's header must commit to this BAL's hash.
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
     storage
         .store_block_access_list(block_hash, &bal)
         .expect("store BAL");
@@ -93,4 +130,165 @@ async fn eth_get_block_access_list_unknown_hash_returns_null() {
 
     let got = map_eth_requests(&request, context).await.expect("rpc ok");
     assert_eq!(got, serde_json::Value::Null);
+}
+
+// engine_getPayloadBodiesByHashV2 must serve the persisted BAL straight from the
+// store, without re-executing the block. We store a block and its BAL but never
+// build the state trie, so a regeneration fallback would fail (or, for this
+// non-Amsterdam block, return None); a response carrying the stored BAL proves it
+// was read from the store. This is the path that was failing on snap-synced nodes.
+#[tokio::test]
+async fn payload_bodies_by_hash_v2_serves_stored_bal() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    // The header must commit to the stored BAL's hash (EIP-8159); the serve
+    // path validates the stored BAL against this commitment before returning it.
+    let bal = sample_bal();
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    storage
+        .store_block_access_list(block_hash, &bal)
+        .expect("store BAL");
+
+    let context = default_context_with_storage(storage).await;
+    let request = GetPayloadBodiesByHashV2Request {
+        hashes: vec![block_hash],
+    };
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                Some(bal)
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(got, expected);
+}
+
+// Same guarantee for the range variant: engine_getPayloadBodiesByRangeV2 returns
+// the persisted BAL from the store without re-execution.
+#[tokio::test]
+async fn payload_bodies_by_range_v2_serves_stored_bal() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    // The header must commit to the stored BAL's hash (EIP-8159); the serve
+    // path validates the stored BAL against this commitment before returning it.
+    let bal = sample_bal();
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+    // Make the block canonical and the latest so the range handler can find it.
+    storage
+        .forkchoice_update(vec![(1, block_hash)], 1, block_hash, None, None)
+        .await
+        .expect("forkchoice update");
+
+    storage
+        .store_block_access_list(block_hash, &bal)
+        .expect("store BAL");
+
+    let context = default_context_with_storage(storage).await;
+    // params: [start, count] = [block 1, 1 block]
+    let params = Some(vec![serde_json::json!("0x1"), serde_json::json!("0x1")]);
+    let request = GetPayloadBodiesByRangeV2Request::parse(&params).expect("parse");
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                Some(bal)
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(got, expected);
+}
+
+// Regression for glamsterdam-devnet-5 block 8501: a stored BAL whose hash does
+// not match the header commitment must NOT be served. Here the header commits
+// to `sample_bal()` but an empty BAL is stored under the block hash; the guard
+// must drop it (and regeneration short-circuits to None for this block), so the
+// body carries no BAL rather than a wrong one.
+#[tokio::test]
+async fn payload_bodies_by_hash_v2_drops_bal_not_matching_commitment() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    let bal = sample_bal();
+    let block = Block {
+        header: header_committing_to(&bal),
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    // Store a BAL that does NOT match the header commitment (the 8501 bug).
+    storage
+        .store_block_access_list(block_hash, &BlockAccessList::from_accounts(vec![]))
+        .expect("store BAL");
+
+    let context = default_context_with_storage(storage).await;
+    let request = GetPayloadBodiesByHashV2Request {
+        hashes: vec![block_hash],
+    };
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                None
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(
+        got, expected,
+        "a stored BAL not matching the header commitment must not be served"
+    );
+}
+
+// Fallback path: when no BAL is stored, the handler must not re-execute a block
+// whose parent state is unavailable. For a pre-Amsterdam block, regeneration
+// short-circuits to None, so a None-carrying body proves the response was
+// produced without touching (absent) historical state. This locks in the
+// snap-sync / aged-out-state safety the PR targets.
+#[tokio::test]
+async fn payload_bodies_by_hash_v2_pre_amsterdam_returns_none_without_re_execution() {
+    let storage = Store::new("temp.db", EngineType::InMemory).expect("Failed to create test DB");
+
+    // Pre-Amsterdam block (timestamp 0); no BAL stored and no state trie built.
+    let block = Block {
+        header: BlockHeader {
+            number: 1,
+            ..Default::default()
+        },
+        body: BlockBody::default(),
+    };
+    let block_hash = block.hash();
+    storage.add_block(block).await.expect("store block");
+
+    let context = default_context_with_storage(storage).await;
+    let request = GetPayloadBodiesByHashV2Request {
+        hashes: vec![block_hash],
+    };
+    let got = request.handle(context).await.expect("rpc ok");
+
+    let expected =
+        serde_json::json!([
+            serde_json::to_value(ExecutionPayloadBodyV2::from_body_with_bal(
+                BlockBody::default(),
+                None
+            ))
+            .unwrap()
+        ]);
+    assert_eq!(got, expected);
 }

@@ -1,6 +1,6 @@
 use ethrex_common::{
     Address, H256, U256,
-    constants::EMPTY_KECCACK_HASH,
+    constants::EMPTY_KECCAK_HASH,
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_crypto::keccak::keccak_hash;
@@ -47,7 +47,10 @@ impl StoreVmDatabase {
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
         {
-            return Err(EvmError::DB("state root missing".to_string()));
+            return Err(EvmError::DB(format!(
+                "state root missing for block {} (state_root {:#x})",
+                block_header.number, block_header.state_root
+            )));
         }
         Ok(StoreVmDatabase {
             store,
@@ -68,7 +71,10 @@ impl StoreVmDatabase {
             .has_state_root(block_header.state_root)
             .map_err(|e| EvmError::DB(e.to_string()))?
         {
-            return Err(EvmError::DB("state root missing".to_string()));
+            return Err(EvmError::DB(format!(
+                "state root missing for block {} (state_root {:#x})",
+                block_header.number, block_header.state_root
+            )));
         }
         Ok(StoreVmDatabase {
             store,
@@ -210,7 +216,7 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_account_code(&self, code_hash: H256) -> Result<Code, EvmError> {
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(Code::default());
         }
         match self.store.get_account_code(code_hash) {
@@ -229,9 +235,9 @@ impl VmDatabase for StoreVmDatabase {
         fields(namespace = "block_execution")
     )]
     fn get_code_metadata(&self, code_hash: H256) -> Result<CodeMetadata, EvmError> {
-        use ethrex_common::constants::EMPTY_KECCACK_HASH;
+        use ethrex_common::constants::EMPTY_KECCAK_HASH;
 
-        if code_hash == *EMPTY_KECCACK_HASH {
+        if code_hash == *EMPTY_KECCAK_HASH {
             return Ok(CodeMetadata { length: 0 });
         }
         match self.store.get_code_metadata(code_hash) {
