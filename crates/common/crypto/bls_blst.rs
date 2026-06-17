@@ -22,7 +22,7 @@ use blst::{
     blst_p2_add_or_double_affine, blst_p2_affine, blst_p2_affine_in_g2, blst_p2_affine_is_inf,
     blst_p2_affine_on_curve, blst_p2_from_affine, blst_p2_mult, blst_p2_to_affine,
     blst_p2s_mult_pippenger, blst_p2s_mult_pippenger_scratch_sizeof, blst_scalar,
-    blst_scalar_from_bendian,
+    blst_scalar_from_be_bytes,
 };
 
 use crate::provider::CryptoError;
@@ -248,14 +248,36 @@ fn read_g2_subgroup(
     Ok(point)
 }
 
-/// EIP-2537 scalars are 32-byte big-endian integers and need not be reduced
-/// modulo the subgroup order, so no canonical check is performed.
+#[cfg(test)]
+use blst::blst_scalar_from_bendian;
+
+/// Test-only: loads a 32-byte big-endian scalar without reducing modulo the
+/// subgroup order. The production MSM path uses [`read_scalar_mod_r`].
+#[cfg(test)]
 #[inline]
 fn read_scalar(bytes: &[u8; 32]) -> blst_scalar {
     let mut out = blst_scalar::default();
     // SAFETY: `bytes` is exactly 32 bytes and `out` is a valid blst value.
     unsafe { blst_scalar_from_bendian(&mut out, bytes.as_ptr()) };
     out
+}
+
+/// Reduces a 32-byte big-endian scalar modulo the subgroup order r, returning
+/// `None` when the reduced scalar is zero.
+///
+/// For a point in the prime-order subgroup (order r), `s·P == (s mod r)·P`, so
+/// reducing is byte-identical to the EIP-2537 result while collapsing scalars
+/// that are multiples of r (e.g. the group order itself) to zero — those
+/// contribute the identity and can be skipped, avoiding a full ~255-bit scalar
+/// multiplication. `blst_scalar_from_be_bytes` performs the reduction (unlike
+/// `blst_scalar_from_bendian`) and returns `false` iff the reduced value is
+/// zero, which is exactly the skip signal we want.
+#[inline]
+fn read_scalar_mod_r(bytes: &[u8; 32]) -> Option<blst_scalar> {
+    let mut out = blst_scalar::default();
+    // SAFETY: `bytes` is exactly 32 bytes and `out` is a valid blst value.
+    let nonzero = unsafe { blst_scalar_from_be_bytes(&mut out, bytes.as_ptr(), 32) };
+    nonzero.then_some(out)
 }
 
 #[inline]
@@ -340,12 +362,16 @@ pub fn g1_msm(pairs: &[(([u8; 48], [u8; 48]), [u8; 32])]) -> Result<[u8; 96], Cr
         if unsafe { !blst_p1_affine_in_g1(&point) } {
             return Err(CryptoError::InvalidPoint("G1 point not in subgroup"));
         }
-        // A zero scalar contributes the identity; skip the scalar multiplication.
-        if is_zero(scalar_bytes) {
+        // Reduce the scalar modulo the subgroup order r. The point above is
+        // subgroup-checked (order r), so s·P == (s mod r)·P and reducing is
+        // byte-identical to the spec. A scalar that is a multiple of r (e.g.
+        // the group order) reduces to zero and contributes the identity, so it
+        // is skipped here instead of running a full ~255-bit scalar mul.
+        let Some(scalar) = read_scalar_mod_r(scalar_bytes) else {
             continue;
-        }
+        };
         points.push(point);
-        scalars.push(read_scalar(scalar_bytes));
+        scalars.push(scalar);
     }
 
     if points.is_empty() {
@@ -385,12 +411,16 @@ pub fn g2_msm(
         if unsafe { !blst_p2_affine_in_g2(&point) } {
             return Err(CryptoError::InvalidPoint("G2 point not in subgroup"));
         }
-        // A zero scalar contributes the identity; skip the scalar multiplication.
-        if is_zero(scalar_bytes) {
+        // Reduce the scalar modulo the subgroup order r. The point above is
+        // subgroup-checked (order r), so s·P == (s mod r)·P and reducing is
+        // byte-identical to the spec. A scalar that is a multiple of r (e.g.
+        // the group order) reduces to zero and contributes the identity, so it
+        // is skipped here instead of running a full ~255-bit scalar mul.
+        let Some(scalar) = read_scalar_mod_r(scalar_bytes) else {
             continue;
-        }
+        };
         points.push(point);
-        scalars.push(read_scalar(scalar_bytes));
+        scalars.push(scalar);
     }
 
     if points.is_empty() {
