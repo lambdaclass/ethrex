@@ -15,28 +15,16 @@ use crate::engine_rest::types::{amsterdam, cancun, paris, prague, shanghai};
 use crate::types::payload::{EncodedTransaction, ExecutionPayload as JsonExecutionPayload};
 
 /// Dispatch tag selecting which existing `handle_new_payload_*` helper to call.
-/// Most variant fields are baked into the reconstructed `Block` upstream and are
-/// not read again in the final dispatch match — `V5.raw_bal_hash` is the
-/// exception, read by the handler's structural BAL check before dispatch (see
-/// `handlers::payloads`). The remaining fields are kept because the conversion
-/// tests assert on them; `#[allow(dead_code)]` silences the lint for the fields
-/// no production code reads.
+/// All payload data (`parent_beacon_block_root`, `execution_requests`, …) is
+/// baked into the reconstructed `Block` upstream, so dispatch only needs the
+/// variant tag. The sole field carried here is `V5.raw_bal_hash`, read by the
+/// handler's structural BAL check before dispatch (see `handlers::payloads`).
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum EngineCall {
     V1V2,
-    V3 {
-        parent_beacon_block_root: H256,
-    },
-    V4 {
-        parent_beacon_block_root: H256,
-        execution_requests: Vec<EncodedRequests>,
-    },
-    V5 {
-        parent_beacon_block_root: H256,
-        execution_requests: Vec<EncodedRequests>,
-        raw_bal_hash: Option<H256>,
-    },
+    V3,
+    V4,
+    V5 { raw_bal_hash: Option<H256> },
 }
 
 /// Outcome of converting an SSZ envelope: the reconstructed `Block`, the
@@ -275,9 +263,7 @@ impl IntoEngineCall for cancun::ExecutionPayloadEnvelope {
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
-            call: EngineCall::V3 {
-                parent_beacon_block_root: pbbr,
-            },
+            call: EngineCall::V3,
             block_access_list: None,
         })
     }
@@ -328,10 +314,7 @@ impl IntoEngineCall for prague::ExecutionPayloadEnvelope {
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
-            call: EngineCall::V4 {
-                parent_beacon_block_root: pbbr,
-                execution_requests,
-            },
+            call: EngineCall::V4,
             block_access_list: None,
         })
     }
@@ -397,11 +380,7 @@ impl IntoEngineCall for amsterdam::ExecutionPayloadEnvelope {
         Ok(DecodedNewPayload {
             block,
             expected_block_hash,
-            call: EngineCall::V5 {
-                parent_beacon_block_root: pbbr,
-                execution_requests,
-                raw_bal_hash,
-            },
+            call: EngineCall::V5 { raw_bal_hash },
             block_access_list,
         })
     }

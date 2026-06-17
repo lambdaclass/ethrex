@@ -14,7 +14,7 @@ use ethrex_rlp::encode::RLPEncode;
 use libssz_types::{SszList, SszVector};
 
 use crate::engine::payload::{
-    handle_new_payload_v1_v2, handle_new_payload_v3, handle_new_payload_v4,
+    handle_new_payload_v1_v2, handle_new_payload_v3, handle_new_payload_v4, validate_fork,
 };
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
@@ -99,7 +99,11 @@ where
     //    These are spec-level invalid-params, not block-validity failures, so they
     //    return 400 BadRequest instead of falling through to PayloadStatus::INVALID.
     if let EngineCall::V5 { raw_bal_hash, .. } = &call {
-        // (a) Empty BAL → structural error. EIP-7928 makes BAL mandatory in V5.
+        // (a) Absent/zero-byte block_access_list field → structural error.
+        //     `raw_bal_hash` is None only when the SSZ field carried no bytes; a
+        //     present-but-empty BAL still RLP-encodes to >=1 byte (the empty-list
+        //     prefix), so this is "field absent", not "empty list". EIP-7928 makes
+        //     the BAL mandatory in V5.
         if raw_bal_hash.is_none() {
             return ProblemJson::bad_request("block_access_list required for engine_newPayloadV5")
                 .into_response();
@@ -120,49 +124,51 @@ where
         }
     }
 
-    // 3b. Fork-boundary checks (mirror JSON-RPC NewPayloadV4/V5 UnsupportedFork,
+    // 3b. Fork-boundary check (mirror JSON-RPC NewPayloadV3/V4/V5 UnsupportedFork,
     //     engine/payload.rs). The fork is pinned by the URL, so a payload whose
     //     timestamp belongs to a different fork era is misrouted; reject it with
     //     400 instead of letting it fall through to a block-hash-mismatch INVALID.
+    //     V4 covers Prague+Osaka (a range), so it can't use the single-fork
+    //     `validate_fork` helper the way V3 (Cancun-only) effectively does here.
     let chain_config = ctx.storage.get_chain_config();
     let ts = block.header.timestamp;
-    match &call {
-        // V4 (Prague/Osaka): Amsterdam-era payloads must use V5; pre-Prague must not use V4.
-        EngineCall::V4 { .. } => {
-            if chain_config.is_amsterdam_activated(ts) || !chain_config.is_prague_activated(ts) {
-                return ProblemJson::bad_request(&format!(
-                    "unsupported fork for this endpoint: {:?}",
-                    chain_config.get_fork(ts)
-                ))
-                .into_response();
-            }
+    let misrouted = match &call {
+        EngineCall::V1V2 => false,
+        EngineCall::V3 => chain_config.get_fork(ts) != Fork::Cancun,
+        EngineCall::V4 => {
+            chain_config.is_amsterdam_activated(ts) || !chain_config.is_prague_activated(ts)
         }
-        // V5 (Amsterdam): pre-Amsterdam payloads must use V4.
-        EngineCall::V5 { .. } => {
-            if !chain_config.is_amsterdam_activated(ts) {
-                return ProblemJson::bad_request(&format!(
-                    "unsupported fork for this endpoint: {:?}",
-                    chain_config.get_fork(ts)
-                ))
-                .into_response();
-            }
-        }
-        EngineCall::V1V2 | EngineCall::V3 { .. } => {}
+        EngineCall::V5 { .. } => !chain_config.is_amsterdam_activated(ts),
+    };
+    if misrouted {
+        return ProblemJson::bad_request(&format!(
+            "unsupported fork for this endpoint: {:?}",
+            chain_config.get_fork(ts)
+        ))
+        .into_response();
     }
 
     // 4. Dispatch to the appropriate handle_new_payload_* helper. The helpers
     //    only need the expected block_hash from the payload, so we pass it
     //    directly and skip the `JsonExecutionPayload::from_block` intermediate.
+    //
+    //    The `None` passed for `expected_blob_versioned_hashes` (V3/V4 arg) is
+    //    intentional, not an omission: execution-apis #793 removed that param
+    //    from the newPayload flow (refactor.md). The EL recomputes the hashes
+    //    from `payload.transactions`, and the block-hash check above already
+    //    binds the CL and EL to the same transactions, so a mismatch still
+    //    surfaces as INVALID. The JSON-RPC path keeps the explicit cross-check
+    //    (it still receives the param); only this transport drops it.
     let result = match call {
         EngineCall::V1V2 => {
             handle_new_payload_v1_v2(expected_block_hash, block, ctx, None, false).await
         }
-        EngineCall::V3 { .. } => {
+        EngineCall::V3 => {
             handle_new_payload_v3(expected_block_hash, ctx, block, None, None, false).await
         }
         // Prague (V4) reuses handle_new_payload_v3 — matches the JSON-RPC
         // NewPayloadV4Request::handle behavior in engine/payload.rs.
-        EngineCall::V4 { .. } => {
+        EngineCall::V4 => {
             handle_new_payload_v3(expected_block_hash, ctx, block, None, None, false).await
         }
         EngineCall::V5 { .. } => {
@@ -233,6 +239,17 @@ pub async fn get_payload(
             return ProblemJson::internal(&format!("get_payload failed: {err}")).into_response();
         }
     };
+
+    // 3b. Ensure the built payload belongs to the requested fork era. Mirrors the
+    //     JSON-RPC GetPayloadV3..V6 `validate_fork` guard (engine/payload.rs): a
+    //     fork/id mismatch would otherwise serialize the payload into the wrong
+    //     SSZ shape (e.g. dropping execution_requests/BAL/slot_number).
+    if let Err(err) = validate_fork(&result.payload, fork, &ctx) {
+        return ProblemJson::bad_request(&format!(
+            "built payload does not match requested fork: {err}"
+        ))
+        .into_response();
+    }
 
     // 4. Convert Block → fork-specific SSZ `BuiltPayload` (replaces
     //    engine_getPayloadV1..V6) and return. `block_value`, `blobs_bundle`,

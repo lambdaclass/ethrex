@@ -1,8 +1,10 @@
 //! Fork path-segment extractor for `/{fork}/...` engine REST routes.
 //!
 //! Maps the URL path segment ("paris" .. "amsterdam") to `ethrex_common::types::Fork`.
-//! Historical forks not in the engine REST spec (Frontier..London) are rejected
-//! with `400 Bad Request`.
+//! Any segment not in the engine REST spec's fork table is rejected with
+//! `400 Bad Request` — this covers both pre-Merge forks (Frontier..London) and
+//! forks that have no REST routes of their own (e.g. the BPO forks that sit
+//! between Osaka and Amsterdam).
 
 use axum::extract::{FromRequestParts, Path};
 use axum::http::request::Parts;

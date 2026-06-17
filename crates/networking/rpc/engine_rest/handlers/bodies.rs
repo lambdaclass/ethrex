@@ -80,9 +80,12 @@ pub async fn bodies_by_range(
         Ok(n) => n,
         Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
     };
-    // Spec: MUST NOT return trailing nulls past the chain head — truncate the
-    // range at `latest`. Saturating math guards against an absurd `from` (an
-    // unbounded u64 query param) overflowing `from + count`.
+    // Truncate the range at the chain head — do NOT pad past-head numbers with
+    // `available=false` entries. This follows the legacy "no trailing nulls" rule
+    // and matches Nethermind. Note execution-apis #793 is ambiguous here: its text
+    // reads as pad-to-`count` (which Erigon implements). Revisit if the spec pins
+    // pad-to-`count`. Saturating math guards against an absurd `from` (an unbounded
+    // u64 query param) overflowing `from + count`.
     let last = latest.min(from.saturating_add(count).saturating_sub(1));
 
     // Fetch every body in one storage transaction (like the JSON-RPC
@@ -175,7 +178,9 @@ async fn build_bodies_response(
                         // Fast path: the BAL persisted at import time is a
                         // synchronous point read. Only the re-execution
                         // fallback (BAL absent) is CPU-bound enough to need
-                        // the blocking-thread helper.
+                        // the blocking-thread helper. On a normally-operating
+                        // node BALs are persisted at import, so the fallback is
+                        // the rare path (e.g. snap-synced pre-cutover blocks).
                         let (bal_bytes, block) =
                             match ctx.storage.get_block_access_list(block.hash()) {
                                 Ok(Some(bal)) => (bal.encode_to_vec(), block),

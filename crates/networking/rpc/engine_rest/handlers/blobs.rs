@@ -36,6 +36,30 @@ pub async fn blobs_v1(
     State(ctx): State<RpcApiContext>,
     Ssz(req): Ssz<VersionedHashList>,
 ) -> Response {
+    // Osaka gate (mirror JSON-RPC getBlobsV1, engine/blobs.rs): /blobs/v1 serves
+    // whole-blob proofs and is only valid pre-Osaka. After Osaka a blob carries
+    // cell proofs, so the `proofs[0]` below would be a cell proof rather than a
+    // whole-blob proof — reject instead of returning a proof that fails KZG
+    // verification at the CL. Before a canonical tip exists there is no timestamp
+    // to compare against, so the node is treated as pre-Osaka.
+    let latest = match ctx.storage.get_latest_block_number().await {
+        Ok(n) => n,
+        Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
+    };
+    match ctx.storage.get_block_header(latest) {
+        Ok(Some(header))
+            if ctx
+                .storage
+                .get_chain_config()
+                .is_osaka_activated(header.timestamp) =>
+        {
+            return ProblemJson::bad_request("/blobs/v1 is only supported before Osaka")
+                .into_response();
+        }
+        Ok(_) => {}
+        Err(e) => return ProblemJson::internal(&format!("storage: {e}")).into_response(),
+    }
+
     let hashes = match request_hashes(&req) {
         Ok(h) => h,
         Err(p) => return p.into_response(),

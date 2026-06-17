@@ -43,6 +43,13 @@ pub struct BuiltPayloadParis {
 }
 
 /// Shanghai built payload (replaces `engine_getPayloadV2`).
+///
+/// Omits `should_override_builder` by design: that flag was introduced in
+/// `engine_getPayloadV3`/Cancun (alongside `blobs_bundle`), not Shanghai. The
+/// execution-apis #793 spec confirms this — `BuiltPayloadShanghai` is
+/// `{payload, block_value}` and the flag first appears on `BuiltPayloadCancun`
+/// (resolved upstream 2026-06-17, commit "advertise all forks"; matches the
+/// legacy `engine_getPayloadV2` shape).
 #[derive(Debug, Clone, PartialEq, Eq, SszEncode, SszDecode, HashTreeRoot)]
 pub struct BuiltPayloadShanghai {
     pub payload: shanghai::ExecutionPayload,

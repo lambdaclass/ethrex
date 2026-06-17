@@ -4,9 +4,10 @@
 //! `BlobsV4Request` container (v4). Responses are bare `List[BlobV*Entry,
 //! MAX_BLOBS_REQUEST]` — NOT wrapped in a named container — matching the CL.
 //! Each entry carries an `available` boolean plus `contents`; when `available`
-//! is false the `contents` are zero-valued and CLs MUST ignore them. `/blobs/v2`
-//! is all-or-nothing (204 when any blob is missing); `/blobs/v3` surfaces missing
-//! blobs per entry.
+//! is false the `contents` are zero-valued and CLs MUST ignore them. `/blobs/v1`
+//! (Cancun, pre-Osaka only) surfaces missing blobs as `available == false`
+//! entries. `/blobs/v2` is all-or-nothing (204 when any blob is missing);
+//! `/blobs/v3` surfaces missing blobs per entry.
 
 use libssz_derive::{HashTreeRoot, SszDecode, SszEncode};
 use libssz_types::{SszBitvector, SszList, SszVector};
@@ -15,11 +16,14 @@ use libssz_types::{SszBitvector, SszList, SszVector};
 pub const BYTES_PER_BLOB: usize = 131_072;
 pub const BYTES_PER_PROOF: usize = 48;
 pub const CELLS_PER_EXT_BLOB: usize = 128;
-/// `BYTES_PER_CELL` per #793 (`BYTES_PER_BLOB / CELLS_PER_EXT_BLOB`). NOTE:
-/// EIP-7594 itself uses 2048-byte cells (over the *extended* blob); the #793
-/// draft derives 1024 and flags the value as an open question. We track the
-/// spec document here since ethrex never emits cell data today (see `/blobs/v4`).
-pub const BYTES_PER_CELL: usize = 1_024;
+/// `BYTES_PER_CELL` = `FIELD_ELEMENTS_PER_CELL * BYTES_PER_FIELD_ELEMENT`
+/// = `64 * 32` = `2048` (EIP-7594). An earlier execution-apis #793 draft derived
+/// `1024` via `BYTES_PER_BLOB / CELLS_PER_EXT_BLOB`, which is geometrically wrong
+/// (cells span the *extended* blob, which is twice `BYTES_PER_BLOB`); the spec
+/// was corrected to `2048` and `c-kzg-4844`'s `compute_cells` writes 2048-byte
+/// cells. ethrex never emits cell data today (see `/blobs/v4`), so this only
+/// matters once per-cell storage lands, but the constant tracks the corrected spec.
+pub const BYTES_PER_CELL: usize = 2_048;
 /// Spec cap on versioned hashes per blobs request (`MAX_BLOBS_REQUEST`).
 pub const MAX_BLOBS_REQUEST: usize = 128;
 

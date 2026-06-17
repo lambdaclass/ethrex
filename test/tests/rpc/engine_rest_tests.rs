@@ -1296,14 +1296,8 @@ mod conversion_tests {
             parent_beacon_block_root: [0xBB; 32],
         };
         let DecodedNewPayload { block, call, .. } = env.into_engine_call().expect("conversion");
-        match call {
-            EngineCall::V3 {
-                parent_beacon_block_root,
-            } => {
-                assert_eq!(parent_beacon_block_root.as_bytes(), &[0xBB; 32]);
-            }
-            other => panic!("expected V3, got {other:?}"),
-        }
+        assert!(matches!(call, EngineCall::V3), "expected V3, got {call:?}");
+        // parent_beacon_block_root is baked into the reconstructed header.
         assert_eq!(
             block.header.parent_beacon_block_root,
             Some(ethrex_common::H256::from([0xBB; 32]))
@@ -1338,16 +1332,16 @@ mod conversion_tests {
                 .try_into()
                 .unwrap(),
         };
-        let DecodedNewPayload { call, .. } = env.into_engine_call().expect("conversion");
-        match call {
-            EngineCall::V4 {
-                execution_requests, ..
-            } => {
-                assert_eq!(execution_requests.len(), 1);
-                assert_eq!(execution_requests[0].0[0], 0x00);
-            }
-            other => panic!("expected V4, got {other:?}"),
-        }
+        let DecodedNewPayload { block, call, .. } = env.into_engine_call().expect("conversion");
+        assert!(matches!(call, EngineCall::V4), "expected V4, got {call:?}");
+        // The decoded execution_requests are folded into the header's requests_hash;
+        // assert on that observable state rather than on a now-removed enum field.
+        let expected = ethrex_common::types::requests::compute_requests_hash(&[
+            ethrex_common::types::requests::EncodedRequests(bytes::Bytes::from(vec![
+                0x00u8, 0xDE, 0xAD,
+            ])),
+        ]);
+        assert_eq!(block.header.requests_hash, Some(expected));
     }
 
     #[test]
@@ -1442,11 +1436,10 @@ mod submit_payload_tests {
     use ethrex_rpc::engine_rest::types::cancun::{
         ExecutionPayload as CancunPayload, ExecutionPayloadEnvelope as CancunEnv,
     };
-    use ethrex_rpc::engine_rest::types::common::{Bytes20, PayloadStatusCode};
+    use ethrex_rpc::engine_rest::types::common::Bytes20;
     use ethrex_rpc::test_utils::default_context_with_storage;
     use ethrex_rpc::test_utils::setup_store;
-    use http_body_util::BodyExt;
-    use libssz::{SszDecode, SszEncode};
+    use libssz::SszEncode;
     use tower::ServiceExt;
 
     fn empty_cancun_envelope() -> CancunEnv {
@@ -1474,8 +1467,13 @@ mod submit_payload_tests {
         }
     }
 
+    /// On the test genesis Osaka is active from timestamp 0, so a Cancun-shaped
+    /// payload (timestamp 0 → Osaka era) submitted to `/cancun/payloads` is
+    /// misrouted. The fork-boundary check (mirroring JSON-RPC NewPayloadV3
+    /// `validate_fork(Cancun)`) rejects it with 400 instead of letting it fall
+    /// through to an INVALID block-hash mismatch.
     #[tokio::test]
-    async fn submit_unknown_parent_returns_syncing_or_invalid() {
+    async fn submit_wrong_fork_payload_returns_400() {
         let storage = setup_store().await;
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
@@ -1493,21 +1491,10 @@ mod submit_payload_tests {
             .body(axum::body::Body::from(body))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.status(), 400);
         assert_eq!(
             resp.headers().get("content-type").unwrap(),
-            "application/octet-stream"
-        );
-        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        let status =
-            ethrex_rpc::engine_rest::types::common::PayloadStatus::from_ssz_bytes(&body_bytes)
-                .unwrap();
-        // Empty/zero payload's parent_hash is unknown to a fresh store; expect SYNCING or INVALID.
-        assert!(
-            status.status == PayloadStatusCode::Syncing as u8
-                || status.status == PayloadStatusCode::Invalid as u8,
-            "expected SYNCING or INVALID, got {}",
-            status.status
+            "application/problem+json"
         );
     }
 
@@ -1656,6 +1643,107 @@ mod forkchoice_handler_tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
         assert_eq!(resp.status(), 400);
+    }
+
+    /// Regression: a forkchoice update carrying payload attributes with a
+    /// non-advancing timestamp must be rejected (422), mirroring the JSON-RPC
+    /// `ForkChoiceUpdatedV3` path (`-38003 InvalidPayloadAttributes`). Before the
+    /// validation-parity fix the REST path built a payload and returned 200 + a
+    /// payloadId for these attributes.
+    ///
+    /// Attribute validation only runs when the forkchoice resolves to a known
+    /// head, so we build a block on genesis, store it non-canonically, and point
+    /// the FCU at it (apply_fork_choice then advances the head). Mirrors the
+    /// fixture in `fork_choice_tests.rs`.
+    #[tokio::test]
+    async fn stale_timestamp_attributes_rejected_with_422() {
+        use std::fs::File;
+        use std::io::BufReader;
+        use std::path::PathBuf;
+
+        use ethrex_blockchain::Blockchain;
+        use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
+        use ethrex_common::types::{DEFAULT_BUILDER_GAS_CEIL, ELASTICITY_MULTIPLIER};
+        use ethrex_common::{H160, H256};
+        use ethrex_rpc::engine_rest::types::cancun::PayloadAttributes;
+        use ethrex_rpc::engine_rest::types::common::Bytes20;
+        use ethrex_storage::{EngineType, Store};
+
+        // Genesis with Cancun active from 0 (Prague tip, no Osaka), matching the
+        // JSON-RPC fork_choice tests — create_payload/build_payload produce a valid
+        // block and the V3 attribute validator reaches the timestamp check.
+        let genesis_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("fixtures/genesis/execution-api.json");
+        let genesis = serde_json::from_reader(BufReader::new(
+            File::open(genesis_path).expect("open genesis"),
+        ))
+        .expect("parse genesis");
+        let mut storage = Store::new("", EngineType::InMemory).expect("store");
+        storage
+            .add_initial_state(genesis)
+            .await
+            .expect("genesis state");
+
+        let blockchain = Blockchain::default_with_store(storage.clone());
+        let genesis_header = storage.get_block_header(0).unwrap().unwrap();
+
+        // Build a block on genesis and store it WITHOUT canonicalizing, so the FCU
+        // advances the head (apply_fork_choice returns Some(head)) and validation runs.
+        let args = BuildPayloadArgs {
+            parent: genesis_header.hash(),
+            timestamp: genesis_header.timestamp + 12,
+            fee_recipient: H160::random(),
+            random: H256::random(),
+            withdrawals: Some(Vec::new()),
+            beacon_root: Some(H256::random()),
+            slot_number: None,
+            version: 3,
+            elasticity_multiplier: ELASTICITY_MULTIPLIER,
+            gas_ceil: DEFAULT_BUILDER_GAS_CEIL,
+        };
+        let payload = create_payload(&args, &storage, Bytes::new()).unwrap();
+        let block_1 = blockchain.build_payload(payload).unwrap().payload;
+        let hash_1 = block_1.hash();
+        blockchain.add_block(block_1.clone()).unwrap();
+
+        let mut ctx = default_context_with_storage(storage.clone()).await;
+        let secret = Bytes::from(vec![0xAB; 32]);
+        ctx.node_data.jwt_secret = secret.clone();
+        let app = router(ctx);
+        let token = auth_token(&secret).await;
+
+        // head advances to block_1; attrs.timestamp == block_1.timestamp is stale
+        // (the engine API requires strictly greater), so validation must reject
+        // (422) instead of building a payload.
+        let update = CancunForkchoiceUpdate {
+            state: ForkchoiceState {
+                head_block_hash: hash_1.0,
+                safe_block_hash: genesis_header.hash().0,
+                finalized_block_hash: genesis_header.hash().0,
+            },
+            payload_attributes: to_optional(Some(PayloadAttributes {
+                timestamp: block_1.header.timestamp,
+                prev_randao: [0; 32],
+                suggested_fee_recipient: Bytes20([0xFE; 20]),
+                withdrawals: vec![].try_into().unwrap(),
+                parent_beacon_block_root: [0xBB; 32],
+            })),
+        };
+        let body = update.to_ssz();
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/cancun/forkchoice")
+            .header("authorization", format!("Bearer {token}"))
+            .header("content-type", "application/octet-stream")
+            .body(axum::body::Body::from(body))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            422,
+            "stale-timestamp attributes must be rejected, not built"
+        );
     }
 }
 
@@ -2154,12 +2242,17 @@ mod blobs_v1_tests {
     use ethrex_rpc::engine_rest::router;
     use ethrex_rpc::engine_rest::types::blobs::VersionedHashList;
     use ethrex_rpc::test_utils::{default_context_with_storage, setup_store};
-    use http_body_util::BodyExt;
     use libssz::SszEncode;
     use tower::ServiceExt;
 
+    /// The test genesis activates Osaka from timestamp 0, so the canonical head is
+    /// Osaka-era. `/blobs/v1` serves whole-blob proofs and is only valid pre-Osaka
+    /// (mirrors JSON-RPC `getBlobsV1`); post-Osaka it must reject with 400 rather
+    /// than return a `proofs[0]` that, for a cell-proof blob, would be a cell proof
+    /// and fail KZG verification at the CL. Pre-Osaka per-entry behavior is covered
+    /// by the v3 path.
     #[tokio::test]
-    async fn unknown_hash_returns_200_with_none_position() {
+    async fn post_osaka_returns_400_unsupported() {
         let storage = setup_store().await;
         let mut ctx = default_context_with_storage(storage).await;
         let secret = Bytes::from(vec![0xAB; 32]);
@@ -2177,13 +2270,11 @@ mod blobs_v1_tests {
             .body(axum::body::Body::from(body))
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
-        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.status(), 400);
         assert_eq!(
             resp.headers().get("content-type").unwrap(),
-            "application/octet-stream"
+            "application/problem+json"
         );
-        let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        assert!(!body_bytes.is_empty());
     }
 
     #[tokio::test]

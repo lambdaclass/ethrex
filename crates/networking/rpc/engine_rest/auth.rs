@@ -74,6 +74,11 @@ pub async fn engine_auth_middleware(
                     raw: raw.to_string(),
                 };
                 debug!(client_version = %cv.raw, "engine REST request");
+                // Forward-looking hook: stash the parsed client version in the
+                // request extensions so downstream handlers can read it (see the
+                // `captures_client_version_header_into_extensions` test). No
+                // production handler consumes it yet; kept for diagnostics and
+                // future `/identity`-style introspection.
                 req.extensions_mut().insert(cv);
             }
             Err(_) => {

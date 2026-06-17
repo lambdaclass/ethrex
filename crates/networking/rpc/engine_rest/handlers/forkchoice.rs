@@ -5,11 +5,14 @@ use axum::extract::State;
 use axum::response::{IntoResponse, Response};
 use ethrex_blockchain::error::ChainError;
 use ethrex_blockchain::payload::{BuildPayloadArgs, create_payload};
-use ethrex_common::types::{ELASTICITY_MULTIPLIER, Fork, Withdrawal};
+use ethrex_common::types::{BlockHeader, ELASTICITY_MULTIPLIER, Fork, Withdrawal};
 use ethrex_common::{Address, H256};
 use tracing::{error, info};
 
-use crate::engine::fork_choice::handle_forkchoice;
+use crate::engine::fork_choice::{
+    handle_forkchoice, validate_attributes_v1, validate_attributes_v2,
+    validate_attributes_v2_pre_shanghai, validate_attributes_v3, validate_attributes_v4,
+};
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
 use crate::engine_rest::fork_path::ForkPath;
@@ -228,6 +231,53 @@ fn rpc_err_to_problem(err: RpcErr) -> ProblemJson {
     }
 }
 
+// ── Payload-attributes validation ────────────────────────────────────────────
+//
+// Mirrors the per-version checks in the JSON-RPC `ForkChoiceUpdatedV{1..4}`
+// handlers (engine/fork_choice.rs): timestamp must advance past the head, the
+// withdrawals/parent_beacon_block_root fields must match the fork, and the
+// attributes version must match the head's fork era. `version` is pinned by the
+// URL fork segment, so it selects the validator exactly as the JSON-RPC method
+// suffix does. Errors are `RpcErr` variants that `rpc_err_to_problem` maps to
+// the appropriate HTTP status (422/400), not 500.
+
+fn validate_rest_attributes(
+    version: usize,
+    attrs: &AttrsInternal,
+    head_block: &BlockHeader,
+    ctx: &RpcApiContext,
+) -> Result<(), RpcErr> {
+    let chain_config = ctx.storage.get_chain_config();
+    match (version, attrs) {
+        (1, AttrsInternal::V3(a)) => {
+            if chain_config.is_cancun_activated(a.timestamp) {
+                return Err(RpcErr::UnsupportedFork(
+                    "forkchoice paris endpoint used to build Cancun payload".to_string(),
+                ));
+            }
+            validate_attributes_v1(a, head_block)
+        }
+        (2, AttrsInternal::V3(a)) => {
+            if chain_config.is_cancun_activated(a.timestamp) {
+                Err(RpcErr::UnsupportedFork(
+                    "forkchoice shanghai endpoint used to build Cancun payload".to_string(),
+                ))
+            } else if chain_config.is_shanghai_activated(a.timestamp) {
+                validate_attributes_v2(a, head_block)
+            } else {
+                validate_attributes_v2_pre_shanghai(a, head_block)
+            }
+        }
+        (3, AttrsInternal::V3(a)) => validate_attributes_v3(a, head_block, ctx),
+        (4, AttrsInternal::V4(a)) => validate_attributes_v4(a, head_block, ctx),
+        // The (version, attrs-variant) pairing is fixed by the caller's per-fork
+        // dispatch in `forkchoice_update`; any other combination is a bug.
+        _ => Err(RpcErr::Internal(
+            "mismatched forkchoice version and payload attributes".to_string(),
+        )),
+    }
+}
+
 // ── Core forkchoice execution ────────────────────────────────────────────────
 
 async fn run_forkchoice(
@@ -249,7 +299,15 @@ async fn run_forkchoice(
         };
 
     // If payload_attributes were provided and we have a known head, kick off a build.
-    if let (Some(attrs_internal), Some(_head)) = (attrs, head_header) {
+    if let (Some(attrs_internal), Some(head)) = (attrs, head_header) {
+        // Validate the attributes before building, mirroring the JSON-RPC
+        // ForkChoiceUpdatedV{1..4} handlers (engine/fork_choice.rs). Without this
+        // the REST path would accept stale-timestamp, wrong-fork, or
+        // missing-field attributes and return 200 + a payloadId where the
+        // JSON-RPC transport rejects with -38003/-38005.
+        if let Err(err) = validate_rest_attributes(version, &attrs_internal, &head, &ctx) {
+            return rpc_err_to_problem(err).into_response();
+        }
         let build_result = match attrs_internal {
             AttrsInternal::V3(v3) => {
                 build_payload_v3(&v3, ctx, &internal_state, version as u8).await

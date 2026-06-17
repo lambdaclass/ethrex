@@ -389,7 +389,7 @@ pub(crate) async fn handle_forkchoice(
     }
 }
 
-fn validate_attributes_v1(
+pub(crate) fn validate_attributes_v1(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -399,7 +399,7 @@ fn validate_attributes_v1(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v2(
+pub(crate) fn validate_attributes_v2(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -409,7 +409,7 @@ fn validate_attributes_v2(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v2_pre_shanghai(
+pub(crate) fn validate_attributes_v2_pre_shanghai(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
 ) -> Result<(), RpcErr> {
@@ -419,7 +419,7 @@ fn validate_attributes_v2_pre_shanghai(
     validate_timestamp(attributes, head_block)
 }
 
-fn validate_attributes_v3(
+pub(crate) fn validate_attributes_v3(
     attributes: &PayloadAttributesV3,
     head_block: &BlockHeader,
     context: &RpcApiContext,
@@ -521,7 +521,7 @@ fn parse_v4(
     Ok((forkchoice_state, payload_attributes))
 }
 
-fn validate_attributes_v4(
+pub(crate) fn validate_attributes_v4(
     attributes: &PayloadAttributesV4,
     head_block: &BlockHeader,
     context: &RpcApiContext,
