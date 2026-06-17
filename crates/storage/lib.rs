@@ -67,8 +67,8 @@
 pub mod api;
 pub mod backend;
 pub mod error;
-pub mod log_index;
 mod layering;
+pub mod log_index;
 pub mod migrations;
 pub mod rlp;
 pub mod store;

@@ -20,6 +20,7 @@
 //! (never on the block-import path), so it is append-only and never needs reorg
 //! invalidation.
 
+use crate::error::StoreError;
 use ethrex_common::{Address, types::BlockNumber};
 
 /// Number of blocks per index section.
@@ -53,11 +54,21 @@ pub fn encode_offsets(offsets: &[u16]) -> Vec<u8> {
 }
 
 /// Decodes a value written by [`encode_offsets`] back into offsets.
-pub fn decode_offsets(bytes: &[u8]) -> Vec<u16> {
-    bytes
+///
+/// Values are always an even number of bytes (one `u16` per offset); an odd
+/// length means the stored value is corrupted, which we surface as an error
+/// rather than silently dropping the trailing byte.
+pub fn decode_offsets(bytes: &[u8]) -> Result<Vec<u16>, StoreError> {
+    if !bytes.len().is_multiple_of(2) {
+        return Err(StoreError::Custom(format!(
+            "log index: corrupted offsets value with odd length {}",
+            bytes.len()
+        )));
+    }
+    Ok(bytes
         .chunks_exact(2)
         .map(|c| u16::from_be_bytes([c[0], c[1]]))
-        .collect()
+        .collect())
 }
 
 /// Given, for one section, the in-section offsets each address logged in,
@@ -120,8 +131,13 @@ mod tests {
     #[test]
     fn offsets_encode_decode_roundtrip() {
         let offsets = vec![0u16, 1, 42, 4095];
-        assert_eq!(decode_offsets(&encode_offsets(&offsets)), offsets);
-        assert!(decode_offsets(&[]).is_empty());
+        assert_eq!(decode_offsets(&encode_offsets(&offsets)).unwrap(), offsets);
+        assert!(decode_offsets(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn decode_offsets_rejects_odd_length() {
+        assert!(decode_offsets(&[0x00, 0x01, 0x02]).is_err());
     }
 
     #[test]
@@ -130,7 +146,7 @@ mod tests {
         assert_eq!(entries.len(), 1);
         let (key, val) = &entries[0];
         assert_eq!(key, &index_key(&addr(9), 3));
-        assert_eq!(decode_offsets(val), vec![1, 5, 10]);
+        assert_eq!(decode_offsets(val).unwrap(), vec![1, 5, 10]);
     }
 
     #[test]

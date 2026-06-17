@@ -9,8 +9,7 @@ use crate::{
             BLOCK_ACCESS_LISTS, BLOCK_NUMBERS, BODIES, CANONICAL_BLOCK_HASHES, CHAIN_DATA,
             EXECUTION_WITNESSES, FULLSYNC_HEADERS, HEADERS, INVALID_CHAINS, LOG_ADDRESS_INDEX,
             MISC_VALUES, PENDING_BLOCKS, RECEIPTS_V2, SNAP_STATE, STORAGE_FLATKEYVALUE,
-            STORAGE_TRIE_NODES,
-            TRANSACTION_LOCATIONS,
+            STORAGE_TRIE_NODES, TRANSACTION_LOCATIONS,
         },
     },
     apply_prefix,
@@ -1281,12 +1280,24 @@ impl Store {
             .unwrap_or(0))
     }
 
-    fn set_indexed_log_sections(&self, count: u64) -> Result<(), StoreError> {
-        self.write(
+    /// Atomically persists a section's index entries and advances the
+    /// indexed-section counter in a single write transaction. Doing both in one
+    /// commit means a crash can't leave the counter pointing past data that was
+    /// never written (the two are in different column families).
+    fn commit_indexed_log_section(
+        &self,
+        section: u64,
+        entries: Vec<(Vec<u8>, Vec<u8>)>,
+    ) -> Result<(), StoreError> {
+        let backend = self.backend.clone();
+        let mut txn = backend.begin_write()?;
+        txn.put_batch(LOG_ADDRESS_INDEX, entries)?;
+        txn.put(
             MISC_VALUES,
-            LOG_INDEX_SECTIONS_KEY.to_vec(),
-            count.to_le_bytes().to_vec(),
-        )
+            LOG_INDEX_SECTIONS_KEY,
+            &(section + 1).to_le_bytes(),
+        )?;
+        txn.commit()
     }
 
     /// Reads all of a block's receipts in one prefix scan (sync variant of
@@ -1330,24 +1341,39 @@ impl Store {
         let mut newly_indexed = 0;
         loop {
             let last_block = (section + 1) * log_index::SECTION_SIZE - 1;
-            // Stop before any section a reorg could still rewrite.
-            if last_block + confirmation_depth > latest {
+            // Stop before any section a reorg could still rewrite (saturating so
+            // a near-`u64::MAX` head can't wrap and skip the guard).
+            if last_block.saturating_add(confirmation_depth) > latest {
                 break;
             }
             let mut address_offsets: HashMap<Address, Vec<u16>> = HashMap::new();
+            let mut section_complete = true;
             for block_number in section * log_index::SECTION_SIZE..=last_block {
-                let block_hash = self.get_canonical_block_hash_sync(block_number)?.ok_or_else(
-                    || {
-                        StoreError::Custom(format!(
-                            "log index: missing canonical hash for block {block_number}"
-                        ))
-                    },
-                )?;
+                // A buried block should always have a canonical hash. If one is
+                // missing (DB inconsistency), we can't build this section
+                // exactly, so we must NOT mark it indexed — leave it (and every
+                // later section) unindexed so queries fall back to scanning that
+                // range, keeping results correct. Defer rather than error so the
+                // indexer doesn't abort; we retry on the next poll.
+                let Some(block_hash) = self.get_canonical_block_hash_sync(block_number)? else {
+                    tracing::warn!(
+                        "log index: missing canonical hash for block {block_number}; \
+                         deferring section {section} (queries scan this range meanwhile)"
+                    );
+                    section_complete = false;
+                    break;
+                };
                 let receipts = self.get_receipts_for_block_sync(&block_hash)?;
                 let offset = log_index::offset_in_section(block_number);
                 // Each address contributes this block's offset at most once.
+                // Mirror the query path and only index logs from successful
+                // receipts (reverted txs carry no logs, so this is a no-op on
+                // EIP-658 networks, but keeps the index exact everywhere).
                 let mut seen = HashSet::new();
                 for receipt in &receipts {
+                    if !receipt.succeeded {
+                        continue;
+                    }
                     for log in &receipt.logs {
                         if seen.insert(log.address) {
                             address_offsets.entry(log.address).or_default().push(offset);
@@ -1355,9 +1381,11 @@ impl Store {
                     }
                 }
             }
+            if !section_complete {
+                break;
+            }
             let entries = log_index::build_section_entries(section, address_offsets);
-            self.write_batch(LOG_ADDRESS_INDEX, entries)?;
-            self.set_indexed_log_sections(section + 1)?;
+            self.commit_indexed_log_section(section, entries)?;
             section += 1;
             newly_indexed += 1;
         }
@@ -1385,6 +1413,8 @@ impl Store {
         if addresses.is_empty() {
             return Ok(None);
         }
+        // First block number not yet covered by the index (0 when nothing is
+        // indexed). If the range starts at or past it, the index can't help.
         let indexed_until = self
             .get_indexed_log_sections()?
             .saturating_mul(log_index::SECTION_SIZE);
@@ -1392,6 +1422,8 @@ impl Store {
             return Ok(None);
         }
 
+        // Safe: the guard above already returned for `indexed_until == 0`, so
+        // here `indexed_until >= 1` and the subtraction can't underflow.
         let indexed_to = to.min(indexed_until - 1);
         let mut candidates = BTreeSet::new();
         for section in log_index::section_of(from)..=log_index::section_of(indexed_to) {
@@ -1399,7 +1431,7 @@ impl Store {
                 if let Some(bytes) =
                     self.read(LOG_ADDRESS_INDEX, log_index::index_key(address, section))?
                 {
-                    let offsets = log_index::decode_offsets(&bytes);
+                    let offsets = log_index::decode_offsets(&bytes)?;
                     candidates.extend(log_index::offsets_to_blocks(
                         section, &offsets, from, indexed_to,
                     ));
