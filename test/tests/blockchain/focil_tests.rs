@@ -21,8 +21,8 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H160, H256, U256,
     types::{
-        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, ELASTICITY_MULTIPLIER,
-        GenesisAccount, Transaction, TxKind,
+        Block, BlockHeader, DEFAULT_BUILDER_GAS_CEIL, EIP1559Transaction, EIP4844Transaction,
+        ELASTICITY_MULTIPLIER, GenesisAccount, Transaction, TxKind,
     },
     validation::BlockValidationContext,
 };
@@ -33,6 +33,9 @@ use secp256k1::SecretKey;
 const TEST_PRIVATE_KEY: &str = "850643a0224065ecce3882673c21f56bcf6eef86274cc21cadff15930b59fc8c";
 /// Second test key used to construct multi-sender ILs without nonce-collision.
 const TEST_PRIVATE_KEY_2: &str = "94eb3102993b41ec55c241060f47daa0f6372e2e3ad7e91612ae36c364042e44";
+/// Third key, deliberately left UNFUNDED in genesis, to exercise the
+/// "IL tx sender cannot afford it" satisfaction path.
+const TEST_PRIVATE_KEY_3: &str = "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 const TEST_MAX_FEE_PER_GAS: u64 = 10_000_000_000;
 const TEST_GAS_LIMIT: u64 = 100_000;
 
@@ -78,15 +81,19 @@ async fn setup_store(senders: &[Address]) -> (Store, u64) {
     (store, chain_id)
 }
 
-/// Sign a 0-value EIP-1559 transfer to a deterministic recipient. Used to
-/// populate the inclusion list with realistic, validator-friendly txs.
-async fn make_transfer_tx(chain_id: u64, nonce: u64, signer: &Signer) -> Transaction {
+/// Sign a 0-value EIP-1559 transfer with a specific gas limit.
+async fn make_transfer_tx_gas(
+    chain_id: u64,
+    nonce: u64,
+    gas_limit: u64,
+    signer: &Signer,
+) -> Transaction {
     let mut tx = Transaction::EIP1559Transaction(EIP1559Transaction {
         chain_id,
         nonce,
         max_priority_fee_per_gas: 1,
         max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
-        gas_limit: TEST_GAS_LIMIT,
+        gas_limit,
         to: TxKind::Call(Address::from_low_u64_be(0xAAAA)),
         value: U256::zero(),
         data: Bytes::new(),
@@ -94,6 +101,12 @@ async fn make_transfer_tx(chain_id: u64, nonce: u64, signer: &Signer) -> Transac
     });
     tx.sign_inplace(signer).await.unwrap();
     tx
+}
+
+/// Sign a 0-value EIP-1559 transfer to a deterministic recipient. Used to
+/// populate the inclusion list with realistic, validator-friendly txs.
+async fn make_transfer_tx(chain_id: u64, nonce: u64, signer: &Signer) -> Transaction {
+    make_transfer_tx_gas(chain_id, nonce, TEST_GAS_LIMIT, signer).await
 }
 
 /// Build a block locally that honors the inclusion list (IL-first sequencing
@@ -285,4 +298,156 @@ async fn il_first_ordering_with_mempool_competition() {
     blockchain
         .add_block_pipeline_with_il(block, None, &context)
         .expect("IL-first locally-built block must satisfy on import");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Ported intent from execution-specs `tests/amsterdam/eip7805_focil/test_focil.py`
+// (branch `eips/bogota/eip-7805`). EELS uses gas-headroom arithmetic to make a
+// pending IL tx (un)appendable; here we drive the same satisfaction outcomes
+// directly through the validator's per-tx appendability checks. An omitted IL
+// tx makes the block INVALID only if it is still validly appendable; otherwise
+// the block is valid. Mirrors `test_block_status_depends_on_pending_inclusion_list`
+// and `test_block_with_pending_blob_il_tx_is_valid`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Hegotá-active chain with `senders` funded; returns store, blockchain,
+/// genesis header, and chain id.
+async fn hegota_chain(senders: &[Address]) -> (Store, Blockchain, BlockHeader, u64) {
+    let (mut store, chain_id) = setup_store(senders).await;
+    let mut config = store.get_chain_config();
+    config.hegota_time = Some(0);
+    store.set_chain_config(&config).await.unwrap();
+    let blockchain = Blockchain::default_with_store(store.clone());
+    let genesis = store.get_block_header(0).unwrap().unwrap();
+    (store, blockchain, genesis, chain_id)
+}
+
+/// EELS `valid_with_pending_il_txs_that_do_not_fit`: an omitted IL tx whose gas
+/// limit exceeds the block's remaining gas is not appendable → block is valid.
+#[tokio::test]
+async fn omitted_il_tx_exceeding_block_gas_is_valid() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    // gas_limit far larger than any block gas limit → never fits the empty
+    // block's headroom. Still affordable (1e9 gas * 10 gwei = 10 ETH < 100 ETH).
+    let il = vec![make_transfer_tx_gas(chain_id, 0, 1_000_000_000, &signer1).await];
+
+    let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("omitted IL tx that cannot fit the block must be satisfied");
+}
+
+/// EELS `valid_with_pending_il_txs_that_are_invalid`: an omitted IL tx with a
+/// future nonce is not appendable against post-state → block is valid.
+#[tokio::test]
+async fn omitted_il_tx_wrong_nonce_is_valid() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    // Sender is at nonce 0; an IL tx at nonce 7 can never be appended now.
+    let il = vec![make_transfer_tx(chain_id, 7, &signer1).await];
+
+    let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("omitted IL tx with wrong nonce must be satisfied");
+}
+
+/// EELS `valid_with_pending_il_txs_that_fit_but_sender_cannot_afford`: an
+/// omitted IL tx whose sender has no balance is not appendable → block valid.
+#[tokio::test]
+async fn omitted_il_tx_unaffordable_is_valid() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    // sk_poor is NOT funded in genesis (balance 0).
+    let sk_poor = key(TEST_PRIVATE_KEY_3);
+    let signer_poor: Signer = LocalSigner::new(sk_poor).into();
+
+    // Only s1 is funded; the poor sender is intentionally absent.
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    // Correct nonce (0) and fits gas, but the sender cannot pay for it.
+    let il = vec![make_transfer_tx(chain_id, 0, &signer_poor).await];
+
+    let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("omitted IL tx whose sender cannot afford it must be satisfied");
+}
+
+/// EELS `test_block_with_pending_blob_il_tx_is_valid`: blob (EIP-4844) txs are
+/// excluded from the EL IL-satisfaction pass, so omitting one keeps the block
+/// valid even though the sender is funded and the tx is otherwise appendable.
+#[tokio::test]
+async fn omitted_blob_il_tx_is_valid() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let s1 = sender_from_key(&sk1);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1]).await;
+
+    // A signed blob tx from a funded sender at the correct nonce: without the
+    // blob-skip it would be appendable → unsatisfied. The skip keeps it valid.
+    let mut blob_tx = Transaction::EIP4844Transaction(EIP4844Transaction {
+        chain_id,
+        nonce: 0,
+        max_priority_fee_per_gas: 1,
+        max_fee_per_gas: TEST_MAX_FEE_PER_GAS,
+        gas: TEST_GAS_LIMIT,
+        to: Address::from_low_u64_be(0xAAAA),
+        value: U256::zero(),
+        data: Bytes::new(),
+        max_fee_per_blob_gas: U256::from(1u64),
+        blob_versioned_hashes: vec![H256::zero()],
+        ..Default::default()
+    });
+    blob_tx.sign_inplace(&signer1).await.unwrap();
+    let il = vec![blob_tx];
+
+    let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
+    let context = BlockValidationContext::with_inclusion_list(il);
+    blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect("omitted blob IL tx must be satisfied (excluded from EL IL check)");
+}
+
+/// EELS `unsatisfied_with_mixed_valid_and_invalid_pending_il_txs`: an IL with
+/// one un-appendable tx (wrong nonce) and one appendable tx, both omitted, is
+/// UNSATISFIED — the appendable one must trigger the rejection.
+#[tokio::test]
+async fn mixed_valid_and_invalid_omitted_il_is_unsatisfied() {
+    let sk1 = key(TEST_PRIVATE_KEY);
+    let sk2 = key(TEST_PRIVATE_KEY_2);
+    let s1 = sender_from_key(&sk1);
+    let s2 = sender_from_key(&sk2);
+    let signer1: Signer = LocalSigner::new(sk1).into();
+    let signer2: Signer = LocalSigner::new(sk2).into();
+
+    let (store, blockchain, genesis, chain_id) = hegota_chain(&[s1, s2]).await;
+
+    // s2's tx has a future nonce (not appendable); s1's tx is appendable.
+    let invalid = make_transfer_tx(chain_id, 9, &signer2).await;
+    let appendable = make_transfer_tx(chain_id, 0, &signer1).await;
+    let il = vec![invalid, appendable.clone()];
+
+    let block = build_block_ignoring_il(&store, &blockchain, &genesis).await;
+    let context = BlockValidationContext::with_inclusion_list(il);
+    let err = blockchain
+        .add_block_pipeline_with_il(block, None, &context)
+        .expect_err("an appendable omitted IL tx must make the block unsatisfied");
+    match err {
+        ChainError::IlUnsatisfied { tx_hash } => assert_eq!(tx_hash, appendable.hash()),
+        other => panic!("expected ChainError::IlUnsatisfied, got {other:?}"),
+    }
 }
