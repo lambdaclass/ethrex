@@ -33,14 +33,17 @@ async fn fresh_context() -> RpcApiContext {
     default_context_with_storage(store).await
 }
 
-async fn osaka_context() -> RpcApiContext {
-    let mut store = Store::new("test-osaka", EngineType::InMemory).expect("store");
+// getBlobsV4 (EIP-8070) is an Amsterdam Engine API method, so the serving-path
+// tests activate Amsterdam (which implies Osaka, where cell proofs first exist).
+async fn amsterdam_context() -> RpcApiContext {
+    let mut store = Store::new("test-amsterdam", EngineType::InMemory).expect("store");
     let config = ChainConfig {
         chain_id: 1,
         shanghai_time: Some(0),
         cancun_time: Some(0),
         prague_time: Some(0),
         osaka_time: Some(0),
+        amsterdam_time: Some(0),
         deposit_contract_address: Address::zero(),
         ..Default::default()
     };
@@ -51,20 +54,21 @@ async fn osaka_context() -> RpcApiContext {
 // ── engine_getBlobsV4 ─────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn blobs_v4_pre_osaka_rejected() {
-    let ctx = fresh_context().await; // no osaka time configured
+async fn blobs_v4_pre_amsterdam_returns_null() {
+    // amsterdam.md getBlobsV4 §6: while unable to serve (here pre-Amsterdam /
+    // syncing) the method MUST return `null` per hash, not a bespoke -38005.
+    let ctx = fresh_context().await; // no fork times configured
     let req =
         BlobsV4Request::parse(&Some(vec![json!([H256::zero()]), json!(hex_mask(1u128))])).unwrap();
-    let err = req.handle(ctx).await.unwrap_err();
-    assert!(
-        matches!(err, RpcErr::UnsupportedFork(_)),
-        "pre-Osaka must return UnsupportedFork, got {err:?}"
-    );
+    let result = req.handle(ctx).await.unwrap();
+    let arr = result.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+    assert!(arr[0].is_null(), "pre-Amsterdam must return null entry");
 }
 
 #[tokio::test]
 async fn blobs_v4_rejects_over_cap() {
-    let ctx = osaka_context().await;
+    let ctx = amsterdam_context().await;
     let hashes: Vec<H256> = (0..=128).map(H256::from_low_u64_be).collect();
     let req = BlobsV4Request::parse(&Some(vec![
         serde_json::to_value(&hashes).unwrap(),
@@ -80,7 +84,7 @@ async fn blobs_v4_rejects_over_cap() {
 
 #[tokio::test]
 async fn blobs_v4_unknown_hash_returns_null_entry() {
-    let ctx = osaka_context().await;
+    let ctx = amsterdam_context().await;
     let req = BlobsV4Request::parse(&Some(vec![
         json!([H256::from_low_u64_be(999)]),
         json!(hex_mask(u128::MAX)),
@@ -94,7 +98,7 @@ async fn blobs_v4_unknown_hash_returns_null_entry() {
 
 #[tokio::test]
 async fn blobs_v4_sparse_mask_returns_length_128_matrix() {
-    let ctx = osaka_context().await;
+    let ctx = amsterdam_context().await;
 
     // Build a synthetic bundle with 1 blob (version=1 for Osaka).
     let commitment = [0x01u8; 48];
@@ -166,7 +170,7 @@ async fn blobs_v4_sparse_mask_returns_length_128_matrix() {
 
 #[tokio::test]
 async fn blobs_v4_version_zero_bundle_returns_null_entry() {
-    let ctx = osaka_context().await;
+    let ctx = amsterdam_context().await;
     // version=0 bundle cannot supply per-cell proofs → null entry.
     let commitment = [0x02u8; 48];
     let bundle = BlobsBundle {

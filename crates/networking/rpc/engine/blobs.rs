@@ -301,13 +301,17 @@ impl RpcHandler for BlobsV4Request {
     async fn handle(&self, context: RpcApiContext) -> Result<Value, RpcErr> {
         debug!("Received new engine request: getBlobsV4");
 
-        if self.versioned_blob_hashes.len() >= GET_BLOBS_V1_REQUEST_MAX_SIZE {
+        // Spec (execution-apis amsterdam.md, getBlobsV4 §5): clients MUST support at
+        // least 128 hashes, so exactly MAX must be accepted; reject only above it.
+        if self.versioned_blob_hashes.len() > GET_BLOBS_V1_REQUEST_MAX_SIZE {
             return Err(RpcErr::TooLargeRequest);
         }
 
-        // Osaka fork guard (mirrors getBlobsV3). On an empty chain the head header
-        // is absent; treat the timestamp as 0 (pre-Osaka) so the guard still
-        // rejects rather than silently serving on a pre-genesis chain.
+        // getBlobsV4 (EIP-8070) is an Amsterdam Engine API method. Per amsterdam.md
+        // getBlobsV4 §6, its contract is to return `null` (not a bespoke -38005)
+        // while syncing or otherwise unable to serve, mirroring getBlobsV3. Before
+        // our canonical tip is at Amsterdam — including while the local head is still
+        // pre-fork during sync — return `null` for every requested hash.
         let head_ts = context
             .storage
             .get_block_header(context.storage.get_latest_block_number().await?)?
@@ -316,11 +320,12 @@ impl RpcHandler for BlobsV4Request {
         if !context
             .storage
             .get_chain_config()
-            .is_osaka_activated(head_ts)
+            .is_amsterdam_activated(head_ts)
         {
-            return Err(RpcErr::UnsupportedFork(
-                "getBlobsV4 engine only supported for Osaka".to_string(),
-            ));
+            let nulls: Vec<Option<BlobCellsAndProofsV1>> = (0..self.versioned_blob_hashes.len())
+                .map(|_| None)
+                .collect();
+            return serde_json::to_value(nulls).map_err(|e| RpcErr::Internal(e.to_string()));
         }
 
         let mask = self.indices_bitarray;
@@ -489,13 +494,17 @@ mod tests {
         }
     }
 
-    fn chain_config(osaka_active: bool) -> ChainConfig {
+    // `active` gates the blob-serving forks used by these tests: Osaka (getBlobsV3)
+    // and Amsterdam (getBlobsV4). Both share the same activation here so the V3 and
+    // V4 positive/negative paths can be driven by a single flag.
+    fn chain_config(active: bool) -> ChainConfig {
         ChainConfig {
             chain_id: 1,
             shanghai_time: Some(0),
             cancun_time: Some(0),
             prague_time: Some(0),
-            osaka_time: osaka_active.then_some(0),
+            osaka_time: active.then_some(0),
+            amsterdam_time: active.then_some(0),
             deposit_contract_address: Address::zero(),
             ..Default::default()
         }
@@ -655,14 +664,17 @@ mod tests {
     // ── BlobsV4 tests ─────────────────────────────────────────────────
 
     #[tokio::test]
-    async fn blobs_v4_requires_osaka() {
+    async fn blobs_v4_returns_null_before_amsterdam() {
+        // amsterdam.md getBlobsV4 §6: while unable to serve (here: pre-Amsterdam /
+        // syncing) the method MUST return `null` per hash, NOT a bespoke -38005.
         let context = context_with_chain_config(false).await;
         let request = BlobsV4Request {
-            versioned_blob_hashes: vec![H256::from_low_u64_be(1)],
+            versioned_blob_hashes: vec![H256::from_low_u64_be(1), H256::from_low_u64_be(2)],
             indices_bitarray: u128::MAX,
         };
-        let err = request.handle(context).await.unwrap_err();
-        assert!(matches!(err, RpcErr::UnsupportedFork(_)));
+        let result = request.handle(context).await.unwrap();
+        let expected = serde_json::to_value(vec![None::<BlobCellsAndProofsV1>, None]).unwrap();
+        assert_eq!(result, expected);
     }
 
     #[tokio::test]
@@ -674,6 +686,19 @@ mod tests {
         };
         let err = request.handle(context).await.unwrap_err();
         assert!(matches!(err, RpcErr::TooLargeRequest));
+    }
+
+    #[tokio::test]
+    async fn blobs_v4_accepts_exactly_max_size() {
+        // Spec §5: clients MUST support at least MAX hashes, so exactly MAX must not
+        // be rejected as too large (regression guard for the `>=` vs `>` off-by-one).
+        let context = context_with_chain_config(true).await;
+        let request = BlobsV4Request {
+            versioned_blob_hashes: vec![H256::zero(); GET_BLOBS_V1_REQUEST_MAX_SIZE],
+            indices_bitarray: u128::MAX,
+        };
+        let result = request.handle(context).await;
+        assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
     }
 
     #[tokio::test]
