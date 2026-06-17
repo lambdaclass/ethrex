@@ -3,8 +3,10 @@ mod tracing;
 
 use super::{BlockExecutionResult, TxGasBreakdown};
 use crate::system_contracts::{
-    BEACON_ROOTS_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS, HISTORY_STORAGE_ADDRESS,
-    PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS, WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
+    AMSTERDAM_REQUEST_PREDEPLOYS, BEACON_ROOTS_ADDRESS, BUILDER_DEPOSIT_CONTRACT_ADDRESS,
+    BUILDER_EXIT_CONTRACT_ADDRESS, CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    HISTORY_STORAGE_ADDRESS, PRAGUE_SYSTEM_CONTRACTS, SYSTEM_ADDRESS,
+    WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
 };
 use crate::{EvmError, ExecutionResult};
 use bytes::Bytes;
@@ -2601,6 +2603,68 @@ impl LEVM {
         }
     }
 
+    pub(crate) fn read_builder_deposit_requests(
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2(_) = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "read_builder_deposit_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::new(),
+            db,
+            BUILDER_DEPOSIT_CONTRACT_ADDRESS.address,
+            SYSTEM_ADDRESS,
+            vm_type,
+            crypto,
+        )?;
+
+        match report.result {
+            TxResult::Success => Ok(report),
+            // EIP-8282 specifies that a failed system call invalidates the entire block.
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
+                "REVERT when reading builder deposit requests with error: {vm_error:?}. According to EIP-8282, the revert of this system call invalidates the block.",
+            ))),
+        }
+    }
+
+    pub(crate) fn dequeue_builder_exit_requests(
+        block_header: &BlockHeader,
+        db: &mut GeneralizedDatabase,
+        vm_type: VMType,
+        crypto: &dyn Crypto,
+    ) -> Result<ExecutionReport, EvmError> {
+        if let VMType::L2(_) = vm_type {
+            return Err(EvmError::InvalidEVM(
+                "dequeue_builder_exit_requests should not be called for L2 VM".to_string(),
+            ));
+        }
+
+        let report = generic_system_contract_levm(
+            block_header,
+            Bytes::new(),
+            db,
+            BUILDER_EXIT_CONTRACT_ADDRESS.address,
+            SYSTEM_ADDRESS,
+            vm_type,
+            crypto,
+        )?;
+
+        match report.result {
+            TxResult::Success => Ok(report),
+            // EIP-8282 specifies that a failed system call invalidates the entire block.
+            TxResult::Revert(vm_error) => Err(EvmError::SystemContractCallFailed(format!(
+                "REVERT when dequeuing builder exit requests with error: {vm_error:?}. According to EIP-8282, the revert of this system call invalidates the block.",
+            ))),
+        }
+    }
+
     pub fn create_access_list(
         mut tx: GenericTransaction,
         header: &BlockHeader,
@@ -2708,8 +2772,13 @@ pub fn generic_system_contract_levm(
     // The error that should be returned for the relevant contracts is indicated in the following:
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7002.md#empty-code-failure
     // https://github.com/ethereum/EIPs/blob/master/EIPS/eip-7251.md#empty-code-failure
+    // EIP-8282 applies the same empty-code-failure rule to the builder deposit/exit predeploys.
+    // No extra fork guard is needed here: builder predeploy addresses only reach this function via
+    // extract_all_requests_levm, which gates them on fork >= Amsterdam, so a Prague/Osaka block
+    // never passes a builder address to this check.
     if PRAGUE_SYSTEM_CONTRACTS
         .iter()
+        .chain(AMSTERDAM_REQUEST_PREDEPLOYS.iter())
         .any(|contract| contract.address == contract_address)
         && db.get_account_code(contract_address)?.bytecode.is_empty()
     {
@@ -2784,7 +2853,27 @@ pub fn extract_all_requests_levm(
     let withdrawals = Requests::from_withdrawals_data(withdrawals_data);
     let consolidation = Requests::from_consolidation_data(consolidation_data);
 
-    Ok(vec![deposits, withdrawals, consolidation])
+    let mut requests = vec![deposits, withdrawals, consolidation];
+
+    // EIP-8282 (Amsterdam): builder deposit (0x03) and builder exit (0x04) requests.
+    // Prague (18) < Amsterdam (25), so this needs a separate explicit gate; appending
+    // unconditionally after the Prague early-return above would emit these on Prague/Osaka blocks.
+    if fork >= Fork::Amsterdam {
+        // Grow to exactly 5 once, avoiding a realloc on each of the two pushes below.
+        requests.reserve_exact(2);
+        let builder_deposit_data: Vec<u8> =
+            LEVM::read_builder_deposit_requests(header, db, vm_type, crypto)?
+                .output
+                .into();
+        let builder_exit_data: Vec<u8> =
+            LEVM::dequeue_builder_exit_requests(header, db, vm_type, crypto)?
+                .output
+                .into();
+        requests.push(Requests::from_builder_deposit_data(builder_deposit_data));
+        requests.push(Requests::from_builder_exit_data(builder_exit_data));
+    }
+
+    Ok(requests)
 }
 
 /// Calculating gas_price according to EIP-1559 rules

@@ -53,12 +53,34 @@ pub const CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS: SystemContract = SystemContra
     active_since_fork: Prague,
 };
 
-pub const SYSTEM_CONTRACTS: [SystemContract; 5] = [
+// EIP-8282 placeholder — final address pending sys-asm#43 (EIP shows 0x…7732).
+pub const BUILDER_DEPOSIT_CONTRACT_ADDRESS: SystemContract = SystemContract {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x77, 0x32,
+    ]),
+    name: "BUILDER_DEPOSIT_CONTRACT_ADDRESS",
+    active_since_fork: Amsterdam,
+};
+
+// EIP-8282 placeholder — final address pending sys-asm#43 (EIP shows 0x…7733).
+pub const BUILDER_EXIT_CONTRACT_ADDRESS: SystemContract = SystemContract {
+    address: H160([
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x77, 0x33,
+    ]),
+    name: "BUILDER_EXIT_CONTRACT_ADDRESS",
+    active_since_fork: Amsterdam,
+};
+
+pub const SYSTEM_CONTRACTS: [SystemContract; 7] = [
     BEACON_ROOTS_ADDRESS,
     HISTORY_STORAGE_ADDRESS,
     DEPOSIT_CONTRACT_ADDRESS,
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
     CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+    BUILDER_DEPOSIT_CONTRACT_ADDRESS,
+    BUILDER_EXIT_CONTRACT_ADDRESS,
 ];
 
 pub fn system_contracts_for_fork(fork: Fork) -> impl Iterator<Item = SystemContract> {
@@ -70,4 +92,12 @@ pub fn system_contracts_for_fork(fork: Fork) -> impl Iterator<Item = SystemContr
 pub const PRAGUE_SYSTEM_CONTRACTS: [SystemContract; 2] = [
     WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
     CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
+];
+
+// EIP-8282 request predeploys (builder deposit/exit). Active from Amsterdam.
+// Empty code at these addresses on an Amsterdam+ block invalidates the block,
+// mirroring the PRAGUE_SYSTEM_CONTRACTS empty-code-failure rule.
+pub const AMSTERDAM_REQUEST_PREDEPLOYS: [SystemContract; 2] = [
+    BUILDER_DEPOSIT_CONTRACT_ADDRESS,
+    BUILDER_EXIT_CONTRACT_ADDRESS,
 ];
