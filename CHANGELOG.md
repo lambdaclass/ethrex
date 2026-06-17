@@ -14,6 +14,8 @@
 
 ### 2026-06-18
 
+- Add an inverted address→blocks log index (background-built, off the import path) to narrow `eth_getLogs` candidate blocks, making mainnet log queries competitive with indexed clients (on par with / faster than geth on recent ranges) [#6884](https://github.com/lambdaclass/ethrex/pull/6884)
+
 - Read a block's receipts in a single bulk read in `eth_getLogs` instead of a point lookup per transaction, ~5–7x faster on mainnet log queries [#6852](https://github.com/lambdaclass/ethrex/pull/6852)
 - Skip non-matching blocks in `eth_getLogs` using the per-block header bloom, avoiding body/receipt loads for blocks that provably cannot match [#6813](https://github.com/lambdaclass/ethrex/pull/6813)
 
