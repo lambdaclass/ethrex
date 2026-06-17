@@ -2,9 +2,8 @@ use ethereum_types::Address;
 use ethrex_crypto::{Crypto, CryptoError};
 
 use super::shared::{
-    bls12_381_fp2_to_g2, bls12_381_fp_to_g1, bls12_381_g1_add, bls12_381_g1_msm,
-    bls12_381_g2_add, bls12_381_g2_msm, bls12_381_pairing_check, k256_ecrecover,
-    k256_recover_signer,
+    bls12_381_fp_to_g1, bls12_381_fp2_to_g2, bls12_381_g1_add, bls12_381_g1_msm, bls12_381_g2_add,
+    bls12_381_g2_msm, bls12_381_pairing_check, k256_ecrecover, k256_recover_signer,
 };
 
 /// OpenVM crypto provider.
@@ -106,10 +105,7 @@ impl Crypto for OpenVmCrypto {
         bls12_381_fp_to_g1(fp)
     }
 
-    fn bls12_381_fp2_to_g2(
-        &self,
-        fp2: ([u8; 48], [u8; 48]),
-    ) -> Result<[u8; 192], CryptoError> {
+    fn bls12_381_fp2_to_g2(&self, fp2: ([u8; 48], [u8; 48])) -> Result<[u8; 192], CryptoError> {
         bls12_381_fp2_to_g2(fp2)
     }
 }
