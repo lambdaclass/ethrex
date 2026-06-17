@@ -3,7 +3,7 @@
 
 use bytes::Bytes;
 use ethrex_common::types::Fork;
-use ethrex_crypto::{Crypto, NativeCrypto};
+use ethrex_crypto::{Crypto, NATIVE_BLS_BACKEND, NativeCrypto};
 use ethrex_levm::precompiles::bls12_pairing_check;
 
 #[test]
@@ -47,14 +47,27 @@ fn pairing_infinity() {
     assert_eq!(result.unwrap(), zero);
 }
 
-// ── blst backend input validation ───────────────────────────────────────────
+// ── blst backend (host BLS12-381 / EIP-2537) ─────────────────────────────────
 //
-// `NativeCrypto` routes BLS12-381 (EIP-2537) through the blst backend (the
-// `blst` feature, on by default; it is the canonical host/L1 implementation).
-// blst's numerical agreement with the portable `bls12_381` reference — which
-// now lives in `ethrex-guest-program` for the zkVM guests — is covered by the
-// EIP-2537 execution-spec state-test vectors. This test exercises the field /
-// curve input validation that EIP-2537 requires of the host backend directly.
+// `NativeCrypto` routes BLS12-381 through the blst backend (the `blst` feature,
+// on by default; the canonical host/L1 implementation). The portable `bls12_381`
+// reference now lives in `ethrex-guest-program` for the zkVM guests, so blst's
+// numerical agreement with it is covered by the EIP-2537 execution-spec
+// state-test vectors. The tests below exercise the host backend directly.
+
+/// Guard: the host BLS12-381 tests must run against blst. With the `blst`
+/// feature off, `NativeCrypto`'s BLS ops return an error, which would make
+/// `blst_rejects_invalid_inputs` pass vacuously (an error is still `is_err()`).
+/// Fail loudly instead of silently testing nothing.
+#[test]
+// `NATIVE_BLS_BACKEND` is a cfg-derived const; the constant assertion *is* the guard.
+#[allow(clippy::assertions_on_constants)]
+fn native_backend_is_active() {
+    assert!(
+        NATIVE_BLS_BACKEND,
+        "blst feature is off; the BLS12-381 host tests are not exercising blst"
+    );
+}
 
 const INF1: ([u8; 48], [u8; 48]) = ([0u8; 48], [0u8; 48]);
 
