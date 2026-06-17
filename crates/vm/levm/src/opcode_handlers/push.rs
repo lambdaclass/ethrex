@@ -32,9 +32,11 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
         // PUSHn reads up to 32 immediate bytes without a bounds check, relying on
-        // the trailing zero padding appended to every bytecode. Keep the unchecked
-        // read below sound if the padding ever shrinks.
-        const { assert!(BYTECODE_PADDING >= 32) };
+        // the trailing zero padding appended to every bytecode. After the read the
+        // dispatch loop fetches the next opcode at `pc + N`, which needs one byte
+        // beyond the immediates, so the padding must exceed 32 (i.e. be >= 33).
+        // Keep the unchecked read below sound if the padding ever shrinks.
+        const { assert!(BYTECODE_PADDING > 32) };
 
         let literal_offset = vm.current_call_frame.pc;
         // Use a *checked* add for the pc advance, not unchecked `+= N`. Both

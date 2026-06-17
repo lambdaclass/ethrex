@@ -30,7 +30,7 @@ static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec
 /// padding regardless of which opcode sits at the last real byte.
 pub const BYTECODE_PADDING: usize = 33;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
     // or with the CODEHASH opcode, which needs an account address as argument and
@@ -154,6 +154,41 @@ impl Code {
     }
 }
 
+/// Serde shadow for [`Code`]. Stores the *logical* (unpadded) bytecode so the
+/// padding is never part of the serialized form. Deserialization re-pads through
+/// [`Code::from_parts_unchecked`], which keeps the dispatch-loop invariant (every
+/// `Code` is padded with [`BYTECODE_PADDING`] trailing STOPs) sound regardless of
+/// where the bytes came from. Deserializing the padded buffer directly would
+/// otherwise let unpadded input through and cause OOB reads during execution.
+#[derive(Serialize, Deserialize)]
+struct CodeSerde {
+    hash: H256,
+    code: Bytes,
+    jump_targets: Arc<[u32]>,
+}
+
+impl Serialize for Code {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        CodeSerde {
+            hash: self.hash,
+            code: self.code_bytes(),
+            jump_targets: self.jump_targets.clone(),
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Code {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let CodeSerde {
+            hash,
+            code,
+            jump_targets,
+        } = CodeSerde::deserialize(deserializer)?;
+        Ok(Self::from_parts_unchecked(hash, &code, jump_targets))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeMetadata {
     pub length: u64,
@@ -215,7 +250,7 @@ impl Default for AccountState {
 impl Default for Code {
     fn default() -> Self {
         Self {
-            bytecode: Bytes::from_static(&[0u8; 33]),
+            bytecode: Bytes::from_static(&[0u8; BYTECODE_PADDING]),
             bytecode_len: 0,
             hash: *EMPTY_KECCAK_HASH,
             jump_targets: EMPTY_JUMP_TARGETS.clone(),
