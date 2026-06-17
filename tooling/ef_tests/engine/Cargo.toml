@@ -12,6 +12,11 @@ ethrex-storage.workspace = true
 ethrex-rpc.workspace = true
 ethrex-blockchain.workspace = true
 ethrex-p2p.workspace = true
+# Activates the host BLS12-381 (EIP-2537) backend (blst) for the EVM that runs
+# the engine fixtures. ethrex-crypto is otherwise pulled in only transitively
+# (via ethrex-blockchain) with the blst feature off, so the EIP-2537 precompiles
+# would hit the no-backend default and error. Feature-only dep (not used in code).
+ethrex-crypto = { workspace = true, features = ["blst"] }
 rayon.workspace = true
 
 serde.workspace = true
