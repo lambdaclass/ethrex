@@ -5,7 +5,10 @@
 //!   - `PUSH1` to `PUSH32`
 
 use crate::{
-    errors::OpcodeResult, errors::VMError, gas_cost, opcode_handlers::OpcodeHandler, vm::VM,
+    errors::{InternalError, OpcodeResult, VMError},
+    gas_cost,
+    opcode_handlers::OpcodeHandler,
+    vm::VM,
 };
 use ethrex_common::{types::BYTECODE_PADDING, utils::u256_from_big_endian_const};
 
@@ -34,13 +37,17 @@ impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
         const { assert!(BYTECODE_PADDING >= 32) };
 
         let literal_offset = vm.current_call_frame.pc;
-        #[expect(
-            clippy::arithmetic_side_effects,
-            reason = "pc bounded by padded bytecode len"
-        )]
-        {
-            vm.current_call_frame.pc += N;
-        }
+        // Use a *checked* add for the pc advance, not unchecked `+= N`. Both
+        // compute the same value (pc never overflows in practice), but the
+        // checked form is required for good codegen here: with unchecked/wrapping
+        // arithmetic LLVM can no longer prove the immediate slice length is the
+        // constant `N`, so the `get_unchecked` read below degrades to a
+        // runtime-length memcpy and the PUSH hot loop runs ~2x slower (IPC
+        // collapses 3.4 -> 1.2). The overflow branch is free (perfectly
+        // predicted) and never taken.
+        vm.current_call_frame.pc = literal_offset
+            .checked_add(N)
+            .ok_or(InternalError::Overflow)?;
         // `pc` is now exactly `literal_offset + N`; reuse it as the immediate end.
         let literal_end = vm.current_call_frame.pc;
 
