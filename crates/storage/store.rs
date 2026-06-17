@@ -1192,12 +1192,6 @@ impl Store {
             .chain(std::iter::once((head_number, head_hash)))
             .collect();
 
-        // Collect block numbers being removed from the canonical chain so we can
-        // evict them from the cache after the DB write. A reorg deletes entries
-        // for (head_number + 1)..=latest from CANONICAL_BLOCK_HASHES; the cache
-        // must drop them too, or a hit would serve a stale hash from the old fork.
-        let blocks_to_invalidate: Vec<BlockNumber> = ((head_number + 1)..=latest).collect();
-
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
@@ -1246,9 +1240,12 @@ impl Store {
             match block_hash_cache.lock() {
                 Ok(mut cache) => {
                     // Evict reorged-out blocks before inserting the new canonical
-                    // set so a cache hit can never return a stale fork's hash.
-                    for block_number in &blocks_to_invalidate {
-                        cache.pop(block_number);
+                    // set so a cache hit can never return a stale fork's hash. A
+                    // reorg deletes (head_number + 1)..=latest from the DB above;
+                    // iterate that range directly to avoid allocating on deep
+                    // rewinds (empty in the common, no-reorg case).
+                    for block_number in (head_number + 1)..=latest {
+                        cache.pop(&block_number);
                     }
                     for (block_number, block_hash) in blocks_to_cache {
                         cache.put(block_number, block_hash);
