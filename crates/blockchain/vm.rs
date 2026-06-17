@@ -4,7 +4,7 @@ use ethrex_common::{
     types::{AccountState, BlockHash, BlockHeader, BlockNumber, ChainConfig, Code, CodeMetadata},
 };
 use ethrex_crypto::keccak::keccak_hash;
-use ethrex_storage::Store;
+use ethrex_storage::{StorageReadSession, Store};
 use ethrex_vm::{EvmError, VmDatabase};
 use rustc_hash::FxHashMap;
 use std::{
@@ -35,6 +35,9 @@ pub struct StoreVmDatabase {
     /// from the same account during execution.
     account_state_cache: Arc<RwLock<AccountStateCache>>,
     pub state_root: H256,
+    /// Snapshot of read resources at `state_root`, acquired once at construction
+    /// so per-opcode account/storage reads don't re-lock or re-open the backend.
+    read_session: StorageReadSession,
 }
 
 impl StoreVmDatabase {
@@ -52,12 +55,16 @@ impl StoreVmDatabase {
                 block_header.number, block_header.state_root
             )));
         }
+        let read_session = store
+            .begin_storage_read_session()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(BTreeMap::new())),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
+            read_session,
         })
     }
 
@@ -76,12 +83,16 @@ impl StoreVmDatabase {
                 block_header.number, block_header.state_root
             )));
         }
+        let read_session = store
+            .begin_storage_read_session()
+            .map_err(|e| EvmError::DB(e.to_string()))?;
         Ok(StoreVmDatabase {
             store,
             block_hash: block_header.hash(),
             block_hash_cache: Arc::new(Mutex::new(block_hash_cache)),
             account_state_cache: Arc::new(RwLock::new(FxHashMap::default())),
             state_root: block_header.state_root,
+            read_session,
         })
     }
 
@@ -101,7 +112,7 @@ impl StoreVmDatabase {
 
         let loaded = self
             .store
-            .get_account_state_by_root(self.state_root, address)
+            .get_account_state_with_session(&self.read_session, self.state_root, address)
             .map_err(|e| EvmError::DB(e.to_string()))?;
         let cached = loaded.map(|state| AccountStateCacheEntry {
             state,
@@ -130,6 +141,72 @@ impl VmDatabase for StoreVmDatabase {
 
     #[instrument(
         level = "trace",
+        name = "Account read batch",
+        skip_all,
+        fields(namespace = "block_execution", n = addresses.len())
+    )]
+    fn get_account_states_batch(
+        &self,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, EvmError> {
+        // Split into cached / uncached so the rocksdb multi_get only fires for
+        // addresses we haven't memoized yet on this StoreVmDatabase.
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        let mut miss_idx: Vec<usize> = Vec::new();
+        let mut miss_addrs: Vec<Address> = Vec::new();
+        {
+            let cache = self
+                .account_state_cache
+                .read()
+                .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+            for (i, addr) in addresses.iter().enumerate() {
+                match cache.get(addr) {
+                    Some(Some(entry)) => results[i] = Some(entry.state),
+                    Some(None) => results[i] = None,
+                    None => {
+                        miss_idx.push(i);
+                        miss_addrs.push(*addr);
+                    }
+                }
+            }
+        }
+
+        if miss_addrs.is_empty() {
+            return Ok(results);
+        }
+
+        let fetched = self
+            .store
+            .get_account_states_batch_by_root(self.state_root, &miss_addrs)
+            .map_err(|e| EvmError::DB(e.to_string()))?;
+
+        // Populate the per-DB cache and assemble results. `insert` (vs `or_insert`)
+        // is intentional: `state_root` is fixed for this `StoreVmDatabase`, so a
+        // concurrent populator can only have written the same value for the same
+        // address — overwriting is a no-op, and the unconditional insert avoids
+        // the extra `entry`-API lookup.
+        let mut cache = self
+            .account_state_cache
+            .write()
+            .map_err(|_| EvmError::Custom("LockError".to_string()))?;
+        for ((slot, addr), state) in miss_idx
+            .iter()
+            .zip(miss_addrs.iter())
+            .zip(fetched.into_iter())
+        {
+            let cached = state.map(|state| AccountStateCacheEntry {
+                state,
+                hashed_address: H256::from(keccak_hash(addr.to_fixed_bytes())),
+            });
+            cache.insert(*addr, cached);
+            results[*slot] = cached.map(|e| e.state);
+        }
+
+        Ok(results)
+    }
+
+    #[instrument(
+        level = "trace",
         name = "Storage read",
         skip_all,
         fields(namespace = "block_execution")
@@ -139,7 +216,8 @@ impl VmDatabase for StoreVmDatabase {
             return Ok(None);
         };
         self.store
-            .get_storage_at_root_with_known_storage_root(
+            .get_storage_with_session(
+                &self.read_session,
                 self.state_root,
                 entry.hashed_address,
                 entry.state.storage_root,

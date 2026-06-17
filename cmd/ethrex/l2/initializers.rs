@@ -21,7 +21,7 @@ use ethrex_p2p::{
     peer_table::PeerTableServer,
     rlpx::{initiator::RLPxInitiator, l2::l2_connection::P2PBasedContext},
     sync_manager::SyncManager,
-    types::{Node, NodeRecord},
+    types::{LocalNode, SharedLocalNode},
 };
 use ethrex_rpc::{SubscriptionManager, WebSocketConfig};
 use ethrex_storage::{Store, StoreConfig};
@@ -30,7 +30,12 @@ use eyre::OptionExt;
 use secp256k1::SecretKey;
 
 use spawned_concurrency::tasks::ActorRef;
-use std::{fs::read_to_string, path::Path, sync::Arc, time::Duration};
+use std::{
+    fs::read_to_string,
+    path::Path,
+    sync::{Arc, RwLock},
+    time::Duration,
+};
 use tokio::task::JoinSet;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 use tracing::{info, warn};
@@ -43,8 +48,7 @@ fn init_rpc_api(
     opts: &L1Options,
     l2_opts: &L2Options,
     peer_handler: Option<PeerHandler>,
-    local_p2p_node: Node,
-    local_node_record: NodeRecord,
+    shared_local_node: SharedLocalNode,
     store: Store,
     blockchain: Arc<Blockchain>,
     syncer: Option<Arc<SyncManager>>,
@@ -65,8 +69,7 @@ fn init_rpc_api(
         store,
         blockchain,
         read_jwtsecret_file(&opts.authrpc_jwtsecret),
-        local_p2p_node,
-        local_node_record,
+        shared_local_node,
         syncer,
         peer_handler,
         get_client_version(),
@@ -247,6 +250,12 @@ pub async fn init_l2(
 
     let local_node_record = get_local_node_record(&datadir, &local_p2p_node, &signer);
 
+    // Build the shared live identity Arc once; threaded into RPC, discovery, and shutdown.
+    let shared_local_node: SharedLocalNode = Arc::new(RwLock::new(LocalNode {
+        node: local_p2p_node.clone(),
+        record: local_node_record,
+    }));
+
     // TODO: Check every module starts properly.
     let tracker = TaskTracker::new();
     let mut join_set = JoinSet::new();
@@ -318,6 +327,7 @@ pub async fn init_l2(
             tracker.clone(),
             blockchain.clone(),
             p2p_context,
+            shared_local_node.clone(),
         )
         .await;
         (Some(peer_handler), Some(Arc::new(syncer)))
@@ -348,8 +358,7 @@ pub async fn init_l2(
         &opts.node_opts,
         &opts,
         peer_handler.clone(),
-        local_p2p_node.clone(),
-        local_node_record.clone(),
+        shared_local_node.clone(),
         store.clone(),
         blockchain.clone(),
         syncer,
@@ -404,7 +413,14 @@ pub async fn init_l2(
     cancel_token.cancel();
     if !opts.node_opts.p2p_disabled {
         let peer_handler = peer_handler.ok_or_eyre("Peer handler not initialized")?;
-        let node_config = NodeConfigFile::new(peer_handler.peer_table, local_node_record).await;
+        // Clone the current (possibly updated) record out and drop the guard.
+        let record = {
+            let guard = shared_local_node
+                .read()
+                .expect("shared_local_node poisoned");
+            guard.record.clone()
+        };
+        let node_config = NodeConfigFile::new(peer_handler.peer_table, record).await;
         store_node_config_file(node_config, node_config_path);
     }
     tokio::time::sleep(Duration::from_secs(1)).await;

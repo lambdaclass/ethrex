@@ -8,6 +8,7 @@ mod eip7708_tests;
 mod eip7778_tests;
 mod eip7928_tests;
 mod eip8037_tests;
+mod eip8246_tests;
 mod l2_fee_token_ratio_tests;
 mod l2_fee_token_tests;
 mod l2_gas_reservation_tests;

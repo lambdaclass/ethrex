@@ -19,7 +19,7 @@ use crate::{
     memory::{self, calculate_memory_size},
     opcode_handlers::OpcodeHandler,
     precompiles,
-    utils::{address_to_word, create_burn_log, create_eth_transfer_log, word_to_address, *},
+    utils::{address_to_word, create_eth_transfer_log, word_to_address, *},
     vm::VM,
 };
 use bytes::Bytes;
@@ -683,32 +683,38 @@ impl OpcodeHandler for OpSelfDestructHandler {
 
         // [EIP-6780] - SELFDESTRUCT only in same transaction from CANCUN
         if vm.env.config.fork >= Fork::Cancun {
-            vm.transfer(to, beneficiary, balance)?;
+            // [EIP-8246] (Amsterdam+): a selfdestruct-to-self moves no ETH (balance is
+            // preserved at finalization). Skip the self-transfer so it doesn't fire
+            // spurious BAL balance events that overwrite the recorded initial balance.
+            // For `to != beneficiary` the transfer still runs (balance moves out).
+            if !(vm.env.config.fork >= Fork::Amsterdam && to == beneficiary) {
+                vm.transfer(to, beneficiary, balance)?;
+            }
 
             // Selfdestruct is executed in the same transaction as the contract was created
             if vm.substate.is_account_created(&to) {
-                // If target is the same as the contract calling, Ether will be burnt.
-                vm.get_account_mut(to)?.info.balance = U256::zero();
+                // [EIP-8246] (Amsterdam+): balance is NOT burned; nonce/code/storage are cleared
+                // at finalization while balance is preserved. Pre-Amsterdam (EIP-6780): Ether is
+                // burned when to == beneficiary.
+                if vm.env.config.fork < Fork::Amsterdam {
+                    vm.get_account_mut(to)?.info.balance = U256::zero();
 
-                // Record balance change to zero for destroyed account in BAL
-                if let Some(recorder) = vm.db.bal_recorder.as_mut() {
-                    recorder.record_balance_change(to, U256::zero());
+                    // Record balance change to zero for destroyed account in BAL
+                    if let Some(recorder) = vm.db.bal_recorder.as_mut() {
+                        recorder.record_balance_change(to, U256::zero());
+                    }
                 }
 
                 vm.substate.add_selfdestruct(to);
             }
 
-            // EIP-7708: Emit appropriate log for ETH movement
-            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() {
-                if to != beneficiary {
-                    let log = create_eth_transfer_log(to, beneficiary, balance);
-                    vm.substate.add_log(log);
-                } else if vm.substate.is_account_created(&to) {
-                    // Selfdestruct-to-self: only emit log when created in same tx (burns ETH)
-                    // Pre-existing contracts selfdestructing to self emit NO log
-                    let log = create_burn_log(to, balance);
-                    vm.substate.add_log(log);
-                }
+            // EIP-7708: Emit appropriate log for ETH movement (Amsterdam+ only).
+            // EIP-8246 (Amsterdam+): no burn log for same-tx selfdestruct-to-self; no ETH burned.
+            // Cancun/Prague (pre-Amsterdam): no EIP-7708 logs at all.
+            if vm.env.config.fork >= Fork::Amsterdam && !balance.is_zero() && to != beneficiary {
+                let log = create_eth_transfer_log(to, beneficiary, balance);
+                vm.substate.add_log(log);
+                // No burn log under EIP-8246: selfdestruct-to-self preserves balance.
             }
         } else {
             vm.increase_account_balance(beneficiary, balance)?;

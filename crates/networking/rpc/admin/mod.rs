@@ -46,10 +46,20 @@ struct EthProtocolInfo {
 }
 
 pub async fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, RpcErr> {
-    let enode_url = node_data.local_p2p_node.enode_url();
-    let enr_url = match node_data.local_node_record.enr_url() {
-        Ok(enr) => enr,
-        Err(_) => "".into(),
+    // Read the live identity; clone out values and drop the guard before any .await.
+    let (enode_url, enr_url, node_id, ip, udp_port, tcp_port) = {
+        let guard = node_data
+            .shared_local_node
+            .read()
+            .map_err(|_| RpcErr::Internal("shared_local_node lock poisoned".to_string()))?;
+        let node = &guard.node;
+        let enode_url = node.enode_url();
+        let enr_url = guard.record.enr_url().unwrap_or_default();
+        let node_id = hex::encode(node.node_id());
+        let ip = node.ip.to_string();
+        let udp_port = node.udp_port;
+        let tcp_port = node.tcp_port;
+        (enode_url, enr_url, node_id, ip, udp_port, tcp_port)
     };
 
     let chain_config = storage.get_chain_config();
@@ -79,16 +89,13 @@ pub async fn node_info(storage: Store, node_data: &NodeData) -> Result<Value, Rp
     let node_info = NodeInfo {
         enode: enode_url,
         enr: enr_url,
-        id: hex::encode(node_data.local_p2p_node.node_id()),
-        ip: node_data.local_p2p_node.ip.to_string(),
-        listen_addr: format!(
-            "{}:{}",
-            node_data.local_p2p_node.ip, node_data.local_p2p_node.tcp_port
-        ),
+        id: node_id,
+        ip: ip.clone(),
+        listen_addr: format!("{ip}:{tcp_port}"),
         name: node_data.client_version.to_string(),
         ports: Ports {
-            discovery: node_data.local_p2p_node.udp_port,
-            listener: node_data.local_p2p_node.tcp_port,
+            discovery: udp_port,
+            listener: tcp_port,
         },
         protocols,
     };

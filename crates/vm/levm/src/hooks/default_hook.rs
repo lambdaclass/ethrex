@@ -11,6 +11,7 @@ use crate::{
 use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
+    constants::EMPTY_KECCAK_HASH,
     types::{Code, Fork},
 };
 
@@ -350,42 +351,42 @@ pub fn pay_coinbase(vm: &mut VM<'_>, gas_to_pay: u64) -> Result<(), VMError> {
 
 // In Cancun the only addresses destroyed are contracts created in this transaction
 pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
-    // EIP-7708: Emit Burn logs for accounts with non-zero balance marked for deletion
-    // Must emit in lexicographical order of address
-    if vm.env.config.fork >= Fork::Amsterdam {
-        let mut addresses_with_balance: Vec<(Address, U256)> = vm
-            .substate
-            .iter_selfdestruct()
-            .filter_map(|addr| {
-                let balance = vm.db.get_account(*addr).ok()?.info.balance;
-                if !balance.is_zero() {
-                    Some((*addr, balance))
-                } else {
-                    None
-                }
-            })
-            .collect();
+    // EIP-8246 (Amsterdam+): SELFDESTRUCT no longer burns ETH.
+    // Accounts in the selfdestruct set have nonce reset to 0, code cleared, and storage cleared,
+    // but balance is preserved. If the resulting balance is zero, EIP-161 removes the account.
+    //
+    // Pre-Amsterdam (EIP-6780 / Cancun): accounts are fully wiped (LevmAccount::default()).
+    //
+    // Note: the pre-Amsterdam Amsterdam+ burn-log loop has been removed because under EIP-8246
+    // no ETH is ever burned by SELFDESTRUCT, so no Burn log is emitted at finalization.
 
-        // Sort by address (lexicographical order per EIP-7708)
-        addresses_with_balance.sort_by_key(|(addr, _)| *addr);
+    let addresses: Vec<Address> = vm.substate.iter_selfdestruct().copied().collect();
 
-        for (addr, balance) in addresses_with_balance {
-            let log = create_burn_log(addr, balance);
-            vm.substate.add_log(log);
-        }
-    }
-
-    // Delete the accounts
-    for address in vm.substate.iter_selfdestruct() {
+    for address in &addresses {
         // Backup must be taken before mark_modified flips `exists` to true.
-        let account_to_remove = vm.db.get_account(*address)?;
+        let account_snapshot = vm.db.get_account(*address)?;
         vm.current_call_frame
             .call_frame_backup
-            .backup_account_info(*address, account_to_remove)?;
+            .backup_account_info(*address, account_snapshot)?;
 
-        let account_to_remove = vm.db.get_account_mut(*address)?;
-        *account_to_remove = LevmAccount::default();
-        account_to_remove.mark_destroyed();
+        if vm.env.config.fork >= Fork::Amsterdam {
+            // EIP-8246: preserve balance; clear nonce, code, and storage.
+            let account = vm.db.get_account_mut(*address)?;
+            let preserved_balance = account.info.balance;
+            account.info.nonce = 0;
+            account.info.code_hash = *EMPTY_KECCAK_HASH;
+            account.storage.clear();
+            account.has_storage = false;
+            account.info.balance = preserved_balance;
+            // Reach DestroyedModified so get_state_transitions emits removed_storage=true
+            // and correctly computes acc_info_updated (nonce/code_hash changed).
+            account.mark_destroyed();
+            account.mark_modified();
+        } else {
+            let account = vm.db.get_account_mut(*address)?;
+            *account = LevmAccount::default();
+            account.mark_destroyed();
+        }
 
         // EIP-7928: Clean up BAL for selfdestructed account
         if let Some(recorder) = vm.db.bal_recorder.as_mut() {

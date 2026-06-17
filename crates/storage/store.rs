@@ -41,6 +41,7 @@ use ethrex_rlp::{
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Trie, TrieLogger, TrieNode, TrieWitness};
 use ethrex_trie::{Node, NodeRLP};
 use lru::LruCache;
+use rayon::prelude::*;
 use rustc_hash::FxBuildHasher;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -158,6 +159,18 @@ impl CodeCache {
         self.inner_cache.get_or_insert(code.hash, || code.clone());
         Ok(())
     }
+}
+
+/// Snapshot of the resources needed to serve account/storage reads at a fixed
+/// state root without re-acquiring locks per access. Built once via
+/// [`Store::begin_storage_read_session`] and reused for the lifetime of a
+/// block's execution. The FKV cursor is precomputed into `Nibbles`, so each
+/// read is a pure `Arc` clone with no per-access allocation.
+#[derive(Clone)]
+pub struct StorageReadSession {
+    read_view: Arc<dyn StorageReadView>,
+    trie_cache: Arc<TrieLayerCache>,
+    last_written: Arc<Nibbles>,
 }
 
 /// Main storage interface for the ethrex client.
@@ -2345,6 +2358,21 @@ impl Store {
         }
     }
 
+    /// Fetches block access lists for a slice of block hashes, preserving order.
+    ///
+    /// Returns `None` at any position where the BAL is unavailable (unknown block,
+    /// pre-Amsterdam block, or pruned data). Never errors for individual missing entries.
+    pub fn iter_block_access_lists_by_hashes(
+        &self,
+        hashes: &[BlockHash],
+    ) -> Result<Vec<Option<BlockAccessList>>, StoreError> {
+        let mut out = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            out.push(self.get_block_access_list(*hash)?);
+        }
+        Ok(out)
+    }
+
     pub async fn add_initial_state(&mut self, genesis: Genesis) -> Result<(), StoreError> {
         self.add_initial_state_inner(genesis, false).await
     }
@@ -2475,8 +2503,9 @@ impl Store {
             .read()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let last_written = self.last_written()?;
-        let use_fkv = Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written);
+        let last_written = Arc::new(Nibbles::from_hex(self.last_written()?));
+        let use_fkv =
+            Self::flatkeyvalue_computed_with_last_written(account_hash, (*last_written).as_ref());
 
         let storage_root = if use_fkv {
             // We will use FKVs, we don't need the root
@@ -2527,16 +2556,18 @@ impl Store {
             .read()
             .map_err(|_| StoreError::LockError)?
             .clone();
-        let last_written = self.last_written()?;
+        let last_written = Arc::new(Nibbles::from_hex(self.last_written()?));
         // When FKV is active the real storage root is in the flatkeyvalue store,
         // not in the account's RLP-encoded storage_root field. Use EMPTY_TRIE_HASH
         // so open_storage_trie_shared falls through to the FKV path.
-        let storage_root =
-            if Self::flatkeyvalue_computed_with_last_written(account_hash, &last_written) {
-                *EMPTY_TRIE_HASH
-            } else {
-                storage_root
-            };
+        let storage_root = if Self::flatkeyvalue_computed_with_last_written(
+            account_hash,
+            (*last_written).as_ref(),
+        ) {
+            *EMPTY_TRIE_HASH
+        } else {
+            storage_root
+        };
         let storage_trie = self.open_storage_trie_shared(
             account_hash,
             state_root,
@@ -2551,6 +2582,130 @@ impl Store {
             .get(&hashed_key)?
             .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
             .transpose()
+    }
+
+    /// Snapshot the per-read invariant resources (DB read view, trie diff-layer
+    /// cache, FKV cursor) once, so callers serving many reads at a fixed state
+    /// root don't re-acquire the locks and allocate a fresh read view on every
+    /// access. `state_root` is fixed for the snapshot's user, and `trie_cache`
+    /// only grows additional ancestor layers while the FKV cursor only advances,
+    /// so a snapshot taken at the start of a block's execution stays correct for
+    /// every read against that state.
+    pub fn begin_storage_read_session(&self) -> Result<StorageReadSession, StoreError> {
+        Ok(StorageReadSession {
+            read_view: self.backend.begin_read()?,
+            trie_cache: self
+                .trie_cache
+                .read()
+                .map_err(|_| StoreError::LockError)?
+                .clone(),
+            last_written: Arc::new(Nibbles::from_hex(self.last_written()?)),
+        })
+    }
+
+    /// Like [`Self::get_storage_at_root_with_known_storage_root`] but reuses a
+    /// previously-acquired [`StorageReadSession`] instead of re-locking.
+    pub fn get_storage_with_session(
+        &self,
+        session: &StorageReadSession,
+        state_root: H256,
+        account_hash: H256,
+        storage_root: H256,
+        storage_key: H256,
+    ) -> Result<Option<U256>, StoreError> {
+        let hashed_key = hash_key_fixed(&storage_key);
+        // Fast path: when the FKV generator has already swept this slot's leaf
+        // path, the read is a single flat lookup. Bypass `Trie::open` (which
+        // allocates a fresh `BackendTrieDB` + `TrieWrapper` per read) and read the
+        // flat KV directly, replicating `Trie::get`'s FKV short-circuit through
+        // `TrieWrapper`: diff-layer cache first, then `STORAGE_FLATKEYVALUE`.
+        let prefixed = apply_prefix(Some(account_hash), Nibbles::from_bytes(&hashed_key));
+        let prefixed_bytes = prefixed.as_ref();
+        if let Some(value) = session.trie_cache.get(state_root, prefixed_bytes) {
+            return if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(U256::decode(&value).map_err(StoreError::RLPDecode)?))
+            };
+        }
+        if (*session.last_written).as_ref() >= prefixed_bytes {
+            let Some(rlp) = session
+                .read_view
+                .get(STORAGE_FLATKEYVALUE, prefixed_bytes)?
+            else {
+                return Ok(None);
+            };
+            return if rlp.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(U256::decode(&rlp).map_err(StoreError::RLPDecode)?))
+            };
+        }
+
+        // Not yet swept by FKV: fall back to the trie walk (identical to the
+        // original path, including the storage-root override).
+        let storage_root = if Self::flatkeyvalue_computed_with_last_written(
+            account_hash,
+            (*session.last_written).as_ref(),
+        ) {
+            *EMPTY_TRIE_HASH
+        } else {
+            storage_root
+        };
+        let storage_trie = self.open_storage_trie_shared(
+            account_hash,
+            state_root,
+            storage_root,
+            session.read_view.clone(),
+            session.trie_cache.clone(),
+            session.last_written.clone(),
+        )?;
+        storage_trie
+            .get(&hashed_key)?
+            .map(|rlp| U256::decode(&rlp).map_err(StoreError::RLPDecode))
+            .transpose()
+    }
+
+    /// Like [`Self::get_account_state_by_root`] but reuses a previously-acquired
+    /// [`StorageReadSession`] instead of re-locking and re-opening the backend.
+    pub fn get_account_state_with_session(
+        &self,
+        session: &StorageReadSession,
+        state_root: H256,
+        address: Address,
+    ) -> Result<Option<AccountState>, StoreError> {
+        // Fast path: covered account leaf -> single flat read, no `Trie::open`.
+        // Mirrors `get_account_states_batch_by_root`: diff-layer cache first,
+        // then `ACCOUNT_FLATKEYVALUE` when the FKV cursor has swept the leaf.
+        let hashed_address = hash_address_fixed(&address);
+        let path = Nibbles::from_bytes(hashed_address.as_bytes());
+        let path_bytes = path.as_ref();
+        if let Some(value) = session.trie_cache.get(state_root, path_bytes) {
+            return if value.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(AccountState::decode(&value)?))
+            };
+        }
+        if (*session.last_written).as_ref() >= path_bytes {
+            let Some(encoded) = session.read_view.get(ACCOUNT_FLATKEYVALUE, path_bytes)? else {
+                return Ok(None);
+            };
+            return if encoded.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(AccountState::decode(&encoded)?))
+            };
+        }
+
+        // Not yet swept by FKV: fall back to the trie walk.
+        let state_trie = self.open_state_trie_shared(
+            state_root,
+            session.read_view.clone(),
+            session.trie_cache.clone(),
+            session.last_written.clone(),
+        )?;
+        self.get_account_state_from_trie(&state_trie, address)
     }
 
     pub fn get_chain_config(&self) -> ChainConfig {
@@ -2674,6 +2829,104 @@ impl Store {
             return Ok(None);
         };
         Ok(Some(AccountState::decode(&encoded_state)?))
+    }
+
+    /// Batch lookup of account states by address against a given state root.
+    ///
+    /// Fast path: for addresses whose hashed path falls within the FKV cursor
+    /// (and which are not present in the in-memory diff-layer cache), values
+    /// are fetched in a single `multi_get` on `ACCOUNT_FLATKEYVALUE`. Other
+    /// addresses fall back to per-address trie walks.
+    ///
+    /// Results are returned in the same order as the input addresses.
+    pub fn get_account_states_batch_by_root(
+        &self,
+        state_root: H256,
+        addresses: &[Address],
+    ) -> Result<Vec<Option<AccountState>>, StoreError> {
+        if addresses.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let last_written = self.last_written()?;
+        let trie_cache = self
+            .trie_cache
+            .read()
+            .map_err(|_| StoreError::LockError)?
+            .clone();
+
+        let mut results: Vec<Option<AccountState>> = vec![None; addresses.len()];
+        // Per-address leaf paths (nibbles + leaf flag). Length 65.
+        let leaf_paths: Vec<Vec<u8>> = addresses
+            .iter()
+            .map(|addr| {
+                let hashed = hash_address_fixed(addr);
+                Nibbles::from_bytes(hashed.as_bytes()).into_vec()
+            })
+            .collect();
+
+        let mut fkv_indices: Vec<usize> = Vec::new();
+        let mut trie_indices: Vec<usize> = Vec::new();
+
+        // Match `BackendTrieDB::flatkeyvalue_computed` semantics: a path is
+        // covered by FKV iff `last_written >= path` as raw nibble bytes. This
+        // is the same check `Trie::get` uses; the related helper
+        // `Store::flatkeyvalue_computed_with_last_written` slices `[0..64]`
+        // and is intentionally more conservative — using that here would
+        // unnecessarily fall back to the trie when the cursor sits inside an
+        // account's storage sweep (the account leaf is already in FKV at that
+        // point; see `flatkeyvalue_generator`).
+        let fkv_cursor: &[u8] = last_written.as_slice();
+        for (i, path) in leaf_paths.iter().enumerate() {
+            if let Some(value) = trie_cache.get(state_root, path.as_slice()) {
+                if !value.is_empty() {
+                    results[i] = Some(AccountState::decode(&value)?);
+                }
+                continue;
+            }
+            if fkv_cursor >= path.as_slice() {
+                fkv_indices.push(i);
+            } else {
+                trie_indices.push(i);
+            }
+        }
+
+        if !fkv_indices.is_empty() {
+            let read_view = self.backend.begin_read()?;
+            let keys: Vec<&[u8]> = fkv_indices
+                .iter()
+                .map(|&i| leaf_paths[i].as_slice())
+                .collect();
+            let raw = read_view.multi_get(ACCOUNT_FLATKEYVALUE, &keys);
+            for (slot, res) in fkv_indices.iter().zip(raw.into_iter()) {
+                let Some(encoded) = res? else { continue };
+                if encoded.is_empty() {
+                    continue;
+                }
+                results[*slot] = Some(AccountState::decode(&encoded)?);
+            }
+        }
+
+        if !trie_indices.is_empty() {
+            // Fall back to the regular trie path for any addresses whose path
+            // hasn't been swept by the FKV generator yet. Parallelized to
+            // recover the per-address fan-out the pre-batch `par_iter` path
+            // had, which matters during initial sync when most addresses
+            // miss FKV.
+            let state_trie = self.open_state_trie(state_root)?;
+            let fetched: Result<Vec<(usize, Option<AccountState>)>, StoreError> = trie_indices
+                .par_iter()
+                .map(|&i| {
+                    self.get_account_state_from_trie(&state_trie, addresses[i])
+                        .map(|s| (i, s))
+                })
+                .collect();
+            for (i, s) in fetched? {
+                results[i] = s;
+            }
+        }
+
+        Ok(results)
     }
 
     /// Constructs a merkle proof for the given account address against a given state.
@@ -2964,7 +3217,7 @@ impl Store {
         state_root: H256,
         read_view: Arc<dyn StorageReadView>,
         cache: Arc<TrieLayerCache>,
-        last_written: Vec<u8>,
+        last_written: Arc<Nibbles>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
@@ -2987,7 +3240,7 @@ impl Store {
         storage_root: H256,
         read_view: Arc<dyn StorageReadView>,
         cache: Arc<TrieLayerCache>,
-        last_written: Vec<u8>,
+        last_written: Arc<Nibbles>,
     ) -> Result<Trie, StoreError> {
         let trie_db = TrieWrapper::new(
             state_root,
@@ -3349,7 +3602,7 @@ fn flatkeyvalue_generator(
             Box::new(BackendTrieDB::new_for_accounts_with_view(
                 backend.clone(),
                 read_tx.clone(),
-                last_written.clone(),
+                Arc::new(Nibbles::from_hex(last_written.clone())),
             )?),
             state_root,
         )
@@ -3380,7 +3633,7 @@ fn flatkeyvalue_generator(
                     backend.clone(),
                     read_tx.clone(),
                     account_hash,
-                    path.as_ref().to_vec(),
+                    Arc::new(Nibbles::from_hex(path.as_ref().to_vec())),
                 )?),
                 account_state.storage_root,
             )
