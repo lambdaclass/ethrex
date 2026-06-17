@@ -63,6 +63,8 @@ use hex_literal::hex;
 /// compares a backend against itself and passes vacuously. Fail loudly rather
 /// than let the suite silently verify nothing.
 #[test]
+// `NATIVE_BLS_BACKEND` is a cfg-derived const; the constant assertion *is* the guard.
+#[allow(clippy::assertions_on_constants)]
 fn native_backend_is_active() {
     assert!(
         NATIVE_BLS_BACKEND,
