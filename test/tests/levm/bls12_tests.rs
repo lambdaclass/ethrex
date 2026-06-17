@@ -55,8 +55,20 @@ fn pairing_infinity() {
 // the Ethereum execution-spec EIP-2537 vectors. Inputs are the EIP-2537
 // generators and points derived from them.
 
-use ethrex_crypto::Crypto;
+use ethrex_crypto::{Crypto, NATIVE_BLS_BACKEND};
 use hex_literal::hex;
+
+/// Guard: without the blst backend, `NativeCrypto` resolves to the same
+/// pure-Rust trait default as `Ref`, so every differential assertion below
+/// compares a backend against itself and passes vacuously. Fail loudly rather
+/// than let the suite silently verify nothing.
+#[test]
+fn native_backend_is_active() {
+    assert!(
+        NATIVE_BLS_BACKEND,
+        "blst feature is off; the BLS12-381 differential tests are vacuous"
+    );
+}
 
 /// Reference implementation: empty impl uses the portable (zkcrypto) defaults.
 #[derive(Debug)]
