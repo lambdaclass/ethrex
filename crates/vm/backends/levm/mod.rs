@@ -2730,7 +2730,11 @@ pub fn polygon_system_call_levm(
     crypto: &dyn Crypto,
 ) -> Result<ExecutionReport, EvmError> {
     let chain_config = db.store.get_chain_config()?;
-    let config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    let mut config = EVMConfig::new_from_chain_config(&chain_config, block_header);
+    if let VMType::Polygon(pfc) = &vm_type {
+        config.eip7883 = true;
+        config.pip88 = pfc.pip88;
+    }
     let coinbase = match &vm_type {
         VMType::Polygon(pfc) => pfc.coinbase,
         _ => block_header.coinbase,

@@ -3764,25 +3764,6 @@ fn execute_polygon_system_calls(
         let chain_id_str = chain_config.chain_id.to_string();
 
         for event in state_sync_data.iter() {
-            if block_number == 88_668_816 {
-                eprintln!(
-                    "EVENT_DATA block={} id={} contract={:?} data_hex=0x{} data_len={}",
-                    block_number, event.id, event.contract,
-                    event.data.iter().map(|b| format!("{b:02x}")).collect::<String>(),
-                    event.data.len()
-                );
-                // Try to ABI-decode (user, rootToken, amountOrTokenId, depositId) from event.data
-                if event.data.len() >= 128 {
-                    let user = Address::from_slice(&event.data[12..32]);
-                    let root_token = Address::from_slice(&event.data[44..64]);
-                    let amount = U256::from_big_endian(&event.data[64..96]);
-                    let deposit_id = U256::from_big_endian(&event.data[96..128]);
-                    eprintln!(
-                        "  DECODED: user={:?} rootToken={:?} amount={} depositId={}",
-                        user, root_token, amount, deposit_id
-                    );
-                }
-            }
             // RLP-encode the full EventRecord matching Bor's format:
             // [id, contract, data, tx_hash, log_index, chain_id_string]
             // log_index is not in the body — use 0 (Bor does the same).
@@ -3806,16 +3787,6 @@ fn execute_polygon_system_calls(
                 MAX_SYSTEM_CALL_GAS,
             ) {
                 Ok(report) => {
-                    eprintln!(
-                        "COMMIT_STATE block={} event_id={} success={} gas_used={} log_count={}",
-                        block_number, event.id, report.is_success(), report.gas_used, report.logs.len()
-                    );
-                    for (i, log) in report.logs.iter().enumerate() {
-                        eprintln!(
-                            "  log[{i}]: addr={:?} topics={} data_len={}",
-                            log.address, log.topics.len(), log.data.len()
-                        );
-                    }
                     // commitState reverts are non-fatal — collect logs only on success
                     if report.is_success() {
                         all_logs.extend(report.logs);
