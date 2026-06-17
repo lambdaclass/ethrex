@@ -446,7 +446,8 @@ fn pip88_precompile_gas_delta(address: Address, calldata: &Bytes) -> u64 {
         // Blake2F: (rounds * 22) - (rounds * 1) = rounds * 21
         0x09 => {
             if calldata.len() >= 4 {
-                let rounds = u32::from_be_bytes([calldata[0], calldata[1], calldata[2], calldata[3]]) as u64;
+                let rounds =
+                    u32::from_be_bytes([calldata[0], calldata[1], calldata[2], calldata[3]]) as u64;
                 rounds * 21 // PIP88_GFROUND (22) - standard GFROUND (1)
             } else {
                 0
@@ -481,7 +482,11 @@ fn pip88_precompile_gas_delta(address: Address, calldata: &Bytes) -> u64 {
         // BLS12-381 Pairing: base + per_pair * k
         // Old: 37700 + 32600 * k, New: 109330 + 94540 * k
         0x0f => {
-            if calldata.is_empty() || !calldata.len().is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH) {
+            if calldata.is_empty()
+                || !calldata
+                    .len()
+                    .is_multiple_of(BLS12_381_PAIRING_CHECK_PAIR_LENGTH)
+            {
                 return 0;
             }
             let k = (calldata.len() / BLS12_381_PAIRING_CHECK_PAIR_LENGTH) as u64;

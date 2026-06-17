@@ -629,7 +629,8 @@ impl Blockchain {
                                 let tx_gas = if i == 0 {
                                     r.cumulative_gas_used
                                 } else {
-                                    r.cumulative_gas_used - execution_result.receipts[i - 1].cumulative_gas_used
+                                    r.cumulative_gas_used
+                                        - execution_result.receipts[i - 1].cumulative_gas_used
                                 };
                                 warn!(
                                     tx_index = i,
@@ -642,7 +643,8 @@ impl Blockchain {
                             warn!(
                                 block_gas = execution_result.block_gas_used,
                                 expected = block.header.gas_used,
-                                delta = block.header.gas_used as i64 - execution_result.block_gas_used as i64,
+                                delta = block.header.gas_used as i64
+                                    - execution_result.block_gas_used as i64,
                                 "gas-debug block total"
                             );
                         }

@@ -50,6 +50,7 @@ use ethrex_levm::db::gen_db::GeneralizedDatabase;
 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
 use ethrex_levm::db::{Database, gen_db::CacheDB};
 use ethrex_levm::errors::{InternalError, TxValidationError};
+use ethrex_levm::hooks::default_hook::set_bytecode_and_code_address;
 #[cfg(feature = "perf_opcode_timings")]
 use ethrex_levm::timings::{OPCODE_TIMINGS, PRECOMPILES_TIMINGS};
 use ethrex_levm::tracing::LevmCallTracer;
@@ -2736,20 +2737,26 @@ pub fn polygon_system_call_levm(
     };
     let system_account_backup = db.current_accounts_state.get(&system_address).cloned();
     let coinbase_backup = db.current_accounts_state.get(&coinbase).cloned();
+
+    // Bor's NewEVMTxContextForStateSync sets Origin = zero address (Go zero value).
+    // The caller (msg.sender / CALLER opcode) is SystemAddress, but tx.origin
+    // (ORIGIN opcode) is 0x0. Bor also bypasses the normal tx lifecycle entirely:
+    // no intrinsic gas, no nonce validation, no fee payment — just a raw
+    // vmenv.Call(SystemAddress, target, data, gas, 0).
     let env = Environment {
-        origin: system_address,
-        gas_limit: gas_limit + TX_BASE_COST,
+        origin: Address::zero(),
+        gas_limit,
         block_number: block_header.number,
-        coinbase,
+        coinbase: block_header.coinbase,
         timestamp: block_header.timestamp,
         prev_randao: Some(block_header.prev_randao),
         difficulty: block_header.difficulty,
         chain_id: U256::from(chain_config.chain_id),
-        base_fee_per_gas: U256::zero(),
+        base_fee_per_gas: U256::from(block_header.base_fee_per_gas.unwrap_or_default()),
         gas_price: U256::zero(),
         block_excess_blob_gas: block_header.excess_blob_gas,
         block_blob_gas_used: block_header.blob_gas_used,
-        block_gas_limit: i64::MAX as u64,
+        block_gas_limit: block_header.gas_limit,
         config,
         ..Default::default()
     };
@@ -2761,8 +2768,31 @@ pub fn polygon_system_call_levm(
         ..Default::default()
     });
 
+    // Create VM with Polygon VMType for correct opcode table and LogTransfer
+    // behavior. Bypass prepare_execution/finalize_execution: no intrinsic gas,
+    // no nonce, no fee payment — just raw EVM execution matching Bor's
+    // vmenv.Call() path.
     let result = VM::new(env, db, tx, LevmCallTracer::disabled(), vm_type, crypto)
-        .and_then(|mut vm| vm.execute())
+        .and_then(|mut vm| {
+            // CALLER = SystemAddress (Bor's ApplyBorMessage uses msg.From = SystemAddress)
+            vm.current_call_frame.msg_sender = system_address;
+            set_bytecode_and_code_address(&mut vm)?;
+            let ctx_result = vm.run_execution()?;
+            let logs = if ctx_result.is_success() {
+                vm.substate.extract_logs()
+            } else {
+                Vec::new()
+            };
+            Ok(ExecutionReport {
+                result: ctx_result.result,
+                gas_used: ctx_result.gas_used,
+                gas_spent: ctx_result.gas_spent,
+                gas_refunded: 0,
+                state_gas_used: 0,
+                output: ctx_result.output,
+                logs,
+            })
+        })
         .map_err(EvmError::from);
 
     let report = result?;
