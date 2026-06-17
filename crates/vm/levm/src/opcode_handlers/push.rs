@@ -5,12 +5,9 @@
 //!   - `PUSH1` to `PUSH32`
 
 use crate::{
-    errors::{InternalError, OpcodeResult, VMError},
-    gas_cost,
-    opcode_handlers::OpcodeHandler,
-    vm::VM,
+    errors::OpcodeResult, errors::VMError, gas_cost, opcode_handlers::OpcodeHandler, vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian_const};
+use ethrex_common::{types::BYTECODE_PADDING, utils::u256_from_big_endian_const};
 
 /// Implementation for the `PUSH0` opcode.
 pub struct OpPush0Handler;
@@ -31,31 +28,35 @@ pub struct OpPushHandler<const N: usize>;
 impl<const N: usize> OpcodeHandler for OpPushHandler<N> {
     #[inline(always)]
     fn eval(vm: &mut VM<'_>) -> Result<OpcodeResult, VMError> {
+        // PUSHn reads up to 32 immediate bytes without a bounds check, relying on
+        // the trailing zero padding appended to every bytecode. Keep the unchecked
+        // read below sound if the padding ever shrinks.
+        const { assert!(BYTECODE_PADDING >= 32) };
+
         let literal_offset = vm.current_call_frame.pc;
-        vm.current_call_frame.pc = vm
-            .current_call_frame
-            .pc
-            .checked_add(N)
-            .ok_or(InternalError::Overflow)?;
+        #[expect(
+            clippy::arithmetic_side_effects,
+            reason = "pc bounded by padded bytecode len"
+        )]
+        {
+            vm.current_call_frame.pc += N;
+        }
+        // `pc` is now exactly `literal_offset + N`; reuse it as the immediate end.
+        let literal_end = vm.current_call_frame.pc;
 
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::PUSHN)?;
 
         let bytecode = vm.current_call_frame.bytecode.dispatch_buf();
-        let value = match bytecode.get(literal_offset..) {
-            #[expect(clippy::indexing_slicing, reason = "length is checked in match guard")]
-            Some(data) if data.len() >= N => {
-                let mut buf = [0u8; N];
-                buf.copy_from_slice(&data[..N]);
-                u256_from_big_endian_const(buf)
-            }
-            Some(data) => {
-                let mut bytes = [0u8; N];
-                bytes[..data.len()].copy_from_slice(data);
-                u256_from_big_endian_const(bytes)
-            }
-            None => U256::zero(),
-        };
+        // SAFETY: PUSH only dispatches on a real opcode byte, so
+        // `literal_offset <= bytecode_len`; the buffer is padded with
+        // BYTECODE_PADDING (>= N) trailing zeros, so N bytes are always in bounds.
+        // Immediate bytes past the real code end read as zero, matching EVM
+        // PUSH-past-end semantics (the padding is zeroed).
+        let mut buf = [0u8; N];
+        #[expect(unsafe_code, reason = "read bounded by padded bytecode len")]
+        buf.copy_from_slice(unsafe { bytecode.get_unchecked(literal_offset..literal_end) });
+        let value = u256_from_big_endian_const(buf);
         vm.current_call_frame.stack.push(value)?;
 
         Ok(OpcodeResult::Continue)

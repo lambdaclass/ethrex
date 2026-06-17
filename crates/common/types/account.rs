@@ -24,6 +24,11 @@ use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
 static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
+/// Number of trailing STOP (`0x00`) bytes appended to every bytecode buffer so
+/// the hot dispatch loop can read a full opcode immediate (up to PUSH32's 32
+/// bytes) without bounds checks. Must be `>= 32`.
+pub const BYTECODE_PADDING: usize = 33;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
@@ -62,9 +67,9 @@ impl Code {
 
     pub fn from_parts(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
         let bytecode_len = code.len();
-        let mut padded_code = Vec::with_capacity(bytecode_len + 33);
+        let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
         padded_code.extend_from_slice(code);
-        padded_code.extend_from_slice(&[0u8; 33]);
+        padded_code.extend_from_slice(&[0u8; BYTECODE_PADDING]);
         Self {
             hash,
             bytecode: Bytes::from_owner(padded_code),
