@@ -227,7 +227,8 @@ pub struct Store {
     /// Cache for block hashes, keyed by block number.
     /// Stores up to 256 recently accessed entries to speed up block hash lookups.
     /// Helps avoid repeated backend reads for frequently requested block hashes.
-    block_hash_cache: Arc<Mutex<LruCache<BlockNumber, BlockHash>>>,
+    /// Uses `FxBuildHasher` for consistency with the other store caches.
+    block_hash_cache: Arc<Mutex<LruCache<BlockNumber, BlockHash, FxBuildHasher>>>,
 
     /// Cache for code metadata (code length), keyed by the bytecode hash.
     /// Uses FxHashMap for efficient lookups, much smaller than code cache.
@@ -564,7 +565,18 @@ impl Store {
             txn.commit()
         })
         .await
-        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))?
+        .map_err(|e| StoreError::Custom(format!("Task panicked: {}", e)))??;
+
+        // Evict the removed block from the cache so a hit can't serve a hash for
+        // a block that no longer exists. Best-effort: readers fall back to the DB.
+        match self.block_hash_cache.lock() {
+            Ok(mut cache) => {
+                cache.pop(&block_number);
+            }
+            Err(_) => tracing::warn!("block_hash_cache lock poisoned; skipping cache eviction"),
+        }
+
+        Ok(())
     }
 
     /// Obtain canonical block bodies in from..=to
@@ -1180,6 +1192,12 @@ impl Store {
             .chain(std::iter::once((head_number, head_hash)))
             .collect();
 
+        // Collect block numbers being removed from the canonical chain so we can
+        // evict them from the cache after the DB write. A reorg deletes entries
+        // for (head_number + 1)..=latest from CANONICAL_BLOCK_HASHES; the cache
+        // must drop them too, or a hit would serve a stale hash from the old fork.
+        let blocks_to_invalidate: Vec<BlockNumber> = ((head_number + 1)..=latest).collect();
+
         tokio::task::spawn_blocking(move || {
             let mut txn = db.begin_write()?;
 
@@ -1220,10 +1238,24 @@ impl Store {
 
             txn.commit()?;
 
-            // Update block hash cache with new canonical blocks
-            if let Ok(mut cache) = block_hash_cache.lock() {
-                for (block_number, block_hash) in blocks_to_cache {
-                    cache.put(block_number, block_hash);
+            // Update block hash cache with new canonical blocks. This is
+            // best-effort: the DB write above is already committed, so a
+            // poisoned lock must not fail the fork-choice update. Readers fall
+            // back to the DB on a cache miss, so a skipped update is harmless,
+            // but we log it since a poisoned lock signals a panic elsewhere.
+            match block_hash_cache.lock() {
+                Ok(mut cache) => {
+                    // Evict reorged-out blocks before inserting the new canonical
+                    // set so a cache hit can never return a stale fork's hash.
+                    for block_number in &blocks_to_invalidate {
+                        cache.pop(block_number);
+                    }
+                    for (block_number, block_hash) in blocks_to_cache {
+                        cache.put(block_number, block_hash);
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("block_hash_cache lock poisoned; skipping cache update")
                 }
             }
 
@@ -1783,8 +1815,9 @@ impl Store {
             trie_update_worker_tx: trie_upd_tx,
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
-            block_hash_cache: Arc::new(Mutex::new(LruCache::new(
+            block_hash_cache: Arc::new(Mutex::new(LruCache::with_hasher(
                 std::num::NonZeroUsize::new(BLOCK_HASH_CACHE_SIZE).unwrap(),
+                FxBuildHasher,
             ))),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
             fcu_lock: Arc::new(tokio::sync::Mutex::new(())),
