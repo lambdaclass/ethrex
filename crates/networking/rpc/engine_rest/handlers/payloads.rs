@@ -14,7 +14,7 @@ use ethrex_rlp::encode::RLPEncode;
 use libssz_types::{SszList, SszVector};
 
 use crate::engine::payload::{
-    handle_new_payload_v1_v2, handle_new_payload_v3, handle_new_payload_v4, validate_fork,
+    handle_new_payload_v1_v2, handle_new_payload_v3, handle_new_payload_v4,
 };
 use crate::engine_rest::error::ProblemJson;
 use crate::engine_rest::extractors::{decode_ssz, is_length_limit_error};
@@ -240,13 +240,29 @@ pub async fn get_payload(
         }
     };
 
-    // 3b. Ensure the built payload belongs to the requested fork era. Mirrors the
-    //     JSON-RPC GetPayloadV3..V6 `validate_fork` guard (engine/payload.rs): a
-    //     fork/id mismatch would otherwise serialize the payload into the wrong
-    //     SSZ shape (e.g. dropping execution_requests/BAL/slot_number).
-    if let Err(err) = validate_fork(&result.payload, fork, &ctx) {
+    // 3b. Ensure the built payload belongs to the requested fork's engine-shape
+    //     era. Mirrors the JSON-RPC GetPayloadV1..V6 range guards
+    //     (engine/payload.rs): each segment accepts its fork up to the next
+    //     payload-shape boundary, so `/osaka` also accepts BPO-era blocks (which
+    //     share the Osaka payload shape) while rejecting Amsterdam (BAL +
+    //     slot_number). An exact `get_fork == fork` check would wrongly 400 a
+    //     BPO-era payload; a mismatch otherwise serializes the wrong SSZ shape.
+    let built_ts = result.payload.header.timestamp;
+    let cc = ctx.storage.get_chain_config();
+    let fork_ok = match fork {
+        Fork::Paris => !cc.is_shanghai_activated(built_ts),
+        Fork::Shanghai => cc.is_shanghai_activated(built_ts) && !cc.is_cancun_activated(built_ts),
+        Fork::Cancun => cc.is_cancun_activated(built_ts) && !cc.is_prague_activated(built_ts),
+        Fork::Prague => cc.is_prague_activated(built_ts) && !cc.is_osaka_activated(built_ts),
+        Fork::Osaka => cc.is_osaka_activated(built_ts) && !cc.is_amsterdam_activated(built_ts),
+        Fork::Amsterdam => cc.is_amsterdam_activated(built_ts),
+        // parse_fork_segment restricts to the 6 spec forks.
+        _ => false,
+    };
+    if !fork_ok {
         return ProblemJson::bad_request(&format!(
-            "built payload does not match requested fork: {err}"
+            "built payload fork {:?} does not match requested endpoint fork {fork:?}",
+            cc.get_fork(built_ts)
         ))
         .into_response();
     }
@@ -628,7 +644,11 @@ fn ssz_execution_requests(
     use crate::engine_rest::types::common::MAX_REQUEST_BYTES;
     let inner: Result<Vec<SszList<u8, MAX_REQUEST_BYTES>>, _> = requests
         .iter()
-        .filter(|r| !r.0.is_empty())
+        // Use EncodedRequests::is_empty (data len <= 1) — NOT Bytes::is_empty on
+        // `.0` (len == 0). EIP-7685 excludes entries with empty request_data, i.e.
+        // type-byte-only entries like [0x00]; this matches compute_requests_hash
+        // and the JSON-RPC GetPayloadV4/V5/V6 emission.
+        .filter(|r| !r.is_empty())
         .map(|r| {
             r.0.to_vec().try_into().map_err(|_| {
                 ProblemJson::internal("execution_request entry exceeds MAX_REQUEST_BYTES")

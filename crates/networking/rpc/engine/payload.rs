@@ -1410,11 +1410,7 @@ fn parse_get_payload_request(params: &Option<Vec<Value>>) -> Result<u64, RpcErr>
     Ok(payload_id)
 }
 
-pub(crate) fn validate_fork(
-    block: &Block,
-    fork: Fork,
-    context: &RpcApiContext,
-) -> Result<(), RpcErr> {
+fn validate_fork(block: &Block, fork: Fork, context: &RpcApiContext) -> Result<(), RpcErr> {
     // Check timestamp matches valid fork
     let chain_config = &context.storage.get_chain_config();
     let current_fork = chain_config.get_fork(block.header.timestamp);
