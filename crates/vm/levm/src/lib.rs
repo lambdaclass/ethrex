@@ -73,6 +73,11 @@ pub mod errors;
 pub mod execution_handlers;
 pub mod gas_cost;
 pub mod hooks;
+/// Host-only result cache for the `KECCAK256` opcode. Compiled out of every zkVM
+/// guest (all of which target riscv32 — sp1/risc0/openvm — or riscv64 — zisk),
+/// which must keep the opcode on its direct, provable path.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+pub mod keccak_cache;
 pub mod memory;
 pub mod opcode_handlers;
 pub mod opcode_tracer;

@@ -11,7 +11,8 @@ use crate::{
     utils::size_offset_to_usize,
     vm::VM,
 };
-use ethrex_common::{U256, utils::u256_from_big_endian};
+use ethrex_common::U256;
+use ethrex_crypto::Crypto;
 
 /// `keccak256("")` as a `U256`. Returned directly for zero-length input so we
 /// skip the permutation entirely; the result is a well-known constant
@@ -45,11 +46,9 @@ impl OpcodeHandler for OpKeccak256Handler {
             EMPTY_KECCAK_U256
         } else {
             let crypto = vm.crypto;
-            u256_from_big_endian(&vm.current_call_frame.memory.with_range(
-                offset,
-                len,
-                |bytes| crypto.keccak256(bytes),
-            )?)
+            vm.current_call_frame
+                .memory
+                .with_range(offset, len, |bytes| keccak256_u256(bytes, crypto))?
         };
         vm.current_call_frame.stack.push(hash)?;
 
@@ -57,11 +56,36 @@ impl OpcodeHandler for OpKeccak256Handler {
     }
 }
 
+/// Keccak-256 of `bytes` (non-empty) as a `U256`.
+///
+/// On the host this consults the [`keccak_cache`](crate::keccak_cache) — the
+/// KECCAK256 opcode runs on a tiny, highly-repeated set of inputs, and a cache
+/// probe is ~20× cheaper than the permutation. The cache is fully transparent
+/// (`keccak256` is pure), so the result is identical to recomputing it.
+#[cfg(not(any(target_arch = "riscv32", target_arch = "riscv64")))]
+#[inline]
+fn keccak256_u256(bytes: &[u8], crypto: &dyn Crypto) -> U256 {
+    crate::keccak_cache::get_or_compute(bytes, crypto)
+}
+
+/// Keccak-256 of `bytes` (non-empty) as a `U256`.
+///
+/// Every zkVM guest (riscv32 for sp1/risc0/openvm, riscv64 for zisk) keeps the
+/// opcode on its direct, provable path: the result cache is a host-only
+/// optimization and must not affect guest behavior, witness output, or proving
+/// cost.
+#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
+#[inline(always)]
+fn keccak256_u256(bytes: &[u8], crypto: &dyn Crypto) -> U256 {
+    ethrex_common::utils::u256_from_big_endian(&crypto.keccak256(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ethrex_common::constants::EMPTY_KECCAK_HASH;
-    use ethrex_crypto::{Crypto, NativeCrypto};
+    use ethrex_common::utils::u256_from_big_endian;
+    use ethrex_crypto::NativeCrypto;
 
     #[test]
     fn empty_keccak_const_matches_hash() {
