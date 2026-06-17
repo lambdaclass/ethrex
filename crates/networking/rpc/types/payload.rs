@@ -274,6 +274,15 @@ impl PayloadStatus {
             witness: None,
         }
     }
+
+    pub fn inclusion_list_unsatisfied() -> Self {
+        PayloadStatus {
+            status: PayloadValidationStatus::InclusionListUnsatisfied,
+            latest_valid_hash: None,
+            validation_error: None,
+            witness: None,
+        }
+    }
 }
 
 mod optional_hex_bytes {
@@ -301,14 +310,6 @@ mod optional_hex_bytes {
                 .map(Some)
                 .map_err(|error| D::Error::custom(error.to_string())),
             _ => Ok(None),
-        }
-    }
-
-    pub fn inclusion_list_unsatisfied() -> Self {
-        PayloadStatus {
-            status: PayloadValidationStatus::InclusionListUnsatisfied,
-            latest_valid_hash: None,
-            validation_error: None,
         }
     }
 }
