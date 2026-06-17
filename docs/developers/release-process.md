@@ -90,7 +90,16 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![edit title](../img/publish_release_step_3.png)
 
-4. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
+4. Customize the release notes.
+
+    The auto-generated changelog lists every commit, but it doesn't tell users what actually matters in this release. At the start of the notes, add a section with hand-made notes.
+    - If the release contains critical security fixes, start with an `> [!IMPORTANT]` block urging users to upgrade.
+    - The rest of the custom notes should be in a `> [!NOTE]` block that:
+      - Has a **What's new** list highlighting the key changes (new features, important fixes).
+      - Mentions, if there's a migration, that users won't be able to roll back to a previous version.
+      - Mentions whether a resync is needed.
+
+5. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
 
     ![set latest release](../img/publish_release_step_4.png)
 
@@ -155,7 +164,7 @@ If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`
 
 ### Failure on "latest release" workflow
 
-If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
+If the CI fails when setting a release as latest (step 5), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
