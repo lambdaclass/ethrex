@@ -844,7 +844,7 @@ impl Store {
             return Ok(None);
         };
         let (bytecode_slice, targets) = decode_bytes(&bytes)?;
-        let code = Code::from_parts(
+        let code = Code::from_parts_unchecked(
             code_hash,
             bytecode_slice,
             <Vec<u32>>::decode(targets)?.into(),

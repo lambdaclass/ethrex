@@ -400,7 +400,11 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        #[expect(unsafe_code, reason = "bytecode padded with 33 STOPs at construction")]
+        // SAFETY: pc reaches at most bytecode_len + 32 (a PUSH32 at the last real
+        // byte advances 33 total: +1 in the dispatch loop, +32 in the handler).
+        // dispatch_buf() is bytecode_len + BYTECODE_PADDING (33) long, so the read
+        // is always in bounds.
+        #[expect(unsafe_code, reason = "pc bounded by padded bytecode len")]
         unsafe {
             *self.bytecode.dispatch_buf().get_unchecked(self.pc)
         }
@@ -534,7 +538,7 @@ impl<'a> VM<'a> {
         clippy::arithmetic_side_effects,
         reason = "pc bounded by padded bytecode len"
     )]
-    pub fn advance_pc(&mut self, count: usize) {
-        self.current_call_frame.pc += count;
+    pub fn advance_pc(&mut self) {
+        self.current_call_frame.pc += 1;
     }
 }

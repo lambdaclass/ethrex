@@ -1012,10 +1012,10 @@ impl<'a> VM<'a> {
         let opcode_table = self.opcode_table;
 
         loop {
-            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
+            // Capture pc BEFORE advance_pc() — this is the address of the current opcode.
             let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1);
+            self.advance_pc();
 
             // Hoist the active flag to avoid reading it twice per opcode.
             let tracer_active = self.opcode_tracer.active;

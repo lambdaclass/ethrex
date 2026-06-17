@@ -24,6 +24,12 @@ use crate::constants::{EMPTY_KECCAK_HASH, EMPTY_TRIE_HASH};
 /// placeholder and every EOA / empty-code load would otherwise each allocate.
 static EMPTY_JUMP_TARGETS: LazyLock<Arc<[u32]>> = LazyLock::new(|| Arc::from(Vec::new()));
 
+/// Trailing STOP bytes appended to every bytecode so the dispatch loop can read
+/// the next opcode without a bounds check. 33 is the widest single-opcode advance
+/// (PUSH32: 1 opcode byte + 32 immediate bytes), so `pc` can never step past the
+/// padding regardless of which opcode sits at the last real byte.
+pub const BYTECODE_PADDING: usize = 33;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct Code {
     // hash is only used for bytecodes stored in the DB, either for reading it from the DB
@@ -51,20 +57,22 @@ impl Code {
     // or never be read (e.g. for initcode).
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
-        Self::from_parts(hash, &code, jump_targets)
+        Self::from_parts_unchecked(hash, &code, jump_targets)
     }
 
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         let hash = H256(crypto.keccak256(code.as_ref()));
-        Self::from_parts(hash, &code, jump_targets)
+        Self::from_parts_unchecked(hash, &code, jump_targets)
     }
 
-    pub fn from_parts(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
+    /// Builds a `Code` from precomputed parts. The caller must guarantee `hash`
+    /// and `jump_targets` correspond to `code`; neither is recomputed or validated.
+    pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
         let bytecode_len = code.len();
-        let mut padded_code = Vec::with_capacity(bytecode_len + 33);
+        let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
         padded_code.extend_from_slice(code);
-        padded_code.extend_from_slice(&[0u8; 33]);
+        padded_code.extend_from_slice(&[0u8; BYTECODE_PADDING]);
         Self {
             hash,
             bytecode: Bytes::from_owner(padded_code),
@@ -122,6 +130,9 @@ impl Code {
         self.bytecode_len == 0
     }
 
+    /// Returns the padded bytecode buffer (real code + [`BYTECODE_PADDING`] trailing
+    /// STOPs) used by the opcode dispatch loop to read opcodes without bounds checks.
+    /// Use [`Code::code`] for the real, unpadded bytecode.
     #[inline]
     pub fn dispatch_buf(&self) -> &[u8] {
         &self.bytecode
