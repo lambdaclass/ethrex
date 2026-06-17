@@ -3785,6 +3785,119 @@ pub fn read_chain_id_from_db(path: &Path) -> Option<u64> {
 }
 
 #[cfg(test)]
+mod block_hash_cache_tests {
+    use super::*;
+    use ethrex_common::types::{Block, BlockBody, BlockHeader};
+
+    /// Minimal canonical-chain block: only the fields the storage layer reads
+    /// here (number, parent linkage) are set; the rest default. `forkchoice_update`
+    /// looks the head header up by hash, so every block must be `add_block`ed first.
+    fn chain_block(number: BlockNumber, parent_hash: BlockHash) -> Block {
+        Block {
+            header: BlockHeader {
+                number,
+                parent_hash,
+                ..Default::default()
+            },
+            body: BlockBody::default(),
+        }
+    }
+
+    /// Build a canonical chain of `len` blocks (numbers 0..len) where each block
+    /// points at its predecessor, persist every block, and return their hashes
+    /// indexed by block number.
+    async fn add_chain(store: &Store, len: u64) -> Vec<BlockHash> {
+        let mut hashes = Vec::with_capacity(len as usize);
+        let mut parent = BlockHash::zero();
+        for number in 0..len {
+            let block = chain_block(number, parent);
+            let hash = block.hash();
+            store.add_block(block).await.unwrap();
+            hashes.push(hash);
+            parent = hash;
+        }
+        hashes
+    }
+
+    /// A reorg must evict the canonical entries it deletes from the block-hash
+    /// cache. Without eviction, `get_canonical_block_hash_sync` would return a
+    /// hash from the abandoned fork because it checks the cache before the DB.
+    #[tokio::test]
+    async fn reorg_evicts_stale_cached_block_hashes() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        // Chain of blocks 0..=3, made canonical up to head 3. This populates the
+        // cache with the hashes for blocks 1, 2 and 3.
+        let hashes = add_chain(&store, 4).await;
+        let canonical: Vec<(BlockNumber, BlockHash)> =
+            (1..=3).map(|n| (n, hashes[n as usize])).collect();
+        store
+            .forkchoice_update(canonical, 3, hashes[3], None, None)
+            .await
+            .unwrap();
+
+        // Block 2 is below the head, so the `latest_block_header` short-circuit
+        // does not apply: this lookup must come from the cache (or DB) and match.
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            Some(hashes[2]),
+            "block 2 should resolve to its canonical hash before the reorg"
+        );
+
+        // Reorg: rewind the head to block 1 along a competing fork. This deletes
+        // the canonical entries for blocks 2 and 3 from the DB.
+        let new_head = chain_block(1, hashes[0]);
+        let new_head_hash = new_head.hash();
+        store.add_block(new_head).await.unwrap();
+        store
+            .forkchoice_update(vec![(1, new_head_hash)], 1, new_head_hash, None, None)
+            .await
+            .unwrap();
+
+        // The DB no longer has a canonical entry for block 2 and head is now 1,
+        // so the only way to get the old hash back would be a stale cache hit.
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            None,
+            "reorged-out block 2 must not be served from a stale cache entry"
+        );
+        assert_eq!(
+            store.get_canonical_block_hash_sync(3).unwrap(),
+            None,
+            "reorged-out block 3 must not be served from a stale cache entry"
+        );
+    }
+
+    /// `remove_block` deletes a canonical entry directly and must evict it from
+    /// the cache too, so a later lookup doesn't resolve a removed block.
+    #[tokio::test]
+    async fn remove_block_evicts_cached_hash() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        let hashes = add_chain(&store, 4).await;
+        let canonical: Vec<(BlockNumber, BlockHash)> =
+            (1..=3).map(|n| (n, hashes[n as usize])).collect();
+        store
+            .forkchoice_update(canonical, 3, hashes[3], None, None)
+            .await
+            .unwrap();
+
+        // Warm the cache for block 2, then remove it.
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            Some(hashes[2])
+        );
+        store.remove_block(2).await.unwrap();
+
+        assert_eq!(
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            None,
+            "removed block 2 must not be served from a stale cache entry"
+        );
+    }
+}
+
+#[cfg(test)]
 mod merge_tests {
     use super::*;
 
