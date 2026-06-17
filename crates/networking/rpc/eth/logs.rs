@@ -262,8 +262,7 @@ fn block_bloom_matches(
         return false;
     }
 
-    let topic_in_bloom =
-        |topic: &H256| bloom.contains_input(BloomInput::Raw(topic.as_bytes()));
+    let topic_in_bloom = |topic: &H256| bloom.contains_input(BloomInput::Raw(topic.as_bytes()));
     topics.iter().all(|topic_filter| match topic_filter {
         // A wildcard position imposes no constraint.
         TopicFilter::Topic(None) => true,
