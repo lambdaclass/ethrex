@@ -20,7 +20,7 @@
 use crate::{
     constants::WORD_SIZE_IN_BYTES_USIZE,
     errors::{ExceptionalHalt, InternalError, OpcodeResult, VMError},
-    gas_cost::{self, SSTORE_STIPEND},
+    gas_cost::{self, SSTORE_STIPEND, STORAGE_CLEAR_REFUND_AMSTERDAM},
     memory::calculate_memory_size,
     opcode_handlers::OpcodeHandler,
     opcodes::Opcode,
@@ -239,6 +239,7 @@ impl OpcodeHandler for OpSLoadHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::sload(
                 vm.substate.add_accessed_slot(address, key),
+                vm.env.config.fork,
             )?)?;
 
         // Record to BAL AFTER gas check passes per EIP-7928
@@ -315,10 +316,51 @@ impl OpcodeHandler for OpSStoreHandler {
             && original_value.is_zero();
 
         if value != current_value {
-            // EIP-2929
-            const REMOVE_SLOT_COST: i64 = 4800;
-            const RESTORE_EMPTY_SLOT_COST: i64 = 19900;
-            const RESTORE_SLOT_COST: i64 = 2800;
+            // ethrex meters refunds as net deltas accumulated across the SSTOREs of a tx.
+            // The deltas below are derived so the NET regular refund matches EELS Amsterdam
+            // (ethereum/execution-specs amsterdam/vm/instructions/storage.py::sstore), given
+            // ethrex's charge side (access component plus a STORAGE_WRITE first-change surcharge).
+            //
+            // Pre-Amsterdam (EIP-2929/3529) deltas, kept byte-identical:
+            //   REMOVE_SLOT_COST = 4800, RESTORE_EMPTY_SLOT_COST = 19900, RESTORE_SLOT_COST = 2800.
+            //
+            // Amsterdam constants (EIP-8038 preliminary):
+            //   WARM = 100, COLD_STORAGE_ACCESS = 3000, STORAGE_WRITE = 10000,
+            //   COLD_STORAGE_WRITE = COLD_STORAGE_ACCESS + STORAGE_WRITE = 13000,
+            //   REFUND_STORAGE_CLEAR (STORAGE_CLEAR_REFUND) = 12480.
+            // EELS adds to the refund counter:
+            //   - on first-time clear of a tx-start-nonzero slot: + REFUND_STORAGE_CLEAR
+            //   - reverse of an earlier clear (original != 0, current == 0): - REFUND_STORAGE_CLEAR
+            //   - on restore to original value: + (COLD_STORAGE_WRITE - COLD_STORAGE_ACCESS - WARM)
+            // (state gas of EIP-8037 is handled via the reservoir, not these regular deltas.)
+            //
+            // Mapping EELS onto ethrex's net deltas:
+            //
+            //   REMOVE_SLOT_COST = REFUND_STORAGE_CLEAR = 12480. It is added on the
+            //   `current == original` clear branch and subtracted on the `current == 0`
+            //   reverse branch, exactly matching EELS's +/- REFUND_STORAGE_CLEAR.
+            //
+            //   RESTORE deltas (both zero- and non-zero-original) =
+            //     COLD_STORAGE_WRITE - COLD_STORAGE_ACCESS - WARM
+            //     = 13000 - 3000 - 100 = 9900 = STORAGE_WRITE - WARM.
+            //
+            // Net cross-checks against EELS:
+            //   (x,x,0) clear single write: ethrex delta = +12480 == EELS. OK.
+            //   (0,x,0) set-then-clear: w1 (0->x) delta 0; w2 (x->0) restore (origin 0)
+            //     => +9900. EELS w2 also adds +9900 (original==new). Net 9900. OK.
+            //   (x,y,x) reset-to-original: w1 (x->y) delta 0; w2 (y->x) restore => +9900.
+            //     EELS net 9900. OK.
+            //   (x,0,x) clear-then-restore: w1 (x->0) +12480; w2 (0->x) -12480 then +9900.
+            //     Net 9900. EELS net 9900. OK.
+            let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost): (i64, i64, i64) =
+                if fork >= Fork::Amsterdam {
+                    // remove = STORAGE_CLEAR_REFUND_AMSTERDAM (12480);
+                    // both restore deltas = STORAGE_WRITE - WARM = 10000 - 100 = 9900.
+                    (STORAGE_CLEAR_REFUND_AMSTERDAM, 9900, 9900)
+                } else {
+                    // EIP-2929
+                    (4800, 19900, 2800)
+                };
 
             // The operations on `delta` cannot overflow.
             let mut delta = 0i64;
@@ -328,30 +370,22 @@ impl OpcodeHandler for OpSStoreHandler {
             )]
             if current_value == original_value {
                 if !original_value.is_zero() && value.is_zero() {
-                    delta += REMOVE_SLOT_COST;
+                    delta += remove_slot_cost;
                 }
             } else {
                 if !original_value.is_zero() {
                     if current_value.is_zero() {
-                        delta -= REMOVE_SLOT_COST;
+                        delta -= remove_slot_cost;
                     } else if value.is_zero() {
-                        delta += REMOVE_SLOT_COST;
+                        delta += remove_slot_cost;
                     }
                 }
 
                 if value == original_value {
                     if original_value.is_zero() {
-                        // EIP-8037 (Amsterdam+): restore_empty_slot_cost changes from 19900 to 2800
-                        // because the SSTORE creation cost changed from 20000 to 2900.
-                        // The state gas portion is refunded via the reservoir (clamp-and-spill),
-                        // NOT through the regular refund counter.
-                        if fork >= Fork::Amsterdam {
-                            delta += RESTORE_SLOT_COST; // 2800 instead of 19900
-                        } else {
-                            delta += RESTORE_EMPTY_SLOT_COST;
-                        }
+                        delta += restore_empty_slot_cost;
                     } else {
-                        delta += RESTORE_SLOT_COST;
+                        delta += restore_slot_cost;
                     }
                 }
             }

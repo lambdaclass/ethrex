@@ -93,14 +93,15 @@ fn parity_env(fork: Fork, block_gas_limit: u64) -> Environment {
     }
 }
 
-/// Asserts `intrinsic_gas_dimensions(tx, fork, block_gas_limit)` and
+/// Asserts `intrinsic_gas_dimensions(tx, sender, fork, block_gas_limit)` and
 /// `VM::new(env, ...).get_intrinsic_gas()` return the same `(regular, state)`
 /// split. A divergence means mempool admission would drift from VM charge.
 fn assert_parity(fork: Fork, block_gas_limit: u64, tx: &Transaction) {
-    let standalone =
-        intrinsic_gas_dimensions(tx, fork, block_gas_limit).expect("intrinsic_gas_dimensions");
-
     let env = parity_env(fork, block_gas_limit);
+    let sender = env.origin;
+    let standalone = intrinsic_gas_dimensions(tx, sender, fork, block_gas_limit)
+        .expect("intrinsic_gas_dimensions");
+
     let mut db = parity_db();
     let vm = VM::new(
         env,

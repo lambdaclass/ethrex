@@ -58,6 +58,7 @@ impl OpcodeHandler for OpBalanceHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::balance(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // State access AFTER gas check passes
@@ -292,6 +293,7 @@ impl OpcodeHandler for OpExtCodeSizeHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodesize(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // State access AFTER gas check passes (using optimized code length lookup)
@@ -324,6 +326,7 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
                 calculate_memory_size(dst_offset, len)?,
                 vm.current_call_frame.memory.len(),
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         // Record address touch for BAL (after gas check passes)
@@ -369,6 +372,7 @@ impl OpcodeHandler for OpExtCodeHashHandler {
         vm.current_call_frame
             .increase_consumed_gas(gas_cost::extcodehash(
                 vm.substate.add_accessed_address(address),
+                vm.env.config.fork,
             )?)?;
 
         let account = vm.db.get_account(address)?;

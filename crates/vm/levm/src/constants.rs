@@ -29,6 +29,10 @@ pub const SYSTEM_MAX_SSTORES_PER_CALL: u64 = 16;
 
 // Transaction costs in gas
 pub const TX_BASE_COST: u64 = 21000;
+// EIP-2780 PRELIMINARY EIPs#11645 — ECDSA recovery + sender account access + write.
+// At Amsterdam the flat 21000 base is decomposed into resource-based charges;
+// this is the sender-side base (recovery + sender access + write).
+pub const TX_BASE_COST_AMSTERDAM: u64 = 12000;
 
 // https://eips.ethereum.org/EIPS/eip-7825
 pub use ethrex_common::constants::POST_OSAKA_GAS_LIMIT_CAP;

@@ -6,10 +6,10 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, ACCESS_LIST_ADDRESS_COST, ACCESS_LIST_STORAGE_KEY_COST, BLOB_GAS_PER_BLOB,
-        COLD_ADDRESS_ACCESS_COST, CREATE_BASE_COST, REGULAR_GAS_CREATE, STANDARD_TOKEN_COST,
-        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, WARM_ADDRESS_ACCESS_COST,
-        cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token,
+        self, BLOB_GAS_PER_BLOB, CREATE_ACCESS_AMSTERDAM, CREATE_BASE_COST, STANDARD_TOKEN_COST,
+        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, TRANSFER_LOG_COST_AMSTERDAM,
+        TX_VALUE_COST_AMSTERDAM, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
+        cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
     },
     vm::{Substate, VM},
 };
@@ -250,6 +250,7 @@ pub fn eip7702_get_code(
     db: &mut GeneralizedDatabase,
     accrued_substate: &mut Substate,
     address: Address,
+    fork: Fork,
 ) -> Result<(bool, u64, Address, Code), VMError> {
     // Address is the delgated address
     let bytecode = db.get_account_code(address)?;
@@ -267,7 +268,7 @@ pub fn eip7702_get_code(
     let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        COLD_ADDRESS_ACCESS_COST
+        gas_cost::cold_account_access_cost(fork)
     } else {
         WARM_ADDRESS_ACCESS_COST
     };
@@ -532,48 +533,94 @@ impl<'a> VM<'a> {
 
         regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
-        // Base Cost
-        regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+        let is_create = self.is_create()?;
 
-        // Create Cost
-        if self.is_create()? {
-            if fork >= Fork::Amsterdam {
-                // EIP-8037: reduced regular cost + state gas for new account
+        if fork >= Fork::Amsterdam {
+            // EIP-2780 (PRELIMINARY EIPs#11645): resource-based intrinsic gas.
+            // The flat 21000 base is decomposed into a sender base + recipient
+            // access charge + value-transfer charge. These tx-level sender/to
+            // charges are ALWAYS the cold rate; access lists do NOT warm
+            // tx-level accounts. Because the intrinsic uses fixed constants
+            // (not substate warmth), the cold rate is applied automatically.
+            let sender = self.env.origin;
+            let to = self.tx.to();
+            let is_self_transfer = matches!(to, TxKind::Call(addr) if addr == sender);
+
+            // Sender base: always TX_BASE_COST_AMSTERDAM (12000).
+            regular_gas = regular_gas
+                .checked_add(tx_base_cost(fork))
+                .ok_or(OutOfGas)?;
+
+            // tx.to charge.
+            if is_self_transfer {
+                // sender == to: no recipient access charge.
+            } else if is_create {
+                // Contract-creation: CREATE_ACCESS_AMSTERDAM regular + state gas
+                // for the new account (EIP-8037).
                 regular_gas = regular_gas
-                    .checked_add(REGULAR_GAS_CREATE)
+                    .checked_add(CREATE_ACCESS_AMSTERDAM)
                     .ok_or(OutOfGas)?;
                 state_gas = state_gas
                     .checked_add(self.state_gas_new_account)
                     .ok_or(OutOfGas)?;
             } else {
+                // Regular call to a distinct account: cold account access.
+                regular_gas = regular_gas
+                    .checked_add(cold_account_access_cost(fork))
+                    .ok_or(OutOfGas)?;
+            }
+
+            // tx.value charge.
+            let value_is_zero = self.tx.value().is_zero();
+            if value_is_zero || is_self_transfer {
+                // zero value or self-transfer: no value-transfer charge.
+            } else if is_create {
+                // non-zero value contract-creation: transfer-log cost only.
+                regular_gas = regular_gas
+                    .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
+                    .ok_or(OutOfGas)?;
+            } else {
+                // non-zero value to a distinct account: transfer-log + value cost.
+                regular_gas = regular_gas
+                    .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
+                    .ok_or(OutOfGas)?
+                    .checked_add(TX_VALUE_COST_AMSTERDAM)
+                    .ok_or(OutOfGas)?;
+            }
+        } else {
+            // Base Cost
+            regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+
+            // Create Cost
+            if is_create {
                 // https://eips.ethereum.org/EIPS/eip-2#specification
                 regular_gas = regular_gas.checked_add(CREATE_BASE_COST).ok_or(OutOfGas)?;
             }
+        }
 
-            // https://eips.ethereum.org/EIPS/eip-3860
-            if fork >= Fork::Shanghai {
-                let number_of_words = &self.current_call_frame.calldata.len().div_ceil(WORD_SIZE);
-                let double_number_of_words: u64 = number_of_words
-                    .checked_mul(2)
-                    .ok_or(OutOfGas)?
-                    .try_into()
-                    .map_err(|_| InternalError::TypeConversion)?;
+        // EIP-3860 init code words (Shanghai+), unchanged by EIP-2780.
+        if is_create && fork >= Fork::Shanghai {
+            let number_of_words = &self.current_call_frame.calldata.len().div_ceil(WORD_SIZE);
+            let double_number_of_words: u64 = number_of_words
+                .checked_mul(2)
+                .ok_or(OutOfGas)?
+                .try_into()
+                .map_err(|_| InternalError::TypeConversion)?;
 
-                regular_gas = regular_gas
-                    .checked_add(double_number_of_words)
-                    .ok_or(OutOfGas)?;
-            }
+            regular_gas = regular_gas
+                .checked_add(double_number_of_words)
+                .ok_or(OutOfGas)?;
         }
 
         // Access List Cost
         let mut access_lists_cost: u64 = 0;
         for (_, keys) in self.tx.access_list() {
             access_lists_cost = access_lists_cost
-                .checked_add(ACCESS_LIST_ADDRESS_COST)
+                .checked_add(gas_cost::access_list_address_cost(fork))
                 .ok_or(OutOfGas)?;
             for _ in keys {
                 access_lists_cost = access_lists_cost
-                    .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                    .checked_add(gas_cost::access_list_storage_key_cost(fork))
                     .ok_or(OutOfGas)?;
             }
         }
@@ -672,6 +719,13 @@ impl<'a> VM<'a> {
 
         // min_gas_used = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
         // EIP-7976 (Amsterdam+) raises TOTAL_COST_FLOOR_PER_TOKEN from 10 to 16.
+        //
+        // EIP-2780 DECISION: the calldata-floor base stays TX_BASE_COST (21000)
+        // at Amsterdam, NOT tx_base_cost(fork) (12000). EIP-2780 decomposes only
+        // the intrinsic-regular base into resource-based charges; it leaves the
+        // EIP-7623/7976 data floor unchanged. Lowering the floor base to 12000
+        // would weaken the minimum-gas guard, which the EIP does not do
+        // (EELS calculate_intrinsic_cost: data_floor_gas_cost uses TX_BASE).
         let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(total_cost_floor_per_token(fork))
             .ok_or(InternalError::Overflow)?;
@@ -719,8 +773,17 @@ impl<'a> VM<'a> {
 ///
 /// Used by the block executor to perform the EIP-8037 (PR #2703) per-tx 2D
 /// inclusion check before the tx runs.
+///
+/// `sender` is the transaction's recovered sender; it is required for the
+/// EIP-2780 (Amsterdam+) self-transfer rule, which zeroes the recipient and
+/// value charges when `sender == tx.to`. The parameter is taken
+/// unconditionally so this function stays byte-identical with
+/// `VM::get_intrinsic_gas` across every tx shape (guarded by
+/// `test_intrinsic_parity_*`). A type-3/type-4 tx can never carry `to == sender`
+/// in practice, but the parameter is still threaded through for parity.
 pub fn intrinsic_gas_dimensions(
     tx: &Transaction,
+    sender: Address,
     fork: Fork,
     block_gas_limit: u64,
 ) -> Result<(u64, u64), VMError> {
@@ -745,43 +808,80 @@ pub fn intrinsic_gas_dimensions(
     let calldata_cost = gas_cost::tx_calldata(tx.data())?;
     regular_gas = regular_gas.checked_add(calldata_cost).ok_or(OutOfGas)?;
 
-    // Base cost
-    regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+    let to = tx.to();
+    let is_create = matches!(to, TxKind::Create);
 
-    let is_create = matches!(tx.to(), TxKind::Create);
-    if is_create {
-        if fork >= Fork::Amsterdam {
+    if fork >= Fork::Amsterdam {
+        // EIP-2780 (PRELIMINARY EIPs#11645): resource-based intrinsic gas.
+        // Mirror of `VM::get_intrinsic_gas`. These tx-level sender/to charges
+        // are ALWAYS the cold rate; access lists do NOT warm tx-level accounts.
+        let is_self_transfer = matches!(to, TxKind::Call(addr) if addr == sender);
+
+        // Sender base: always TX_BASE_COST_AMSTERDAM (12000).
+        regular_gas = regular_gas
+            .checked_add(tx_base_cost(fork))
+            .ok_or(OutOfGas)?;
+
+        // tx.to charge.
+        if is_self_transfer {
+            // sender == to: no recipient access charge.
+        } else if is_create {
             regular_gas = regular_gas
-                .checked_add(REGULAR_GAS_CREATE)
+                .checked_add(CREATE_ACCESS_AMSTERDAM)
                 .ok_or(OutOfGas)?;
             state_gas = state_gas
                 .checked_add(state_gas_new_account)
                 .ok_or(OutOfGas)?;
         } else {
-            regular_gas = regular_gas.checked_add(CREATE_BASE_COST).ok_or(OutOfGas)?;
+            regular_gas = regular_gas
+                .checked_add(cold_account_access_cost(fork))
+                .ok_or(OutOfGas)?;
         }
 
-        // EIP-3860 init code words (Shanghai+)
-        if fork >= Fork::Shanghai {
-            let words = tx.data().len().div_ceil(WORD_SIZE);
-            let double_words: u64 = words
-                .checked_mul(2)
+        // tx.value charge.
+        let value_is_zero = tx.value().is_zero();
+        if value_is_zero || is_self_transfer {
+            // zero value or self-transfer: no value-transfer charge.
+        } else if is_create {
+            regular_gas = regular_gas
+                .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
+                .ok_or(OutOfGas)?;
+        } else {
+            regular_gas = regular_gas
+                .checked_add(TRANSFER_LOG_COST_AMSTERDAM)
                 .ok_or(OutOfGas)?
-                .try_into()
-                .map_err(|_| InternalError::TypeConversion)?;
-            regular_gas = regular_gas.checked_add(double_words).ok_or(OutOfGas)?;
+                .checked_add(TX_VALUE_COST_AMSTERDAM)
+                .ok_or(OutOfGas)?;
         }
+    } else {
+        // Base cost
+        regular_gas = regular_gas.checked_add(TX_BASE_COST).ok_or(OutOfGas)?;
+
+        if is_create {
+            regular_gas = regular_gas.checked_add(CREATE_BASE_COST).ok_or(OutOfGas)?;
+        }
+    }
+
+    // EIP-3860 init code words (Shanghai+), unchanged by EIP-2780.
+    if is_create && fork >= Fork::Shanghai {
+        let words = tx.data().len().div_ceil(WORD_SIZE);
+        let double_words: u64 = words
+            .checked_mul(2)
+            .ok_or(OutOfGas)?
+            .try_into()
+            .map_err(|_| InternalError::TypeConversion)?;
+        regular_gas = regular_gas.checked_add(double_words).ok_or(OutOfGas)?;
     }
 
     // Access list cost
     let mut access_lists_cost: u64 = 0;
     for (_, keys) in tx.access_list() {
         access_lists_cost = access_lists_cost
-            .checked_add(ACCESS_LIST_ADDRESS_COST)
+            .checked_add(gas_cost::access_list_address_cost(fork))
             .ok_or(OutOfGas)?;
         for _ in keys {
             access_lists_cost = access_lists_cost
-                .checked_add(ACCESS_LIST_STORAGE_KEY_COST)
+                .checked_add(gas_cost::access_list_storage_key_cost(fork))
                 .ok_or(OutOfGas)?;
         }
     }
@@ -862,6 +962,8 @@ pub fn intrinsic_gas_floor(tx: &Transaction, fork: Fork) -> Result<u64, VMError>
             .ok_or(InternalError::Overflow)?;
     }
 
+    // EIP-2780 DECISION: floor base stays TX_BASE_COST (21000) at Amsterdam,
+    // mirroring `VM::get_min_gas_used`. The floor is unchanged by EIP-2780.
     tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?

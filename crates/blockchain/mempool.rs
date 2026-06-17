@@ -783,6 +783,7 @@ pub struct PendingTxFilter {
 
 pub fn transaction_intrinsic_gas(
     tx: &Transaction,
+    sender: Address,
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
@@ -798,7 +799,7 @@ pub fn transaction_intrinsic_gas(
     // pass mempool and then fail at block inclusion, polluting the pool.
     if config.is_amsterdam_activated(header.timestamp) {
         let fork = config.fork(header.timestamp);
-        let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
+        let (regular, state) = intrinsic_gas_dimensions(tx, sender, fork, header.gas_limit)
             .map_err(|_| MempoolError::TxGasOverflowError)?;
         let intrinsic = regular
             .checked_add(state)

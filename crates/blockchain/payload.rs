@@ -714,6 +714,7 @@ impl Blockchain {
         if context.is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head.tx,
+                head.tx.sender(),
                 Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,

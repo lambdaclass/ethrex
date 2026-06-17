@@ -2904,7 +2904,7 @@ impl Blockchain {
         }
 
         // Check that the gas limit covers the gas needs for transaction metadata.
-        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, &header, &config)? {
+        if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, sender, &header, &config)? {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
         }
 

@@ -2,7 +2,10 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{STANDARD_TOKEN_COST, floor_tokens_in_access_list, total_cost_floor_per_token},
+    gas_cost::{
+        STANDARD_TOKEN_COST, cold_account_access_cost, floor_tokens_in_access_list,
+        total_cost_floor_per_token,
+    },
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -124,6 +127,38 @@ impl Hook for DefaultHook {
         // Transaction is type 4 if authorization_list is Some
         if vm.tx.authorization_list().is_some() {
             validate_type_4_tx(vm)?;
+        }
+
+        // EIP-2780 (PRELIMINARY EIPs#11645) top-level post-7702 charges.
+        // Applied AFTER EIP-7702 authorizations are set (so recipient emptiness /
+        // delegation reflect the post-auth state) and BEFORE the value transfer.
+        // Only for Amsterdam+ non-create transactions.
+        if vm.env.config.fork >= Fork::Amsterdam && !vm.is_create()? {
+            let to = vm.current_call_frame.to;
+            let recipient = vm.db.get_account(to)?;
+            let recipient_is_empty = recipient.is_empty();
+            let recipient_code_hash = recipient.info.code_hash;
+            let recipient_is_delegated = if recipient_code_hash == *EMPTY_KECCAK_HASH {
+                false
+            } else {
+                let code = vm.db.get_code(recipient_code_hash)?.bytecode.clone();
+                code_has_delegation(&code)?
+            };
+
+            // If the recipient is EIP-161-empty and the tx transfers value, the
+            // value transfer will materialize a new account: charge the
+            // new-account state gas. (Skipped if a 7702 auth already materialized
+            // the recipient this tx, since emptiness is evaluated post-auth.)
+            if recipient_is_empty && !vm.tx.value().is_zero() {
+                vm.increase_state_gas(vm.state_gas_new_account)?;
+            }
+
+            // If the recipient is a 7702-delegated account, charge an additional
+            // cold account access for resolving the delegation target.
+            if recipient_is_delegated {
+                vm.current_call_frame
+                    .increase_consumed_gas(cold_account_access_cost(vm.env.config.fork))?;
+            }
         }
 
         transfer_value(vm)?;
@@ -443,6 +478,8 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
 
     // floor_cost_by_tokens = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
     // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
+    // EIP-2780 DECISION: floor base stays TX_BASE_COST (21000); the data floor is
+    // not decomposed (see `VM::get_min_gas_used`).
     let floor_cost_by_tokens = tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
@@ -734,7 +771,7 @@ pub fn set_bytecode_and_code_address(vm: &mut VM<'_>) -> Result<(), VMError> {
         }
 
         let (is_delegation, _eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, to)?;
+            eip7702_get_code(vm.db, &mut vm.substate, to, vm.env.config.fork)?;
 
         // If EIP-7702 delegation, also record the delegation target (code source) in BAL
         if is_delegation && let Some(recorder) = vm.db.bal_recorder.as_mut() {

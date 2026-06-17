@@ -119,13 +119,15 @@ fn check_gas_limit(
 /// sync with the aggregation loop in [`execute_block_parallel`].
 pub fn check_2d_gas_allowance(
     tx: &Transaction,
+    sender: Address,
     fork: Fork,
     block_gas_used_regular: u64,
     block_gas_used_state: u64,
     block_gas_limit: u64,
 ) -> Result<(), EvmError> {
-    let (intrinsic_regular, intrinsic_state) = intrinsic_gas_dimensions(tx, fork, block_gas_limit)
-        .map_err(|e| EvmError::Transaction(format!("intrinsic gas computation failed: {e}")))?;
+    let (intrinsic_regular, intrinsic_state) =
+        intrinsic_gas_dimensions(tx, sender, fork, block_gas_limit)
+            .map_err(|e| EvmError::Transaction(format!("intrinsic gas computation failed: {e}")))?;
 
     let tx_gas = tx.gas_limit();
     let regular_available = block_gas_limit.saturating_sub(block_gas_used_regular);
@@ -246,6 +248,7 @@ impl LEVM {
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
+                    tx_sender,
                     Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
@@ -651,6 +654,7 @@ impl LEVM {
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
+                    tx_sender,
                     Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,
@@ -1298,12 +1302,13 @@ impl LEVM {
         let mut block_state_gas_used = 0_u64;
         let mut tx_gas_breakdowns: Vec<TxGasBreakdown> = Vec::with_capacity(exec_results.len());
         for (tx_idx, _, report, _, _, _, _) in &exec_results {
-            let (tx, _) = txs_with_sender
+            let (tx, tx_sender) = txs_with_sender
                 .get(*tx_idx)
                 .ok_or_else(|| EvmError::Custom(format!("tx index {tx_idx} out of bounds")))?;
             if is_amsterdam {
                 check_2d_gas_allowance(
                     tx,
+                    *tx_sender,
                     Fork::Amsterdam,
                     block_regular_gas_used,
                     block_state_gas_used,

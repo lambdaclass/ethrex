@@ -228,6 +228,7 @@ pub async fn fill_transactions(
         if is_amsterdam
             && let Err(e) = check_2d_gas_allowance(
                 &head_tx.tx,
+                head_tx.tx.sender(),
                 Fork::Amsterdam,
                 context.block_regular_gas_used,
                 context.block_state_gas_used,

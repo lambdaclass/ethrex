@@ -49,7 +49,7 @@ impl OpcodeHandler for OpCallHandler {
         }
 
         let value_cost = if !value.is_zero() {
-            gas_cost::CALL_POSITIVE_VALUE
+            gas_cost::call_positive_value_cost(vm.env.config.fork)
         } else {
             0
         };
@@ -72,7 +72,7 @@ impl OpcodeHandler for OpCallHandler {
             vm.db.get_account(callee)?.is_empty()
         };
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, callee)?;
+            eip7702_get_code(vm.db, &mut vm.substate, callee, vm.env.config.fork)?;
         let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
@@ -218,7 +218,7 @@ impl OpcodeHandler for OpCallCodeHandler {
         let (return_len, return_offset) = size_offset_to_usize(return_len, return_offset)?;
 
         let value_cost = if !value.is_zero() {
-            gas_cost::CALLCODE_POSITIVE_VALUE
+            gas_cost::call_positive_value_cost(vm.env.config.fork)
         } else {
             0
         };
@@ -233,7 +233,7 @@ impl OpcodeHandler for OpCallCodeHandler {
 
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address)?;
+            eip7702_get_code(vm.db, &mut vm.substate, address, vm.env.config.fork)?;
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -267,6 +267,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             value,
             gas,
             gas_left,
+            vm.env.config.fork,
         )?;
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
@@ -336,7 +337,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
 
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address)?;
+            eip7702_get_code(vm.db, &mut vm.substate, address, vm.env.config.fork)?;
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -369,6 +370,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             address_was_cold,
             gas,
             gas_left,
+            vm.env.config.fork,
         )?;
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
@@ -440,7 +442,7 @@ impl OpcodeHandler for OpStaticCallHandler {
 
         vm.substate.add_accessed_address(address);
         let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address)?;
+            eip7702_get_code(vm.db, &mut vm.substate, address, vm.env.config.fork)?;
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -473,6 +475,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             address_was_cold,
             gas,
             gas_left,
+            vm.env.config.fork,
         )?;
         vm.current_call_frame.increase_consumed_gas(
             gas_cost
@@ -623,7 +626,8 @@ impl OpcodeHandler for OpSelfDestructHandler {
         // This ensures the beneficiary is recorded in BAL even when the full
         // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
         if vm.env.config.fork >= Fork::Amsterdam {
-            let base_cost = gas_cost::selfdestruct_base(target_account_is_cold)?;
+            let base_cost =
+                gas_cost::selfdestruct_base(target_account_is_cold, vm.env.config.fork)?;
             // Phase 1: Check base cost is available (without charging)
             #[expect(clippy::as_conversions, reason = "base_cost fits in i64")]
             if vm.current_call_frame.gas_remaining < (base_cost as i64) {
@@ -955,7 +959,7 @@ impl<'a> VM<'a> {
         let memory_expansion_cost =
             memory::expansion_cost(new_memory_size, self.current_call_frame.memory.len())?;
         let access_gas_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
+            gas_cost::cold_account_access_cost(self.env.config.fork)
         } else {
             gas_cost::WARM_ADDRESS_ACCESS_COST
         };
@@ -995,7 +999,7 @@ impl<'a> VM<'a> {
         let mem_cost =
             memory::expansion_cost(new_memory_size, current_memory_size).unwrap_or(u64::MAX);
         let access_cost = if address_was_cold {
-            gas_cost::COLD_ADDRESS_ACCESS_COST
+            gas_cost::cold_account_access_cost(self.env.config.fork)
         } else {
             gas_cost::WARM_ADDRESS_ACCESS_COST
         };
