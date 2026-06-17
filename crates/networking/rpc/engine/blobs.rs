@@ -650,6 +650,8 @@ mod tests {
         };
         let result = request.handle(context).await;
         assert!(!matches!(result, Err(RpcErr::TooLargeRequest)));
+    }
+
     // ── BlobsV4 tests ─────────────────────────────────────────────────
 
     #[tokio::test]

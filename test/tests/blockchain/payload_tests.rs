@@ -20,8 +20,8 @@ use ethrex_blockchain::{
 use ethrex_common::{
     Address, H256, U256,
     types::{
-        AccessList, BYTES_PER_CELL, BlobsBundle, CELLS_PER_EXT_BLOB, DEFAULT_BUILDER_GAS_CEIL,
-        EIP4844Transaction, ELASTICITY_MULTIPLIER, GenesisAccount, MempoolTransaction, Transaction,
+        AccessList, BYTES_PER_CELL, BlobsBundle, DEFAULT_BUILDER_GAS_CEIL, EIP4844Transaction,
+        ELASTICITY_MULTIPLIER, GenesisAccount, MempoolTransaction, Transaction,
         kzg_commitment_to_versioned_hash,
     },
 };
@@ -134,7 +134,7 @@ async fn builder_caps_elided_blob_bundles_to_fork_max() {
     // Deterministic test keypair (constant seed for reproducibility).
     let sk_bytes = [0x42u8; 32];
     let sk = SecretKey::from_slice(&sk_bytes).expect("valid sk");
-    let pk = sk.public_key(&SECP256K1);
+    let pk = sk.public_key(SECP256K1);
     let sender = address_from_pubkey(&pk);
 
     let (store, chain_id) = setup_store(sender).await;
