@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-2e31f4fa.js";
+            window.path_to_searchindex_js = "searchindex-bf7d17f3.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-7e7556e2.js"></script>
@@ -11309,6 +11309,29 @@ git push origin &lt;release_version&gt;
 <p><img src="img/publish_release_step_3.png" alt="edit title"></p>
 </li>
 <li>
+<p>Customize the release notes.</p>
+<p>The auto-generated changelog lists every commit, but it doesn’t tell operators what actually matters in this release. Above the auto-generated changelog, add a hand-written summary using <a href="https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts">GitHub alerts</a>. Pick boxes by what the operator needs to decide, in this order:</p>
+<ul>
+<li><code>&gt; [!IMPORTANT]</code> — <strong>only</strong> when the release carries critical security or correctness fixes. One line stating that upgrading is strongly recommended for all operators.</li>
+<li><code>&gt; [!WARNING]</code> — <strong>only</strong> when the upgrade can’t be cleanly undone or carries a breaking change the operator must account for: a database schema migration you can’t roll back from, a required resync, removed or renamed CLI flags / config options, changed defaults, breaking RPC/API changes, or new minimum requirements (disk, dependency, consensus-client version). State what changes and what the operator must do.</li>
+<li><code>&gt; [!NOTE]</code> — <strong>always</strong>. A <strong>What’s new</strong> list of the highlights (new features, important fixes), plus a line saying whether a resync is needed (if not already covered above).</li>
+</ul>
+<p>Keep the space after <code>&gt;</code> (<code>&gt; [!NOTE]</code>, not <code>&gt;[!NOTE]</code>) and leave a blank line between boxes so each renders separately. Drop the <code>[!IMPORTANT]</code> / <code>[!WARNING]</code> boxes when they don’t apply — a routine release needs only the <code>[!NOTE]</code>.</p>
+<pre><code class="language-markdown">&gt; [!IMPORTANT]
+&gt; This release contains critical fixes. Upgrading is strongly recommended for all operators.
+
+&gt; [!WARNING]
+&gt; This release changes the database schema; once you upgrade you can't roll back to a previous version. The migration runs automatically.
+
+&gt; [!NOTE]
+&gt; **What's new**
+&gt; - &lt;highlight&gt;
+&gt; - &lt;highlight&gt;
+&gt;
+&gt; No resync is needed.
+</code></pre>
+</li>
+<li>
 <p>Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on <code>Update release</code></p>
 <p><img src="img/publish_release_step_4.png" alt="set latest release"></p>
 </li>
@@ -11377,7 +11400,7 @@ xattr -dr com.apple.quarantine ethrex
 <p>If hotfixes are needed before the final release, commit them to <code>release/vX.Y.Z</code>, push, and create a new pre-release tag. The final tag <code>vX.Y.Z</code> should always point to the exact commit you will merge via PR.</p>
 <h2 id="troubleshooting-5"><a class="header" href="#troubleshooting-5">Troubleshooting</a></h2>
 <h3 id="failure-on-latest-release-workflow"><a class="header" href="#failure-on-latest-release-workflow">Failure on “latest release” workflow</a></h3>
-<p>If the CI fails when setting a release as latest (step 4), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push those changes, follow these steps:</p>
+<p>If the CI fails when setting a release as latest (step 5), Docker tags <code>latest</code> and <code>l2</code> may not be updated. To manually push those changes, follow these steps:</p>
 <ul>
 <li>Create a new Github Personal Access Token (PAT) from the <a href="https://github.com/settings/tokens/new">settings</a>.</li>
 <li>Check <code>write:packages</code> permission (this will auto-check <code>repo</code> permissions too), give a name and a short expiration time.</li>
