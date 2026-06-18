@@ -41,10 +41,10 @@ use crate::{
 };
 use ethrex_blockchain::Blockchain;
 use ethrex_common::H256;
-use ethrex_crypto::NativeCrypto;
 #[cfg(feature = "l2")]
 use ethrex_common::types::Transaction;
 use ethrex_common::types::{MempoolTransaction, P2PTransaction, Receipt};
+use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{Store, error::StoreError};
 use ethrex_trie::TrieError;
@@ -1235,7 +1235,11 @@ async fn handle_incoming_message(
                 state.received_txs_from_peer = true;
             }
             if state.blockchain.is_synced() {
-                let tx_hashes: Vec<_> = txs.transactions.iter().map(|tx| tx.hash(&NativeCrypto)).collect();
+                let tx_hashes: Vec<_> = txs
+                    .transactions
+                    .iter()
+                    .map(|tx| tx.hash(&NativeCrypto))
+                    .collect();
 
                 // Offload pool insertion to a background task so we don't block
                 // the ConnectionServer (validation + signature recovery are expensive).
@@ -1314,7 +1318,8 @@ async fn handle_incoming_message(
                                 None
                             }
                         };
-                        bal.matches_commitment(commitment, &NativeCrypto).then_some(bal)
+                        bal.matches_commitment(commitment, &NativeCrypto)
+                            .then_some(bal)
                     }
                     Ok(None) => None,
                     Err(err) => {

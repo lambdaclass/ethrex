@@ -4,6 +4,7 @@ use ethrex_blockchain::{
     constants::TX_GAS_COST,
     payload::{PayloadBuildContext, PayloadBuildResult, TransactionQueue, apply_plain_transaction},
 };
+use ethrex_common::NativeCrypto;
 use ethrex_common::{
     U256,
     types::{
@@ -20,7 +21,6 @@ use ethrex_metrics::{
     blocks::METRICS_BLOCKS,
     transactions::{METRICS_TX, MetricsTxType},
 };
-use ethrex_common::NativeCrypto;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::Store;
 use ethrex_vm::check_2d_gas_allowance;
@@ -156,7 +156,10 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction
         if context.remaining_gas < head_tx.tx.gas_limit() {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash(&NativeCrypto));
+            debug!(
+                "Skipping transaction: {}, no gas left",
+                head_tx.tx.hash(&NativeCrypto)
+            );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;
@@ -164,7 +167,10 @@ pub async fn fill_transactions(
 
         // Check if we have enough gas to run the transaction within the configured block_gas_limit
         if context.gas_used() + head_tx.tx.gas_limit() >= configured_block_gas_limit {
-            debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash(&NativeCrypto));
+            debug!(
+                "Skipping transaction: {}, no gas left",
+                head_tx.tx.hash(&NativeCrypto)
+            );
             // We don't have enough gas left for the transaction, so we skip all txs from this account
             txs.pop();
             continue;

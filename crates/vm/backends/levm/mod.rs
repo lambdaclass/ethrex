@@ -689,7 +689,11 @@ impl LEVM {
                 chain_id,
             )?;
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(tx_idx, tx.hash(crypto), &report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                tx_idx,
+                tx.hash(crypto),
+                &report,
+            ));
 
             if queue_length.load(Ordering::Relaxed) == 0 && tx_since_last_flush > 5 {
                 LEVM::send_state_transitions_tx(&merkleizer, db, queue_length)?;
@@ -1313,7 +1317,11 @@ impl LEVM {
                 )?;
             }
 
-            tx_gas_breakdowns.push(TxGasBreakdown::from_report(*tx_idx, tx.hash(crypto), report));
+            tx_gas_breakdowns.push(TxGasBreakdown::from_report(
+                *tx_idx,
+                tx.hash(crypto),
+                report,
+            ));
 
             let tx_state_gas = report.state_gas_used;
             let tx_regular_gas = report.gas_used.saturating_sub(tx_state_gas);

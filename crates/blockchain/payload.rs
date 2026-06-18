@@ -639,7 +639,10 @@ impl Blockchain {
                 head_tx.tx.gas_limit()
             };
             if context.remaining_gas < tx_gas_reservation {
-                debug!("Skipping transaction: {}, no gas left", head_tx.tx.hash(&NativeCrypto));
+                debug!(
+                    "Skipping transaction: {}, no gas left",
+                    head_tx.tx.hash(&NativeCrypto)
+                );
                 // We don't have enough gas left for the transaction, so we skip all txs from this account
                 txs.pop();
                 continue;
