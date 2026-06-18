@@ -897,8 +897,9 @@ mod alternates {
 // execution, and must reject empty EIP-7702 authorization lists. Otherwise txs
 // that the VM will reject at inclusion are admitted, polluting the pool.
 
-/// Prague config where Amsterdam is NOT active, so `transaction_intrinsic_gas`
-/// exercises the non-Amsterdam path. `config.fork(timestamp)` resolves to Prague.
+/// Prague config (Amsterdam NOT active); `config.fork(timestamp)` resolves to
+/// Prague, so `intrinsic_gas_dimensions` exercises its pre-Amsterdam sub-path
+/// (flat EIP-7702 auth-list cost + EIP-7623 calldata floor).
 fn prague_config_and_header() -> (ChainConfig, BlockHeader) {
     let config = ChainConfig {
         istanbul_block: Some(0),
@@ -1049,5 +1050,83 @@ async fn validate_transaction_rejects_empty_auth_list() {
         matches!(res, Err(MempoolError::EmptyAuthorizationList)),
         "type-4 tx with an empty authorization_list must be rejected at admission \
          with EmptyAuthorizationList; unfixed mempool admits it (got {res:?})"
+    );
+}
+
+/// The empty-auth-list check must run before the intrinsic-gas check, so a
+/// type-4 tx that is both empty-auth and under-gassed reports the structural
+/// fault (`EmptyAuthorizationList`) rather than the downstream gas symptom —
+/// matching LEVM's `validate_type_4_tx` ordering.
+#[tokio::test]
+async fn validate_transaction_empty_auth_reported_before_intrinsic() {
+    let (config, header) = prague_config_and_header();
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 1_000, // below the 21000 intrinsic
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![], // empty — the structural fault
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::EmptyAuthorizationList)),
+        "empty auth-list must be reported before the intrinsic-gas check (got {res:?})"
+    );
+}
+
+/// EIP-7702 (type-4) txs only exist from Prague onward; LEVM rejects them with
+/// `Type4TxPreFork` otherwise. Mempool admission must mirror that gate so a
+/// pre-Prague node does not pool a type-4 tx that execution will reject.
+#[tokio::test]
+async fn validate_transaction_rejects_pre_prague_eip7702() {
+    // Cancun active, Prague NOT active.
+    let config = ChainConfig {
+        istanbul_block: Some(0),
+        shanghai_time: Some(0),
+        cancun_time: Some(0),
+        ..Default::default()
+    };
+    let header = BlockHeader {
+        number: 5,
+        timestamp: 5,
+        gas_limit: 100_000_000,
+        gas_used: 0,
+        ..Default::default()
+    };
+    let store = setup_storage(config, header).await.expect("Storage setup");
+    let blockchain = Blockchain::default_with_store(store);
+
+    let tx = Transaction::EIP7702Transaction(EIP7702Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 0,
+        max_fee_per_gas: 0,
+        gas_limit: 100_000,
+        to: Address::from_low_u64_be(1),
+        value: U256::zero(),
+        data: Bytes::default(),
+        access_list: Default::default(),
+        authorization_list: vec![AuthorizationTuple::default()], // non-empty
+        ..Default::default()
+    });
+
+    let res = blockchain
+        .validate_transaction(&tx, Address::random())
+        .await;
+    assert!(
+        matches!(res, Err(MempoolError::Eip7702TxPreFork)),
+        "pre-Prague type-4 tx must be rejected with Eip7702TxPreFork (got {res:?})"
     );
 }

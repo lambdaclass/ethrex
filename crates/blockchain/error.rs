@@ -121,6 +121,8 @@ pub enum MempoolError {
     UnderpricedReplacement,
     #[error("EIP-7702 transaction has an empty authorization list")]
     EmptyAuthorizationList,
+    #[error("EIP-7702 (type-4) transaction is not valid before Prague")]
+    Eip7702TxPreFork,
 }
 
 #[derive(Debug)]

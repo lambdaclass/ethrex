@@ -800,10 +800,10 @@ pub fn transaction_intrinsic_gas(
     // The EIP-7623 calldata floor only exists from Prague onward; the VM gates
     // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
     // pre-Prague would spuriously raise the admission threshold.
-    let floor = if fork >= Fork::Prague {
+    let calldata_floor = if fork >= Fork::Prague {
         intrinsic_gas_floor(tx, fork).map_err(|_| MempoolError::TxGasOverflowError)?
     } else {
         0
     };
-    Ok(intrinsic.max(floor))
+    Ok(intrinsic.max(calldata_floor))
 }

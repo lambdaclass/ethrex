@@ -2903,18 +2903,24 @@ impl Blockchain {
             return Err(MempoolError::TxTipAboveFeeCapError);
         }
 
+        // EIP-7702 type-4 structural validation, mirroring LEVM's
+        // `validate_type_4_tx` and ordered before the gas checks so the returned
+        // error names the structural fault, not a downstream gas symptom. Reject
+        // at admission so invalid type-4 txs never enter the pool.
+        if let Transaction::EIP7702Transaction(eip7702) = tx {
+            // Type-4 txs only exist from Prague onward.
+            if !config.is_prague_activated(header.timestamp) {
+                return Err(MempoolError::Eip7702TxPreFork);
+            }
+            // An empty authorization_list makes the tx invalid.
+            if eip7702.authorization_list.is_empty() {
+                return Err(MempoolError::EmptyAuthorizationList);
+            }
+        }
+
         // Check that the gas limit covers the gas needs for transaction metadata.
         if tx.gas_limit() < mempool::transaction_intrinsic_gas(tx, &header, &config)? {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
-        }
-
-        // EIP-7702: an empty `authorization_list` makes a type-4 tx invalid
-        // (LEVM rejects it in `validate_type_4_tx`). Reject at admission so it
-        // never enters the pool.
-        if let Transaction::EIP7702Transaction(eip7702) = tx
-            && eip7702.authorization_list.is_empty()
-        {
-            return Err(MempoolError::EmptyAuthorizationList);
         }
 
         // Check that the specified blob gas fee is above the minimum value
