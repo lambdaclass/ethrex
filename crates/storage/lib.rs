@@ -69,6 +69,7 @@ pub mod backend;
 pub mod error;
 mod layering;
 pub mod migrations;
+mod prefetch_pool;
 pub mod rlp;
 pub mod store;
 pub mod trie;

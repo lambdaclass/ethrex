@@ -637,7 +637,15 @@ impl Blockchain {
             if self.options.bal_prefetch_enabled
                 && let Some(updates) = optimistic_updates.as_ref()
             {
-                const MERKLE_PREFETCH_THRESHOLD: usize = 16_384;
+                // Warm the merkleizer's changed-path trie nodes for every BAL
+                // block, not just large ones. No size gate: small batches
+                // (<=KEYS_PER_SHARD keys after prefix expansion) take the inline
+                // single `multi_get` in `warm_trie_node_keys` with no thread
+                // spawn, so there is no per-block spawn cost to amortize. The
+                // old 16_384 gate was MAX_SHARDS*KEYS_PER_SHARD counted against
+                // *raw* writes, but each write expands to MAX_PREFETCH_DEPTH+1
+                // prefix probes, so it gated off the entire sstore_bloated range
+                // (~4k-12k writes) where the cold merkle reads dominate.
                 let mut write_slots: Vec<(Address, H256)> = Vec::new();
                 for (addr, item) in updates {
                     for slot in item.added_storage.keys() {
@@ -645,11 +653,7 @@ impl Blockchain {
                     }
                 }
                 let write_accounts: Vec<Address> = updates.keys().copied().collect();
-                if write_slots.len() + write_accounts.len() >= MERKLE_PREFETCH_THRESHOLD {
-                    Some((write_slots, write_accounts))
-                } else {
-                    None
-                }
+                Some((write_slots, write_accounts))
             } else {
                 None
             };

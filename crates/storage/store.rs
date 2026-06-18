@@ -16,6 +16,7 @@ use crate::{
     backend::in_memory::InMemoryBackend,
     error::StoreError,
     layering::{TrieLayerCache, TrieWrapper},
+    prefetch_pool::prefetch_pool,
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
     utils::{ChainDataIndex, SnapStateIndex},
@@ -3175,37 +3176,57 @@ impl Store {
         keys.sort_unstable();
         keys.dedup();
 
+        // One shard = one `multi_get` job on the persistent prefetch pool. The
+        // pool's thread count (not a per-call cap) bounds the effective queue
+        // depth, so we just split into fixed-size shards and let the pool run up
+        // to its width concurrently; finer-grained shards load-balance better
+        // than a hard MAX_SHARDS cap (no straggler shard).
         const KEYS_PER_SHARD: usize = 256;
-        const MAX_SHARDS: usize = 64;
-        let shards = keys.len().div_ceil(KEYS_PER_SHARD).clamp(1, MAX_SHARDS);
         let read_view = self.backend.begin_read()?;
         let count_hits = |res: Vec<Result<Option<Vec<u8>>, StoreError>>| {
             res.into_iter().filter(|r| matches!(r, Ok(Some(_)))).count()
         };
-        if shards <= 1 {
+        // Small batch: read inline, no pool dispatch / channel overhead.
+        if keys.len() <= KEYS_PER_SHARD {
             let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
             return Ok(count_hits(read_view.multi_get(table, &refs)));
         }
-        let chunk = keys.len().div_ceil(shards);
-        let rv = read_view.as_ref();
-        let hits = std::thread::scope(|scope| {
-            let handles: Vec<_> = keys
-                .chunks(chunk)
-                .map(|ck| {
-                    scope.spawn(move || {
-                        let refs: Vec<&[u8]> = ck.iter().map(|k| k.as_slice()).collect();
-                        // Warm-only: keep cache population, just tally the hits.
-                        count_hits(rv.multi_get(table, &refs))
-                    })
-                })
-                .collect();
-            handles
-                .into_iter()
-                // Best-effort warming: a panicked shard contributes 0 hits rather
-                // than re-panicking the (caller-discarded) prefetch thread.
-                .map(|h| h.join().unwrap_or(0))
-                .sum::<usize>()
-        });
+
+        // Persistent-pool jobs outlive this stack frame, so the keys and the
+        // read view are shared by `Arc` (cheap pointer bumps, no key copies);
+        // the read view drops when the last shard finishes via its refcount.
+        let keys = Arc::new(keys);
+        let n = keys.len();
+        let pool = prefetch_pool();
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
+        let mut dispatched = 0usize;
+        let mut lo = 0;
+        while lo < n {
+            let hi = (lo + KEYS_PER_SHARD).min(n);
+            let rv = read_view.clone();
+            let keys = keys.clone();
+            let tx = tx.clone();
+            pool.submit(Box::new(move || {
+                let refs: Vec<&[u8]> = keys[lo..hi].iter().map(|k| k.as_slice()).collect();
+                // Warm-only: keep cache population, just tally the hits.
+                let hits = rv
+                    .multi_get(table, &refs)
+                    .into_iter()
+                    .filter(|r| matches!(r, Ok(Some(_))))
+                    .count();
+                let _ = tx.send(hits);
+            }));
+            dispatched += 1;
+            lo = hi;
+        }
+        drop(tx);
+        // Fan-in: wait for every shard so warming completes within the block
+        // window (mirrors the old scope.join). A panicked shard drops its sender
+        // without sending, so `recv` eventually returns Err -> contributes 0.
+        let mut hits = 0;
+        for _ in 0..dispatched {
+            hits += rx.recv().unwrap_or(0);
+        }
         Ok(hits)
     }
 
