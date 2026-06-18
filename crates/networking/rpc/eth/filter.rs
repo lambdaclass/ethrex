@@ -20,6 +20,14 @@ use serde_json::{Value, json};
 
 use super::logs::{LogsFilter, fetch_logs_with_filter};
 
+/// Maximum number of concurrently-installed `eth_*` filters across all callers.
+/// The filter registry is process-global and, unlike WebSocket subscriptions
+/// (capped at `MAX_TOTAL_SUBSCRIPTIONS`), HTTP filters are not tied to a
+/// connection — so without this bound a client can install unbounded filters
+/// and keep them alive past the inactivity TTL by polling. Mirrors the
+/// subscription total to keep the two surfaces symmetric.
+pub const MAX_ACTIVE_FILTERS: usize = 10_000;
+
 #[derive(Debug, Clone)]
 pub struct NewFilterRequest {
     pub request_data: LogsFilter,
@@ -68,6 +76,7 @@ impl NewFilterRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
+        max_active_filters: usize,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let from = self
             .request_data
@@ -95,6 +104,14 @@ impl NewFilterRequest {
             filters.clear_poison();
             poisoned_guard.into_inner()
         });
+        // Cap the global filter registry. HTTP filters are not connection-scoped,
+        // so this is the only bound on how many a client can accumulate (a polled
+        // filter never hits the inactivity TTL).
+        if max_active_filters != 0 && active_filters_guard.len() >= max_active_filters {
+            return Err(RpcErr::Internal(format!(
+                "Active filter limit reached ({max_active_filters}); uninstall unused filters with eth_uninstallFilter, or raise/disable the limit with --rpc.max-active-filters (0 = unlimited)"
+            )));
+        }
         active_filters_guard.insert(
             id,
             (
@@ -113,9 +130,10 @@ impl NewFilterRequest {
         req: &RpcRequest,
         storage: Store,
         state: ActiveFilters,
+        max_active_filters: usize,
     ) -> Result<Value, RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, state).await
+        request.handle(storage, state, max_active_filters).await
     }
 }
 
@@ -185,6 +203,8 @@ impl FilterChangesRequest {
         &self,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
+        max_block_range: u64,
+        max_logs_per_response: usize,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let latest_block_num = storage.get_latest_block_number().await?;
         // Box needed to keep the future Sync
@@ -221,7 +241,13 @@ impl FilterChangesRequest {
                 // Drop the lock early to process this filter's query
                 // and not keep the lock more than we should.
                 drop(active_filters_guard);
-                let logs = fetch_logs_with_filter(&filter.filter_data, storage).await?;
+                let logs = fetch_logs_with_filter(
+                    &filter.filter_data,
+                    storage,
+                    max_block_range,
+                    max_logs_per_response,
+                )
+                .await?;
                 serde_json::to_value(logs).map_err(|error| {
                     tracing::error!("Log filtering request failed with: {error}");
                     RpcErr::Internal("Failed to filter logs".to_string())
@@ -242,9 +268,13 @@ impl FilterChangesRequest {
         req: &RpcRequest,
         storage: ethrex_storage::Store,
         filters: ActiveFilters,
+        max_block_range: u64,
+        max_logs_per_response: usize,
     ) -> Result<serde_json::Value, crate::utils::RpcErr> {
         let request = Self::parse(&req.params)?;
-        request.handle(storage, filters).await
+        request
+            .handle(storage, filters, max_block_range, max_logs_per_response)
+            .await
     }
 }
 
@@ -601,5 +631,57 @@ mod tests {
         );
 
         server_handle.abort();
+    }
+
+    #[tokio::test]
+    async fn new_filter_rejected_at_capacity() {
+        use super::{MAX_ACTIVE_FILTERS, NewFilterRequest};
+        use crate::utils::RpcErr;
+
+        let mut storage = Store::new("in-mem", EngineType::InMemory)
+            .expect("Fatal: could not create in memory test db");
+        let genesis: Genesis =
+            serde_json::from_str(TEST_GENESIS).expect("Fatal: non-valid genesis test config");
+        storage
+            .add_initial_state(genesis)
+            .await
+            .expect("Fatal: could not add test genesis");
+
+        // Pre-fill the registry to capacity.
+        let mut map = HashMap::new();
+        for i in 0..MAX_ACTIVE_FILTERS as u64 {
+            map.insert(
+                i,
+                (
+                    Instant::now(),
+                    PollableFilter {
+                        last_block_number: 0,
+                        filter_data: LogsFilter {
+                            from_block: BlockIdentifier::Number(0),
+                            to_block: BlockIdentifier::Number(0),
+                            address_filters: None,
+                            topics: vec![],
+                        },
+                    },
+                ),
+            );
+        }
+        let filters: ActiveFilters = Arc::new(Mutex::new(map));
+
+        let req = NewFilterRequest {
+            request_data: LogsFilter {
+                from_block: BlockIdentifier::Number(0),
+                to_block: BlockIdentifier::Number(0),
+                address_filters: None,
+                topics: vec![],
+            },
+        };
+        let err = req
+            .handle(storage, filters.clone(), MAX_ACTIVE_FILTERS)
+            .await
+            .expect_err("filter creation must be refused at capacity");
+        assert!(matches!(err, RpcErr::Internal(_)), "got {err:?}");
+        // The registry did not grow past the cap.
+        assert_eq!(filters.lock().unwrap().len(), MAX_ACTIVE_FILTERS);
     }
 }

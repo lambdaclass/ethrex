@@ -76,6 +76,11 @@ fn init_rpc_api(
         log_filter_handler,
         l2_gas_limit,
         l2_opts.sponsored_gas_limit,
+        ethrex_rpc::EthRpcLimits {
+            max_log_block_range: opts.rpc_max_log_block_range,
+            max_logs_per_response: opts.rpc_max_logs_per_response,
+            max_active_filters: opts.rpc_max_active_filters,
+        },
         allowed_namespaces,
         ethrex_namespace_allowed,
     );

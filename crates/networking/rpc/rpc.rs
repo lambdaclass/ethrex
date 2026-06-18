@@ -193,6 +193,29 @@ type BlockWorkerMessage = (
 /// including storage access, blockchain state, P2P networking, and configuration.
 ///
 /// The context is cloned for each request, with most fields being cheap `Arc` references.
+/// RPC memory-safety limits for the log/filter endpoints, configurable via the
+/// `--rpc.*` CLI flags. A value of `0` disables the corresponding cap. Defaults
+/// (see [`Default`]) come from the canonical consts in `eth::logs`/`eth::filter`.
+#[derive(Debug, Clone, Copy)]
+pub struct EthRpcLimits {
+    /// Max block span for `eth_getLogs` / `eth_getFilterChanges` (`0` = unlimited).
+    pub max_log_block_range: u64,
+    /// Max logs a single query may accumulate before erroring (`0` = unlimited).
+    pub max_logs_per_response: usize,
+    /// Max concurrently-installed `eth_*` filters (`0` = unlimited).
+    pub max_active_filters: usize,
+}
+
+impl Default for EthRpcLimits {
+    fn default() -> Self {
+        Self {
+            max_log_block_range: crate::eth::logs::MAX_BLOCK_RANGE,
+            max_logs_per_response: crate::eth::logs::MAX_LOGS_PER_RESPONSE,
+            max_active_filters: crate::eth::filter::MAX_ACTIVE_FILTERS,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RpcApiContext {
     /// Database storage for blocks, transactions, and state.
@@ -213,6 +236,8 @@ pub struct RpcApiContext {
     pub log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     /// Maximum gas limit for blocks (used in payload building).
     pub gas_ceil: u64,
+    /// Memory-safety limits for the log/filter endpoints (configurable via `--rpc.*`).
+    pub eth_limits: EthRpcLimits,
     /// Channel for sending blocks to the block executor worker thread.
     pub block_worker_channel: UnboundedSender<BlockWorkerMessage>,
     /// WebSocket configuration. `None` when the WS server is disabled.
@@ -525,6 +550,7 @@ pub async fn start_api(
     client_version: ClientVersion,
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     gas_ceil: u64,
+    eth_limits: EthRpcLimits,
     extra_data: String,
     allowed_namespaces: HashSet<RpcNamespace>,
 ) -> Result<(), RpcErr> {
@@ -548,6 +574,7 @@ pub async fn start_api(
         gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
         log_filter_handler,
         gas_ceil,
+        eth_limits,
         block_worker_channel,
         ws: ws.clone(),
         allowed_namespaces: Arc::new(allowed_namespaces),
@@ -1131,13 +1158,29 @@ pub async fn map_eth_requests(req: &RpcRequest, context: RpcApiContext) -> Resul
         "eth_estimateGas" => EstimateGasRequest::call(req, context).await,
         "eth_getLogs" => LogsFilter::call(req, context).await,
         "eth_newFilter" => {
-            NewFilterRequest::stateful_call(req, context.storage, context.active_filters).await
+            let max_active_filters = context.eth_limits.max_active_filters;
+            NewFilterRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                max_active_filters,
+            )
+            .await
         }
         "eth_uninstallFilter" => {
             DeleteFilterRequest::stateful_call(req, context.storage, context.active_filters)
         }
         "eth_getFilterChanges" => {
-            FilterChangesRequest::stateful_call(req, context.storage, context.active_filters).await
+            let max_block_range = context.eth_limits.max_log_block_range;
+            let max_logs_per_response = context.eth_limits.max_logs_per_response;
+            FilterChangesRequest::stateful_call(
+                req,
+                context.storage,
+                context.active_filters,
+                max_block_range,
+                max_logs_per_response,
+            )
+            .await
         }
         "eth_sendRawTransaction" => SendRawTransactionRequest::call(req, context).await,
         "eth_getProof" => GetProofRequest::call(req, context).await,

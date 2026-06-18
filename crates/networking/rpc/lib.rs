@@ -82,15 +82,16 @@ pub mod test_utils;
 // TODO: These exports are needed by ethrex-l2-rpc, but we do not want to
 // export them in the public API of this crate.
 pub use eth::{
-    filter::{ActiveFilters, clean_outdated_filters},
+    filter::{ActiveFilters, MAX_ACTIVE_FILTERS, clean_outdated_filters},
     gas_price::GasPrice,
     gas_tip_estimator::GasTipEstimator,
+    logs::{MAX_BLOCK_RANGE, MAX_LOGS_PER_RESPONSE},
     transaction::EstimateGasRequest,
 };
 pub use rpc::{
-    ClientVersion, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper, WebSocketConfig,
-    handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket, map_debug_requests,
-    map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
+    ClientVersion, EthRpcLimits, NodeData, RpcApiContext, RpcHandler, RpcRequestWrapper,
+    WebSocketConfig, handle_eth_subscribe, handle_eth_unsubscribe, handle_websocket,
+    map_debug_requests, map_eth_requests, map_http_requests, rpc_response, shutdown_signal,
 };
 pub use subscription_manager::{SubscriptionManager, SubscriptionManagerProtocol};
 pub use utils::{RpcErr, RpcErrorMetadata, RpcNamespace};

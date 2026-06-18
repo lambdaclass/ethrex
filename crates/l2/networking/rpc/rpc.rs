@@ -94,6 +94,7 @@ pub async fn start_api(
     log_filter_handler: Option<reload::Handle<EnvFilter, Registry>>,
     l2_gas_limit: u64,
     sponsored_gas_limit: u64,
+    eth_limits: ethrex_rpc::EthRpcLimits,
     allowed_namespaces: HashSet<L1RpcNamespace>,
     ethrex_namespace_allowed: bool,
 ) -> Result<(), RpcErr> {
@@ -124,6 +125,7 @@ pub async fn start_api(
             gas_tip_estimator: Arc::new(TokioMutex::new(GasTipEstimator::new())),
             log_filter_handler,
             gas_ceil: l2_gas_limit,
+            eth_limits,
             block_worker_channel,
             ws: ws.clone(),
             allowed_namespaces: Arc::new(allowed_namespaces),
