@@ -413,6 +413,10 @@ fn crypto_error_to_precompile(e: CryptoError) -> VMError {
         CryptoError::RecoveryFailed => PrecompileError::ParsingInputError.into(),
         CryptoError::VerificationFailed => PrecompileError::ParsingInputError.into(),
         CryptoError::Other(_) => PrecompileError::ParsingInputError.into(),
+        // Misconfiguration rather than bad input: the BLS12-381 backend is
+        // unavailable (host built without `blst`, or a provider failed to
+        // override the trait default). Surface it as an internal error.
+        CryptoError::Unsupported(msg) => InternalError::Custom(msg.to_string()).into(),
     }
 }
 
