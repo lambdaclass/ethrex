@@ -100,6 +100,15 @@ pub fn restore_cache_state(
         }
     }
 
+    // Evict codes the reverted frame(s) deployed: a stale by-hash cache entry
+    // would serve a later read of the same hash (from a pre-existing account)
+    // without hitting the store, hiding the read from execution-witness
+    // recording (EIP-8025). Only hashes that were NOT cached before the frame
+    // are tracked, so committed or store-loaded codes are never evicted.
+    for code_hash in callframe_backup.inserted_code_hashes {
+        db.codes.remove(&code_hash);
+    }
+
     // Restore BAL recorder to checkpoint (but keep touched_addresses per EIP-7928)
     if let Some(checkpoint) = callframe_backup.bal_checkpoint
         && let Some(recorder) = db.bal_recorder.as_mut()
@@ -251,30 +260,41 @@ pub fn eip7702_get_code(
     accrued_substate: &mut Substate,
     address: Address,
 ) -> Result<(bool, u64, Address, Code), VMError> {
-    // Address is the delgated address
-    let bytecode = db.get_account_code(address)?;
-
-    // If the Address doesn't have a delegation code
-    // return false meaning that is not a delegation
-    // return the same address given
-    // return the bytecode of the given address
-    if !code_has_delegation(bytecode.code())? {
-        return Ok((false, 0, address, bytecode.clone()));
-    }
-
-    // Here the address has a delegation code
-    // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(bytecode.code())?;
-
-    let access_cost = if accrued_substate.add_accessed_address(auth_address) {
-        COLD_ADDRESS_ACCESS_COST
-    } else {
-        WARM_ADDRESS_ACCESS_COST
+    let (bytecode, delegation) = eip7702_peek_delegation(db, accrued_substate, address)?;
+    let Some((auth_address, access_cost)) = delegation else {
+        return Ok((false, 0, address, bytecode));
     };
 
+    accrued_substate.add_accessed_address(auth_address);
     let authorized_bytecode = db.get_account_code(auth_address)?.clone();
 
     Ok((true, access_cost, auth_address, authorized_bytecode))
+}
+
+/// First half of [`eip7702_get_code`]: read `address`'s code and detect a
+/// delegation designation WITHOUT touching the delegate account.
+///
+/// Returns `address`'s code and, when delegated, the delegate address with
+/// its warm/cold access cost (computed from the current substate, not
+/// recorded). CALL-family opcodes use this to gas-check the delegation
+/// access cost before reading the delegate (EELS order); reading it earlier
+/// would leak the delegate account into execution witnesses on OOG.
+pub fn eip7702_peek_delegation(
+    db: &mut GeneralizedDatabase,
+    substate: &Substate,
+    address: Address,
+) -> Result<(Code, Option<(Address, u64)>), VMError> {
+    let bytecode = db.get_account_code(address)?.clone();
+    if !code_has_delegation(bytecode.code())? {
+        return Ok((bytecode, None));
+    }
+    let auth_address = get_authorized_address_from_code(bytecode.code())?;
+    let access_cost = if substate.is_address_accessed(&auth_address) {
+        WARM_ADDRESS_ACCESS_COST
+    } else {
+        COLD_ADDRESS_ACCESS_COST
+    };
+    Ok((bytecode, Some((auth_address, access_cost))))
 }
 
 /// Precomputed intrinsic-gas components for a transaction.

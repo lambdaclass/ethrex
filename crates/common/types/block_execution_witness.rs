@@ -13,6 +13,7 @@ use crate::{
 use ethereum_types::{Address, H256, U256};
 use ethrex_crypto::{Crypto, NativeCrypto};
 use ethrex_rlp::error::RLPDecodeError;
+use ethrex_rlp::structs::{Decoder, Encoder};
 use ethrex_rlp::{decode::RLPDecode, encode::RLPEncode};
 use ethrex_trie::{EMPTY_TRIE_HASH, Nibbles, Node, NodeRef, Trie, TrieError};
 use rkyv::with::{Identity, MapKV};
@@ -124,16 +125,77 @@ impl TryFrom<ExecutionWitness> for RpcExecutionWitness {
         for node in value.storage_trie_roots.values() {
             node.encode_subtrie(&mut nodes)?;
         }
+        // Canonical witness ordering (EIP-8025, geth `ExtWitness`): state nodes
+        // and codes sorted lexicographically and deduplicated (identical
+        // storage subtries would otherwise emit identical nodes twice); headers
+        // ascending by block number and deduplicated (the same ancestor header
+        // can be referenced by more than one block).
+        nodes.sort();
+        nodes.dedup();
+        let mut codes = value.codes;
+        codes.sort();
+        codes.dedup();
+        let mut headers = value.block_headers_bytes;
+        headers.sort_by_cached_key(|bytes| {
+            // Undecodable headers sort last; consumers reject them on decode anyway.
+            BlockHeader::decode(bytes)
+                .map(|header| header.number)
+                .unwrap_or(u64::MAX)
+        });
+        // Identical headers share a block number, so they are now adjacent.
+        headers.dedup();
         Ok(Self {
             state: nodes.into_iter().map(Bytes::from).collect(),
             keys: Vec::new(),
-            codes: value.codes.into_iter().map(Bytes::from).collect(),
-            headers: value
-                .block_headers_bytes
-                .into_iter()
-                .map(Bytes::from)
-                .collect(),
+            codes: codes.into_iter().map(Bytes::from).collect(),
+            headers: headers.into_iter().map(Bytes::from).collect(),
         })
+    }
+}
+
+/// Geth's `ExtWitness` wire shape, returned by
+/// `engine_newPayloadWithWitness*`: an RLP list of
+/// `(headers, codes, state, keys)`, with headers ascending by block number
+/// and code/state byte lists sorted lexicographically. Geth currently emits
+/// empty `keys`, but the trailing field is part of the RLP shape.
+/// Reference:
+/// https://github.com/ethereum/go-ethereum/blob/4daaaadfc4706b0a49d4dfde3559de7be968c28a/core/stateless/encoding.go#L30-L52
+#[derive(Debug, Clone)]
+pub struct ExtWitness {
+    pub headers: Vec<BlockHeader>,
+    pub codes: Vec<Bytes>,
+    pub state: Vec<Bytes>,
+    pub keys: Vec<Bytes>,
+}
+
+impl RLPEncode for ExtWitness {
+    fn encode(&self, buf: &mut dyn bytes::BufMut) {
+        Encoder::new(buf)
+            .encode_field(&self.headers)
+            .encode_field(&self.codes)
+            .encode_field(&self.state)
+            .encode_field(&self.keys)
+            .finish();
+    }
+}
+
+impl RLPDecode for ExtWitness {
+    fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
+        let decoder = Decoder::new(rlp)?;
+        let (headers, decoder) = decoder.decode_field("headers")?;
+        let (codes, decoder) = decoder.decode_field("codes")?;
+        let (state, decoder) = decoder.decode_field("state")?;
+        let (keys, decoder) = decoder.decode_field("keys")?;
+        let remaining = decoder.finish()?;
+        Ok((
+            ExtWitness {
+                headers,
+                codes,
+                state,
+                keys,
+            },
+            remaining,
+        ))
     }
 }
 
