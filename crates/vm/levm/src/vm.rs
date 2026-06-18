@@ -937,7 +937,7 @@ impl<'a> VM<'a> {
     #[inline(always)]
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
-            && self.current_call_frame.bytecode.bytecode.is_empty()
+            && self.current_call_frame.bytecode.is_empty()
             // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
@@ -1027,10 +1027,10 @@ impl<'a> VM<'a> {
         let opcode_table = self.opcode_table;
 
         loop {
-            // Capture pc BEFORE advance_pc(1) — this is the address of the current opcode.
+            // Capture pc BEFORE advance_pc() — this is the address of the current opcode.
             let pc_of_current_op = self.current_call_frame.pc;
             let opcode = self.current_call_frame.next_opcode();
-            self.advance_pc(1)?;
+            self.advance_pc();
 
             // Struct-log pre-step capture (compiled out entirely when !TRACED).
             let gas_before_op = if TRACED {

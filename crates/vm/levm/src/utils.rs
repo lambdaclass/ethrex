@@ -177,7 +177,7 @@ pub fn word_to_address(word: U256) -> Address {
 
 // ================== EIP-7702 related functions =====================
 
-pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
+pub fn code_has_delegation(code: &[u8]) -> Result<bool, VMError> {
     if code.len() == EIP7702_DELEGATED_CODE_LEN {
         let first_3_bytes = &code.get(..3).ok_or(InternalError::Slicing)?;
         return Ok(*first_3_bytes == SET_CODE_DELEGATION_BYTES);
@@ -187,7 +187,7 @@ pub fn code_has_delegation(code: &Bytes) -> Result<bool, VMError> {
 
 /// Gets the address inside the bytecode if it has been
 /// delegated as the EIP7702 determines.
-pub fn get_authorized_address_from_code(code: &Bytes) -> Result<Address, VMError> {
+pub fn get_authorized_address_from_code(code: &[u8]) -> Result<Address, VMError> {
     if code_has_delegation(code)? {
         let address_bytes = &code
             .get(SET_CODE_DELEGATION_BYTES.len()..)
@@ -258,13 +258,13 @@ pub fn eip7702_get_code(
     // return false meaning that is not a delegation
     // return the same address given
     // return the bytecode of the given address
-    if !code_has_delegation(&bytecode.bytecode)? {
+    if !code_has_delegation(bytecode.code())? {
         return Ok((false, 0, address, bytecode.clone()));
     }
 
     // Here the address has a delegation code
     // The delegation code has the authorized address
-    let auth_address = get_authorized_address_from_code(&bytecode.bytecode)?;
+    let auth_address = get_authorized_address_from_code(bytecode.code())?;
 
     let access_cost = if accrued_substate.add_accessed_address(auth_address) {
         COLD_ADDRESS_ACCESS_COST
@@ -332,9 +332,9 @@ impl<'a> VM<'a> {
 
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
-            let authority_code_is_empty = authority_code.bytecode.is_empty();
+            let authority_code_is_empty = authority_code.is_empty();
             let empty_or_delegated =
-                authority_code_is_empty || code_has_delegation(&authority_code.bytecode)?;
+                authority_code_is_empty || code_has_delegation(authority_code.code())?;
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -638,9 +638,9 @@ impl<'a> VM<'a> {
 
         // If the transaction is a CREATE transaction, the calldata is emptied and the bytecode is assigned.
         let calldata = if self.is_create()? {
-            &self.current_call_frame.bytecode.bytecode
+            self.current_call_frame.bytecode.code()
         } else {
-            &self.current_call_frame.calldata
+            self.current_call_frame.calldata.as_ref()
         };
 
         // EIP-7976 floor tokens: for the floor arm, all calldata bytes count unweighted.
