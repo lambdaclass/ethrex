@@ -1047,8 +1047,8 @@ impl Store {
         self.get_block_by_hash(block_hash).await
     }
 
-    // Get the canonical block hash for a given block number.
-    pub async fn get_canonical_block_hash(
+    /// Resolve a canonical block hash from cache
+    fn cached_canonical_block_hash(
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
@@ -1056,6 +1056,22 @@ impl Store {
         if last.number == block_number {
             return Ok(Some(last.hash()));
         }
+        let mut cache = self
+            .block_hash_cache
+            .lock()
+            .map_err(|_| StoreError::LockError)?;
+        Ok(cache.get(&block_number).copied())
+    }
+
+    // Get the canonical block hash for a given block number.
+    pub async fn get_canonical_block_hash(
+        &self,
+        block_number: BlockNumber,
+    ) -> Result<Option<BlockHash>, StoreError> {
+        if let Some(hash) = self.cached_canonical_block_hash(block_number)? {
+            return Ok(Some(hash));
+        }
+        // Cache miss: read from database
         let backend = self.backend.clone();
         tokio::task::spawn_blocking(move || {
             backend
@@ -1385,20 +1401,8 @@ impl Store {
         &self,
         block_number: BlockNumber,
     ) -> Result<Option<BlockHash>, StoreError> {
-        let last = self.latest_block_header.get();
-        if last.number == block_number {
-            return Ok(Some(last.hash()));
-        }
-
-        // Check the LRU cache first
-        {
-            let mut cache = self
-                .block_hash_cache
-                .lock()
-                .map_err(|_| StoreError::LockError)?;
-            if let Some(hash) = cache.get(&block_number) {
-                return Ok(Some(*hash));
-            }
+        if let Some(hash) = self.cached_canonical_block_hash(block_number)? {
+            return Ok(Some(hash));
         }
 
         // Cache miss: read from database
@@ -1809,7 +1813,8 @@ impl Store {
             last_computed_flatkeyvalue: Arc::new(RwLock::new(last_written)),
             account_code_cache: Arc::new(Mutex::new(CodeCache::default())),
             block_hash_cache: Arc::new(Mutex::new(LruCache::with_hasher(
-                std::num::NonZeroUsize::new(BLOCK_HASH_CACHE_SIZE).unwrap(),
+                std::num::NonZeroUsize::new(BLOCK_HASH_CACHE_SIZE)
+                    .expect("BLOCK_HASH_CACHE_SIZE must be non-zero"),
                 FxBuildHasher,
             ))),
             code_metadata_cache: Arc::new(Mutex::new(rustc_hash::FxHashMap::default())),
@@ -3860,6 +3865,65 @@ mod block_hash_cache_tests {
             store.get_canonical_block_hash_sync(3).unwrap(),
             None,
             "reorged-out block 3 must not be served from a stale cache entry"
+        );
+    }
+
+    /// The async `get_canonical_block_hash` and the sync variant must agree and
+    /// both go through the cache, so a reorg is reflected on both paths.
+    #[tokio::test]
+    async fn async_and_sync_canonical_lookups_agree_across_reorg() {
+        let store = Store::new("", EngineType::InMemory).unwrap();
+
+        let hashes = add_chain(&store, 4).await;
+        let canonical: Vec<(BlockNumber, BlockHash)> =
+            (1..=3).map(|n| (n, hashes[n as usize])).collect();
+        store
+            .forkchoice_update(canonical, 3, hashes[3], None, None)
+            .await
+            .unwrap();
+
+        // Both paths resolve block 2 (below the head) to its canonical hash.
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            Some(hashes[2]),
+            "async lookup should resolve block 2 before the reorg"
+        );
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            "async and sync lookups must agree before the reorg"
+        );
+
+        // Reorg the head back to block 1, dropping blocks 2 and 3.
+        let new_head = chain_block(1, hashes[0]);
+        let new_head_hash = new_head.hash();
+        store.add_block(new_head).await.unwrap();
+        store
+            .forkchoice_update(vec![(1, new_head_hash)], 1, new_head_hash, None, None)
+            .await
+            .unwrap();
+
+        // The async path must also see the eviction, not a stale cache hit.
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            None,
+            "async lookup must not serve a reorged-out block from the cache"
+        );
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            store.get_canonical_block_hash_sync(2).unwrap(),
+            "async and sync lookups must agree after the reorg"
+        );
+
+        // Prove the async path actually reads the cache (not just the DB): seed a
+        // cache entry for a block that has no DB row. A pure-DB lookup would miss;
+        // a cache-aware one returns the seeded hash.
+        let cache_only = H256::from_low_u64_be(0xCAFE);
+        store.block_hash_cache.lock().unwrap().put(2, cache_only);
+        assert_eq!(
+            store.get_canonical_block_hash(2).await.unwrap(),
+            Some(cache_only),
+            "async lookup must read the block-hash cache, not only the DB"
         );
     }
 
