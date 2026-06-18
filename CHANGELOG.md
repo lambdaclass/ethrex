@@ -12,9 +12,17 @@
 
 ## Perf
 
-### 2026-06-09
+### 2026-06-18
 
 - Skip non-matching blocks in `eth_getLogs` using the per-block header bloom, avoiding body/receipt loads for blocks that provably cannot match [#6813](https://github.com/lambdaclass/ethrex/pull/6813)
+
+### 2026-06-15
+
+- Pad `Code` bytecode with 33 trailing `STOP` bytes so the hot dispatch fetch and `pc` advance drop their bounds checks (~8% fewer instructions, ~13% fewer branches on dispatch). The logical length is tracked separately and `Code` is encapsulated so all consumers read the true length [#6866](https://github.com/lambdaclass/ethrex/pull/6866)
+
+### 2026-06-05
+
+- Route the native BLS12-381 (EIP-2537) precompiles through the `blst` backend, replacing the pure-Rust path whose Fermat field inversion made `BLS12_G1ADD`/`BLS12_G2ADD` time-per-gas outliers; ~7.7x faster G1ADD, ~5.6x faster G2ADD (zkVM guest builds keep the portable backend) [#6792](https://github.com/lambdaclass/ethrex/pull/6792)
 
 ### 2026-06-03
 
@@ -27,6 +35,7 @@
 ### 2026-05-19
 
 - Lazy BAL cursor for per-tx parallel execution [#6669](https://github.com/lambdaclass/ethrex/pull/6669)
+- Move per-tx BAL validation into the rayon par_iter closure on the parallel execution path [#6677](https://github.com/lambdaclass/ethrex/pull/6677)
 
 ### 2026-05-15
 

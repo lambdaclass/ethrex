@@ -225,7 +225,7 @@ fn build_account_output(
 fn get_preloaded_code(db: &GeneralizedDatabase, hash: &H256) -> Result<bytes::Bytes, EvmError> {
     db.codes
         .get(hash)
-        .map(|c| c.bytecode.clone())
+        .map(|c| c.code_bytes())
         .ok_or_else(|| EvmError::Custom(format!("missing preloaded code for {hash:?}")))
 }
 
