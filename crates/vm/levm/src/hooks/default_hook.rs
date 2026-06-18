@@ -8,7 +8,6 @@ use crate::{
     vm::VM,
 };
 
-use bytes::Bytes;
 use ethrex_common::{
     Address, H256, U256,
     types::{Code, Fork},
@@ -109,7 +108,7 @@ impl Hook for DefaultHook {
 
         // (9) SENDER_NOT_EOA
         let code = vm.db.get_code(sender_info.code_hash)?;
-        validate_sender(sender_address, &code.bytecode)?;
+        validate_sender(sender_address, code.code())?;
 
         // (10) GAS_ALLOWANCE_EXCEEDED
         validate_gas_allowance(vm)?;
@@ -603,7 +602,7 @@ pub fn validate_type_4_tx(vm: &mut VM<'_>) -> Result<(), VMError> {
     vm.eip7702_set_access_code()
 }
 
-pub fn validate_sender(sender_address: Address, code: &Bytes) -> Result<(), VMError> {
+pub fn validate_sender(sender_address: Address, code: &[u8]) -> Result<(), VMError> {
     if !code.is_empty() && !code_has_delegation(code)? {
         return Err(TxValidationError::SenderNotEOA(sender_address).into());
     }
@@ -673,11 +672,8 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = calculate_blob_gas_cost(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    let blob_gas_cost =
+        calculate_blob_gas_cost(&vm.env.tx_blob_hashes, vm.env.base_blob_fee_per_gas)?;
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product

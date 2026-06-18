@@ -1,5 +1,6 @@
 use std::io::Write;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use ethrex_common::H256;
 use ethrex_common::types::{BlockHash, BlockHeader, BlockNumber, Index};
@@ -17,69 +18,6 @@ use crate::utils::{ChainDataIndex, block_hashes_by_number_key, chain_data_key};
 use crate::{STORE_METADATA_FILENAME, STORE_SCHEMA_VERSION};
 
 use super::store::StoreMetadata;
-
-/// Migrates the RECEIPTS table from RLP-encoded `(BlockHash, u64)` keys
-/// to raw `block_hash (32B) || index (8B big-endian u64)` keys in a new
-/// `receipts_v2` column family.
-///
-/// This two-CF approach copies entries from the old `receipts` CF to
-/// `receipts_v2` with the new key format. The old `receipts` CF is **not**
-/// deleted here — `Store::new()` calls `drop_obsolete_cfs()` right after
-/// this migration returns, which drops it in the same startup.
-///
-/// Crash safety: if interrupted, metadata still says v1, so the migration
-/// restarts from scratch on next boot. Duplicate puts to `receipts_v2` are
-/// idempotent.
-fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
-    const BATCH_SIZE: usize = 10_000;
-
-    let txn = backend.begin_read()?;
-    let iter = txn.prefix_iterator(RECEIPTS, &[])?;
-
-    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
-    let mut migrated: u64 = 0;
-
-    for result in iter {
-        let (key, value) = result?;
-
-        let (block_hash, index) = match <(H256, u64)>::decode(&key) {
-            Ok(decoded) => decoded,
-            Err(_) => {
-                tracing::warn!(
-                    "Skipping RECEIPTS key that failed RLP decode (len={})",
-                    key.len()
-                );
-                continue;
-            }
-        };
-
-        let new_key = receipt_key(&block_hash, index);
-        batch.push((new_key, value.to_vec()));
-
-        if batch.len() >= BATCH_SIZE {
-            let count = batch.len() as u64;
-            let mut tx = backend.begin_write()?;
-            tx.put_batch(RECEIPTS_V2, std::mem::take(&mut batch))?;
-            tx.commit()?;
-            migrated += count;
-            if migrated.is_multiple_of(100_000) {
-                tracing::info!("Migration v1→v2: migrated {migrated} RECEIPTS entries so far");
-            }
-        }
-    }
-
-    // Flush remaining entries.
-    if !batch.is_empty() {
-        let count = batch.len() as u64;
-        let mut tx = backend.begin_write()?;
-        tx.put_batch(RECEIPTS_V2, batch)?;
-        tx.commit()?;
-        migrated += count;
-    }
-
-    tracing::info!("Migration v1→v2 complete: migrated {migrated} RECEIPTS entries total");
-    Ok(())
-}
 
 const BACKFILL_BATCH_SIZE: usize = 10_000;
 
@@ -258,21 +196,50 @@ fn migration_for_version(version: u64) -> MigrationFn {
     MIGRATIONS[(version - 1) as usize]
 }
 
+/// Minimum interval between migration progress log lines.
+const PROGRESS_LOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Per-second processing rate for progress logs. Returns 0 when `elapsed` is
+/// zero so the division can never produce `inf` or `NaN`.
+fn entries_per_second(count: u64, elapsed: Duration) -> f64 {
+    let secs = elapsed.as_secs_f64();
+    if secs > 0.0 { count as f64 / secs } else { 0.0 }
+}
+
 /// Runs all pending migrations from `current_version` up to `STORE_SCHEMA_VERSION`.
 ///
 /// Each migration is applied one version at a time, and the metadata file is
 /// updated (with fsync) after each successful step for crash safety.
 ///
 /// Returns `Ok(())` if `current_version == STORE_SCHEMA_VERSION` (no-op).
+/// If `current_version > STORE_SCHEMA_VERSION` (older binary against a newer
+/// database), it warns and returns `Ok(())` without migrating.
 pub fn run_pending_migrations(
     backend: &dyn StorageBackend,
     db_path: &Path,
     current_version: u64,
 ) -> Result<(), StoreError> {
+    if current_version > STORE_SCHEMA_VERSION {
+        tracing::warn!(
+            "Database schema is at v{current_version}, ahead of this binary's v{STORE_SCHEMA_VERSION}; \
+             running an older binary against a newer database is unsupported. Upgrade the binary"
+        );
+    }
+
+    let pending = STORE_SCHEMA_VERSION.saturating_sub(current_version);
+    if pending == 0 {
+        return Ok(());
+    }
+
+    tracing::info!(
+        "Database schema is at v{current_version}, latest is v{STORE_SCHEMA_VERSION}; running {pending} migration(s). This may take a while on large databases"
+    );
+
     for version in current_version..STORE_SCHEMA_VERSION {
         let target = version + 1;
 
-        tracing::info!("Running migration v{version} → v{target}");
+        tracing::info!("Running schema migration v{version} → v{target}");
+        let start = Instant::now();
 
         migration_for_version(version)(backend).map_err(|e| StoreError::MigrationFailed {
             from: version,
@@ -287,7 +254,10 @@ pub fn run_pending_migrations(
             reason: format!("failed to write metadata: {e}"),
         })?;
 
-        tracing::info!("Migration v{version} → v{target} completed");
+        tracing::info!(
+            "Schema migration v{version} → v{target} completed in {:.1}s",
+            start.elapsed().as_secs_f64()
+        );
     }
 
     Ok(())
@@ -309,6 +279,75 @@ fn write_metadata_version(db_path: &Path, version: u64) -> Result<(), StoreError
     file.sync_all()?;
     std::fs::rename(&tmp_path, &metadata_path)?;
 
+    Ok(())
+}
+
+/// Migrates the RECEIPTS table from RLP-encoded `(BlockHash, u64)` keys
+/// to raw `block_hash (32B) || index (8B big-endian u64)` keys in a new
+/// `receipts_v2` column family.
+///
+/// This two-CF approach copies entries from the old `receipts` CF to
+/// `receipts_v2` with the new key format. The old `receipts` CF is **not**
+/// deleted here — `Store::new()` calls `drop_obsolete_cfs()` right after
+/// this migration returns, which drops it in the same startup.
+///
+/// Crash safety: if interrupted, metadata still says v1, so the migration
+/// restarts from scratch on next boot. Duplicate puts to `receipts_v2` are
+/// idempotent.
+fn migrate_1_to_2(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    const BATCH_SIZE: usize = 10_000;
+
+    let txn = backend.begin_read()?;
+    let iter = txn.prefix_iterator(RECEIPTS, &[])?;
+
+    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+    let mut migrated: u64 = 0;
+    let start = Instant::now();
+    let mut last_progress_log = Instant::now();
+
+    for result in iter {
+        let (key, value) = result?;
+
+        let (block_hash, index) = match <(H256, u64)>::decode(&key) {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                tracing::warn!(
+                    "Schema migration v1 → v2: skipping receipts key that failed RLP decode (len={})",
+                    key.len()
+                );
+                continue;
+            }
+        };
+
+        let new_key = receipt_key(&block_hash, index);
+        batch.push((new_key, value.to_vec()));
+
+        if batch.len() >= BATCH_SIZE {
+            let count = batch.len() as u64;
+            let mut tx = backend.begin_write()?;
+            tx.put_batch(RECEIPTS_V2, std::mem::take(&mut batch))?;
+            tx.commit()?;
+            migrated += count;
+            if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+                let rate = entries_per_second(migrated, start.elapsed());
+                tracing::info!(
+                    "Schema migration v1 → v2: {migrated} receipt entries migrated so far ({rate:.0} entries/s)"
+                );
+                last_progress_log = Instant::now();
+            }
+        }
+    }
+
+    // Flush remaining entries.
+    if !batch.is_empty() {
+        let count = batch.len() as u64;
+        let mut tx = backend.begin_write()?;
+        tx.put_batch(RECEIPTS_V2, batch)?;
+        tx.commit()?;
+        migrated += count;
+    }
+
+    tracing::info!("Schema migration v1 → v2: migrated {migrated} receipt entries in total");
     Ok(())
 }
 
@@ -342,6 +381,8 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     let mut current: Option<(H256, Vec<TxLocation>, Vec<Vec<u8>>)> = None;
     let mut total_groups: u64 = 0;
     let mut total_old_entries: u64 = 0;
+    let start = Instant::now();
+    let mut last_progress_log = Instant::now();
 
     for result in iter {
         let (key, value) = result?;
@@ -358,6 +399,13 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
         }
 
         total_old_entries += 1;
+        if last_progress_log.elapsed() >= PROGRESS_LOG_INTERVAL {
+            let rate = entries_per_second(total_old_entries, start.elapsed());
+            tracing::info!(
+                "Schema migration v2 → v3: {total_old_entries} transaction location entries processed so far ({rate:.0} entries/s)"
+            );
+            last_progress_log = Instant::now();
+        }
 
         let tx_hash = H256::from_slice(&key[..32]);
         let location = TxLocation::decode(&value)?;
@@ -399,7 +447,7 @@ fn migrate_2_to_3(backend: &dyn StorageBackend) -> Result<(), StoreError> {
     write_batch.commit()?;
 
     tracing::info!(
-        "TRANSACTION_LOCATIONS migration: rewrote {} composite-key entries into {} tx-hash-keyed entries",
+        "Schema migration v2 → v3: rewrote {} transaction location entries into {} transaction records",
         total_old_entries,
         total_groups
     );
