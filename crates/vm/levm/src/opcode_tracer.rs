@@ -98,7 +98,7 @@ impl LevmOpcodeTracer {
     /// Captures pre-step state, building and buffering an `OpcodeStep` entry.
     ///
     /// Called BEFORE the opcode executes.  `pc` must be the address of the
-    /// current opcode (before `advance_pc(1)`).
+    /// current opcode (before `advance_pc()`).
     ///
     /// `stack_view` must already be bottom-first (caller reverses LEVM's top-first
     /// layout) and empty when `cfg.disable_stack` is true.
