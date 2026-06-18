@@ -2,12 +2,13 @@ use std::io::Write;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use bytes::Bytes;
 use ethrex_common::H256;
-use ethrex_common::types::{BlockHash, BlockNumber, Index};
-use ethrex_rlp::decode::RLPDecode;
+use ethrex_common::types::{BlockHash, BlockNumber, Code, Index};
+use ethrex_rlp::decode::{RLPDecode, decode_bytes};
 use ethrex_rlp::encode::RLPEncode;
 
-use crate::api::tables::{RECEIPTS, RECEIPTS_V2, TRANSACTION_LOCATIONS};
+use crate::api::tables::{ACCOUNT_CODES, RECEIPTS, RECEIPTS_V2, TRANSACTION_LOCATIONS};
 use crate::api::{StorageBackend, StorageWriteBatch};
 use crate::error::StoreError;
 use crate::store::receipt_key;
@@ -30,7 +31,7 @@ pub type MigrationFn = fn(backend: &dyn StorageBackend) -> Result<(), StoreError
 ///
 /// **Invariant**: `MIGRATIONS.len() == (STORE_SCHEMA_VERSION - 1) as usize`
 /// (empty when `STORE_SCHEMA_VERSION == 1`, one entry when it's 2, etc.)
-pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3];
+pub const MIGRATIONS: &[MigrationFn] = &[migrate_1_to_2, migrate_2_to_3, migrate_3_to_4];
 
 // Compile-time check: the number of migration functions must match the number
 // of version gaps (i.e. STORE_SCHEMA_VERSION - 1).
@@ -323,6 +324,55 @@ fn flush_tx_location_group(
     Ok(())
 }
 
+/// Migrates from index-based Vec<u32> JUMPDEST to the Vec<u8> bitvec,
+/// where bit i is set iff position i is a valid JUMPDEST
+fn migrate_3_to_4(backend: &dyn StorageBackend) -> Result<(), StoreError> {
+    const BATCH_SIZE: usize = 10_000;
+
+    let txn = backend.begin_read()?;
+    let iter = txn.prefix_iterator(ACCOUNT_CODES, &[])?;
+
+    let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(BATCH_SIZE);
+    let mut migrated: u64 = 0;
+
+    for result in iter {
+        let (key, val) = result?;
+        let bytes = Bytes::from(val.to_vec());
+        let (bytecode_slice, _old_targets) = decode_bytes(&bytes)?;
+        let bytecode = bytes.slice_ref(bytecode_slice);
+
+        let code = Code::from_bytecode_unchecked(bytecode, H256::from_slice(&key));
+        let mut buf = Vec::with_capacity(6 + code.bytecode.len() + code.jump_targets.len());
+        code.bytecode.encode(&mut buf);
+        code.jump_targets.to_vec().encode(&mut buf);
+        batch.push((key.into(), buf));
+
+        if batch.len() >= BATCH_SIZE {
+            let count = batch.len() as u64;
+            let mut tx = backend.begin_write()?;
+            tx.put_batch(ACCOUNT_CODES, std::mem::take(&mut batch))?;
+            tx.commit()?;
+            migrated += count;
+            if migrated.is_multiple_of(100_000) {
+                tracing::info!(
+                    "Schema migration v3 → v4: {migrated} account code entries migrated so far"
+                );
+            }
+        }
+    }
+
+    if !batch.is_empty() {
+        let count = batch.len() as u64;
+        let mut tx = backend.begin_write()?;
+        tx.put_batch(ACCOUNT_CODES, batch)?;
+        tx.commit()?;
+        migrated += count;
+    }
+
+    tracing::info!("Schema migration v3 → v4: migrated {migrated} account code entries in total");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -608,4 +658,75 @@ mod tests {
             "merge must union, not overwrite, on mixed state"
         );
     }
+
+    #[test]
+    fn migrate_3_to_4_converts_jumpdest_indices_to_bitvec() {
+        let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+        // Old jump targets: [0, 3], expected bitvec [1, 0, 0, 1]
+        let bytecode = Bytes::from(vec![0x5Bu8, 0x00, 0x00, 0x5B]);
+        let old_targets: Vec<u32> = vec![0, 3];
+        let code_hash = H256::random();
+
+        {
+            let mut buf = Vec::new();
+            bytecode.encode(&mut buf);
+            old_targets.encode(&mut buf);
+            let mut txn = backend.begin_write().unwrap();
+            txn.put(ACCOUNT_CODES, code_hash.as_bytes(), &buf).unwrap();
+            txn.commit().unwrap();
+        }
+
+        migrate_3_to_4(&backend).unwrap();
+
+        let txn = backend.begin_read().unwrap();
+        let val = txn
+            .get(ACCOUNT_CODES, code_hash.as_bytes())
+            .unwrap()
+            .expect("entry must still exist after migration");
+        let bytes = Bytes::from(val.to_vec());
+        let (bytecode_slice, targets_tail) = decode_bytes(&bytes).unwrap();
+        let new_bytecode = bytes.slice_ref(bytecode_slice);
+        let new_targets = <Vec<u8>>::decode(targets_tail).unwrap();
+
+        assert_eq!(new_bytecode, bytecode);
+        assert_eq!(new_targets, vec![0x09u8]);
+    }
+}
+#[test]
+fn migrate_3_to_4_jumpless_bytecode_produces_empty_bitvec() {
+    let backend = crate::backend::in_memory::InMemoryBackend::open().unwrap();
+
+    // No JUMPDEST opcodes — old targets empty, bitvec must also be empty.
+    let bytecode = Bytes::from(vec![0x60u8, 0x00, 0x50]); // PUSH1 0x00 POP
+    let old_targets: Vec<u32> = vec![];
+    let code_hash = H256::random();
+
+    {
+        let mut buf = Vec::new();
+        bytecode.encode(&mut buf);
+        old_targets.encode(&mut buf);
+        let mut txn = backend.begin_write().unwrap();
+        txn.put(ACCOUNT_CODES, code_hash.as_bytes(), &buf).unwrap();
+        txn.commit().unwrap();
+    }
+
+    migrate_3_to_4(&backend).unwrap();
+
+    let txn = backend.begin_read().unwrap();
+    let val = txn
+        .get(ACCOUNT_CODES, code_hash.as_bytes())
+        .unwrap()
+        .expect("entry must still exist after migration");
+    let bytes = Bytes::from(val.to_vec());
+    let (bytecode_slice, targets_tail) = decode_bytes(&bytes).unwrap();
+    let new_bytecode = bytes.slice_ref(bytecode_slice);
+    let new_targets = <Vec<u8>>::decode(targets_tail).unwrap();
+
+    assert_eq!(new_bytecode, bytecode, "bytecode unchanged");
+    assert_eq!(
+        new_targets,
+        vec![0x00u8],
+        "jumpless bytecode produces zeroed bitvec"
+    );
 }
