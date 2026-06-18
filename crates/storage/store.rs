@@ -121,6 +121,14 @@ const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
 /// sections (`u64` little-endian).
 const LOG_INDEX_SECTIONS_KEY: &[u8] = b"log_index_sections";
 
+/// `MISC_VALUES` key holding the first section the log index actually covers
+/// (`u64` little-endian) — the lowest section found to contain any logs. Absent
+/// until the indexer encounters data. A query whose range starts below this
+/// section's first block falls back to a full scan, so the index never claims
+/// coverage over blocks this node does not retain (e.g. below a snap-sync
+/// pivot), which would otherwise hide them as having no logs.
+const LOG_INDEX_START_KEY: &[u8] = b"log_index_start_section";
+
 #[derive(Debug)]
 struct CodeCache {
     inner_cache: LruCache<H256, Code, FxBuildHasher>,
@@ -1280,6 +1288,14 @@ impl Store {
             .unwrap_or(0))
     }
 
+    /// First section the index covers, or `None` if the indexer hasn't found any
+    /// logs yet. The index is exact only over `[start, indexed_sections)`.
+    fn get_log_index_start_section(&self) -> Result<Option<u64>, StoreError> {
+        Ok(self
+            .read(MISC_VALUES, LOG_INDEX_START_KEY.to_vec())?
+            .and_then(|bytes| bytes.try_into().ok().map(u64::from_le_bytes)))
+    }
+
     /// Atomically persists a section's index entries and advances the
     /// indexed-section counter in a single write transaction. Doing both in one
     /// commit means a crash can't leave the counter pointing past data that was
@@ -1288,10 +1304,16 @@ impl Store {
         &self,
         section: u64,
         entries: Vec<(Vec<u8>, Vec<u8>)>,
+        new_start: Option<u64>,
     ) -> Result<(), StoreError> {
         let backend = self.backend.clone();
         let mut txn = backend.begin_write()?;
         txn.put_batch(LOG_ADDRESS_INDEX, entries)?;
+        // The first section with data also records the index's covered start, in
+        // the same commit as its entries and the counter.
+        if let Some(start) = new_start {
+            txn.put(MISC_VALUES, LOG_INDEX_START_KEY, &start.to_le_bytes())?;
+        }
         txn.put(
             MISC_VALUES,
             LOG_INDEX_SECTIONS_KEY,
@@ -1338,6 +1360,7 @@ impl Store {
 
         let latest = self.latest_block_header.get().number;
         let mut section = self.get_indexed_log_sections()?;
+        let mut start = self.get_log_index_start_section()?;
         let mut newly_indexed = 0;
         loop {
             let last_block = (section + 1) * log_index::SECTION_SIZE - 1;
@@ -1384,8 +1407,17 @@ impl Store {
             if !section_complete {
                 break;
             }
+            // The first section that carries any logs marks where the index's
+            // exact coverage begins; below it the node has no indexable data and
+            // queries must scan rather than trust an empty index result.
+            let new_start = if start.is_none() && !address_offsets.is_empty() {
+                start = Some(section);
+                Some(section)
+            } else {
+                None
+            };
             let entries = log_index::build_section_entries(section, address_offsets);
-            self.commit_indexed_log_section(section, entries)?;
+            self.commit_indexed_log_section(section, entries, new_start)?;
             section += 1;
             newly_indexed += 1;
         }
@@ -1413,12 +1445,19 @@ impl Store {
         if addresses.is_empty() {
             return Ok(None);
         }
-        // First block number not yet covered by the index (0 when nothing is
-        // indexed). If the range starts at or past it, the index can't help.
+        // The index is exact only over `[indexed_from, indexed_until)`. Outside
+        // that window — nothing indexed yet, the range starts below the covered
+        // start (e.g. before this node's snap-sync pivot), or it starts at/past
+        // what's indexed — fall back to a full scan so we don't report retained-
+        // but-unindexed or unavailable blocks as having no logs.
+        let Some(start_section) = self.get_log_index_start_section()? else {
+            return Ok(None);
+        };
+        let indexed_from = start_section.saturating_mul(log_index::SECTION_SIZE);
         let indexed_until = self
             .get_indexed_log_sections()?
             .saturating_mul(log_index::SECTION_SIZE);
-        if from >= indexed_until {
+        if from < indexed_from || from >= indexed_until {
             return Ok(None);
         }
 
