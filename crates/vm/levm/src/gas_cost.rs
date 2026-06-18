@@ -5,7 +5,6 @@ use crate::{
     memory,
 };
 use ExceptionalHalt::OutOfGas;
-use bytes::Bytes;
 /// Contains the gas costs of the EVM instructions
 use ethrex_common::{U256, types::Fork, types::tx_fields::AccessList};
 use malachite::base::num::logic::traits::*;
@@ -636,7 +635,7 @@ pub fn selfdestruct(
         .ok_or(OutOfGas.into())
 }
 
-pub fn tx_calldata(calldata: &Bytes) -> Result<u64, VMError> {
+pub fn tx_calldata(calldata: &[u8]) -> Result<u64, VMError> {
     // This cost applies both for call and create
     // 4 gas for each zero byte in the transaction data, 16 gas for each non-zero byte.
     // Counting non-zero bytes in a single pass autovectorizes; the previous per-byte

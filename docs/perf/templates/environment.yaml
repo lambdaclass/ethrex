@@ -1,0 +1,44 @@
+# Environment Documentation Template
+# Copy this file to your experiment directory and fill in the values.
+# Example: docs/perf/experiments/001-optimization-name/environment.yaml
+
+# Machine specifications
+machine:
+  hostname: ""          # e.g., ethrex-office-2
+  cpu: ""               # e.g., AMD Ryzen 9 5950X
+  cores: null           # e.g., 16
+  gpu: ""               # e.g., NVIDIA RTX 3090 (if applicable)
+  gpu_memory: ""        # e.g., 24GB (if applicable)
+  memory: ""            # e.g., 64GB
+  storage: ""           # e.g., NVMe SSD
+  os: ""                # e.g., Debian GNU/Linux 13
+
+# Toolchain versions
+toolchain:
+  rust: ""              # e.g., 1.84.0
+  # Add other relevant tools:
+  # cargo: ""
+  # cuda: ""            # if using GPU
+  # zisk: ""            # if benchmarking zkVM
+  # sp1: ""
+  # risc0: ""
+
+# zkVM patches (if applicable)
+# Uncomment if benchmarking zkVM provers
+# patches:
+#   keccak: false
+#   secp256k1: false
+#   bn254: false
+#   bls12_381: false
+#   modexp: false       # ZisK-only
+
+# Git commit being benchmarked (exact hash, not branch name)
+commit: ""              # e.g., abc123def456
+
+# Date of benchmark
+date: ""                # YYYY-MM-DD
+
+# Additional notes about environment
+# notes: |
+#   Any relevant notes about the environment setup,
+#   special configurations, etc.

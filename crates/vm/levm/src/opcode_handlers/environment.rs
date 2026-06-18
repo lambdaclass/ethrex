@@ -236,7 +236,7 @@ impl OpcodeHandler for OpCodeSizeHandler {
 
         vm.current_call_frame
             .stack
-            .push(vm.current_call_frame.bytecode.bytecode.len().into())?;
+            .push(vm.current_call_frame.bytecode.len().into())?;
 
         Ok(OpcodeResult::Continue)
     }
@@ -262,7 +262,7 @@ impl OpcodeHandler for OpCodeCopyHandler {
             let data = vm
                 .current_call_frame
                 .bytecode
-                .bytecode
+                .dispatch_buf()
                 .get(src_offset..)
                 .unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
@@ -351,7 +351,7 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             let data = vm
                 .db
                 .get_account_code(address)?
-                .bytecode
+                .dispatch_buf()
                 .get(src_offset..)
                 .unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);

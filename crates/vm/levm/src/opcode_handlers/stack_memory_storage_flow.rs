@@ -448,7 +448,7 @@ fn jump(vm: &mut VM<'_>, target: usize, parent_gas_cost: u64) -> Result<(), VMEr
     if vm
         .current_call_frame
         .bytecode
-        .bytecode
+        .dispatch_buf()
         .get(target)
         .is_some_and(|&value| {
             value == Opcode::JUMPDEST as u8

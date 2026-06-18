@@ -652,7 +652,7 @@ impl GuestProgramState {
         self.codes_hashed
             .get(&code_hash)
             .map(|code| CodeMetadata {
-                length: code.bytecode.len() as u64,
+                length: code.len() as u64,
             })
             .ok_or(GuestProgramStateError::MissingBytecode(code_hash))
     }
