@@ -3749,10 +3749,9 @@ pub fn compute_sharded_storage_root(
     // existing subtree at its nibble so root reassembly has no holes.
     std::thread::scope(|s| -> Result<(), StoreError> {
         let handles: Vec<_> = buckets
-            .iter()
+            .into_iter()
             .enumerate()
             .map(|(nibble, bucket)| {
-                let bucket = bucket.clone();
                 std::thread::Builder::new()
                     .name(format!("storage_shard_{nibble}"))
                     .spawn_scoped(
