@@ -1045,6 +1045,7 @@ dependencies = [
  "ark-ec",
  "ark-ff 0.5.0",
  "bls12_381 0.8.0",
+ "blst",
  "ethereum-types",
  "ff 0.13.1",
  "hex-literal",
