@@ -51,7 +51,10 @@ eip-8025 = ["dep:libssz", "dep:libssz-types", "dep:libssz-merkle", "dep:libssz-d
 risc0 = ["ethrex-crypto/risc0"]
 sp1 = []
 zisk = []
-openvm = ["ethrex-crypto/openvm"]
+# ethrex-crypto has no openvm-specific code anymore (the openvm-kzg backend
+# lives in ethrex-guest-program's OpenVm provider), so this is an empty stub
+# like `sp1`/`zisk` above, kept for the zkVM feature-propagation chain.
+openvm = []
 
 [dev-dependencies]
 k256.workspace = true

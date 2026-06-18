@@ -949,7 +949,16 @@ impl<'a> VM<'a> {
         let acc = self.get_account_mut(address)?;
         let code_hash = new_bytecode.hash;
         acc.info.code_hash = new_bytecode.hash;
-        self.db.codes.entry(code_hash).or_insert(new_bytecode);
+        if let Entry::Vacant(entry) = self.db.codes.entry(code_hash) {
+            entry.insert(new_bytecode);
+            // Track the insertion so a frame revert evicts it: a stale entry
+            // would serve a later read of the same hash from the cache,
+            // hiding the store read from execution-witness recording.
+            self.current_call_frame
+                .call_frame_backup
+                .inserted_code_hashes
+                .push(code_hash);
+        }
         Ok(())
     }
 
