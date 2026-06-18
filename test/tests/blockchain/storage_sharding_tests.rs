@@ -13,9 +13,8 @@ use ethrex_common::{H256, U256, constants::EMPTY_TRIE_HASH};
 use ethrex_crypto::NativeCrypto;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
-use ethrex_storage::{DecodedNodeOverlay, EngineType, Store, apply_prefix};
-use ethrex_trie::{Nibbles, Node, TrieNode};
-use std::sync::Arc;
+use ethrex_storage::{EngineType, Store};
+use ethrex_trie::TrieNode;
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -41,70 +40,6 @@ fn seed_storage(store: &Store, hashed_address: H256, initial_slots: &[(H256, U25
     }
     trie.commit(&NativeCrypto).expect("commit seeded trie");
     trie.hash_no_commit(&NativeCrypto)
-}
-
-/// Like [`seed_storage`] but also returns the trie node set produced by the same
-/// inserts (nibble path -> encoded RLP), so the test can build a decoded-node
-/// overlay keyed exactly the way `TrieWrapper::get_node` looks nodes up.
-///
-/// The persisted trie and the node-capture trie are SEPARATE instances: committing
-/// memoizes hashes, after which the change accumulator comes back empty, so a single
-/// trie cannot both persist and report its node set. The capture trie is an
-/// independent in-memory trie fed the identical inserts; the storage trie is
-/// content-addressed, so its node set (and root) is byte-identical to the persisted one.
-fn seed_storage_returning_nodes(
-    store: &Store,
-    hashed_address: H256,
-    initial_slots: &[(H256, U256)],
-) -> (H256, Vec<TrieNode>) {
-    // Persist the base trie exactly as the other tests do.
-    let root = seed_storage(store, hashed_address, initial_slots);
-
-    // Capture the identical node set from a throwaway in-memory trie.
-    let mut capture = ethrex_trie::Trie::empty_in_memory();
-    for (k, v) in initial_slots {
-        capture
-            .insert(k.as_bytes().to_vec(), v.encode_to_vec())
-            .expect("capture insert");
-    }
-    let (capture_root, nodes) = capture.collect_changes_since_last_hash(&NativeCrypto);
-    assert_eq!(
-        capture_root, root,
-        "capture trie root must match persisted trie (content-addressed)"
-    );
-    (root, nodes)
-}
-
-/// Build a CORRECT decoded-node overlay from a base trie's committed change set.
-/// Each entry is keyed by `apply_prefix(Some(hashed_address), path)` — byte-for-byte
-/// the key `TrieWrapper::get_node` derives (`prefix_nibbles.concat(path)`) for a
-/// storage trie — and valued by the pre-decoded node.
-///
-/// `collect_changes_since_last_hash` interleaves two kinds of entries: actual
-/// trie-node encodings (keyed by node path, what the merkleizer reads via
-/// `get_node` and what lands in `STORAGE_TRIE_NODES`) and flat leaf-value entries
-/// (the slot's encoded U256, keyed by the full leaf path). The overlay must hold
-/// only real nodes, so entries whose RLP does not decode as a `Node` (the leaf
-/// values) are skipped — mirroring the production builder, which reads only the
-/// `STORAGE_TRIE_NODES` CF. Empty (tombstone / empty-trie-marker) entries are
-/// likewise skipped.
-fn build_overlay(hashed_address: H256, base_nodes: &[TrieNode]) -> DecodedNodeOverlay {
-    let mut overlay = DecodedNodeOverlay::default();
-    for (path, rlp) in base_nodes {
-        if rlp.is_empty() {
-            continue; // tombstone / empty-trie marker: never a real node
-        }
-        // Only retain entries that decode as a trie node; flat leaf-value entries
-        // (encoded slot values) are not nodes and are not read via `get_node`.
-        let Ok(node) = Node::decode(rlp) else {
-            continue;
-        };
-        let key = apply_prefix(Some(hashed_address), path.clone())
-            .into_vec()
-            .into_boxed_slice();
-        overlay.insert(key, Arc::new(node));
-    }
-    overlay
 }
 
 /// Serial reference for a single account: open the storage trie, apply the
@@ -177,7 +112,6 @@ fn sharded_vs_serial_new_storage_2048_slots() {
         hashed_address,
         storage_root,
         &slots,
-        None,
     )
     .expect("sharded");
 
@@ -216,7 +150,6 @@ fn sharded_vs_serial_all_slots_removed() {
         hashed_address,
         storage_root,
         &removals,
-        None,
     )
     .expect("sharded");
 
@@ -278,7 +211,6 @@ fn sharded_vs_serial_mixed_insert_remove_update() {
         hashed_address,
         storage_root,
         &delta,
-        None,
     )
     .expect("sharded");
 
@@ -311,7 +243,6 @@ fn sharded_vs_serial_single_nibble_concentration() {
         hashed_address,
         storage_root,
         &slots,
-        None,
     )
     .expect("sharded");
 
@@ -352,7 +283,6 @@ fn sharded_vs_serial_single_slot_remaining() {
         hashed_address,
         storage_root,
         &delta,
-        None,
     )
     .expect("sharded");
 
@@ -394,7 +324,6 @@ fn sharded_vs_serial_two_bucket_branch() {
         hashed_address,
         storage_root,
         &slots,
-        None,
     )
     .expect("sharded");
 
@@ -443,7 +372,6 @@ fn sharded_vs_serial_normal_spread_mixed() {
         hashed_address,
         storage_root,
         &delta,
-        None,
     )
     .expect("sharded");
 
@@ -533,7 +461,6 @@ fn sharded_vs_serial_remove_one_bucket_keeps_other() {
         hashed_address,
         storage_root,
         &delta,
-        None,
     )
     .expect("sharded");
 
@@ -586,7 +513,6 @@ fn sharded_vs_serial_duplicate_key_resolution() {
         hashed_address,
         storage_root,
         &delta,
-        None,
     )
     .expect("sharded");
 
@@ -636,7 +562,6 @@ async fn assert_db_correct_after_sharded(
         hashed_address,
         storage_root,
         delta,
-        None,
     )
     .expect("sharded");
 
@@ -724,151 +649,5 @@ async fn functional_randomized() {
             hashed_address,
         )
         .await;
-    }
-}
-
-// ── test 10: populated decoded-node overlay path ───────────────────────────
-// All the tests above pass `overlay = None`, exercising only the pure-RocksDB
-// fallback in `TrieWrapper::get_node`. The EF blockchain suite never populates
-// the overlay either (no hot account hits >=2048 slots). This is the ONLY test
-// of the *populated* overlay path: it feeds a CORRECTLY-built decoded-node
-// overlay and proves the result is byte-identical to both the serial reference
-// and the sharded-no-overlay computation. Byte-identity on the same input is the
-// guarantee that serving warmed nodes from the overlay never diverges from a
-// cold RocksDB read+decode.
-#[test]
-fn sharded_with_populated_overlay_is_byte_identical() {
-    let store = Store::new("", EngineType::InMemory).expect("in-memory store");
-    let hashed_address = H256::from_low_u64_be(0x0BCE_000C);
-    let parent_state_root = *EMPTY_TRIE_HASH;
-
-    // Seed a non-empty base trie with real internal structure: 512 slots spread
-    // across all 16 nibbles, so the merkle walk reads existing branch/extension
-    // nodes — exactly where overlay hits happen. Capture the committed node set.
-    let initial: Vec<(H256, U256)> = (0u64..512)
-        .map(|i| {
-            let nibble = (i / 32) as u8; // 0-15
-            (key_in_nibble(nibble, i + 700_000), U256::from(i + 1))
-        })
-        .collect();
-    let (storage_root, base_nodes) = seed_storage_returning_nodes(&store, hashed_address, &initial);
-    assert_ne!(
-        storage_root, *EMPTY_TRIE_HASH,
-        "seeded base trie must be non-empty"
-    );
-
-    // Build a correctly-keyed overlay from the base trie's committed nodes.
-    let overlay = build_overlay(hashed_address, &base_nodes);
-
-    // The overlay must be non-empty AND its keys must match what the walk reads.
-    // The merkleizer always reads the root node first at path `Nibbles::default()`,
-    // so its prefixed key MUST be present — proving the overlay is actually hit
-    // and the test is not a vacuous pass against a never-consulted overlay.
-    assert!(!overlay.is_empty(), "overlay must contain warmed nodes");
-    let root_key = apply_prefix(Some(hashed_address), Nibbles::default())
-        .into_vec()
-        .into_boxed_slice();
-    assert!(
-        overlay.contains_key(&root_key),
-        "overlay must contain the base root node (the walk's first read) — \
-         otherwise the overlay is never hit and the test proves nothing"
-    );
-
-    // A mix of new inserts, updates of existing slots, and removals over the base,
-    // spread so the parallel (>=2 occupied buckets) path runs.
-    let mut writes: Vec<(H256, U256)> = Vec::new();
-    for i in 0u64..128 {
-        let nibble = (i / 8) as u8 % 16;
-        writes.push((key_in_nibble(nibble, i + 900_000), U256::from(i + 5000)));
-    }
-    for (k, _) in &initial[..64] {
-        writes.push((*k, U256::zero())); // remove
-    }
-    for (k, v) in &initial[64..128] {
-        writes.push((*k, *v + U256::from(7))); // update
-    }
-
-    // Ground truth: serial reference, no overlay.
-    let serial = serial_reference(
-        &store,
-        hashed_address,
-        parent_state_root,
-        storage_root,
-        &writes,
-    );
-    // Sharded, no overlay (pure RocksDB fallback path).
-    let sharded_none = compute_sharded_storage_root(
-        &store,
-        parent_state_root,
-        hashed_address,
-        storage_root,
-        &writes,
-        None,
-    )
-    .expect("sharded no overlay");
-    // Sharded, WITH the populated overlay (the hit path under test).
-    let sharded_overlay = compute_sharded_storage_root(
-        &store,
-        parent_state_root,
-        hashed_address,
-        storage_root,
-        &writes,
-        Some(Arc::new(overlay.clone())),
-    )
-    .expect("sharded with overlay");
-
-    // All three must agree on root hash and node set. The overlay-vs-None equality
-    // is the key assertion: it proves the populated-overlay hit path is byte-identical.
-    assert_equiv(
-        serial.clone(),
-        sharded_none.clone(),
-        "overlay_test/serial_vs_sharded_none",
-    );
-    assert_equiv(
-        serial,
-        sharded_overlay.clone(),
-        "overlay_test/serial_vs_sharded_overlay",
-    );
-    assert_equiv(
-        sharded_none.clone(),
-        sharded_overlay,
-        "overlay_test/sharded_none_vs_overlay",
-    );
-
-    // ── proof of consultation (negative control) ──────────────────────────
-    // The byte-identity above is only meaningful if the overlay was actually
-    // consulted; an empty / mis-keyed overlay would also be byte-identical
-    // (it would just always miss and fall through to disk). To prove the
-    // overlay's nodes are really served, poison it: overwrite the root-node
-    // entry with a different (but structurally valid) node taken from another
-    // path. There is no write layer for this freshly-seeded root, so
-    // `TrieWrapper::get_node` precedence (write-layer > overlay > disk) means a
-    // poisoned root entry is served INSTEAD of the correct on-disk root. If the
-    // overlay were never consulted, the result would still equal the correct
-    // `sharded_none`; we assert it does NOT (either it diverges or errors),
-    // which can only happen if the overlay node was actually used.
-    let mut poisoned = overlay;
-    let wrong_node = poisoned
-        .iter()
-        .find(|(k, _)| ***k != *root_key)
-        .map(|(_, v)| v.clone())
-        .expect("overlay has a non-root node to clone");
-    poisoned.insert(root_key, wrong_node);
-    let poisoned_result = compute_sharded_storage_root(
-        &store,
-        parent_state_root,
-        hashed_address,
-        storage_root,
-        &writes,
-        Some(Arc::new(poisoned)),
-    );
-    // A structurally-wrong root can also make the walk fail; an `Err` likewise
-    // proves the overlay node was served (a never-consulted overlay cannot error).
-    if let Ok((poisoned_root, _)) = poisoned_result {
-        assert_ne!(
-            poisoned_root, sharded_none.0,
-            "poisoned overlay produced the correct root — the overlay was NOT \
-             consulted, so the byte-identity test is vacuous"
-        );
     }
 }

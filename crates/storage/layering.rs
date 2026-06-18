@@ -1,16 +1,10 @@
 use ethrex_common::H256;
-use ethrex_rlp::decode::RLPDecode;
 use fastbloom::AtomicBloomFilter;
 use rayon::prelude::*;
 use rustc_hash::{FxBuildHasher, FxHashMap};
 use std::{fmt, sync::Arc};
 
-use ethrex_trie::{Nibbles, Node, TrieDB, TrieError};
-
-/// Read-only overlay of pre-decoded trie nodes keyed by their prefixed path bytes.
-/// When attached to a [`TrieWrapper`], lets warmed/decoded nodes be served without
-/// re-reading and re-decoding from disk. Empty/absent by default.
-pub type DecodedNodeOverlay = std::collections::HashMap<Box<[u8]>, std::sync::Arc<Node>>;
+use ethrex_trie::{Nibbles, TrieDB, TrieError};
 
 const BLOOM_SIZE: usize = 1_000_000;
 const FALSE_POSITIVE_RATE: f64 = 0.02;
@@ -281,9 +275,6 @@ pub struct TrieWrapper {
     /// For state tries this is None; for storage tries this is
     /// `Nibbles::from_bytes(address.as_bytes()).append_new(17)`.
     prefix_nibbles: Option<Nibbles>,
-    /// Optional read-only overlay of pre-decoded nodes. `None` by default; when
-    /// present it is consulted between the in-RAM write layer and the on-disk db.
-    overlay: Option<Arc<DecodedNodeOverlay>>,
 }
 
 impl TrieWrapper {
@@ -299,14 +290,7 @@ impl TrieWrapper {
             inner,
             db,
             prefix_nibbles,
-            overlay: None,
         }
-    }
-
-    /// Attach (or clear) a read-only decoded-node overlay. Returns `self` for chaining.
-    pub fn with_overlay(mut self, overlay: Option<Arc<DecodedNodeOverlay>>) -> Self {
-        self.overlay = overlay;
-        self
     }
 }
 
@@ -342,35 +326,6 @@ impl TrieDB for TrieWrapper {
             return Ok(Some(value));
         }
         self.db.get(key)
-    }
-
-    fn get_node(&self, key: Nibbles) -> Result<Option<Arc<Node>>, TrieError> {
-        // Precedence (mirrors `get`): in-RAM write layer > read-only overlay > disk.
-        // (a) derive the prefixed key exactly as `get` does.
-        let key = match &self.prefix_nibbles {
-            Some(prefix) => prefix.concat(&key),
-            None => key,
-        };
-        // (b) write layer (TrieLayerCache) FIRST: a hit here short-circuits and the
-        // overlay is NOT consulted. The uncommitted in-RAM write layer must outrank
-        // the read-only warmed overlay; serving an overlay node over a pending write
-        // would be a consensus bug.
-        if let Some(rlp) = self.inner.get(self.state_root, key.as_ref()) {
-            // A write-layer hit is authoritative even when it is an empty (deletion)
-            // entry: in that case it short-circuits to `None`, exactly as `get` returns
-            // the empty bytes and the Phase-1 default `get_node` filters them out.
-            if rlp.is_empty() {
-                return Ok(None);
-            }
-            return Ok(Some(Arc::new(Node::decode(&rlp)?)));
-        }
-        // (c) overlay: serve the pre-decoded node (cheap Arc clone) when present.
-        if let Some(node) = self.overlay.as_ref().and_then(|o| o.get(key.as_ref())) {
-            return Ok(Some(node.clone()));
-        }
-        // (d) disk fallback (Phase-1 default `get_node`): with address_prefix=None on
-        // the underlying db this re-derives the same bytes from RocksDB and decodes.
-        self.db.get_node(key)
     }
 
     fn put_batch(&self, _key_values: Vec<(Nibbles, Vec<u8>)>) -> Result<(), TrieError> {

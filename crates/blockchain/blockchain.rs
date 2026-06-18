@@ -85,8 +85,7 @@ use ethrex_rlp::constants::RLP_NULL;
 use ethrex_rlp::decode::RLPDecode;
 use ethrex_rlp::encode::RLPEncode;
 use ethrex_storage::{
-    AccountUpdatesList, DecodedNodeOverlay, Store, UpdateBatch, error::StoreError, hash_address,
-    hash_key,
+    AccountUpdatesList, Store, UpdateBatch, error::StoreError, hash_address, hash_key,
 };
 use ethrex_trie::node::{BranchNode, ExtensionNode, LeafNode};
 use ethrex_trie::{Nibbles, Node, NodeRef, Trie, TrieError, TrieNode};
@@ -103,7 +102,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::LazyLock;
 use std::sync::mpsc::Sender;
 use std::sync::{
-    Arc, Condvar, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc::{Receiver, channel},
 };
@@ -123,12 +122,6 @@ use ethrex_common::types::BlobsBundle;
 
 const MAX_PAYLOADS: usize = 10;
 const MAX_MEMPOOL_SIZE_DEFAULT: usize = 10_000;
-
-/// Join cell connecting the during-exec trie-prefetch thread (publisher) to the
-/// hot-account storage merkleizer (consumer). The producer publishes the decoded
-/// node overlay it retained; the consumer waits on the condvar until a value is
-/// present. With the overlay empty or absent every read falls back to RocksDB.
-type OverlayCell = (Mutex<Option<Arc<DecodedNodeOverlay>>>, Condvar);
 
 /// Background thread for dropping large tree structures off the critical path.
 /// Accepts any `Send` value and drops it on a dedicated thread, avoiding
@@ -733,89 +726,20 @@ impl Blockchain {
                 // before the block returns, but it shares the trie-node cold reads with
                 // the merkleizer at higher aggregate queue depth, so it completes
                 // within the exec/merkle window rather than extending it.
-                // Join cell linking the prefetch publisher to the merkleizer consumer.
-                // `Some` ONLY when the prefetch thread will actually run (same cfg as
-                // `trie_prefetch_handle` AND `trie_prefetch_input.is_some()`), so the
-                // consumer never waits on a value nobody will publish.
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-                let overlay_cell: Option<Arc<OverlayCell>> = trie_prefetch_input
-                    .as_ref()
-                    .map(|_| Arc::new((Mutex::new(None), Condvar::new())));
-                #[cfg(not(all(feature = "rayon", not(feature = "eip-8025"))))]
-                let overlay_cell: Option<Arc<OverlayCell>> = None;
-
                 #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
                 let trie_prefetch_handle = match trie_prefetch_input {
                     Some((slots, accounts)) => {
                         let storage = &self.storage;
-                        let cell = overlay_cell.clone();
                         std::thread::Builder::new()
                             .name("block_executor_trie_prefetch".to_string())
                             .spawn_scoped(s, move || {
-                                if let Some(cell) = cell.as_deref() {
-                                    // Drop-guard: if we return early (Err) or panic before
-                                    // publishing a real overlay, publish an empty one so the
-                                    // merkleizer's wait is always satisfied (no deadlock).
-                                    struct PublishGuard<'a> {
-                                        cell: &'a OverlayCell,
-                                        done: bool,
-                                    }
-                                    impl Drop for PublishGuard<'_> {
-                                        fn drop(&mut self) {
-                                            if !self.done {
-                                                let mut g = self
-                                                    .cell
-                                                    .0
-                                                    .lock()
-                                                    .unwrap_or_else(|e| e.into_inner());
-                                                if g.is_none() {
-                                                    *g = Some(Arc::new(DecodedNodeOverlay::new()));
-                                                }
-                                                self.cell.1.notify_all();
-                                            }
-                                        }
-                                    }
-                                    let mut guard = PublishGuard { cell, done: false };
-                                    match storage.prefetch_trie_nodes_retain(&slots, &accounts) {
-                                        Ok((_, overlay)) => {
-                                            let mut g =
-                                                cell.0.lock().unwrap_or_else(|e| e.into_inner());
-                                            *g = Some(overlay);
-                                            cell.1.notify_all();
-                                            guard.done = true;
-                                        }
-                                        Err(e) => {
-                                            debug!(
-                                                "trie-node prefetch-retain failed (non-fatal): {e}"
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    let _ = storage.prefetch_trie_nodes(&slots, &accounts);
-                                }
+                                let _ = storage.prefetch_trie_nodes(&slots, &accounts);
                             })
                             .inspect_err(|e| debug!("trie-node prefetch spawn failed: {e}"))
                             .ok()
                     }
                     None => None,
                 };
-
-                // If the prefetch thread failed to spawn, its publisher (and the
-                // drop-guard) never run, so nobody would ever publish to the
-                // overlay cell — and the hot-account merkleizer's `wait_while`
-                // would block forever. Publish an empty overlay here so the wait
-                // is always satisfied (merkle then runs correctly off RocksDB).
-                // No-op in the normal case: the thread already published `Some`.
-                #[cfg(all(feature = "rayon", not(feature = "eip-8025")))]
-                if trie_prefetch_handle.is_none()
-                    && let Some(cell) = overlay_cell.as_deref()
-                {
-                    let mut g = cell.0.lock().unwrap_or_else(|e| e.into_inner());
-                    if g.is_none() {
-                        *g = Some(Arc::new(DecodedNodeOverlay::new()));
-                    }
-                    cell.1.notify_all();
-                }
 
                 let max_queue_length_ref = &mut max_queue_length;
                 // Channel is needed whenever the merkleizer takes the streaming
@@ -924,7 +848,6 @@ impl Blockchain {
                     ),
                     StoreError,
                 >;
-                let merkleize_overlay_cell = overlay_cell;
                 let merkleize_handle = std::thread::Builder::new()
                     .name("block_executor_merkleizer".to_string())
                     .spawn_scoped(s, move || -> MerkleResult {
@@ -934,7 +857,6 @@ impl Blockchain {
                                 let list = self.handle_merkleization_bal_from_updates(
                                     prepared,
                                     parent_header_ref,
-                                    merkleize_overlay_cell.as_ref(),
                                 )?;
                                 (list, None)
                             } else {
@@ -1250,7 +1172,6 @@ impl Blockchain {
         &self,
         prepared: FxHashMap<Address, BalSynthesisItem>,
         parent_header: &BlockHeader,
-        overlay_cell: Option<&Arc<OverlayCell>>,
     ) -> Result<AccountUpdatesList, StoreError> {
         const NUM_WORKERS: usize = 16;
         // Accounts with at least this many storage slot updates are sharded
@@ -1416,20 +1337,6 @@ impl Blockchain {
         // future option if multi-hot-account blocks appear.
         // Skip the state-trie open entirely on the common path (no hot accounts).
         if !hot_indices.is_empty() {
-            // JOIN with the prefetch publisher: block until the retained overlay is
-            // published (or an empty one on the publisher's error/panic path). Only
-            // the hot-account path waits; the common path (no hot accounts) never does.
-            let overlay: Option<Arc<DecodedNodeOverlay>> = match overlay_cell {
-                Some(cell) => {
-                    let mut g = cell.0.lock().unwrap_or_else(|e| e.into_inner());
-                    g = cell
-                        .1
-                        .wait_while(g, |v| v.is_none())
-                        .unwrap_or_else(|e| e.into_inner());
-                    g.clone()
-                }
-                None => None,
-            };
             let state_trie = self.storage.open_state_trie(parent_state_root)?;
             for idx in &hot_indices {
                 let idx = *idx;
@@ -1451,7 +1358,6 @@ impl Blockchain {
                     *hashed_address,
                     storage_root,
                     &hashed_storage,
-                    overlay.clone(),
                 )?;
                 storage_roots[idx] = Some(root_hash);
                 storage_updates.push((*hashed_address, nodes));
@@ -3813,14 +3719,8 @@ fn serial_storage_root(
     hashed_address: H256,
     storage_root: H256,
     hashed_storage: &[(H256, U256)],
-    overlay: Option<Arc<DecodedNodeOverlay>>,
 ) -> Result<(H256, Vec<TrieNode>), StoreError> {
-    let mut trie = storage.open_storage_trie_with_overlay(
-        hashed_address,
-        parent_state_root,
-        storage_root,
-        overlay,
-    )?;
+    let mut trie = storage.open_storage_trie(hashed_address, parent_state_root, storage_root)?;
     for (hashed_key, value) in hashed_storage {
         if value.is_zero() {
             trie.remove(hashed_key.as_bytes())?;
@@ -3849,7 +3749,6 @@ pub fn compute_sharded_storage_root(
     hashed_address: H256,
     storage_root: H256,
     hashed_storage: &[(H256, U256)],
-    overlay: Option<Arc<DecodedNodeOverlay>>,
 ) -> Result<(H256, Vec<TrieNode>), StoreError> {
     // Sort by hashed key, matching the serial Stage B path (the per-account
     // worker). The storage root is content-addressed so order is irrelevant to
@@ -3895,7 +3794,6 @@ pub fn compute_sharded_storage_root(
             hashed_address,
             storage_root,
             hashed_storage,
-            overlay,
         );
     }
 
@@ -3911,17 +3809,15 @@ pub fn compute_sharded_storage_root(
             .enumerate()
             .map(|(nibble, bucket)| {
                 let bucket = bucket.clone();
-                let overlay = overlay.clone();
                 std::thread::Builder::new()
                     .name(format!("storage_shard_{nibble}"))
                     .spawn_scoped(
                         s,
                         move || -> Result<(Box<BranchNode>, Vec<TrieNode>), StoreError> {
-                            let mut trie = storage.open_storage_trie_with_overlay(
+                            let mut trie = storage.open_storage_trie(
                                 hashed_address,
                                 parent_state_root,
                                 storage_root,
-                                overlay.clone(),
                             )?;
                             for (hashed_key, value) in &bucket {
                                 if value.is_zero() {
@@ -3965,7 +3861,6 @@ pub fn compute_sharded_storage_root(
             hashed_address,
             storage_root,
             hashed_storage,
-            overlay,
         );
     };
 

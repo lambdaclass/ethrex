@@ -15,7 +15,7 @@ use crate::{
     apply_prefix,
     backend::in_memory::InMemoryBackend,
     error::StoreError,
-    layering::{DecodedNodeOverlay, TrieLayerCache, TrieWrapper},
+    layering::{TrieLayerCache, TrieWrapper},
     prefetch_pool::prefetch_pool,
     rlp::{BlockBodyRLP, BlockHeaderRLP, BlockRLP},
     trie::{BackendTrieDB, BackendTrieDBLocked},
@@ -3121,32 +3121,6 @@ impl Store {
         storage_slots: &[(Address, H256)],
         accounts: &[Address],
     ) -> Result<usize, StoreError> {
-        // Stable wrapper: delegate to the retaining variant and drop the overlay.
-        // The public signature must stay unchanged so existing callers keep
-        // compiling; callers that want the decoded overlay call
-        // `prefetch_trie_nodes_retain` directly.
-        Ok(self.prefetch_trie_nodes_retain(storage_slots, accounts)?.0)
-    }
-
-    /// Like [`Self::prefetch_trie_nodes`] but additionally returns the storage
-    /// trie nodes it warmed, decoded and keyed by their on-disk path, as a
-    /// [`DecodedNodeOverlay`]. The merkleizer can consult this overlay to skip
-    /// the cold read+decode of nodes already pulled into RAM here.
-    ///
-    /// Only STORAGE_TRIE_NODES are retained: the storage merkleizer is the sole
-    /// consumer of the overlay, and account nodes are never looked up through
-    /// it, so account warming stays on the cheap count-only path (no wasted
-    /// decode). Account hits still count toward the returned coverage total.
-    ///
-    /// The overlay keys are exactly `apply_prefix(Some(hashed_address), path)`,
-    /// which is byte-identical to the key `TrieWrapper::get_node` looks up
-    /// (`prefix_nibbles.concat(path)`); that byte-equality is what makes the
-    /// overlay actually hit (verified in Phase 2).
-    pub fn prefetch_trie_nodes_retain(
-        &self,
-        storage_slots: &[(Address, H256)],
-        accounts: &[Address],
-    ) -> Result<(usize, Arc<DecodedNodeOverlay>), StoreError> {
         // Probe band: nodes live at depth <= ~ceil(log16(trie_size)). 8 nibbles
         // covers tries up to ~16^8 entries near-fully; any deeper node is simply
         // cold-read by the walk, so under-covering only loses a little warming,
@@ -3180,15 +3154,9 @@ impl Store {
             }
         }
 
-        // Retain storage nodes (consumed by the storage merkleizer); account
-        // nodes are warmed count-only.
-        let (storage_hits, storage_nodes) =
-            self.warm_trie_node_keys(STORAGE_TRIE_NODES, storage_keys, true)?;
-        let (account_hits, _) =
-            self.warm_trie_node_keys(ACCOUNT_TRIE_NODES, account_keys, false)?;
-
-        let overlay: DecodedNodeOverlay = storage_nodes.into_iter().collect();
-        Ok((storage_hits + account_hits, Arc::new(overlay)))
+        let hits = self.warm_trie_node_keys(STORAGE_TRIE_NODES, storage_keys)?
+            + self.warm_trie_node_keys(ACCOUNT_TRIE_NODES, account_keys)?;
+        Ok(hits)
     }
 
     /// Sorted, sharded, high-queue-depth `multi_get` over `keys` in `table`,
@@ -3197,24 +3165,13 @@ impl Store {
     /// count (async_io is off, so a single multi_get runs at QD1). Mirrors the
     /// storage flat-KV batch path. Dedups first so shared shallow prefixes are
     /// read once.
-    ///
-    /// When `retain` is false this discards the bytes and only tallies hits
-    /// (`Ok(Some(_))`), returning an empty Vec — the cheap path used for account
-    /// nodes, which the storage merkleizer never consults. When `retain` is true
-    /// each non-empty hit is decoded into an `Arc<Node>` and paired with its
-    /// probe key; the count is the number of retained (successfully decoded)
-    /// entries. A decode error on a warmed node is non-fatal: that entry is
-    /// skipped and the merkleizer will cold-read+decode it via its normal
-    /// fallback.
-    #[allow(clippy::type_complexity)]
     fn warm_trie_node_keys(
         &self,
         table: &'static str,
         mut keys: Vec<Vec<u8>>,
-        retain: bool,
-    ) -> Result<(usize, Vec<(Box<[u8]>, Arc<Node>)>), StoreError> {
+    ) -> Result<usize, StoreError> {
         if keys.is_empty() {
-            return Ok((0, Vec::new()));
+            return Ok(0);
         }
         keys.sort_unstable();
         keys.dedup();
@@ -3226,36 +3183,13 @@ impl Store {
         // than a hard MAX_SHARDS cap (no straggler shard).
         const KEYS_PER_SHARD: usize = 256;
         let read_view = self.backend.begin_read()?;
-        // Best-effort decode of one shard's worth of results into retained
-        // (key, Arc<Node>) pairs. Misses and empty values are skipped; a decode
-        // error is non-fatal and the offending entry is dropped.
-        let decode_shard = |res: Vec<Result<Option<Vec<u8>>, StoreError>>,
-                            shard_keys: &[Vec<u8>]| {
-            let mut out: Vec<(Box<[u8]>, Arc<Node>)> = Vec::new();
-            for (r, key) in res.into_iter().zip(shard_keys.iter()) {
-                if let Ok(Some(rlp)) = r {
-                    if rlp.is_empty() {
-                        continue;
-                    }
-                    if let Ok(node) = Node::decode(&rlp) {
-                        out.push((key.as_slice().to_vec().into_boxed_slice(), Arc::new(node)));
-                    }
-                }
-            }
-            out
-        };
         let count_hits = |res: Vec<Result<Option<Vec<u8>>, StoreError>>| {
             res.into_iter().filter(|r| matches!(r, Ok(Some(_)))).count()
         };
         // Small batch: read inline, no pool dispatch / channel overhead.
         if keys.len() <= KEYS_PER_SHARD {
             let refs: Vec<&[u8]> = keys.iter().map(|k| k.as_slice()).collect();
-            let res = read_view.multi_get(table, &refs);
-            if retain {
-                let nodes = decode_shard(res, &keys);
-                return Ok((nodes.len(), nodes));
-            }
-            return Ok((count_hits(res), Vec::new()));
+            return Ok(count_hits(read_view.multi_get(table, &refs)));
         }
 
         // Persistent-pool jobs outlive this stack frame, so the keys and the
@@ -3264,10 +3198,7 @@ impl Store {
         let keys = Arc::new(keys);
         let n = keys.len();
         let pool = prefetch_pool();
-        // Each shard sends a (hit_count, nodes) pair: when retaining, `nodes`
-        // holds the decoded entries and the count is their length; otherwise
-        // `nodes` is empty and the count is the raw hit tally.
-        let (tx, rx) = std::sync::mpsc::channel::<(usize, Vec<(Box<[u8]>, Arc<Node>)>)>();
+        let (tx, rx) = std::sync::mpsc::channel::<usize>();
         let mut dispatched = 0usize;
         let mut lo = 0;
         while lo < n {
@@ -3276,17 +3207,14 @@ impl Store {
             let keys = keys.clone();
             let tx = tx.clone();
             pool.submit(Box::new(move || {
-                let shard_keys = &keys[lo..hi];
-                let refs: Vec<&[u8]> = shard_keys.iter().map(|k| k.as_slice()).collect();
-                let res = rv.multi_get(table, &refs);
-                let payload = if retain {
-                    let nodes = decode_shard(res, shard_keys);
-                    (nodes.len(), nodes)
-                } else {
-                    // Warm-only: keep cache population, just tally the hits.
-                    (count_hits(res), Vec::new())
-                };
-                let _ = tx.send(payload);
+                let refs: Vec<&[u8]> = keys[lo..hi].iter().map(|k| k.as_slice()).collect();
+                // Warm-only: keep cache population, just tally the hits.
+                let hits = rv
+                    .multi_get(table, &refs)
+                    .into_iter()
+                    .filter(|r| matches!(r, Ok(Some(_))))
+                    .count();
+                let _ = tx.send(hits);
             }));
             dispatched += 1;
             lo = hi;
@@ -3294,20 +3222,12 @@ impl Store {
         drop(tx);
         // Fan-in: wait for every shard so warming completes within the block
         // window (mirrors the old scope.join). A panicked shard drops its sender
-        // without sending, so `recv` eventually returns Err -> contributes
-        // nothing. Merge is single-threaded.
+        // without sending, so `recv` eventually returns Err -> contributes 0.
         let mut hits = 0;
-        let mut nodes: Vec<(Box<[u8]>, Arc<Node>)> = Vec::new();
         for _ in 0..dispatched {
-            match rx.recv() {
-                Ok((shard_hits, mut shard_nodes)) => {
-                    hits += shard_hits;
-                    nodes.append(&mut shard_nodes);
-                }
-                Err(_) => continue,
-            }
+            hits += rx.recv().unwrap_or(0);
         }
-        Ok((hits, nodes))
+        Ok(hits)
     }
 
     /// Constructs a merkle proof for the given account address against a given state.
@@ -3587,32 +3507,6 @@ impl Store {
             )?),
             Some(account_hash),
         );
-        Ok(Trie::open(Box::new(trie_db), storage_root))
-    }
-
-    /// Same as [`Self::open_storage_trie`] but attaches a read-only decoded-node
-    /// overlay to the `TrieWrapper`. With `overlay = None` this is byte-identical
-    /// to `open_storage_trie`.
-    pub fn open_storage_trie_with_overlay(
-        &self,
-        account_hash: H256,
-        state_root: H256,
-        storage_root: H256,
-        overlay: Option<Arc<DecodedNodeOverlay>>,
-    ) -> Result<Trie, StoreError> {
-        let trie_db = TrieWrapper::new(
-            state_root,
-            self.trie_cache
-                .read()
-                .map_err(|_| StoreError::LockError)?
-                .clone(),
-            Box::new(BackendTrieDB::new_for_storages(
-                self.backend.clone(),
-                self.last_written()?,
-            )?),
-            Some(account_hash),
-        )
-        .with_overlay(overlay);
         Ok(Trie::open(Box::new(trie_db), storage_root))
     }
 
