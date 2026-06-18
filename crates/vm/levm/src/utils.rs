@@ -512,6 +512,13 @@ impl<'a> VM<'a> {
                 // Capture initial reservoir for block-dimensional regular gas computation.
                 self.state_gas_reservoir_initial = reservoir;
             }
+
+            // EIP-8037: seed the top frame's state-gas entry baseline to the post-intrinsic
+            // value of `state_gas_used` (the intrinsic state gas was already added above).
+            // A top-level revert/halt refill (`refill_frame_state_gas`) then rolls back only
+            // the execution portion and preserves the intrinsic state gas (which EELS keeps
+            // separate as `tx_env.intrinsic_state_gas` and never refunds).
+            self.current_call_frame.state_gas_used_at_entry = self.state_gas_used;
         }
 
         Ok(())

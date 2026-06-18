@@ -290,6 +290,9 @@ pub struct CallFrame {
     /// EIP-8037: snapshot of VM.state_gas_used (signed) at child-frame entry.
     /// Used to restore parent's state_gas_used on child revert.
     pub state_gas_used_at_entry: i64,
+    /// EIP-8037: EELS per-frame `state_gas_spilled`; LIFO refund source;
+    /// propagated to parent on child success.
+    pub frame_state_gas_spilled: u64,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -395,6 +398,7 @@ impl CallFrame {
             pc: 0,
             sub_return_data: Bytes::default(),
             state_gas_used_at_entry: 0,
+            frame_state_gas_spilled: 0,
         }
     }
 

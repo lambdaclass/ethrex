@@ -53,6 +53,15 @@ impl<'a> VM<'a> {
                     return Err(error);
                 }
 
+                // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order
+                // BEFORE zeroing gas. Mirrors EELS `process_create_message`'s
+                // `refill_frame_state_gas` on the code-deposit ExceptionalHalt path.
+                // Must run before the `&mut self.current_call_frame` borrow below.
+                if self.env.config.fork >= Fork::Amsterdam {
+                    let entry = self.current_call_frame.state_gas_used_at_entry;
+                    self.refill_frame_state_gas(entry)?;
+                }
+
                 // Consume all gas because error was exceptional.
                 let callframe = &mut self.current_call_frame;
                 callframe.gas_remaining = 0;
@@ -98,6 +107,15 @@ impl<'a> VM<'a> {
             return Err(error);
         }
 
+        // EIP-8037 (Amsterdam+): roll back this frame's state gas in LIFO order BEFORE
+        // zeroing gas on exceptional halt. Covers both revert and exceptional-halt paths
+        // (mirrors EELS `process_message`'s `refill_frame_state_gas` on Revert/ExceptionalHalt).
+        // Must run before the `&mut self.current_call_frame` borrow below since refill needs `&mut self`.
+        if self.env.config.fork >= Fork::Amsterdam {
+            let entry = self.current_call_frame.state_gas_used_at_entry;
+            self.refill_frame_state_gas(entry)?;
+        }
+
         let callframe = &mut self.current_call_frame;
 
         // Unless error is caused by Revert Opcode, consume all gas left.
@@ -131,6 +149,21 @@ impl<'a> VM<'a> {
         let new_account = self.get_account_mut(new_contract_address)?;
 
         if new_account.create_would_collide() {
+            // EIP-8037: a collision returns before any opcode executes, so no execution
+            // state gas was charged via `increase_state_gas` (the only writer of
+            // `state_gas_spill` / `frame_state_gas_spilled`). Intrinsic state gas was added
+            // directly to `state_gas_used` in `add_intrinsic_gas` and never spills. There is
+            // therefore nothing for `refill_frame_state_gas` to roll back; the retained
+            // create-tx NEW_ACCOUNT refund in `finalize_execution` covers the account charge.
+            debug_assert_eq!(
+                self.state_gas_spill, 0,
+                "create collision must occur before any execution state gas spills"
+            );
+            debug_assert_eq!(
+                self.current_call_frame.frame_state_gas_spilled, 0,
+                "create collision must occur before any per-frame state gas spills"
+            );
+
             // Per EIP-684: a tx-level CREATE collision burns the
             // full forwarded execution gas as `regular_gas_used`. Zero `gas_remaining`
             // so `raw_consumed = gas_limit` for the downstream regular-gas formula in

@@ -1249,7 +1249,7 @@ impl<'a> VM<'a> {
             ret_offset,
             ret_size,
             memory: old_callframe_memory,
-            state_gas_used_at_entry,
+            frame_state_gas_spilled: child_frame_state_gas_spilled,
             call_frame_backup,
             stack,
             ..
@@ -1295,9 +1295,18 @@ impl<'a> VM<'a> {
                 // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
+                // Propagate the child's per-frame spill to the parent so a later
+                // parent revert/halt refills it LIFO (EELS `incorporate_child_on_success`).
+                self.current_call_frame.frame_state_gas_spilled = self
+                    .current_call_frame
+                    .frame_state_gas_spilled
+                    .checked_add(child_frame_state_gas_spilled)
+                    .ok_or(InternalError::Overflow)?;
             }
             TxResult::Revert(_) => {
-                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
+                // EIP-8037: the child already self-refilled its state gas via
+                // `refill_frame_state_gas` in `handle_opcode_error`, so no parent-side
+                // state-gas reabsorption is needed here.
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };
@@ -1322,7 +1331,7 @@ impl<'a> VM<'a> {
             to,
             call_frame_backup,
             memory: old_callframe_memory,
-            state_gas_used_at_entry,
+            frame_state_gas_spilled: child_frame_state_gas_spilled,
             stack,
             ..
         } = executed_call_frame;
@@ -1351,9 +1360,18 @@ impl<'a> VM<'a> {
                 // EIP-8037: on success, child's state_gas_used is already
                 // accumulated into the VM-level field (signed sum handles refunds).
                 // No pending flush needed — credits were applied inline.
+                // Propagate the child's per-frame spill to the parent so a later
+                // parent revert/halt refills it LIFO (EELS `incorporate_child_on_success`).
+                self.current_call_frame.frame_state_gas_spilled = self
+                    .current_call_frame
+                    .frame_state_gas_spilled
+                    .checked_add(child_frame_state_gas_spilled)
+                    .ok_or(InternalError::Overflow)?;
             }
             TxResult::Revert(err) => {
-                self.incorporate_child_state_gas_on_revert(state_gas_used_at_entry)?;
+                // EIP-8037: the child already self-refilled its state gas via
+                // `refill_frame_state_gas` in `handle_opcode_error`, so no parent-side
+                // state-gas reabsorption is needed here.
 
                 // EIP-8037: CREATE's account state gas was charged in the parent before
                 // the child frame began; no account was created, so refund it per EELS

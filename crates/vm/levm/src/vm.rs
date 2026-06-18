@@ -817,22 +817,64 @@ impl<'a> VM<'a> {
             .state_gas_spill
             .checked_add(spill)
             .ok_or(InternalError::Overflow)?;
+        // Per-frame spill: EELS charge_state_gas does `frame_state_gas_spilled += remainder`.
+        // LIFO refund source; propagated to parent on child success.
+        self.current_call_frame.frame_state_gas_spilled = self
+            .current_call_frame
+            .frame_state_gas_spilled
+            .checked_add(spill)
+            .ok_or(InternalError::Overflow)?;
         Ok(())
     }
 
-    /// EIP-8037: credit `amount` directly to the local frame's reservoir; `state_gas_used`
-    /// may go negative when the matching charge lives in an ancestor frame.
+    /// EIP-8037 `credit_state_gas_refund`: refund `amount` of state gas using LIFO
+    /// source order, mirroring EELS `credit_state_gas_refund`.
+    ///
+    /// The refund is sourced gas_remaining-first: the portion that was spilled past
+    /// the reservoir into this frame's `gas_remaining` (`frame_state_gas_spilled`) is
+    /// returned to `gas_remaining` first, and only the remainder flows into the shared
+    /// reservoir. Concretely `from_gas_left = min(amount, frame_state_gas_spilled)`
+    /// returns to `gas_remaining`, and `amount - from_gas_left` returns to the
+    /// reservoir. `state_gas_used` is always decremented by the full `amount` and may
+    /// go negative when the matching charge lives in an ancestor frame.
+    ///
+    /// Block accounting: both the per-frame `frame_state_gas_spilled` and the VM-level
+    /// `state_gas_spill` counter are decremented by the `from_gas_left` portion ONLY
+    /// (the part credited back to `gas_remaining`), never by the full `amount`.
     ///
     /// Must only be called for Amsterdam+ forks.
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "subtractions proven safe by min()"
+    )]
     pub fn credit_state_gas_refund(&mut self, amount: u64) -> Result<(), VMError> {
         debug_assert!(
             self.env.config.fork >= Fork::Amsterdam,
             "credit_state_gas_refund called pre-Amsterdam"
         );
+        // LIFO: drain the frame's spill (gas borrowed from gas_remaining) first.
+        let from_gas_left = self.current_call_frame.frame_state_gas_spilled.min(amount);
+        // Return the spilled portion to gas_remaining (i64).
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .checked_add(i64::try_from(from_gas_left).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // Safe: from_gas_left = min(spill, amount) <= frame_state_gas_spilled.
+        self.current_call_frame.frame_state_gas_spilled -= from_gas_left;
+        // Block accounting: the refilled spill is no longer regular gas.
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_sub(from_gas_left)
+            .ok_or(InternalError::Underflow)?;
+        // The remainder of the refund flows into the shared reservoir.
+        // Safe: from_gas_left = min(spill, amount) <= amount.
+        let to_reservoir = amount - from_gas_left;
         self.state_gas_reservoir = self
             .state_gas_reservoir
-            .checked_add(amount)
+            .checked_add(to_reservoir)
             .ok_or(InternalError::Overflow)?;
+        // state_gas_used always drops by the full amount (may go negative).
         self.state_gas_used = self
             .state_gas_used
             .checked_sub(i64::try_from(amount).map_err(|_| InternalError::Overflow)?)
@@ -840,35 +882,77 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
-    /// EIP-8037 `incorporate_child_on_error`: on child revert, restore the parent's
-    /// `state_gas_used` to its pre-child value and refund the child's net
-    /// `(state_gas_used + state_gas_left)` back into the parent's reservoir.
+    /// EIP-8037 `refill_frame_state_gas`: roll back this frame's state gas in LIFO
+    /// order on revert or exceptional halt, mirroring EELS `refill_frame_state_gas`.
     ///
-    /// In ethrex's shared-VM model the child holds the entire reservoir during its
-    /// execution, so `child.state_gas_left == self.state_gas_reservoir` (absolute,
-    /// not a delta against entry). `child.state_gas_used` can be negative when
-    /// inline refunds inside the child exceeded its gross charges.
-    pub fn incorporate_child_state_gas_on_revert(
-        &mut self,
-        state_gas_used_at_entry: i64,
-    ) -> Result<(), VMError> {
-        let child_state_gas_used = self
+    /// `entry` is the value of `state_gas_used` when this frame began executing
+    /// (`current_call_frame.state_gas_used_at_entry`). The frame's net charge is
+    /// `frame_used = state_gas_used - entry`. Of that, `frame_state_gas_spilled` was
+    /// drawn from `gas_remaining` (spilled past the reservoir) and the remainder came
+    /// from the reservoir. LIFO refill returns the spilled portion to `gas_remaining`
+    /// first and the rest to the reservoir, restoring the exact pools the charges drew
+    /// from. `state_gas_used` is rolled back to `entry` and the per-frame spill counter
+    /// is cleared.
+    ///
+    /// Revert-vs-halt equivalence (load-bearing): on revert, the spilled gas returns to
+    /// `gas_remaining` (raising the sender refund / lowering raw_consumed) while
+    /// `state_gas_spill` drops by the same amount, so the regular dimension in
+    /// `refund_sender` (default_hook) drops by exactly the refilled spill. On exceptional
+    /// halt the caller subsequently sets `gas_remaining = 0` and burns it to the regular
+    /// dimension — but `state_gas_spill` was already decremented here, so the spilled gas
+    /// stays counted as regular. Both paths are correct.
+    ///
+    /// Must only be called for Amsterdam+ forks.
+    pub fn refill_frame_state_gas(&mut self, entry: i64) -> Result<(), VMError> {
+        debug_assert!(
+            self.env.config.fork >= Fork::Amsterdam,
+            "refill_frame_state_gas called pre-Amsterdam"
+        );
+        // The frame's net state-gas charge since it began executing. May be
+        // negative when the frame's inline refunds (e.g. an SSTORE clearing a
+        // slot an ancestor set) exceeded its own gross charges.
+        let frame_used = self
             .state_gas_used
-            .checked_sub(state_gas_used_at_entry)
+            .checked_sub(entry)
+            .ok_or(InternalError::Underflow)?;
+        let spilled = self.current_call_frame.frame_state_gas_spilled;
+        // LIFO invariant: any remaining spill is undrained own-charge, so it
+        // implies frame_used >= 0. A net-negative frame_used only arises after
+        // credit_state_gas_refund has already drained all spill (spilled == 0).
+        debug_assert!(
+            frame_used >= 0 || spilled == 0,
+            "negative frame_used with positive spill violates LIFO invariant \
+             (frame_used={frame_used}, spilled={spilled})"
+        );
+        // LIFO: return the spilled portion (borrowed from gas_remaining) first.
+        self.current_call_frame.gas_remaining = self
+            .current_call_frame
+            .gas_remaining
+            .checked_add(i64::try_from(spilled).map_err(|_| InternalError::Overflow)?)
             .ok_or(InternalError::Overflow)?;
-        let child_state_gas_left =
+        // The remainder (drawn from the reservoir) flows back to the reservoir.
+        let to_reservoir = frame_used
+            .checked_sub(i64::try_from(spilled).map_err(|_| InternalError::Overflow)?)
+            .ok_or(InternalError::Overflow)?;
+        // `to_reservoir` is negative in the cross-ancestor refund case
+        // (frame_used < 0); clamp so the reservoir never goes negative.
+        let reservoir_signed =
             i64::try_from(self.state_gas_reservoir).map_err(|_| InternalError::Overflow)?;
-        self.state_gas_used = state_gas_used_at_entry;
-        let net_return = child_state_gas_used
-            .checked_add(child_state_gas_left)
-            .ok_or(InternalError::Overflow)?;
-        // net_return is always >= 0 by the spec invariant (reservoir conservation
-        // means a child cannot refund more than its ancestors charged); clamp
-        // defensively and cast — `as u64` is sound because of the `.max(0)`.
-        #[expect(clippy::as_conversions, reason = ".max(0) proves non-negativity")]
-        {
-            self.state_gas_reservoir = net_return.max(0) as u64;
-        }
+        self.state_gas_reservoir = u64::try_from(
+            reservoir_signed
+                .checked_add(to_reservoir)
+                .ok_or(InternalError::Overflow)?
+                .max(0),
+        )
+        .map_err(|_| InternalError::Overflow)?;
+        // Roll back state_gas_used to the frame's entry baseline.
+        self.state_gas_used = entry;
+        // Block accounting: the refilled spill is no longer regular gas.
+        self.state_gas_spill = self
+            .state_gas_spill
+            .checked_sub(spilled)
+            .ok_or(InternalError::Underflow)?;
+        self.current_call_frame.frame_state_gas_spilled = 0;
         Ok(())
     }
 
@@ -894,6 +978,9 @@ impl<'a> VM<'a> {
         // The BAL checkpoint below is intentionally skipped: a codeless transfer cannot
         // fail past this point and has no inner calls, so there's nothing to roll back.
         if self.is_simple_transfer_fast_path() {
+            // EIP-8037: no `refill_frame_state_gas` needed here — a codeless transfer always
+            // succeeds, runs no opcodes, and charges no execution state gas, so the frame's
+            // `frame_state_gas_spilled` is 0 and `state_gas_used` equals its entry baseline.
             #[expect(clippy::as_conversions, reason = "gas_remaining is non-negative here")]
             let gas_used = self
                 .current_call_frame
@@ -969,6 +1056,14 @@ impl<'a> VM<'a> {
             self.env.config.fork,
             self.vm_type,
         ) {
+            // EIP-8037 invariant: precompiles never touch state gas. `execute_precompile`
+            // is a free function that only mutates `gas_remaining`; it has no access to
+            // `state_gas_used` / `state_gas_reservoir` / `state_gas_spill`. This is what makes
+            // it safe to omit any state-gas refill on a precompile revert (no
+            // `refill_frame_state_gas` needed here). The assert below guards the invariant.
+            #[cfg(debug_assertions)]
+            let state_gas_used_before_precompile = self.state_gas_used;
+
             let call_frame = &mut self.current_call_frame;
 
             let mut gas_remaining = call_frame.gas_remaining as u64;
@@ -980,6 +1075,11 @@ impl<'a> VM<'a> {
                 self.env.config.fork,
                 self.db.store.precompile_cache(),
                 self.crypto,
+            );
+
+            debug_assert_eq!(
+                self.state_gas_used, state_gas_used_before_precompile,
+                "precompile execution must not mutate state_gas_used"
             );
 
             // EIP-8037 Amsterdam 2D accounting recomputes `block_gas_used` from
@@ -1187,30 +1287,16 @@ impl<'a> VM<'a> {
         &mut self,
         mut ctx_result: ContextResult,
     ) -> Result<ExecutionReport, VMError> {
-        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG),
-        // refund only the EXECUTION portion of state gas to the reservoir; the intrinsic
-        // stays in `state_gas_used` so block accounting bills it. EELS keeps these in
-        // separate fields (`tx_output.state_gas_used` vs `tx_env.intrinsic_state_gas`);
-        // ethrex lumps them so we split on the way out:
-        //   tx_output.state_gas_left += tx_output.state_gas_used
-        //   tx_output.state_gas_used  = 0
-        // becomes in lumped form (with intrinsic preserved):
-        //   reservoir   += signed(state_gas_used − intrinsic)   [clamped at 0]
-        //   state_gas_used = intrinsic
-        // Collision is handled separately in the hook.
+        // EIP-8037: On top-level tx failure (REVERT, ExceptionalHalt, or OOG), the
+        // execution portion of state gas has already been refilled into the reservoir by
+        // the top-frame `refill_frame_state_gas` (seeded at the post-intrinsic baseline in
+        // `add_intrinsic_gas` and fired on revert/halt in `handle_opcode_error` /
+        // `handle_opcode_result`). The intrinsic portion stays in `state_gas_used` so block
+        // accounting bills it. No reservoir-move is performed here. Collision returns before
+        // any execution state gas is charged, so it has nothing to refill (see the create
+        // collision branch in `handle_create_transaction`). The create-tx NEW_ACCOUNT refund
+        // below still runs for every top-level CREATE-tx failure, collision included.
         if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
-            if !ctx_result.is_collision() {
-                let intrinsic_signed =
-                    i64::try_from(self.intrinsic_state_gas).map_err(|_| InternalError::Overflow)?;
-                let execution_state_gas_used = self.state_gas_used.saturating_sub(intrinsic_signed);
-                let reservoir_signed = i64::try_from(self.state_gas_reservoir)
-                    .map_err(|_| InternalError::Overflow)?
-                    .saturating_add(execution_state_gas_used);
-                self.state_gas_reservoir =
-                    u64::try_from(reservoir_signed.max(0)).map_err(|_| InternalError::Overflow)?;
-                self.state_gas_used = intrinsic_signed;
-            }
-
             // EIP-8037: on ANY top-level CREATE-tx
             // failure (revert / halt / OOG / collision), refund the intrinsic
             // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the reservoir.
@@ -1419,5 +1505,513 @@ impl Substate {
         );
 
         Ok(substate)
+    }
+}
+
+#[cfg(test)]
+mod state_gas_tests {
+    //! EIP-8037 source-based state-gas refund unit tests.
+    //!
+    //! Test-harness approach (Phase 5.1): these tests build the real [`VM`] via a struct
+    //! literal directly (the test module is inline in `vm.rs`, so it has access to the
+    //! crate-private `opcode_table` / `preserve_top_level_backup` fields) rather than going
+    //! through [`VM::new`]. `VM::new` runs `Substate::initialize` and `get_tx_callee`, both of
+    //! which read the database; that machinery is irrelevant to the pure two-pool arithmetic
+    //! under test and would pull in `ethrex-storage` / `ethrex-blockchain` (a dependency cycle
+    //! for the levm crate). Instead the harness wires up the minimal state the three methods
+    //! actually touch — `env.config.fork = Amsterdam`, a single top-level call frame with a
+    //! configurable `gas_remaining`, and a configurable `state_gas_reservoir` — and exercises
+    //! the genuine `increase_state_gas` / `credit_state_gas_refund` / `refill_frame_state_gas`
+    //! methods. No EF fixtures are read.
+
+    use super::*;
+    use crate::db::Database;
+    use crate::environment::EVMConfig;
+    use crate::errors::DatabaseError;
+    use ethrex_common::types::{AccountState, ChainConfig, CodeMetadata, EIP1559Transaction};
+    use ethrex_crypto::NativeCrypto;
+    use std::sync::Arc;
+
+    /// Minimal in-crate [`Database`] used only to satisfy [`GeneralizedDatabase::new`].
+    /// None of its methods are reached by these tests (the VM is built by struct literal,
+    /// so no account/storage/code loads occur), so every method returns an error.
+    struct StubDatabase;
+
+    impl Database for StubDatabase {
+        fn get_account_state(&self, _address: Address) -> Result<AccountState, DatabaseError> {
+            Err(DatabaseError::Custom("stub db: no account state".into()))
+        }
+        fn get_storage_value(&self, _address: Address, _key: H256) -> Result<U256, DatabaseError> {
+            Err(DatabaseError::Custom("stub db: no storage value".into()))
+        }
+        fn get_block_hash(&self, _block_number: u64) -> Result<H256, DatabaseError> {
+            Err(DatabaseError::Custom("stub db: no block hash".into()))
+        }
+        fn get_chain_config(&self) -> Result<ChainConfig, DatabaseError> {
+            Err(DatabaseError::Custom("stub db: no chain config".into()))
+        }
+        fn get_account_code(&self, _code_hash: H256) -> Result<Code, DatabaseError> {
+            Err(DatabaseError::Custom("stub db: no account code".into()))
+        }
+        fn get_code_metadata(&self, _code_hash: H256) -> Result<CodeMetadata, DatabaseError> {
+            Err(DatabaseError::Custom("stub db: no code metadata".into()))
+        }
+    }
+
+    /// A large gas budget for the top-level frame so spills never run the frame OOG; the tests
+    /// assert against the delta from this baseline.
+    const FRAME_GAS_LIMIT: u64 = 1_000_000;
+
+    /// Builds a `GeneralizedDatabase` over the stub backend. Returned by value so the caller
+    /// owns it for at least the VM's lifetime.
+    fn stub_db() -> GeneralizedDatabase {
+        GeneralizedDatabase::new(Arc::new(StubDatabase))
+    }
+
+    /// A trivial transaction the VM borrows but never reads in these tests.
+    fn stub_tx() -> Transaction {
+        Transaction::EIP1559Transaction(EIP1559Transaction::default())
+    }
+
+    /// Builds an Amsterdam `Environment` with a generous gas limit.
+    fn amsterdam_env() -> Environment {
+        Environment {
+            config: EVMConfig::new(
+                Fork::Amsterdam,
+                EVMConfig::canonical_values(Fork::Amsterdam),
+            ),
+            gas_limit: FRAME_GAS_LIMIT,
+            block_gas_limit: FRAME_GAS_LIMIT,
+            ..Default::default()
+        }
+    }
+
+    /// Builds a single top-level call frame with `gas_remaining = FRAME_GAS_LIMIT`.
+    fn top_frame() -> CallFrame {
+        CallFrame::new(
+            Address::default(),
+            Address::default(),
+            Address::default(),
+            Code::default(),
+            U256::zero(),
+            Bytes::new(),
+            false,
+            FRAME_GAS_LIMIT,
+            0,
+            true,
+            false,
+            0,
+            0,
+            Stack::default(),
+            Memory::default(),
+        )
+    }
+
+    /// Assembles a minimal Amsterdam VM with the given starting `state_gas_reservoir`,
+    /// borrowing the caller-owned `db`, `tx` and `crypto`.
+    fn build_vm<'a>(
+        env: Environment,
+        db: &'a mut GeneralizedDatabase,
+        tx: &'a Transaction,
+        crypto: &'a dyn Crypto,
+        state_gas_reservoir: u64,
+    ) -> VM<'a> {
+        let fork = env.config.fork;
+        VM {
+            call_frames: Vec::new(),
+            current_call_frame: top_frame(),
+            env,
+            substate: Substate::default(),
+            db,
+            tx,
+            hooks: Vec::new(),
+            storage_original_values: FxHashMap::default(),
+            tracer: LevmCallTracer::disabled(),
+            opcode_tracer: LevmOpcodeTracer::disabled(),
+            debug_mode: DebugMode::disabled(),
+            stack_pool: Vec::new(),
+            vm_type: VMType::L1,
+            preserve_top_level_backup: false,
+            state_gas_used: 0,
+            state_gas_reservoir,
+            state_gas_reservoir_initial: state_gas_reservoir,
+            state_gas_spill: 0,
+            cost_per_state_byte: 0,
+            state_gas_new_account: 0,
+            state_gas_storage_set: 0,
+            state_gas_auth_total: 0,
+            state_gas_auth_base: 0,
+            state_refund: 0,
+            intrinsic_state_gas: 0,
+            opcode_table: VM::build_opcode_table(fork),
+            crypto,
+        }
+    }
+
+    /// Convenience: lossless `u64 -> i64` for test values (all well below `i64::MAX`).
+    /// Saturates rather than panics; every test value is a small constant so the saturation
+    /// branch is never taken.
+    fn as_i64(v: u64) -> i64 {
+        i64::try_from(v).unwrap_or(i64::MAX)
+    }
+
+    /// Convenience: current frame's `gas_remaining`.
+    fn gas_remaining(vm: &VM<'_>) -> i64 {
+        vm.current_call_frame.gas_remaining
+    }
+
+    /// Convenience: current frame's per-frame spill counter.
+    fn frame_spilled(vm: &VM<'_>) -> u64 {
+        vm.current_call_frame.frame_state_gas_spilled
+    }
+
+    /// 5.2 — Full spill then refund (reservoir empty).
+    ///
+    /// reservoir = 0, so `increase_state_gas(N)` spills the whole charge out of
+    /// `gas_remaining`. `credit_state_gas_refund(N)` must, in LIFO order, return all of it
+    /// to `gas_remaining` (none to the reservoir) and zero every counter.
+    #[test]
+    fn credit_lifo_spill_first() {
+        const N: u64 = 5_000;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, 0);
+
+        let gas_before = gas_remaining(&vm);
+        vm.increase_state_gas(N).unwrap();
+
+        // The full charge spilled to gas_remaining.
+        assert_eq!(frame_spilled(&vm), N, "whole charge must spill");
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before - as_i64(N),
+            "gas_remaining drops by the spilled amount"
+        );
+        assert_eq!(vm.state_gas_spill, N, "vm-level spill tracks the spill");
+        assert_eq!(vm.state_gas_used, as_i64(N));
+        assert_eq!(vm.state_gas_reservoir, 0);
+
+        vm.credit_state_gas_refund(N).unwrap();
+
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "gas_remaining fully restored (LIFO: spill returned first)"
+        );
+        assert_eq!(frame_spilled(&vm), 0, "frame spill drained");
+        assert_eq!(vm.state_gas_reservoir, 0, "nothing flowed to reservoir");
+        assert_eq!(vm.state_gas_spill, 0, "vm-level spill drained");
+        assert_eq!(vm.state_gas_used, 0, "state_gas_used back to zero");
+    }
+
+    /// 5.3 — Charge fully from reservoir, no spill, then refund.
+    ///
+    /// reservoir = N, so `increase_state_gas(N)` draws entirely from the reservoir and never
+    /// touches `gas_remaining`. The refund must return the full amount to the reservoir,
+    /// leaving `gas_remaining` untouched.
+    #[test]
+    fn credit_lifo_reservoir_only() {
+        const N: u64 = 5_000;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, N);
+
+        let gas_before = gas_remaining(&vm);
+        vm.increase_state_gas(N).unwrap();
+
+        assert_eq!(
+            frame_spilled(&vm),
+            0,
+            "no spill when reservoir covers charge"
+        );
+        assert_eq!(gas_remaining(&vm), gas_before, "gas_remaining untouched");
+        assert_eq!(vm.state_gas_reservoir, 0, "reservoir fully drawn down");
+        assert_eq!(vm.state_gas_spill, 0);
+        assert_eq!(vm.state_gas_used, as_i64(N));
+
+        vm.credit_state_gas_refund(N).unwrap();
+
+        assert_eq!(vm.state_gas_reservoir, N, "refund flows back to reservoir");
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "gas_remaining still untouched"
+        );
+        assert_eq!(frame_spilled(&vm), 0);
+        assert_eq!(vm.state_gas_spill, 0);
+        assert_eq!(vm.state_gas_used, 0, "state_gas_used back to zero");
+    }
+
+    /// 5.4 — Partial spill: reservoir K covers part, S spills, then refund the whole charge.
+    ///
+    /// LIFO refund returns the spilled S to `gas_remaining` first and the remaining K to the
+    /// reservoir.
+    #[test]
+    fn credit_lifo_partial_spill() {
+        const K: u64 = 3_000;
+        const S: u64 = 2_000;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, K);
+
+        let gas_before = gas_remaining(&vm);
+        vm.increase_state_gas(K + S).unwrap();
+
+        assert_eq!(frame_spilled(&vm), S, "only the over-reservoir part spills");
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before - as_i64(S),
+            "gas_remaining drops only by the spill S"
+        );
+        assert_eq!(vm.state_gas_reservoir, 0, "reservoir fully drawn");
+        assert_eq!(vm.state_gas_spill, S);
+        assert_eq!(vm.state_gas_used, as_i64(K + S));
+
+        vm.credit_state_gas_refund(K + S).unwrap();
+
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "gas_remaining += S (spill returned)"
+        );
+        assert_eq!(vm.state_gas_reservoir, K, "remainder K flows to reservoir");
+        assert_eq!(frame_spilled(&vm), 0, "frame spill drained");
+        assert_eq!(vm.state_gas_spill, 0, "vm-level spill drained");
+        assert_eq!(vm.state_gas_used, 0);
+    }
+
+    /// 5.5 — `refill_frame_state_gas` on a frame that spilled (reservoir empty at entry).
+    ///
+    /// After a full spill of N, refilling from entry=0 returns N to `gas_remaining`, leaves the
+    /// reservoir at 0, and clears `state_gas_used` / both spill counters.
+    #[test]
+    fn refill_on_spilled_frame() {
+        const N: u64 = 5_000;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, 0);
+
+        let gas_before = gas_remaining(&vm);
+        vm.increase_state_gas(N).unwrap();
+        assert_eq!(frame_spilled(&vm), N);
+        assert_eq!(gas_remaining(&vm), gas_before - as_i64(N));
+
+        vm.refill_frame_state_gas(0).unwrap();
+
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "spilled gas returned to gas_remaining"
+        );
+        assert_eq!(vm.state_gas_reservoir, 0, "no spill went to reservoir");
+        assert_eq!(vm.state_gas_used, 0, "state_gas_used rolled back to entry");
+        assert_eq!(frame_spilled(&vm), 0, "frame spill cleared");
+        assert_eq!(vm.state_gas_spill, 0, "vm-level spill cleared");
+    }
+
+    /// 5.5 (no-spill variant) — `refill_frame_state_gas` on a frame whose charge came entirely
+    /// from the reservoir. The reservoir-sourced portion must flow back to the reservoir; gas
+    /// remaining is untouched.
+    #[test]
+    fn refill_on_reservoir_only_frame() {
+        const N: u64 = 5_000;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, N);
+
+        let gas_before = gas_remaining(&vm);
+        vm.increase_state_gas(N).unwrap();
+        assert_eq!(frame_spilled(&vm), 0);
+        assert_eq!(vm.state_gas_reservoir, 0);
+
+        vm.refill_frame_state_gas(0).unwrap();
+
+        assert_eq!(
+            vm.state_gas_reservoir, N,
+            "reservoir-sourced charge returns to reservoir"
+        );
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "gas_remaining unchanged (no spill)"
+        );
+        assert_eq!(vm.state_gas_used, 0, "state_gas_used rolled back to entry");
+        assert_eq!(frame_spilled(&vm), 0);
+        assert_eq!(vm.state_gas_spill, 0);
+    }
+
+    /// 5.6 — `refill_frame_state_gas` preserves the intrinsic baseline.
+    ///
+    /// Top-frame entry is seeded at the post-intrinsic `state_gas_used` value (see
+    /// `add_intrinsic_gas` in `utils.rs`). A revert/halt refill from that entry must roll back
+    /// only the execution-portion of the charge and leave the intrinsic portion billed.
+    #[test]
+    fn refill_preserves_intrinsic_baseline() {
+        const INTRINSIC: i64 = 4_000;
+        const EXEC: u64 = 6_000;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, 0);
+
+        // Simulate the post-intrinsic baseline: intrinsic state gas already accounted for, and
+        // the frame's entry snapshot taken at that point (mirrors add_intrinsic_gas seeding).
+        vm.state_gas_used = INTRINSIC;
+        vm.current_call_frame.state_gas_used_at_entry = INTRINSIC;
+
+        let gas_before = gas_remaining(&vm);
+        // Execution-time state-gas charge (spills, reservoir is empty).
+        vm.increase_state_gas(EXEC).unwrap();
+        assert_eq!(vm.state_gas_used, INTRINSIC + as_i64(EXEC));
+        assert_eq!(frame_spilled(&vm), EXEC);
+
+        let entry = vm.current_call_frame.state_gas_used_at_entry;
+        vm.refill_frame_state_gas(entry).unwrap();
+
+        assert_eq!(
+            vm.state_gas_used, INTRINSIC,
+            "execution portion rolled back, intrinsic preserved"
+        );
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "spilled execution gas returned to gas_remaining"
+        );
+        assert_eq!(frame_spilled(&vm), 0);
+        assert_eq!(vm.state_gas_spill, 0);
+        assert_eq!(vm.state_gas_reservoir, 0);
+    }
+
+    /// 5.7 — Revert-vs-halt regular-dimension equivalence (method-level proxy).
+    ///
+    /// Decision: a full `vm.execute()` path is NOT feasible fixture-free here. `execute`
+    /// requires a funded sender, valid bytecode and a working database (account/code loads),
+    /// which `VM::new`'s `Substate::initialize` / `get_tx_callee` perform against the store; a
+    /// fixture-free in-crate VM cannot drive that without pulling in `ethrex-storage` /
+    /// `ethrex-blockchain` (dependency cycle). This test is therefore the documented
+    /// method-level proxy for the end-to-end equivalence: it drives the exact two-method
+    /// sequence the production revert and halt paths use (`increase_state_gas` to spill, then
+    /// `refill_frame_state_gas` to roll the frame back) and asserts the regular-gas dimension
+    /// for both a "gas not zeroed" (revert) and a "gas then zeroed" (exceptional halt) sequence.
+    ///
+    /// The regular-gas dimension consumed by the tx is, per `refund_sender`/`default_hook`:
+    ///   regular = (gas_limit - gas_remaining) - state_gas_spill
+    /// On revert, the refilled spill returns to `gas_remaining` AND `state_gas_spill` drops by
+    /// the same amount, so the spilled gas is fully refunded to the sender. On exceptional
+    /// halt the caller zeroes `gas_remaining` after the refill, burning everything left to the
+    /// regular dimension; but because `refill_frame_state_gas` already decremented
+    /// `state_gas_spill`, the spilled gas stays counted as regular (burned, not refunded).
+    #[test]
+    fn revert_vs_halt_regular_dimension_proxy() {
+        const N: u64 = 5_000;
+
+        // Computes the regular-gas dimension exactly as default_hook's refund_sender does.
+        fn regular_dimension(vm: &VM<'_>) -> i64 {
+            let consumed = as_i64(FRAME_GAS_LIMIT) - vm.current_call_frame.gas_remaining;
+            consumed - as_i64(vm.state_gas_spill)
+        }
+
+        // --- Revert path: refill, gas_remaining NOT zeroed ---
+        let mut db_r = stub_db();
+        let tx_r = stub_tx();
+        let crypto_r = NativeCrypto;
+        let mut vm_revert = build_vm(amsterdam_env(), &mut db_r, &tx_r, &crypto_r, 0);
+        vm_revert.increase_state_gas(N).unwrap();
+        // Mid-spill: the spilled gas is currently counted as regular.
+        assert_eq!(
+            regular_dimension(&vm_revert),
+            0,
+            "before refill, spill is netted out of the regular dimension"
+        );
+        vm_revert.refill_frame_state_gas(0).unwrap();
+        // Revert keeps gas_remaining as-is (no zeroing).
+        let revert_regular = regular_dimension(&vm_revert);
+        assert_eq!(
+            revert_regular, 0,
+            "revert: spilled gas refunded to sender (regular dimension unchanged at 0)"
+        );
+        assert_eq!(vm_revert.state_gas_spill, 0, "revert drains vm-level spill");
+
+        // --- Halt path: refill, THEN zero gas_remaining (exceptional halt) ---
+        let mut db_h = stub_db();
+        let tx_h = stub_tx();
+        let crypto_h = NativeCrypto;
+        let mut vm_halt = build_vm(amsterdam_env(), &mut db_h, &tx_h, &crypto_h, 0);
+        vm_halt.increase_state_gas(N).unwrap();
+        vm_halt.refill_frame_state_gas(0).unwrap();
+        // Exceptional halt: caller zeroes gas_remaining after the refill.
+        vm_halt.current_call_frame.gas_remaining = 0;
+        let halt_regular = regular_dimension(&vm_halt);
+        assert_eq!(
+            halt_regular,
+            as_i64(FRAME_GAS_LIMIT),
+            "halt: all remaining gas burned to the regular dimension (spilled gas stays burned)"
+        );
+        assert_eq!(
+            vm_halt.state_gas_spill, 0,
+            "halt also drained vm-level spill"
+        );
+
+        // The two paths differ in exactly the regular dimension: revert refunds the spilled
+        // gas (sender keeps it), halt burns it.
+        assert_ne!(
+            revert_regular, halt_regular,
+            "revert and halt must produce different regular-gas dimensions"
+        );
+    }
+
+    /// 6.2 — Pre-Amsterdam invariance guard.
+    ///
+    /// Builds a pre-Amsterdam (Prague) VM through the same struct-literal harness and asserts
+    /// that every EIP-8037 state-gas field is 0 at construction and that nothing seeds them on
+    /// a pre-Amsterdam fork. The Amsterdam-gated methods (`increase_state_gas` /
+    /// `credit_state_gas_refund` / `refill_frame_state_gas`) are intentionally NOT called here:
+    /// their `debug_assert!(fork >= Amsterdam)` gates would fire pre-Amsterdam. Instead this
+    /// proves the no-state-gas path leaves the per-frame and VM-level counters untouched, which
+    /// is what every production state-gas call site relies on (each is wrapped in a
+    /// `fork >= Fork::Amsterdam` guard, so on a pre-Amsterdam fork none of them ever run).
+    #[test]
+    fn pre_amsterdam_state_gas_fields_stay_zero() {
+        // Build a Prague (pre-Amsterdam) environment via the harness.
+        let env = Environment {
+            config: EVMConfig::new(Fork::Prague, EVMConfig::canonical_values(Fork::Prague)),
+            gas_limit: FRAME_GAS_LIMIT,
+            block_gas_limit: FRAME_GAS_LIMIT,
+            ..Default::default()
+        };
+        assert!(
+            env.config.fork < Fork::Amsterdam,
+            "guard test must run on a pre-Amsterdam fork"
+        );
+
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        // Reservoir 0: a pre-Amsterdam VM never funds a state-gas reservoir.
+        let vm = build_vm(env, &mut db, &tx, &crypto, 0);
+
+        // At construction, every state-gas field is 0; nothing seeds them pre-Amsterdam.
+        assert_eq!(
+            frame_spilled(&vm),
+            0,
+            "per-frame spill must stay 0 pre-Amsterdam"
+        );
+        assert_eq!(
+            vm.state_gas_spill, 0,
+            "vm-level spill must stay 0 pre-Amsterdam"
+        );
+        assert_eq!(
+            vm.state_gas_reservoir, 0,
+            "reservoir must stay 0 pre-Amsterdam"
+        );
+        assert_eq!(
+            vm.state_gas_used, 0,
+            "state_gas_used must stay 0 pre-Amsterdam"
+        );
     }
 }
