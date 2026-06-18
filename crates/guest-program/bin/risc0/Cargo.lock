@@ -947,7 +947,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1000,7 +1000,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1024,7 +1024,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-risc0"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "c-kzg",
  "ethrex-common",
@@ -1038,7 +1038,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1056,7 +1056,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1081,7 +1081,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1099,7 +1099,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "14.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1532,16 +1532,18 @@ checksum = "b6d2cec3eae94f9f509c767b45932f1ada8350c4bdb85af2fcab4a3c14807981"
 
 [[package]]
 name = "libssz"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d498c0482bba87d2647ea4601ea76cf2b498065e3958798a88f49274f3ced5e9"
 dependencies = [
  "smallvec",
 ]
 
 [[package]]
 name = "libssz-derive"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08ddfb5c969c28a4a54043e630f80c723352637bd1020f256ee3ac7a8814922b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1550,8 +1552,9 @@ dependencies = [
 
 [[package]]
 name = "libssz-merkle"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "63c6d6d5ce5d79bba66bc98c99869eedffedf7f14f0aa0915f1a62802650bdf6"
 dependencies = [
  "libssz",
  "sha2",
@@ -1559,8 +1562,9 @@ dependencies = [
 
 [[package]]
 name = "libssz-types"
-version = "0.2.1"
-source = "git+https://github.com/lambdaclass/libssz?rev=7262a4f#7262a4f17f71fb9108166ba260659bcdd64feb4c"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "747273ab2d923e82ed147091fe0fb3e602dd2012c872cdad5efe69e27c3b4099"
 dependencies = [
  "libssz",
  "libssz-merkle",

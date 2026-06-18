@@ -46,7 +46,10 @@ use ethrex_rlp::{
     structs::{Decoder, Encoder},
 };
 
+#[cfg(all(feature = "eip-8025", target_arch = "riscv64"))]
+use super::eip8025_cell::OnceCell;
 use crate::types::{AccessList, AuthorizationList, BlobsBundle};
+#[cfg(not(all(feature = "eip-8025", target_arch = "riscv64")))]
 use once_cell::sync::OnceCell;
 
 // The `#[serde(untagged)]` attribute allows the `Transaction` enum to be serialized without
@@ -1527,11 +1530,11 @@ impl Transaction {
 
 fn derive_legacy_chain_id(v: U256) -> Option<u64> {
     let v = u64::try_from(v).ok()?;
-    if v == 27 || v == 28 {
-        None
-    } else {
-        Some((v - 35) / 2)
-    }
+    // EIP-155 encodes the chain id as `v = chain_id * 2 + 35` (or 36), so any
+    // replay-protected `v` is >= 35. Pre-EIP-155 txs use v=27/28, and malformed
+    // signatures (e.g. v=0 from an unsigned IL transaction) are < 35 too; none
+    // carry a chain id. Guard the subtraction to avoid an underflow panic.
+    if v < 35 { None } else { Some((v - 35) / 2) }
 }
 
 impl TxType {
@@ -1545,6 +1548,20 @@ impl TxType {
             0x7d => Some(Self::FeeToken),
             0x7e => Some(Self::Privileged),
             _ => None,
+        }
+    }
+
+    /// Transaction types that only exist on the L2 rollup and must never appear in
+    /// an L1 block (`FeeToken` 0x7d, `Privileged` 0x7e). Privileged transactions in
+    /// particular take their sender from an unsigned, caller-chosen `from` field.
+    ///
+    /// This match is intentionally exhaustive (no wildcard arm): adding a new
+    /// `TxType` variant will not compile until it is explicitly classified here,
+    /// so an L2-only type can never be silently accepted on L1 by omission.
+    pub fn is_l2_only(self) -> bool {
+        match self {
+            Self::Legacy | Self::EIP2930 | Self::EIP1559 | Self::EIP4844 | Self::EIP7702 => false,
+            Self::FeeToken | Self::Privileged => true,
         }
     }
 }
@@ -3147,6 +3164,29 @@ mod tests {
     use hex_literal::hex;
     use serde_impl::{AccessListEntry, GenericTransaction};
     use std::str::FromStr;
+
+    #[test]
+    fn legacy_chain_id_handles_out_of_range_v_without_underflow() {
+        // A legacy transaction decodes `v` as an arbitrary U256, so a malformed tx can
+        // carry any value. `derive_legacy_chain_id` must return None for the pre-EIP-155
+        // values (27/28) and any v < 35 rather than underflowing `v - 35`, which panics
+        // in debug and wraps to a bogus chain id in release. This is reachable on the
+        // block-import path (every tx's chain id is now checked pre-execution).
+        let legacy_chain_id = |v: u64| {
+            Transaction::LegacyTransaction(LegacyTransaction {
+                v: U256::from(v),
+                ..Default::default()
+            })
+            .chain_id()
+        };
+        for v in [0u64, 1, 26, 27, 28, 34] {
+            assert_eq!(legacy_chain_id(v), None, "v={v} must yield no chain id");
+        }
+        // EIP-155 values (v = chain_id * 2 + 35/36) still derive correctly.
+        assert_eq!(legacy_chain_id(35), Some(0));
+        assert_eq!(legacy_chain_id(36), Some(0));
+        assert_eq!(legacy_chain_id(37), Some(1));
+    }
 
     #[test]
     fn test_compute_transactions_root() {

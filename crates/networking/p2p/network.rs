@@ -236,6 +236,10 @@ pub async fn periodically_show_peer_stats_during_syncing(
 
     loop {
         if blockchain.is_synced() {
+            if !sync_started_logged {
+                info!("Node already has state; following chain via full sync");
+                return;
+            }
             // Log sync complete summary
             let total_elapsed = format_duration(start.elapsed());
             let headers_downloaded = METRICS.downloaded_headers.get();
@@ -792,7 +796,7 @@ pub async fn periodically_show_peer_stats_after_sync(peer_table: &PeerTable) {
                         .any(|cap| peer.supported_capabilities.contains(cap))
             })
             .count();
-        info!("Snap Peers: {snap_active_peers} / Total Peers: {active_peers}");
+        info!("Peers: {active_peers} (snap-capable: {snap_active_peers})");
         interval.tick().await;
     }
 }

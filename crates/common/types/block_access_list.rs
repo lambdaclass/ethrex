@@ -543,6 +543,15 @@ impl BlockAccessList {
         Ok(())
     }
 
+    /// Returns true if this BAL matches the header's EIP-8159 commitment
+    /// (`block_access_list_hash`). Used to gate persisting/serving a BAL so a
+    /// stale or regenerated-against-wrong-state BAL is never handed to peers as
+    /// if it were authoritative; callers degrade to the `0x80` "unavailable"
+    /// sentinel on a `false` here.
+    pub fn matches_commitment(&self, commitment: Option<H256>) -> bool {
+        commitment == Some(self.compute_hash())
+    }
+
     /// Computes the hash of the block access list (sorts accounts by address per EIP-7928).
     /// Use this when hashing a BAL constructed locally from execution.
     pub fn compute_hash(&self, crypto: &dyn ethrex_crypto::Crypto) -> H256 {
@@ -1558,17 +1567,32 @@ impl BlockAccessListRecorder {
             }
         }
 
-        // 2. Remove balance changes if pre-balance was 0 (round-trip: 0→X→0)
-        // If initial_balance was never set, treat it as 0 (contract created with no value)
+        // 2. Collapse balance changes to the account's final post-tx balance of 0.
+        // The account is destroyed at end-of-tx, so its post-transaction balance is 0
+        // regardless of any intermediate value transfers (e.g. a later CALL that sent
+        // wei to the now-destroyed address, which is burned at finalization). EELS
+        // derives BAL balance changes by diffing pre-tx vs final post-tx account state
+        // (block_access_lists.py:update_builder_from_tx), so only the final 0 matters.
+        //
+        // In practice `pre_balance` is always 0 here: under EIP-6780, track_selfdestruct
+        // only runs for accounts created and destroyed in the same tx. The non-zero branch
+        // below mirrors EELS's general pre/post diff and guards future spec/fixture changes.
+        //
+        // If the pre-tx balance was also 0, this is a net-zero round-trip (0→X→0) and the
+        // change MUST NOT be recorded (EIP-7928). Otherwise record a single (idx, 0).
+        // If initial_balance was never set, treat it as 0 (contract created with no value).
         let pre_balance = self
             .initial_balances
             .get(&address)
             .copied()
             .unwrap_or_default();
-        if pre_balance.is_zero()
-            && let Some(changes) = self.balance_changes.get_mut(&address)
-        {
+        if let Some(changes) = self.balance_changes.get_mut(&address) {
+            // Drop all intermediate balance changes recorded for this tx.
             changes.retain(|(i, _)| *i != idx);
+            // Record the final post-tx balance of 0 unless it equals the pre-tx balance.
+            if !pre_balance.is_zero() {
+                changes.push((idx, U256::zero()));
+            }
             if changes.is_empty() {
                 self.balance_changes.remove(&address);
             }

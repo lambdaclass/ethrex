@@ -2,9 +2,7 @@ use crate::{
     account::LevmAccount,
     constants::*,
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
-    gas_cost::{
-        self, STANDARD_TOKEN_COST, floor_tokens_in_access_list, total_cost_floor_per_token,
-    },
+    gas_cost::{STANDARD_TOKEN_COST, floor_tokens_in_access_list, total_cost_floor_per_token},
     hooks::hook::Hook,
     utils::*,
     vm::VM,
@@ -33,8 +31,13 @@ impl Hook for DefaultHook {
         let sender_address = vm.env.origin;
         let sender_info = vm.db.get_account(sender_address)?.info.clone();
 
+        // Compute intrinsic gas once and reuse it for both the min-gas-limit
+        // validation and `add_intrinsic_gas` below (nothing in between mutates the
+        // calldata / access-list / auth-list it depends on).
+        let intrinsic = vm.get_intrinsic_gas()?;
+
         if vm.env.config.fork >= Fork::Prague {
-            validate_min_gas_limit(vm)?;
+            validate_min_gas_limit(vm, &intrinsic)?;
             // EIP-7825 (Osaka to pre-Amsterdam): reject tx if gas_limit > POST_OSAKA_GAS_LIMIT_CAP.
             // Amsterdam removes this restriction (EIP-8037 reservoir model).
             if vm.env.config.fork >= Fork::Osaka
@@ -76,7 +79,7 @@ impl Hook for DefaultHook {
         }
 
         // (6) INTRINSIC_GAS_TOO_LOW
-        vm.add_intrinsic_gas()?;
+        vm.add_intrinsic_gas(&intrinsic)?;
 
         // (7) NONCE_IS_MAX
         vm.increment_account_nonce(sender_address)
@@ -393,10 +396,10 @@ pub fn delete_self_destruct_accounts(vm: &mut VM<'_>) -> Result<(), VMError> {
     Ok(())
 }
 
-pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
+pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Result<(), VMError> {
     // check for gas limit is grater or equal than the minimum required
-    let calldata = vm.current_call_frame.calldata.clone();
-    let (regular_gas, state_gas) = vm.get_intrinsic_gas()?;
+    let regular_gas = intrinsic.regular;
+    let state_gas = intrinsic.state;
     let intrinsic_gas: u64 = regular_gas
         .checked_add(state_gas)
         .ok_or(ExceptionalHalt::OutOfGas)?;
@@ -412,7 +415,9 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
     // Pre-Amsterdam uses the weighted EIP-7623 formula: (nonzero * 16 + zero * 4) / 4
     let mut tokens_in_calldata: u64 = if fork >= Fork::Amsterdam {
         // EIP-7976: floor tokens = total_bytes * STANDARD_TOKEN_COST (unweighted).
-        let total_bytes: u64 = calldata
+        let total_bytes: u64 = vm
+            .current_call_frame
+            .calldata
             .len()
             .try_into()
             .map_err(|_| InternalError::TypeConversion)?;
@@ -420,8 +425,9 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>) -> Result<(), VMError> {
             .checked_mul(STANDARD_TOKEN_COST)
             .ok_or(InternalError::Overflow)?
     } else {
-        // Pre-Amsterdam: weighted EIP-7623 token count.
-        gas_cost::tx_calldata(&calldata)? / STANDARD_TOKEN_COST
+        // Pre-Amsterdam: weighted EIP-7623 token count. Reuse the calldata cost already
+        // computed in `intrinsic` (same byte string) instead of re-walking the calldata.
+        intrinsic.calldata_cost / STANDARD_TOKEN_COST
     };
 
     // EIP-7981 (Amsterdam+): access-list data bytes fold into the floor-token count.
@@ -667,11 +673,8 @@ pub fn deduct_caller(
     // Up front cost is the maximum amount of wei that a user is willing to pay for. Gaslimit * gasprice + value + blob_gas_cost
     let value = vm.current_call_frame.msg_value;
 
-    let blob_gas_cost = calculate_blob_gas_cost(
-        &vm.env.tx_blob_hashes,
-        vm.env.block_excess_blob_gas,
-        &vm.env.config,
-    )?;
+    let blob_gas_cost =
+        calculate_blob_gas_cost(&vm.env.tx_blob_hashes, vm.env.base_blob_fee_per_gas)?;
 
     // The real cost to deduct is calculated as effective_gas_price * gas_limit + value + blob_gas_cost
     let up_front_cost = gas_limit_price_product

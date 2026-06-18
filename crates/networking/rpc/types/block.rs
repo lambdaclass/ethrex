@@ -121,7 +121,7 @@ mod test {
     use bytes::Bytes;
     use ethrex_common::{
         Address, Bloom, H256, U256,
-        constants::EMPTY_KECCACK_HASH,
+        constants::EMPTY_KECCAK_HASH,
         types::{EIP1559Transaction, Transaction, TxKind},
     };
     use std::str::FromStr;
@@ -171,7 +171,7 @@ mod test {
             blob_gas_used: Some(0x00),
             excess_blob_gas: Some(0x00),
             parent_beacon_block_root: Some(H256::zero()),
-            requests_hash: Some(*EMPTY_KECCACK_HASH),
+            requests_hash: Some(*EMPTY_KECCAK_HASH),
             ..Default::default()
         };
 

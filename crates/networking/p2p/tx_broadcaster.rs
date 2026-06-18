@@ -16,7 +16,7 @@ use spawned_concurrency::{
     protocol,
     tasks::{Actor, ActorRef, ActorStart as _, Context, Handler, send_interval},
 };
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     peer_table::{PeerTable, PeerTableServerProtocol as _},
@@ -131,7 +131,7 @@ pub async fn send_tx_hashes(
                 NewPooledTransactionHashes::new(txs_to_send, blockchain)?,
             );
             connection.outgoing_message(hashes_message.clone()).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions hashes");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transaction hashes");
             });
         }
     }
@@ -145,7 +145,7 @@ impl TxBroadcaster {
         blockchain: Arc<Blockchain>,
         tx_broadcasting_time_interval: u64,
     ) -> Result<ActorRef<TxBroadcaster>, TxBroadcasterError> {
-        info!("Starting Transaction Broadcaster");
+        debug!("Starting transaction broadcaster");
 
         let state = TxBroadcaster {
             peer_table: kademlia,
@@ -182,8 +182,8 @@ impl TxBroadcaster {
     ) {
         trace!(received = "BroadcastTxs");
 
-        let _ = self.do_broadcast_txs().await.inspect_err(|_| {
-            error!("Failed to broadcast transactions");
+        let _ = self.do_broadcast_txs().await.inspect_err(|err| {
+            error!(err = ?err, "Failed to broadcast transactions");
         });
     }
 
@@ -300,7 +300,7 @@ impl TxBroadcaster {
                 transactions: txs_to_send,
             });
             connection.outgoing_message(txs_message).await.unwrap_or_else(|err| {
-                error!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
+                debug!(peer_id = %format!("{:#x}", peer_id), err = ?err, "Failed to send transactions");
             });
             self.send_tx_hashes_internal(blob_txs.clone(), capabilities, &mut connection, peer_id)
                 .await?;

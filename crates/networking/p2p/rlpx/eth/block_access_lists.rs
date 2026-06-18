@@ -16,22 +16,34 @@ use ethrex_rlp::{
 pub const BLOCK_ACCESS_LIST_LIMIT: usize = 1024;
 
 /// Wrapper for optional BAL in eth/71 protocol messages.
-/// `None` (BAL unavailable) is encoded as an empty RLP list (0xc0).
+///
+/// Per EIP-8159 §"BlockAccessLists (0x13)": "The RLP empty string (`0x80`)
+/// is returned for blocks where the BAL is unavailable." An empty list
+/// (`0xc0`) is a valid BAL encoding (block with no state changes), so the
+/// empty string is the only sentinel that can never alias a real BAL.
 /// `Some(bal)` is encoded as the BAL's normal RLP list encoding.
+///
+/// INVARIANT: `BlockAccessList` always encodes as an RLP list (first byte is
+/// `0xc0` or greater), so `0x80` is unambiguously the `None` sentinel; keep
+/// this true if `BlockAccessList`'s encoding is ever refactored.
+///
+/// Public so the byte-level sentinel encoding can be asserted from the test
+/// crate (`test/tests/p2p/rlpx/block_access_lists_tests.rs`); message-level
+/// roundtrips run the bytes through snappy and can't see the raw `0x80`.
 #[derive(Debug, Clone)]
-struct OptionalBal(Option<BlockAccessList>);
+pub struct OptionalBal(pub Option<BlockAccessList>);
 
 impl RLPEncode for OptionalBal {
     fn encode(&self, buf: &mut dyn BufMut) {
         match &self.0 {
-            None => buf.put_u8(0xc0),
+            None => buf.put_u8(0x80),
             Some(bal) => bal.encode(buf),
         }
     }
 
     fn length(&self) -> usize {
         match &self.0 {
-            None => 1, // empty list = 0xc0
+            None => 1, // empty string = 0x80 per EIP-8159
             Some(bal) => bal.length(),
         }
     }
@@ -39,7 +51,7 @@ impl RLPEncode for OptionalBal {
 
 impl RLPDecode for OptionalBal {
     fn decode_unfinished(rlp: &[u8]) -> Result<(Self, &[u8]), RLPDecodeError> {
-        if rlp.first() == Some(&0xc0) {
+        if rlp.first() == Some(&0x80) {
             return Ok((OptionalBal(None), &rlp[1..]));
         }
         let (bal, rest) = BlockAccessList::decode_unfinished(rlp)?;

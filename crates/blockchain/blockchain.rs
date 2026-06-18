@@ -60,6 +60,9 @@ use crossbeam::channel::{self as cb, TryRecvError, select};
 // Re-export stateless validation functions for backwards compatibility
 #[cfg(feature = "c-kzg")]
 use ethrex_common::types::EIP4844Transaction;
+#[cfg(feature = "c-kzg")]
+use ethrex_common::types::MAX_BLOB_TX_SIZE;
+use ethrex_common::types::MAX_TX_SIZE;
 use ethrex_common::types::block_access_list::BlockAccessList;
 use ethrex_common::types::block_execution_witness::ExecutionWitness;
 use ethrex_common::types::fee_config::FeeConfig;
@@ -70,12 +73,11 @@ use ethrex_common::types::{
 };
 use ethrex_common::types::{ELASTICITY_MULTIPLIER, P2PTransaction};
 use ethrex_common::types::{Fork, MempoolTransaction};
-use ethrex_common::types::{MAX_BLOB_TX_SIZE, MAX_TX_SIZE};
 use ethrex_common::utils::keccak;
 use ethrex_common::{Address, H256, TrieLogger, U256};
 pub use ethrex_common::{
     get_total_blob_gas, validate_block_access_list_hash, validate_block_pre_execution,
-    validate_gas_used, validate_receipts_root, validate_requests_hash,
+    validate_gas_used, validate_receipts_root_and_logs_bloom, validate_requests_hash,
 };
 use ethrex_crypto::NativeCrypto;
 use ethrex_metrics::metrics;
@@ -142,6 +144,12 @@ type BlockExecutionPipelineResult = (
     usize,                   // max queue length
     [Instant; 7],            // timing instants
     Duration,                // warmer duration
+);
+
+type AddBlockPipelineInnerResult = (
+    Option<BlockAccessList>,
+    Option<ExecutionWitness>,
+    Result<(), ChainError>,
 );
 
 //TODO: Implement a struct Chain or BlockChain to encapsulate
@@ -403,6 +411,26 @@ impl Blockchain {
         }
     }
 
+    /// L1 blocks must not contain L2-only transaction types (`FeeToken` 0x7d,
+    /// `Privileged` 0x7e). Both are L2-only types unknown to other L1 clients, so
+    /// accepting one on L1 diverges consensus. `Privileged` additionally takes its
+    /// sender from an unsigned, caller-chosen `from` (no signature recovery), so it
+    /// would also let a block forge a sender. On L2 these types are valid, so this
+    /// check only applies to L1.
+    fn validate_l1_transaction_types(&self, block: &Block) -> Result<(), ChainError> {
+        if !matches!(self.options.r#type, BlockchainType::L1) {
+            return Ok(());
+        }
+        for tx in &block.body.transactions {
+            if tx.tx_type().is_l2_only() {
+                return Err(ChainError::InvalidBlock(
+                    InvalidBlockError::UnsupportedTransactionType(tx.tx_type() as u8),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Executes a block withing a new vm instance and state
     fn execute_block(
         &self,
@@ -419,6 +447,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, &parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
 
         let vm_db = StoreVmDatabase::new(self.storage.clone(), parent_header)?;
         let mut vm = self.new_evm(vm_db)?;
@@ -436,7 +465,11 @@ impl Blockchain {
             );
             return Err(e.into());
         }
-        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+        validate_receipts_root_and_logs_bloom(
+            &block.header,
+            &execution_result.receipts,
+            &NativeCrypto,
+        )?;
         validate_requests_hash(&block.header, &chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -490,6 +523,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         vm: &mut Evm,
         bal: Option<&BlockAccessList>,
+        collect_witness: bool,
     ) -> Result<BlockExecutionPipelineResult, ChainError> {
         let start_instant = Instant::now();
 
@@ -497,6 +531,7 @@ impl Blockchain {
 
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, &chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
         validate_block_body(&block.header, &block.body, &NativeCrypto)
             .map_err(|e| ChainError::InvalidBlock(InvalidBlockError::InvalidBody(e)))?;
         let block_validated_instant = Instant::now();
@@ -530,7 +565,7 @@ impl Blockchain {
             } else {
                 None
             };
-        let optimistic_witness: Option<Vec<AccountUpdate>> = if self.options.precompute_witnesses {
+        let optimistic_witness: Option<Vec<AccountUpdate>> = if collect_witness {
             optimistic_updates.as_ref().map(|m| {
                 m.iter()
                     .map(|(addr, item)| AccountUpdate {
@@ -681,7 +716,7 @@ impl Blockchain {
                             );
                             return Err(e.into());
                         }
-                        validate_receipts_root(
+                        validate_receipts_root_and_logs_bloom(
                             &block.header,
                             &execution_result.receipts,
                             &NativeCrypto,
@@ -691,13 +726,14 @@ impl Blockchain {
                             &chain_config,
                             &execution_result.requests,
                         )?;
-                        // Amsterdam validation path uses the header BAL directly to drive
-                        // execution; it doesn't rebuild a BAL, so produced_bal is None.
+                        // The parallel Amsterdam validation path uses the header BAL directly
+                        // to drive execution; it doesn't rebuild a BAL, so produced_bal is None.
                         // BAL correctness on that path is enforced inside
                         // execute_block_pipeline (header-BAL index/size/withdrawal-index
                         // checks plus unread_storage_reads / unaccessed_pure_accounts).
-                        // Pre-Amsterdam / streaming paths return Some(produced_bal) and
-                        // the hash check below still runs.
+                        // The sequential Amsterdam path rebuilds a BAL and returns
+                        // Some(produced_bal), so the hash check below runs. Pre-Amsterdam
+                        // blocks never record a BAL, so produced_bal is None there too.
                         if let Some(bal) = &produced_bal {
                             validate_block_access_list_hash(
                                 &block.header,
@@ -742,6 +778,7 @@ impl Blockchain {
                                     parent_header_ref,
                                     queue_length_ref,
                                     max_queue_length_ref,
+                                    collect_witness,
                                 )?
                             };
                         let merkle_end_instant = Instant::now();
@@ -813,6 +850,7 @@ impl Blockchain {
         parent_header: &BlockHeader,
         queue_length: &AtomicUsize,
         max_queue_length: &mut usize,
+        collect_witness: bool,
     ) -> Result<(AccountUpdatesList, Option<Vec<AccountUpdate>>), StoreError> {
         let parent_state_root = parent_header.state_root;
 
@@ -884,13 +922,8 @@ impl Blockchain {
             let mut hashed_address_cache: FxHashMap<Address, H256> = Default::default();
             let mut has_storage: FxHashSet<H256> = Default::default();
 
-            // Accumulator for witness generation (only used if precompute_witnesses is true)
             let mut accumulator: Option<FxHashMap<Address, AccountUpdate>> =
-                if self.options.precompute_witnesses {
-                    Some(FxHashMap::default())
-                } else {
-                    None
-                };
+                collect_witness.then(FxHashMap::default);
 
             for updates in rx {
                 let current_length = queue_length.fetch_sub(1, Ordering::Acquire);
@@ -1313,6 +1346,7 @@ impl Blockchain {
     ) -> Result<BlockExecutionResult, ChainError> {
         // Validate the block pre-execution
         validate_block_pre_execution(block, parent_header, chain_config, ELASTICITY_MULTIPLIER)?;
+        self.validate_l1_transaction_types(block)?;
         let (execution_result, bal) = vm.execute_block(block)?;
         // Validate execution went alright
         if let Err(e) = validate_gas_used(execution_result.block_gas_used, &block.header) {
@@ -1324,7 +1358,11 @@ impl Blockchain {
             );
             return Err(e.into());
         }
-        validate_receipts_root(&block.header, &execution_result.receipts, &NativeCrypto)?;
+        validate_receipts_root_and_logs_bloom(
+            &block.header,
+            &execution_result.receipts,
+            &NativeCrypto,
+        )?;
         validate_requests_hash(&block.header, chain_config, &execution_result.requests)?;
         if let Some(bal) = &bal {
             validate_block_access_list_hash(
@@ -1980,20 +2018,40 @@ impl Blockchain {
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<(), ChainError> {
-        let (_, result) = self.add_block_pipeline_inner(block, bal)?;
+        let (_, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result
     }
 
     /// Same as [`add_block_pipeline`] but also returns the BAL produced during execution.
-    /// On Amsterdam+ blocks the returned value is `Some(bal)`, otherwise `None`.
+    /// A BAL only exists from Amsterdam onward. On the parallel validation path the BAL
+    /// comes from the header and drives execution rather than being rebuilt, so the
+    /// returned value is `None`; the sequential path (block production or
+    /// `--no-bal-parallel-exec`) rebuilds it and returns `Some(bal)`. Pre-Amsterdam blocks
+    /// never record a BAL, so the returned value is always `None`.
     pub fn add_block_pipeline_bal(
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
     ) -> Result<Option<BlockAccessList>, ChainError> {
-        let (produced_bal, result) = self.add_block_pipeline_inner(block, bal)?;
+        let (produced_bal, _, result) = self.add_block_pipeline_inner(block, bal, false)?;
         result?;
         Ok(produced_bal)
+    }
+
+    /// Same as [`add_block_pipeline`] but returns the execution witness produced
+    /// while importing the block.
+    pub fn add_block_pipeline_with_witness(
+        &self,
+        block: Block,
+        bal: Option<&BlockAccessList>,
+    ) -> Result<ExecutionWitness, ChainError> {
+        let (_, witness, result) = self.add_block_pipeline_inner(block, bal, true)?;
+        result?;
+        witness.ok_or_else(|| {
+            ChainError::WitnessGeneration(
+                "forced witness collection completed without producing a witness".to_string(),
+            )
+        })
     }
 
     /// Runs the full block pipeline (execute + merkleize + store).
@@ -2008,7 +2066,8 @@ impl Blockchain {
         &self,
         block: Block,
         bal: Option<&BlockAccessList>,
-    ) -> Result<(Option<BlockAccessList>, Result<(), ChainError>), ChainError> {
+        force_witness: bool,
+    ) -> Result<AddBlockPipelineInnerResult, ChainError> {
         // Validate if it can be the new head and find the parent
         let Ok(parent_header) = find_parent_header(&block.header, &self.storage) else {
             // If the parent is not present, we store it as pending.
@@ -2016,7 +2075,10 @@ impl Blockchain {
             return Err(ChainError::ParentNotFound);
         };
 
-        let (mut vm, logger) = if self.options.precompute_witnesses && self.is_synced() {
+        let should_store_witness = self.options.precompute_witnesses && self.is_synced();
+        let collect_witness = should_store_witness || force_witness;
+
+        let (mut vm, logger) = if collect_witness {
             // If witness pre-generation is enabled, we wrap the db with a logger
             // to track state access (block hashes, storage keys, codes) during execution
             // avoiding the need to re-execute the block later.
@@ -2054,7 +2116,7 @@ impl Blockchain {
             merkle_queue_length,
             instants,
             warmer_duration,
-        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal)? };
+        ) = { self.execute_block_pipeline(&block, &parent_header, &mut vm, bal, collect_witness)? };
 
         let (gas_used, gas_limit, block_number, transactions_count) = (
             block.header.gas_used,
@@ -2062,27 +2124,44 @@ impl Blockchain {
             block.header.number,
             block.body.transactions.len(),
         );
+        let block_hash = block.hash();
 
+        let mut witness = None;
         if let Some(logger) = logger
             && let Some(account_updates) = accumulated_updates
         {
             let block_hash = block.hash();
-            let witness = self.generate_witness_from_account_updates(
+            let generated_witness = self.generate_witness_from_account_updates(
                 account_updates,
                 &block,
                 parent_header,
                 &logger,
             )?;
-            self.storage
-                .store_witness(block_hash, block_number, witness)?;
+            match (should_store_witness, force_witness) {
+                (true, true) => {
+                    witness = Some(generated_witness.clone());
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (true, false) => {
+                    self.storage
+                        .store_witness(block_hash, block_number, generated_witness)?;
+                }
+                (false, true) => {
+                    witness = Some(generated_witness);
+                }
+                (false, false) => {}
+            }
         };
 
-        // Store the produced BAL (present on Amsterdam+ blocks) so peers can request it
-        if let Some(bal) = &produced_bal {
-            let block_hash = block.hash();
-            if let Err(err) = self.storage.store_block_access_list(block_hash, bal) {
-                warn!("Failed to store block access list for block {block_hash}: {err}");
-            }
+        // Store the block's BAL so peers can request it later without re-execution.
+        // On the parallel Amsterdam validation path the BAL is supplied via the header
+        // and `produced_bal` is None, so fall back to the validated incoming `bal`.
+        // Pre-Amsterdam blocks have no BAL on either source, so nothing is stored.
+        if let Some(bal) = produced_bal.as_ref().or(bal)
+            && let Err(err) = self.storage.store_block_access_list(block_hash, bal)
+        {
+            warn!("Failed to store block access list for block {block_hash}: {err}");
         }
 
         let result = self.store_block(block, account_updates_list, res);
@@ -2102,6 +2181,7 @@ impl Blockchain {
                 gas_used,
                 gas_limit,
                 block_number,
+                block_hash,
                 transactions_count,
                 merkle_queue_length,
                 warmer_duration,
@@ -2120,7 +2200,7 @@ impl Blockchain {
             METRICS_BAL.slot_count.set(slot_count as i64);
         });
 
-        Ok((produced_bal, result))
+        Ok((produced_bal, witness, result))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2182,6 +2262,7 @@ impl Blockchain {
         gas_used: u64,
         gas_limit: u64,
         block_number: u64,
+        block_hash: H256,
         transactions_count: usize,
         merkle_queue_length: usize,
         warmer_duration: Duration,
@@ -2270,8 +2351,9 @@ impl Blockchain {
 
         // Format output
         let header = format!(
-            "[METRIC] BLOCK {} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%)",
+            "[METRIC] BLOCK {} {:#x} | {:.3} Ggas/s | {:.2} ms | {} txs | {:.0} Mgas ({}%)",
             block_number,
+            block_hash,
             throughput,
             total_ms,
             transactions_count,
@@ -2361,12 +2443,27 @@ impl Blockchain {
     /// - [`BatchProcessingFailure`] (if the error was caused by block processing).
     ///
     /// Note: only the last block's state trie is stored in the db
+    /// `bals` holds the per-block Block Access Lists fetched during sync, aligned
+    /// by index with `blocks`. Pass an empty slice when no BALs are available
+    /// (e.g. block import from RLP); the persistence step then stores none. Only
+    /// BALs matching their block's header commitment are persisted.
     pub async fn add_blocks_in_batch(
         &self,
         blocks: Vec<Block>,
+        bals: &[Option<BlockAccessList>],
         cancellation_token: CancellationToken,
     ) -> Result<(), (ChainError, Option<BatchBlockProcessingFailure>)> {
         let mut last_valid_hash = H256::default();
+
+        // `bals` is either empty (no BALs available) or index-aligned with `blocks`.
+        // Guard the contract so a wrong-length slice can't silently drop/ignore BALs
+        // via the `zip` in the persistence step below.
+        debug_assert!(
+            bals.is_empty() || bals.len() == blocks.len(),
+            "bals must be empty or aligned with blocks (bals={}, blocks={})",
+            bals.len(),
+            blocks.len(),
+        );
 
         let Some(first_block_header) = blocks.first().map(|e| e.header.clone()) else {
             return Err((ChainError::Custom("First block not found".into()), None));
@@ -2491,6 +2588,22 @@ impl Blockchain {
         // Check state root matches the one in block header
         validate_state_root(&last_block.header, new_state_root).map_err(|e| (e, None))?;
 
+        // EIP-8159: persist the per-block BAL fetched during sync so peers can
+        // later request it over eth/71 without re-execution (the batch path
+        // doesn't record BALs, so without this they'd fall back to regenerating
+        // against possibly-pruned parent state). Only persist a BAL that matches
+        // its header commitment; a wrong/empty peer BAL is dropped here, and the
+        // serve path guards again. Captured before `blocks` is moved below.
+        let bals_to_store: Vec<(BlockHash, BlockAccessList)> = blocks
+            .iter()
+            .zip(bals.iter())
+            .filter_map(|(block, bal)| {
+                let bal = bal.as_ref()?;
+                bal.matches_commitment(block.header.block_access_list_hash)
+                    .then(|| (block.hash(), bal.clone()))
+            })
+            .collect();
+
         let update_batch = UpdateBatch {
             account_updates: state_updates,
             storage_updates: accounts_updates,
@@ -2503,6 +2616,14 @@ impl Blockchain {
         self.storage
             .store_block_updates(update_batch)
             .map_err(|e| (e.into(), None))?;
+
+        for (block_hash, bal) in &bals_to_store {
+            if let Err(err) = self.storage.store_block_access_list(*block_hash, bal) {
+                warn!(
+                    "Failed to persist block access list for {block_hash} during batch sync: {err}"
+                );
+            }
+        }
 
         let elapsed_seconds = interval.elapsed().as_secs_f64();
         let throughput = if elapsed_seconds > 0.0 && total_gas_used != 0 {
@@ -2635,6 +2756,36 @@ impl Blockchain {
         Ok(())
     }
 
+    /// Drop blob txs with nonce below the sender's on-chain nonce at `head_hash`.
+    /// Per-block pruning only covers the head block, so stale blob txs from
+    /// non-head canonical blocks leak in and are never evicted (value/nonce
+    /// eviction pins low nonces). Resetting against on-chain nonces clears them.
+    pub fn remove_stale_blob_txs(&self, head_hash: BlockHash) -> Result<(), StoreError> {
+        let blob_txs = self.mempool.blob_txs()?;
+        if blob_txs.is_empty() {
+            return Ok(());
+        }
+        // Cache on-chain nonce per sender to avoid repeated state reads.
+        let mut nonce_by_sender: HashMap<Address, u64> = HashMap::new();
+        for (hash, sender, tx_nonce) in blob_txs {
+            let state_nonce = match nonce_by_sender.entry(sender) {
+                Entry::Occupied(e) => *e.get(),
+                Entry::Vacant(e) => {
+                    let nonce = self
+                        .storage
+                        .get_account_info_by_hash(head_hash, sender)?
+                        .map(|info| info.nonce)
+                        .unwrap_or(0);
+                    *e.insert(nonce)
+                }
+            };
+            if tx_nonce < state_nonce {
+                self.mempool.remove_transaction(&hash)?;
+            }
+        }
+        Ok(())
+    }
+
     /*
 
     SOME VALIDATIONS THAT WE COULD INCLUDE
@@ -2715,7 +2866,9 @@ impl Blockchain {
             return Err(MempoolError::TxMaxInitCodeSizeError);
         }
 
-        if config.is_osaka_activated(header.timestamp) && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
+        if config.is_osaka_activated(header.timestamp)
+            && !config.is_amsterdam_activated(header.timestamp)
+            && tx.gas_limit() > POST_OSAKA_GAS_LIMIT_CAP
         {
             // https://eips.ethereum.org/EIPS/eip-7825
             return Err(MempoolError::TxMaxGasLimitExceededError(
