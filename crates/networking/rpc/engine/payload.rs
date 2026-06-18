@@ -246,24 +246,13 @@ impl RpcHandler for NewPayloadV4Request {
             )));
         }
 
-        // EIP-7928 fork-boundary detector: V4 doesn't carry block_access_list_hash
-        // in its header schema. If the payload's block_hash matches what a V5-style
-        // header (with block_access_list_hash injected) would produce, the sender
-        // used the wrong API version; reject with -32602 (InvalidParams) to match
-        // the EELS fixture test_invalid_pre_fork_block_with_bal_hash_field
-        // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine]. Real value-mismatch
-        // tests don't match this alternate and fall through to PayloadStatus.INVALID.
-        if block.hash() != self.payload.block_hash {
-            let mut alt_header = block.header.clone();
-            alt_header.block_access_list_hash = Some(H256::zero());
-            let alt_hash = alt_header.compute_block_hash(&ethrex_crypto::NativeCrypto);
-            if alt_hash == self.payload.block_hash {
-                return Err(RpcErr::WrongParam(
-                    "engine_newPayloadV4 received header with Amsterdam block_access_list_hash field"
-                        .to_string(),
-                ));
-            }
-        }
+        // A pre-Amsterdam header that carries block_access_list_hash produces a
+        // block_hash that won't match the one ethrex reconstructs (the field is
+        // omitted from the V4 header schema). That mismatch is surfaced as
+        // PayloadStatus.INVALID via the normal block-hash check, matching the EELS
+        // fixture test_invalid_pre_fork_block_with_bal_hash_field
+        // [fork_BPO2ToAmsterdamAtTime15k-blockchain_test_engine] (INVALID_BLOCK_HASH,
+        // no engine API error code).
 
         // We use v3 since the execution payload remains the same.
         validate_execution_payload_v3(&self.payload)?;
@@ -617,14 +606,16 @@ impl RpcHandler for GetPayloadV5Request {
         let payload_bundle = get_payload(self.payload_id, &context).await?;
         let chain_config = &context.storage.get_chain_config();
 
-        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp) {
+        if !chain_config.is_osaka_activated(payload_bundle.block.header.timestamp)
+            || chain_config.is_amsterdam_activated(payload_bundle.block.header.timestamp)
+        {
             return Err(RpcErr::UnsupportedFork(format!(
                 "{:?}",
                 chain_config.get_fork(payload_bundle.block.header.timestamp)
             )));
         }
 
-        // V5 supports BAL (Amsterdam fork, EIP-7928)
+        // V5 supports BAL before Amsterdam (EIP-7928)
         let response = ExecutionPayloadResponse {
             execution_payload: ExecutionPayload::from_block(
                 payload_bundle.block,
@@ -1262,7 +1253,7 @@ async fn try_execute_payload(
             Ok(PayloadStatus::syncing())
         }
         Err(ChainError::InvalidBlock(error)) => {
-            warn!("Error executing block: {error}");
+            warn!(%block_hash, %block_number, "Error executing block: {error}");
             context
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
@@ -1273,7 +1264,7 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::EvmError(error)) => {
-            warn!("Error executing block: {error}");
+            warn!(%block_hash, %block_number, "Error executing block: {error}");
             context
                 .storage
                 .set_latest_valid_ancestor(block_hash, latest_valid_hash)
@@ -1284,7 +1275,7 @@ async fn try_execute_payload(
             ))
         }
         Err(ChainError::StoreError(error)) => {
-            warn!("Error storing block: {error}");
+            warn!(%block_hash, %block_number, "Error storing block: {error}");
             Err(RpcErr::Internal(error.to_string()))
         }
         Err(e) => {

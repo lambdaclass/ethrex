@@ -76,6 +76,19 @@ A changelog will be generated based on commit names (using conventional commits)
 
 ## 4th - Test & Publish Release
 
+### Testing checklist
+
+Before publishing the release, run through the following checks using the pre-release binaries:
+
+- [ ] Upgrade `ethrex-ethdocker-mainnet`
+- [ ] Upgrade `ethrex-mainnet-1`
+- [ ] Upgrade `ethrex-minimum-mainnet`
+- [ ] Launch multisync on `ethrex-multisync-main`
+- [ ] Upgrade a local L2 created with the previous version and run the integration tests
+- [ ] Run the L2 integration tests with a SP1 prover on the GPU server (`l2-gpu`)
+
+### Publish
+
 Once the pre-release is created and you want to publish the release, go to the [release page](https://github.com/lambdaclass/ethrex/releases) and follow the next steps:
 
 1. Click on the edit button of the last pre-release created
