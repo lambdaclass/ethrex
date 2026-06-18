@@ -22,7 +22,7 @@ use crate::{
 use ethrex_common::{Address, U256, types::FrameMode, types::Log};
 
 /// Convert a u64 index to usize, returning InvalidOpcode on overflow.
-fn index_to_usize(val: u64) -> Result<usize, VMError> {
+pub(crate) fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
