@@ -85,6 +85,15 @@ impl RpcHandler for BuildBlockV1Request {
             Some(value) if !value.is_null() => decode_hex_value(value)?,
             _ => Bytes::new(),
         };
+        // Block validation rejects headers with `extra_data` longer than 32 bytes
+        // (crates/common/types/block.rs); reject it here so the method never
+        // returns a payload that is invalid by consensus rules.
+        if extra_data.len() > 32 {
+            return Err(RpcErr::BadParams(format!(
+                "extraData exceeds 32 bytes (got {})",
+                extra_data.len()
+            )));
+        }
         // `PayloadAttributesV3` has no `slotNumber`, so read it from the raw
         // attributes object (EIP-7843, present from Amsterdam onwards).
         let slot_number = match params[1].get("slotNumber") {

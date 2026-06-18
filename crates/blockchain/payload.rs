@@ -727,6 +727,18 @@ impl Blockchain {
     ) -> Result<(), ChainError> {
         let base_fee = context.base_fee_per_gas();
         for tx in transactions {
+            // L1 blocks must not contain L2-only transaction types (`FeeToken`
+            // 0x7d, `Privileged` 0x7e). Block import rejects them too
+            // (`validate_l1_transaction_types`); reject here so an explicit-tx
+            // build never produces a payload no other L1 client would accept.
+            if let BlockchainType::L1 = self.options.r#type
+                && tx.tx_type().is_l2_only()
+            {
+                return Err(ChainError::Custom(format!(
+                    "transaction type {:#x} is not valid on L1",
+                    tx.tx_type() as u8
+                )));
+            }
             let sender = tx.sender(&NativeCrypto).map_err(|err| {
                 ChainError::Custom(format!("invalid transaction signature: {err}"))
             })?;
