@@ -6,6 +6,7 @@ mod destroyed_refault_tests;
 mod eip7702_tests;
 mod eip7708_tests;
 mod eip7778_tests;
+mod eip7906_tests;
 mod eip7928_tests;
 mod eip8037_tests;
 mod eip8141_tests;

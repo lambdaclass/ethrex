@@ -69,6 +69,8 @@ pub const FRAMEDATACOPY_STATIC: u64 = 3;
 pub const FRAMEDATACOPY_DYNAMIC_BASE: u64 = 3;
 pub const FRAMEPARAM: u64 = 2;
 pub const SIGPARAM: u64 = 2;
+/// EIP-7906 TXTRACE. Provisional value (EIP marks gas cost TBD; 100 matches the EIP's own example, ~warm access).
+pub const TXTRACE: u64 = 100;
 
 pub fn framedatacopy(
     new_memory_size: usize,

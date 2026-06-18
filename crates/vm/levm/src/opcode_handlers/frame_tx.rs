@@ -22,7 +22,7 @@ use crate::{
 use ethrex_common::{Address, U256, types::FrameMode, types::Log};
 
 /// Convert a u64 index to usize, returning InvalidOpcode on overflow.
-fn index_to_usize(val: u64) -> Result<usize, VMError> {
+pub(crate) fn index_to_usize(val: u64) -> Result<usize, VMError> {
     usize::try_from(val).map_err(|_| ExceptionalHalt::InvalidOpcode.into())
 }
 
@@ -46,7 +46,7 @@ pub fn u256_to_offset(value: U256) -> Option<usize> {
 /// NOTE: TXPARAM(0x06) / load_tx_param 0x06 intentionally still reports the
 /// MAXIMUM cost (max_fee-based, spec line 455) — that is a different quantity;
 /// do not change it.
-fn compute_tx_cost(
+pub(crate) fn compute_tx_cost(
     ctx: &crate::vm::FrameTxContext,
     effective_gas_price: U256,
     blob_gas_cost: U256,
