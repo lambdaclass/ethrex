@@ -543,7 +543,7 @@ impl<'a> VM<'a> {
         let is_create = self.is_create()?;
 
         if fork >= Fork::Amsterdam {
-            // EIP-2780 (PRELIMINARY EIPs#11645): resource-based intrinsic gas.
+            // EIP-2780 (merged EIPs#11645): resource-based intrinsic gas.
             // The flat 21000 base is decomposed into a sender base + recipient
             // access charge + value-transfer charge. These tx-level sender/to
             // charges are ALWAYS the cold rate; access lists do NOT warm
@@ -819,7 +819,7 @@ pub fn intrinsic_gas_dimensions(
     let is_create = matches!(to, TxKind::Create);
 
     if fork >= Fork::Amsterdam {
-        // EIP-2780 (PRELIMINARY EIPs#11645): resource-based intrinsic gas.
+        // EIP-2780 (merged EIPs#11645): resource-based intrinsic gas.
         // Mirror of `VM::get_intrinsic_gas`. These tx-level sender/to charges
         // are ALWAYS the cold rate; access lists do NOT warm tx-level accounts.
         let is_self_transfer = matches!(to, TxKind::Call(addr) if addr == sender);

@@ -2083,4 +2083,49 @@ mod state_gas_tests {
         assert_eq!(frame_spilled(&vm), 0, "no spill to drain");
         assert_eq!(vm.state_gas_spill, 0);
     }
+
+    /// EIP-8037 #3002 (Case 1) under state-gas pressure: the unconditional
+    /// new-account charge spills into `gas_remaining` (reservoir < NEW_ACCOUNT),
+    /// so the success-arm `credit_state_gas_refund` must restore `gas_remaining`
+    /// LIFO (spill-drain branch) rather than the reservoir. Complements the
+    /// no-spill proxy above so both `credit_state_gas_refund` paths are covered.
+    #[test]
+    fn create_success_to_alive_target_refund_proxy_spill() {
+        const NEW_ACCOUNT: u64 = 7_500;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        // Reservoir = 0 forces the charge to spill fully into gas_remaining.
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, 0);
+        vm.state_gas_new_account = NEW_ACCOUNT;
+
+        let gas_before = gas_remaining(&vm);
+
+        vm.increase_state_gas(vm.state_gas_new_account).unwrap();
+        assert_eq!(frame_spilled(&vm), NEW_ACCOUNT, "charge fully spilled");
+        assert_eq!(
+            vm.state_gas_spill, NEW_ACCOUNT,
+            "block-accounting spill set"
+        );
+        assert!(
+            gas_remaining(&vm) < gas_before,
+            "spill drew from gas_remaining"
+        );
+
+        vm.credit_state_gas_refund(vm.state_gas_new_account)
+            .unwrap();
+
+        assert_eq!(
+            vm.state_gas_used, 0,
+            "alive-target refund makes the new-account charge net-zero"
+        );
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "refund restored gas_remaining LIFO (spill drained first)"
+        );
+        assert_eq!(frame_spilled(&vm), 0, "spill fully drained");
+        assert_eq!(vm.state_gas_spill, 0, "block-accounting spill cleared");
+        assert_eq!(vm.state_gas_reservoir, 0, "reservoir untouched (was 0)");
+    }
 }

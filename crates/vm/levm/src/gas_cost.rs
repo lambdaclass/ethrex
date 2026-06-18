@@ -189,7 +189,7 @@ pub const BLOB_GAS_PER_BLOB: u64 = 131072;
 pub const ACCESS_LIST_STORAGE_KEY_COST: u64 = 1900;
 pub const ACCESS_LIST_ADDRESS_COST: u64 = 2400;
 
-// ===== EIP-8038 PRELIMINARY Amsterdam values (EIPs#11802 / EELS#2972) — swap here =====
+// ===== EIP-8038 Amsterdam values (merged EIPs#11802) =====
 pub const COLD_ACCOUNT_ACCESS_AMSTERDAM: u64 = 3000;
 pub const COLD_STORAGE_ACCESS_AMSTERDAM: u64 = 3000;
 pub const ACCESS_LIST_ADDRESS_COST_AMSTERDAM: u64 = 3000;
@@ -200,7 +200,7 @@ pub const CALL_VALUE_AMSTERDAM: u64 = 10300;
 pub const STORAGE_CLEAR_REFUND_AMSTERDAM: i64 = 12480;
 pub const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
 
-// ===== EIP-2780 PRELIMINARY Amsterdam values (EIPs#11645) — swap here =====
+// ===== EIP-2780 Amsterdam values (merged EIPs#11645) =====
 // Resource-based intrinsic transaction gas. The flat 21000 base is decomposed
 // into: sender base (TX_BASE_COST_AMSTERDAM = 12000), recipient access, and a
 // value-transfer charge split between a transfer log cost and a value cost.

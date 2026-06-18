@@ -875,14 +875,6 @@ impl<'a> VM<'a> {
 
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
-        // EIP-8037 (#3002): capture whether the create target is already alive
-        // (exists and non-empty) BEFORE any nonce increment / state mutation,
-        // mirroring EELS `target_alive = is_account_alive(tx_state, contract_address)`.
-        // A non-colliding alive target must have balance > 0 (collision rules forbid
-        // code/nonce/storage), so `!is_empty()` matches `is_account_alive` semantics:
-        // nonexistent or empty -> not alive. Used on the success path to refund the
-        // unconditionally-charged new-account state gas (no new account leaf created).
-        let target_alive = !new_account.is_empty();
         if new_account.create_would_collide() {
             // Per EELS: on collision, regular gas stays consumed (not returned)
             // but the CREATE account state gas IS refunded — no account was created.
@@ -894,6 +886,16 @@ impl<'a> VM<'a> {
                 .exit_early(gas_limit, Some("CreateAccExists".to_string()))?;
             return Ok(OpcodeResult::Continue);
         }
+        // EIP-8037 (#3002): capture whether the create target is already alive,
+        // AFTER the collision guard and BEFORE any nonce increment / state
+        // mutation, mirroring EELS `target_alive = is_account_alive(...)`.
+        // `create_would_collide()` already excluded any account with code, nonce,
+        // or storage, so a surviving non-empty target can differ only by
+        // balance > 0; hence `!is_empty()` is exactly `is_account_alive` for
+        // create targets (nonexistent or empty -> not alive). Used on the success
+        // path to refund the unconditionally-charged new-account state gas (no new
+        // account leaf created).
+        let target_alive = !self.get_account_mut(new_address)?.is_empty();
 
         // Create BAL checkpoint before entering create call for potential revert per EIP-7928
         let bal_checkpoint = self.db.bal_recorder.as_ref().map(|r| r.checkpoint());

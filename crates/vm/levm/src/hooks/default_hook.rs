@@ -129,7 +129,7 @@ impl Hook for DefaultHook {
             validate_type_4_tx(vm)?;
         }
 
-        // EIP-2780 (PRELIMINARY EIPs#11645) top-level post-7702 charges.
+        // EIP-2780 (merged EIPs#11645) top-level post-7702 charges.
         // Applied AFTER EIP-7702 authorizations are set (so recipient emptiness /
         // delegation reflect the post-auth state) and BEFORE the value transfer.
         // Only for Amsterdam+ non-create transactions.
