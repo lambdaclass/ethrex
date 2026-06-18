@@ -186,11 +186,7 @@ impl NodeRef {
             NodeRef::Hash(hash @ NodeHash::Inline(_)) => {
                 Ok(Some(Arc::new(Node::decode(hash.as_ref())?)))
             }
-            NodeRef::Hash(_) => db
-                .get(path)?
-                .filter(|rlp| !rlp.is_empty())
-                .map(|rlp| Ok(Arc::new(Node::decode(&rlp)?)))
-                .transpose(),
+            NodeRef::Hash(_) => db.get_node(path),
         }
     }
 
@@ -243,15 +239,10 @@ impl NodeRef {
                 self.get_node_mut(db, path)
             }
             NodeRef::Hash(hash @ NodeHash::Hashed(_)) => {
-                let Some(node) = db
-                    .get(path.clone())?
-                    .filter(|rlp| !rlp.is_empty())
-                    .map(|rlp| Node::decode(&rlp).map_err(TrieError::RLPDecode))
-                    .transpose()?
-                else {
+                let Some(node) = db.get_node(path.clone())? else {
                     return Ok(None);
                 };
-                *self = NodeRef::Node(Arc::new(node), OnceLock::from(*hash));
+                *self = NodeRef::Node(node, OnceLock::from(*hash));
                 self.get_node_mut(db, path)
             }
         }

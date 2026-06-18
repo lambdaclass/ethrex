@@ -75,6 +75,7 @@ pub mod store;
 pub mod trie;
 pub mod utils;
 
+pub use layering::DecodedNodeOverlay;
 pub use layering::apply_prefix;
 pub use store::{
     AccountUpdatesList, DEFAULT_ROCKSDB_BLOCK_CACHE_SIZE_BYTES, EngineType, StorageReadSession,
