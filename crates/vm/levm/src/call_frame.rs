@@ -293,6 +293,11 @@ pub struct CallFrame {
     /// EIP-8037: EELS per-frame `state_gas_spilled`; LIFO refund source;
     /// propagated to parent on child success.
     pub frame_state_gas_spilled: u64,
+    /// EIP-8037 (#3002): whether this CREATE/CREATE2 child's target address was
+    /// already alive (existed and non-empty) before the create mutated state.
+    /// Read in `handle_return_create` to refund the unconditional new-account
+    /// state gas on the success path (no new account leaf is created).
+    pub target_alive: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -399,6 +404,7 @@ impl CallFrame {
             sub_return_data: Bytes::default(),
             state_gas_used_at_entry: 0,
             frame_state_gas_spilled: 0,
+            target_alive: false,
         }
     }
 

@@ -178,6 +178,16 @@ impl<'a> VM<'a> {
             }));
         }
 
+        // EIP-8037 (#3002): capture whether the create-tx target is already alive
+        // (exists and non-empty) BEFORE balance/nonce mutation, mirroring EELS
+        // `target_alive = is_account_alive(message.current_target)` (set in
+        // `process_message_call` only for the non-colliding deployable path).
+        // A non-colliding alive target must have balance > 0 (collision rules forbid
+        // code/nonce/storage), so `!is_empty()` matches `is_account_alive` semantics.
+        // Used in `finalize_execution` to refund the unconditional new-account state
+        // gas on a successful create-tx whose target already existed.
+        self.created_target_alive = !new_account.is_empty();
+
         let value = self.current_call_frame.msg_value;
         self.increase_account_balance(new_contract_address, value)?;
 

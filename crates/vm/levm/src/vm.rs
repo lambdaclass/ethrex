@@ -540,6 +540,13 @@ pub struct VM<'a> {
     /// execution portion to the reservoir — block accounting then bills the intrinsic
     /// (matches EELS `tx_state_gas = intrinsic_state_gas + tx_output.state_gas_used`).
     pub intrinsic_state_gas: u64,
+    /// EIP-8037 (#3002): whether a top-level CREATE transaction targeted an
+    /// already-alive account (existed and non-empty) at tx start, captured in
+    /// `handle_create_transaction` before any state mutation. Mirrors EELS
+    /// `MessageCallOutput.created_target_alive`. Extends the create-tx
+    /// new-account refund in `finalize_execution` to also fire on success when
+    /// the target was alive (no new account leaf created). Default false.
+    pub created_target_alive: bool,
     /// The opcode table mapping opcodes to opcode handlers for fast lookup.
     /// A shared `&'static` reference to a per-fork table that is `const`-built once for the
     /// whole process (immutable), so each VM holds only a pointer instead of a 2 KB inline copy.
@@ -729,6 +736,7 @@ impl<'a> VM<'a> {
             state_gas_auth_base,
             state_refund: 0,
             intrinsic_state_gas: 0,
+            created_target_alive: false,
             current_call_frame: CallFrame::new(
                 env.origin,
                 callee,
@@ -1294,29 +1302,34 @@ impl<'a> VM<'a> {
         // `handle_opcode_result`). The intrinsic portion stays in `state_gas_used` so block
         // accounting bills it. No reservoir-move is performed here. Collision returns before
         // any execution state gas is charged, so it has nothing to refill (see the create
-        // collision branch in `handle_create_transaction`). The create-tx NEW_ACCOUNT refund
-        // below still runs for every top-level CREATE-tx failure, collision included.
-        if self.env.config.fork >= Fork::Amsterdam && !ctx_result.is_success() {
-            // EIP-8037: on ANY top-level CREATE-tx
-            // failure (revert / halt / OOG / collision), refund the intrinsic
-            // `STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte` charge to the reservoir.
-            // Also add to `state_refund` so block-level accounting subtracts it.
-            // EELS reference: fork.py::process_transaction:
-            //   if isinstance(tx.to, Bytes0):
-            //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
-            //       tx_output.state_gas_left += new_account_refund
-            //       tx_output.state_refund   += new_account_refund
-            if self.is_create()? {
-                let new_account_refund = self.state_gas_new_account;
-                self.state_gas_reservoir = self
-                    .state_gas_reservoir
-                    .checked_add(new_account_refund)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_refund = self
-                    .state_refund
-                    .checked_add(new_account_refund)
-                    .ok_or(InternalError::Overflow)?;
-            }
+        // collision branch in `handle_create_transaction`).
+        //
+        // EIP-8037 (#3002): the create-tx NEW_ACCOUNT refund fires for every top-level
+        // CREATE-tx failure (revert / halt / OOG / collision), AND on success when the
+        // target was already alive (`created_target_alive`) — no new account leaf created.
+        // EELS reference: fork.py::process_transaction:
+        //   if isinstance(tx.to, Bytes0) and (
+        //       tx_output.error is not None or tx_output.created_target_alive
+        //   ):
+        //       new_account_refund = STATE_BYTES_PER_NEW_ACCOUNT * COST_PER_STATE_BYTE
+        //       tx_output.state_gas_left += new_account_refund
+        //       tx_output.state_refund   += new_account_refund
+        // The `created_target_alive` term only ever holds on the success path: on
+        // collision `handle_create_transaction` returns before setting it, so the
+        // collision refund still fires exactly once via `!is_success`.
+        if self.env.config.fork >= Fork::Amsterdam
+            && self.is_create()?
+            && (!ctx_result.is_success() || self.created_target_alive)
+        {
+            let new_account_refund = self.state_gas_new_account;
+            self.state_gas_reservoir = self
+                .state_gas_reservoir
+                .checked_add(new_account_refund)
+                .ok_or(InternalError::Overflow)?;
+            self.state_refund = self
+                .state_refund
+                .checked_add(new_account_refund)
+                .ok_or(InternalError::Overflow)?;
         }
 
         // See `prepare_execution`: per-hook `Rc::clone` avoids the `self.hooks.clone()` realloc.
@@ -1643,6 +1656,7 @@ mod state_gas_tests {
             state_gas_auth_base: 0,
             state_refund: 0,
             intrinsic_state_gas: 0,
+            created_target_alive: false,
             opcode_table: VM::build_opcode_table(fork),
             crypto,
         }
@@ -2013,5 +2027,60 @@ mod state_gas_tests {
             vm.state_gas_used, 0,
             "state_gas_used must stay 0 pre-Amsterdam"
         );
+    }
+
+    /// EIP-8037 #3002 (Case 1, CREATE/CREATE2 success-to-alive-target) — method-level proxy.
+    ///
+    /// Decision: a full create-to-an-already-alive-target execution path is NOT feasible
+    /// fixture-free here (it needs a funded sender, real initcode, a pre-existing alive target
+    /// account and a working store — the same `VM::new`/`Substate::initialize` machinery the
+    /// other tests document as unavailable without an `ethrex-storage`/`ethrex-blockchain`
+    /// dependency cycle; the EF v6.0.0 fixtures for #3002 are also unavailable). This test is
+    /// therefore the documented proxy: it reproduces the exact two-step the production
+    /// `generic_create` success arm performs when `target_alive` holds — the unconditional
+    /// new-account state-gas charge (`increase_state_gas(state_gas_new_account)` at the top of
+    /// `generic_create`) followed by `credit_state_gas_refund(state_gas_new_account)` (the
+    /// `if target_alive` refund added to the `handle_return_create` success arm) — and asserts
+    /// the reservoir and `state_gas_used` are fully restored, i.e. the unconditional charge is
+    /// net-zero when the target was already alive. Mirrors EELS `generic_create`:
+    ///   if target_alive: credit_state_gas_refund(evm, StateGasCosts.NEW_ACCOUNT)
+    #[test]
+    fn create_success_to_alive_target_refund_proxy() {
+        const NEW_ACCOUNT: u64 = 7_500;
+        let mut db = stub_db();
+        let tx = stub_tx();
+        let crypto = NativeCrypto;
+        // Reservoir large enough that the unconditional charge draws fully from it (no spill),
+        // matching a CREATE with ample state-gas headroom.
+        let mut vm = build_vm(amsterdam_env(), &mut db, &tx, &crypto, NEW_ACCOUNT);
+        vm.state_gas_new_account = NEW_ACCOUNT;
+
+        let gas_before = gas_remaining(&vm);
+        let reservoir_before = vm.state_gas_reservoir;
+
+        // Top of `generic_create`: charge the new-account state gas unconditionally.
+        vm.increase_state_gas(vm.state_gas_new_account).unwrap();
+        assert_eq!(vm.state_gas_used, as_i64(NEW_ACCOUNT), "charge landed");
+        assert_eq!(vm.state_gas_reservoir, 0, "charge drawn from reservoir");
+
+        // Success arm of `handle_return_create` with `target_alive == true`: refund it.
+        vm.credit_state_gas_refund(vm.state_gas_new_account)
+            .unwrap();
+
+        assert_eq!(
+            vm.state_gas_used, 0,
+            "alive-target refund makes the new-account charge net-zero"
+        );
+        assert_eq!(
+            vm.state_gas_reservoir, reservoir_before,
+            "refund restores the reservoir"
+        );
+        assert_eq!(
+            gas_remaining(&vm),
+            gas_before,
+            "gas_remaining untouched (charge and refund both via reservoir)"
+        );
+        assert_eq!(frame_spilled(&vm), 0, "no spill to drain");
+        assert_eq!(vm.state_gas_spill, 0);
     }
 }

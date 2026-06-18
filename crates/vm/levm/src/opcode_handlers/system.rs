@@ -875,6 +875,14 @@ impl<'a> VM<'a> {
 
         // Deployment will fail (consuming all gas) if the contract already exists.
         let new_account = self.get_account_mut(new_address)?;
+        // EIP-8037 (#3002): capture whether the create target is already alive
+        // (exists and non-empty) BEFORE any nonce increment / state mutation,
+        // mirroring EELS `target_alive = is_account_alive(tx_state, contract_address)`.
+        // A non-colliding alive target must have balance > 0 (collision rules forbid
+        // code/nonce/storage), so `!is_empty()` matches `is_account_alive` semantics:
+        // nonexistent or empty -> not alive. Used on the success path to refund the
+        // unconditionally-charged new-account state gas (no new account leaf created).
+        let target_alive = !new_account.is_empty();
         if new_account.create_would_collide() {
             // Per EELS: on collision, regular gas stays consumed (not returned)
             // but the CREATE account state gas IS refunded — no account was created.
@@ -919,6 +927,9 @@ impl<'a> VM<'a> {
         // `vm.state_gas_used`, so the revert restore in `handle_return_create`
         // keeps the parent's pre-CREATE intrinsic without re-refunding it.
         new_call_frame.state_gas_used_at_entry = self.state_gas_used;
+        // EIP-8037 (#3002): thread the pre-mutation target-alive flag to the
+        // success arm of `handle_return_create`.
+        new_call_frame.target_alive = target_alive;
 
         self.add_callframe(new_call_frame);
 
@@ -1332,6 +1343,7 @@ impl<'a> VM<'a> {
             call_frame_backup,
             memory: old_callframe_memory,
             frame_state_gas_spilled: child_frame_state_gas_spilled,
+            target_alive,
             stack,
             ..
         } = executed_call_frame;
@@ -1367,6 +1379,17 @@ impl<'a> VM<'a> {
                     .frame_state_gas_spilled
                     .checked_add(child_frame_state_gas_spilled)
                     .ok_or(InternalError::Overflow)?;
+                // EIP-8037 (#3002): the parent charged the new-account state gas
+                // unconditionally before the child ran. On success, if the target was
+                // already alive (existed and non-empty), no new account leaf is created,
+                // so refund the new-account portion — EELS `generic_create`:
+                //   if target_alive: credit_state_gas_refund(evm, StateGasCosts.NEW_ACCOUNT)
+                // LIFO via `credit_state_gas_refund` (drains the parent frame spill first,
+                // then the reservoir). Disjoint from the failure/collision refunds, which
+                // only fire on the Revert arm / early-return paths.
+                if self.env.config.fork >= Fork::Amsterdam && target_alive {
+                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                }
             }
             TxResult::Revert(err) => {
                 // EIP-8037: the child already self-refilled its state gas via
