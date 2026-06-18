@@ -2940,6 +2940,7 @@ dependencies = [
  "ethrex-blockchain",
  "ethrex-common 17.0.0",
  "ethrex-p2p",
+ "ethrex-rlp 17.0.0",
  "ethrex-rpc",
  "ethrex-storage 17.0.0",
  "hex",
