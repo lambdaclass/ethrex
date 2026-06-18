@@ -759,7 +759,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -792,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -815,7 +815,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-sp1"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "ethrex-guest-program",
  "ethrex-vm",
@@ -849,7 +849,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -867,7 +867,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "derive_more",
@@ -884,7 +884,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -893,7 +893,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "17.0.0"
+version = "18.0.0"
 dependencies = [
  "bytes",
  "derive_more",
