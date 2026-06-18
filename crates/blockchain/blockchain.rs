@@ -2908,6 +2908,15 @@ impl Blockchain {
             return Err(MempoolError::TxIntrinsicGasCostAboveLimitError);
         }
 
+        // EIP-7702: an empty `authorization_list` makes a type-4 tx invalid
+        // (LEVM rejects it in `validate_type_4_tx`). Reject at admission so it
+        // never enters the pool.
+        if let Transaction::EIP7702Transaction(eip7702) = tx
+            && eip7702.authorization_list.is_empty()
+        {
+            return Err(MempoolError::EmptyAuthorizationList);
+        }
+
         // Check that the specified blob gas fee is above the minimum value
         if let Some(fee) = tx.max_fee_per_blob_gas() {
             // Blob tx fee checks

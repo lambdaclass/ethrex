@@ -119,6 +119,8 @@ pub enum MempoolError {
     InvalidTxSender(#[from] ethrex_crypto::CryptoError),
     #[error("Attempted to replace a pooled transaction with an underpriced transaction")]
     UnderpricedReplacement,
+    #[error("EIP-7702 transaction has an empty authorization list")]
+    EmptyAuthorizationList,
 }
 
 #[derive(Debug)]
