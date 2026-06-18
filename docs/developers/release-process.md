@@ -103,7 +103,32 @@ Once the pre-release is created and you want to publish the release, go to the [
 
     ![edit title](../img/publish_release_step_3.png)
 
-4. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
+4. Customize the release notes.
+
+    The auto-generated changelog lists every commit, but it doesn't tell operators what actually matters in this release. Above the auto-generated changelog, add a hand-written summary using [GitHub alerts](https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#alerts). Pick boxes by what the operator needs to decide, in this order:
+
+    - `> [!IMPORTANT]` — **only** when the release carries critical security or correctness fixes. One line stating that upgrading is strongly recommended for all operators.
+    - `> [!WARNING]` — **only** when the upgrade can't be cleanly undone or carries a breaking change the operator must account for: a database schema migration you can't roll back from, a required resync, removed or renamed CLI flags / config options, changed defaults, breaking RPC/API changes, or new minimum requirements (disk, dependency, consensus-client version). State what changes and what the operator must do.
+    - `> [!NOTE]` — **always**. A **What's new** list of the highlights (new features, important fixes), plus a line saying whether a resync is needed (if not already covered above).
+
+    Keep the space after `>` (`> [!NOTE]`, not `>[!NOTE]`) and leave a blank line between boxes so each renders separately. Drop the `[!IMPORTANT]` / `[!WARNING]` boxes when they don't apply — a routine release needs only the `[!NOTE]`.
+
+    ```markdown
+    > [!IMPORTANT]
+    > This release contains critical fixes. Upgrading is strongly recommended for all operators.
+
+    > [!WARNING]
+    > This release changes the database schema; once you upgrade you can't roll back to a previous version. The migration runs automatically.
+
+    > [!NOTE]
+    > **What's new**
+    > - <highlight>
+    > - <highlight>
+    >
+    > No resync is needed.
+    ```
+
+5. Set the release as the latest release (you will need to uncheck the pre-release first). And finally, click on `Update release`
 
     ![set latest release](../img/publish_release_step_4.png)
 
@@ -168,7 +193,7 @@ If hotfixes are needed before the final release, commit them to `release/vX.Y.Z`
 
 ### Failure on "latest release" workflow
 
-If the CI fails when setting a release as latest (step 4), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
+If the CI fails when setting a release as latest (step 5), Docker tags `latest` and `l2` may not be updated. To manually push those changes, follow these steps:
 
 - Create a new Github Personal Access Token (PAT) from the [settings](https://github.com/settings/tokens/new).
 - Check `write:packages` permission (this will auto-check `repo` permissions too), give a name and a short expiration time.
