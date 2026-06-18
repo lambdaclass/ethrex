@@ -89,9 +89,11 @@ pub enum MempoolError {
         "Transaction gas limit exceeds maximum. Transaction hash: {0}, transaction gas limit: {1}"
     )]
     TxMaxGasLimitExceededError(H256, u64),
-    #[error("Transaction priority fee above gas fee")]
-    TxGasOverflowError,
     #[error("Transaction intrinsic gas overflow")]
+    TxGasOverflowError,
+    #[error("Could not compute transaction intrinsic gas: {0}")]
+    IntrinsicGasError(String),
+    #[error("Transaction priority fee above gas fee")]
     TxTipAboveFeeCapError,
     #[error("Transaction intrinsic gas cost above gas limit")]
     TxIntrinsicGasCostAboveLimitError,

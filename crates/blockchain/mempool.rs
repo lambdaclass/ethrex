@@ -793,7 +793,7 @@ pub fn transaction_intrinsic_gas(
     // Amsterdam, and keeps mempool admission in lockstep with the VM.
     let fork = config.fork(header.timestamp);
     let (regular, state) = intrinsic_gas_dimensions(tx, fork, header.gas_limit)
-        .map_err(|_| MempoolError::TxGasOverflowError)?;
+        .map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?;
     let intrinsic = regular
         .checked_add(state)
         .ok_or(MempoolError::TxGasOverflowError)?;
@@ -801,7 +801,7 @@ pub fn transaction_intrinsic_gas(
     // it the same way (`fork >= Fork::Prague` in the default hook). Applying it
     // pre-Prague would spuriously raise the admission threshold.
     let calldata_floor = if fork >= Fork::Prague {
-        intrinsic_gas_floor(tx, fork).map_err(|_| MempoolError::TxGasOverflowError)?
+        intrinsic_gas_floor(tx, fork).map_err(|e| MempoolError::IntrinsicGasError(e.to_string()))?
     } else {
         0
     };
