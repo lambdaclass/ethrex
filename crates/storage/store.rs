@@ -116,6 +116,10 @@ enum FKVGeneratorControlMessage {
 
 // 64mb
 const CODE_CACHE_MAX_SIZE: u64 = 64 * 1024 * 1024;
+
+// A cache size of 256 is sufficient for RPC reads of recent blocks.
+// Initial synchronization or requests spanning hundreds of canonical
+// blocks will thrash the cache.
 const BLOCK_HASH_CACHE_SIZE: usize = 256;
 
 #[derive(Debug)]
