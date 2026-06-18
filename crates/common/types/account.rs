@@ -55,11 +55,16 @@ impl Code {
     // SAFETY: hash will be stored as-is, so it either needs to match
     // the real code hash (i.e. it was precomputed and we're reusing)
     // or never be read (e.g. for initcode).
+    //
+    // `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
+    // appended internally by `from_parts_unchecked`.
     pub fn from_bytecode_unchecked(code: Bytes, hash: H256) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         Self::from_parts_unchecked(hash, &code, jump_targets)
     }
 
+    /// `code` is the logical, unpadded bytecode; `BYTECODE_PADDING` STOP bytes are
+    /// appended internally by `from_parts_unchecked`.
     pub fn from_bytecode(code: Bytes, crypto: &dyn Crypto) -> Self {
         let jump_targets = Self::compute_jump_targets(&code);
         let hash = H256(crypto.keccak256(code.as_ref()));
@@ -68,6 +73,11 @@ impl Code {
 
     /// Builds a `Code` from precomputed parts. The caller must guarantee `hash`
     /// and `jump_targets` correspond to `code`; neither is recomputed or validated.
+    ///
+    /// `code` is the logical, unpadded bytecode: this function appends
+    /// `BYTECODE_PADDING` STOP bytes and records the original length in
+    /// `bytecode_len`. Never pass a pre-padded buffer, or the logical length and
+    /// every `JUMPDEST`/`PUSH` offset derived from it would be wrong.
     pub fn from_parts_unchecked(hash: H256, code: &[u8], jump_targets: Arc<[u32]>) -> Self {
         let bytecode_len = code.len();
         let mut padded_code = Vec::with_capacity(bytecode_len + BYTECODE_PADDING);
