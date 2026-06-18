@@ -690,7 +690,7 @@ fn blob_txs_lists_only_blob_txs_with_sender_and_nonce() {
         to: TxKind::Call(Address::from_low_u64_be(1)),
         ..Default::default()
     });
-    let plain_hash = plain.hash();
+    let plain_hash = plain.hash(&NativeCrypto);
     mempool
         .add_transaction(plain_hash, sender, MempoolTransaction::new(plain, sender))
         .unwrap();

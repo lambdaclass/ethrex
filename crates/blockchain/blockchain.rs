@@ -2599,7 +2599,7 @@ impl Blockchain {
             .zip(bals.iter())
             .filter_map(|(block, bal)| {
                 let bal = bal.as_ref()?;
-                bal.matches_commitment(block.header.block_access_list_hash)
+                bal.matches_commitment(block.header.block_access_list_hash, &NativeCrypto)
                     .then(|| (block.hash(), bal.clone()))
             })
             .collect();

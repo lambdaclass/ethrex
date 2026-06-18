@@ -1314,7 +1314,7 @@ async fn handle_incoming_message(
                                 None
                             }
                         };
-                        bal.matches_commitment(commitment).then_some(bal)
+                        bal.matches_commitment(commitment, &NativeCrypto).then_some(bal)
                     }
                     Ok(None) => None,
                     Err(err) => {

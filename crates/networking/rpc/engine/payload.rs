@@ -7,6 +7,7 @@ use ethrex_common::types::payload::PayloadBundle;
 use ethrex_common::types::requests::{EncodedRequests, compute_requests_hash};
 use ethrex_common::types::{Block, BlockBody, BlockHash, BlockHeader, BlockNumber, Fork};
 use ethrex_common::{H256, U256};
+use ethrex_crypto::NativeCrypto;
 use ethrex_p2p::sync::SyncMode;
 use ethrex_rlp::{decode::RLPDecode, error::RLPDecodeError, structs::Encoder};
 use serde_json::Value;
@@ -779,7 +780,7 @@ fn bal_for_block(
         // EIP-8159: never serve a BAL that doesn't match the header commitment.
         // A stale/empty entry (e.g. from a prior regeneration against state that
         // was later pruned) must degrade to "unavailable" rather than a wrong BAL.
-        if bal.matches_commitment(commitment) {
+        if bal.matches_commitment(commitment, &NativeCrypto) {
             return Ok(Some(bal));
         }
         warn!("Stored BAL for {block_hash} does not match header commitment; ignoring it");
@@ -792,7 +793,8 @@ fn bal_for_block(
     // Regeneration re-executes against the parent state; if that state is gone
     // or stale the result can be empty/wrong, so guard before writing it back.
     let regenerated = generated.is_some();
-    let Some(bal) = generated.filter(|bal| bal.matches_commitment(commitment)) else {
+    let Some(bal) = generated.filter(|bal| bal.matches_commitment(commitment, &NativeCrypto))
+    else {
         // A successful regeneration whose hash doesn't match the commitment means
         // the block was re-executed against wrong/incomplete state; don't serve or
         // persist it. (Absent regeneration just means the state is unavailable.)
