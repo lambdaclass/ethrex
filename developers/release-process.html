@@ -34,7 +34,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-1d18f029.js";
+            window.path_to_searchindex_js = "../searchindex-2e31f4fa.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-7e7556e2.js"></script>
@@ -246,6 +246,17 @@ git push origin &lt;release_version&gt;
 </ul>
 <p>A changelog will be generated based on commit names (using conventional commits) from the last stable tag.</p>
 <h2 id="4th---test--publish-release"><a class="header" href="#4th---test--publish-release">4th - Test &amp; Publish Release</a></h2>
+<h3 id="testing-checklist"><a class="header" href="#testing-checklist">Testing checklist</a></h3>
+<p>Before publishing the release, run through the following checks using the pre-release binaries:</p>
+<ul>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-ethdocker-mainnet</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-mainnet-1</code></li>
+<li><input disabled="" type="checkbox"> Upgrade <code>ethrex-minimum-mainnet</code></li>
+<li><input disabled="" type="checkbox"> Launch multisync on <code>ethrex-multisync-main</code></li>
+<li><input disabled="" type="checkbox"> Upgrade a local L2 created with the previous version and run the integration tests</li>
+<li><input disabled="" type="checkbox"> Run the L2 integration tests with a SP1 prover on the GPU server (<code>l2-gpu</code>)</li>
+</ul>
+<h3 id="publish"><a class="header" href="#publish">Publish</a></h3>
 <p>Once the pre-release is created and you want to publish the release, go to the <a href="https://github.com/lambdaclass/ethrex/releases">release page</a> and follow the next steps:</p>
 <ol>
 <li>
