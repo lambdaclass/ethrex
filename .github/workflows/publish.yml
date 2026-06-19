@@ -1,8 +1,12 @@
 name: Publish crates to crates.io
 
+# `released` fires only when a release is promoted to a full (non-pre-release)
+# release — i.e. step 4 of the release process, after the RC has been tested.
+# It does NOT fire on `vX.Y.Z-rc.W` pre-release creation, so release candidates
+# never publish to crates.io (crates.io versions are immutable).
 on:
   release:
-    types: [published]
+    types: [released]
   workflow_dispatch:
     inputs:
       dry_run:
