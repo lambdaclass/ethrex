@@ -13,7 +13,6 @@ path = "./lib.rs"
 # TODO(#1102): Move to Lambdaworks in the future
 c-kzg = { version = "2.1.1", default-features = false, optional = true }
 kzg-rs = { workspace = true, optional = true }
-openvm-kzg = { git = "https://github.com/axiom-crypto/openvm-kzg.git", rev = "530a6ed413def5296b7e4967650ba4fc8fd92ea1", optional = true } # v1.4.1
 ethereum-types = { version = "0.15.1", default-features = false }
 thiserror = { version = "2.0.9", default-features = false }
 
@@ -25,32 +24,44 @@ ark-bn254 = { version = "0.5.0", default-features = false, features = ["curve"] 
 ark-ec = { version = "0.5.0", default-features = false }
 ark-ff = { version = "0.5.0", default-features = false }
 p256 = { version = "0.13.2", default-features = false, features = ["ecdsa", "arithmetic", "expose-field"] }
-bls12_381 = { git = "https://github.com/lambdaclass/bls12_381", branch = "expose-affine-constructors", default-features = false, features = ["groups", "bits", "pairings", "alloc", "experimental"] }
-ff = { version = "0.13", default-features = false }
 k256 = { version = "0.13.4", default-features = false, features = ["ecdsa"] }
 num-bigint = { version = "0.4.6", default-features = false }
 
 # std-only deps (faster alternatives used when available)
 secp256k1 = { workspace = true, optional = true }
 malachite = { version = "0.6.1", optional = true }
+# assembly-optimized BLS12-381 backend for the native (non-zkVM) path
+blst = { version = "0.3.16", optional = true }
 
 #[target.'cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))'.dependencies]
 tiny-keccak = { version = "2.0.2", features = ["keccak"] }
 
 [features]
-default = ["std", "kzg-rs", "secp256k1"]
+default = ["std", "kzg-rs", "secp256k1", "blst"]
 std = [
     "dep:malachite",
     "ark-ff/asm",
     "thiserror/std",
 ]
+# Route the BLS12-381 (EIP-2537) trait defaults through blst — the canonical
+# host/L1 backend. Native-only (requires std). zkVM guest builds omit it: the
+# BLS defaults then return an error and the guest `Crypto` providers override
+# them with the portable `bls12_381` implementation that lives in
+# `ethrex-guest-program`, so this crate carries no `bls12_381` git dependency.
+blst = ["dep:blst", "std"]
 secp256k1 = ["dep:secp256k1", "std"]
 c-kzg = ["dep:c-kzg", "c-kzg/std", "c-kzg/ethereum_kzg_settings", "std"]
-openvm-kzg = ["dep:openvm-kzg"]
 kzg-rs = ["dep:kzg-rs"]
 
 risc0 = ["c-kzg/std", "c-kzg/ethereum_kzg_settings", "c-kzg/portable", "std"]
-openvm = ["openvm-kzg"]
+
+[dev-dependencies]
+criterion = { version = "0.5.1", features = ["html_reports"] }
+blst = "0.3.16"
+
+[[bench]]
+name = "bls_single_op"
+harness = false
 
 [lints]
 workspace = true

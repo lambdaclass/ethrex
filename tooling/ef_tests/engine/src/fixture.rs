@@ -66,6 +66,12 @@ pub struct FixturePayload {
     pub validation_error: Option<ValidationError>,
     #[serde(default, rename = "errorCode", deserialize_with = "de_opt_str_i32")]
     pub error_code: Option<i32>,
+    /// Expected execution witness for this payload (zkevm fixtures):
+    /// `{state, codes, headers}` arrays of hex strings. When present (and the
+    /// payload is V5), the runner exercises `engine_newPayloadWithWitnessV5`
+    /// and compares the returned witness against it.
+    #[serde(default, rename = "executionWitness")]
+    pub execution_witness: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
