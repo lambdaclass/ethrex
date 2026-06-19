@@ -1438,7 +1438,7 @@ impl<'a> VM<'a> {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit, Vec::new())
-            } else if bytecode.bytecode.is_empty() && !is_delegation_7702 {
+            } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default code runs only when the target has NEITHER code NOR a delegation
                 // indicator (EIP-8141 §Execution lines 348-349). After eip7702_get_code,
                 // bytecode is the delegatee's code when delegated, so a delegation to an
@@ -1953,7 +1953,7 @@ impl<'a> VM<'a> {
                 self.substate.revert_backup();
                 self.restore_cache_state()?;
                 (false, frame.gas_limit)
-            } else if bytecode.bytecode.is_empty() && !is_delegation_7702 {
+            } else if bytecode.is_empty() && !is_delegation_7702 {
                 // Default-code path (target has neither code nor a delegation).
                 if !frame.value.is_zero() {
                     self.transfer(sender, target, frame.value)?;
@@ -2143,6 +2143,21 @@ impl<'a> VM<'a> {
             return result;
         }
 
+        // Specialize the dispatch loop on whether a struct-log tracer is active.
+        // The `!TRACED` variant compiles out every tracer branch and capture call,
+        // leaving a minimal hot loop (the common, non-traced case).
+        if self.opcode_tracer.active {
+            self.run_dispatch::<true>()
+        } else {
+            self.run_dispatch::<false>()
+        }
+    }
+
+    /// Opcode dispatch loop, monomorphized over whether a struct-log tracer is
+    /// active. With `TRACED = false` the compiler eliminates the tracer branches
+    /// and the cold `trace_*_step` calls entirely, so the hot loop body stays
+    /// minimal; the traced variant keeps the cold helpers out of line.
+    fn run_dispatch<const TRACED: bool>(&mut self) -> Result<ContextResult, VMError> {
         let mut error = OnceCell::<VMError>::new();
 
         #[cfg(feature = "perf_opcode_timings")]
@@ -2165,54 +2180,9 @@ impl<'a> VM<'a> {
                 self.check_validation_banned_opcode(opcode);
             }
 
-            // Hoist the active flag to avoid reading it twice per opcode.
-            let tracer_active = self.opcode_tracer.active;
-
-            // Struct-log pre-step capture (single branch on the fast path when disabled).
-            let gas_before_op = if tracer_active {
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
-                )]
-                let gas_before = self.current_call_frame.gas_remaining.max(0) as u64;
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "call depth bounded by STACK_LIMIT=1024, fits in u32"
-                )]
-                let depth = (self.call_frames.len() as u32).saturating_add(1);
-                let refund = self.substate.refunded_gas;
-                let stack_view = self.collect_stack_for_trace();
-                let mem_view = self.collect_memory_for_trace();
-                // mem_size always reflects actual memory size, regardless of enable_memory.
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "memory size is bounded by gas; fits in u64"
-                )]
-                let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
-                let storage_kv = self.read_storage_for_trace(opcode);
-                let return_data = if self.opcode_tracer.cfg.enable_return_data {
-                    self.current_call_frame.sub_return_data.clone()
-                } else {
-                    Bytes::new()
-                };
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "pc is usize, fits in u64 on supported targets"
-                )]
-                let pc_u64 = pc_of_current_op as u64;
-                self.opcode_tracer.pre_step_capture(
-                    pc_u64,
-                    opcode,
-                    gas_before,
-                    depth,
-                    refund,
-                    &stack_view,
-                    &mem_view,
-                    mem_size_for_trace,
-                    &return_data,
-                    storage_kv,
-                );
-                gas_before
+            // Struct-log pre-step capture (compiled out entirely when !TRACED).
+            let gas_before_op = if TRACED {
+                self.trace_pre_step(opcode, pc_of_current_op)
             } else {
                 0
             };
@@ -2220,7 +2190,6 @@ impl<'a> VM<'a> {
             #[cfg(feature = "perf_opcode_timings")]
             let opcode_time_start = std::time::Instant::now();
 
-            // Fast path for common opcodes
             #[allow(clippy::indexing_slicing, clippy::as_conversions)]
             let op_result = opcode_table[opcode as usize].call(self, &mut error);
 
@@ -2230,29 +2199,9 @@ impl<'a> VM<'a> {
                 timings.update(opcode, time);
             }
 
-            // Struct-log post-step: patch gas_cost, refund-after-op, and error
-            // into the buffered entry.
-            if tracer_active {
-                #[expect(
-                    clippy::as_conversions,
-                    reason = "gas_remaining is i64; clamp to 0 before converting to u64"
-                )]
-                let gas_after = self.current_call_frame.gas_remaining.max(0) as u64;
-                // Prefer the explicit opcode-overhead cost written by CALL/CREATE handlers;
-                // fall back to the gas diff for all other opcodes.
-                let gas_cost = self
-                    .opcode_tracer
-                    .last_opcode_gas_cost
-                    .take()
-                    .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
-                // refund-after-op matches geth's structLogger timing: for SSTORE and
-                // (pre-London) SELFDESTRUCT, the refund counter shown is the value
-                // *after* the opcode's accounting applied. Other opcodes don't touch
-                // refund, so the post-op value equals the captured pre-op value.
-                let refund_after = self.substate.refunded_gas;
-                let err_str = error.get().map(|e| e.to_string());
-                self.opcode_tracer
-                    .finalize_step(gas_cost, refund_after, err_str.as_deref());
+            // Struct-log post-step (compiled out entirely when !TRACED).
+            if TRACED {
+                self.trace_post_step(gas_before_op, &error);
             }
 
             let result = match op_result {
@@ -2469,6 +2418,83 @@ impl<'a> VM<'a> {
         let (is_delegation_7702, _access_cost, _code_address, _bytecode) =
             crate::utils::eip7702_get_code(self.db, &mut self.substate, target)?;
         self.validation_check_call_target(target, is_delegation_7702)
+    }
+
+    /// Struct-log pre-step capture, split out of the interpreter loop and kept
+    /// cold + non-inlined so the hot dispatch loop stays small (this code is
+    /// only reached when a struct-log tracer is active). Returns `gas_before`.
+    #[cold]
+    #[inline(never)]
+    fn trace_pre_step(&mut self, opcode: u8, pc_of_current_op: usize) -> u64 {
+        #[expect(
+            clippy::as_conversions,
+            reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+        )]
+        let gas_before = self.current_call_frame.gas_remaining.max(0) as u64;
+        #[expect(
+            clippy::as_conversions,
+            reason = "call depth bounded by STACK_LIMIT=1024, fits in u32"
+        )]
+        let depth = (self.call_frames.len() as u32).saturating_add(1);
+        let refund = self.substate.refunded_gas;
+        let stack_view = self.collect_stack_for_trace();
+        let mem_view = self.collect_memory_for_trace();
+        // mem_size always reflects actual memory size, regardless of enable_memory.
+        #[expect(
+            clippy::as_conversions,
+            reason = "memory size is bounded by gas; fits in u64"
+        )]
+        let mem_size_for_trace = self.current_call_frame.memory.len() as u64;
+        let storage_kv = self.read_storage_for_trace(opcode);
+        let return_data = if self.opcode_tracer.cfg.enable_return_data {
+            self.current_call_frame.sub_return_data.clone()
+        } else {
+            Bytes::new()
+        };
+        #[expect(
+            clippy::as_conversions,
+            reason = "pc is usize, fits in u64 on supported targets"
+        )]
+        let pc_u64 = pc_of_current_op as u64;
+        self.opcode_tracer.pre_step_capture(
+            pc_u64,
+            opcode,
+            gas_before,
+            depth,
+            refund,
+            &stack_view,
+            &mem_view,
+            mem_size_for_trace,
+            &return_data,
+            storage_kv,
+        );
+        gas_before
+    }
+
+    /// Struct-log post-step: patch gas_cost, refund-after-op, and error into the
+    /// buffered entry. Cold + non-inlined for the same reason as `trace_pre_step`.
+    #[cold]
+    #[inline(never)]
+    fn trace_post_step(&mut self, gas_before_op: u64, error: &OnceCell<VMError>) {
+        #[expect(
+            clippy::as_conversions,
+            reason = "gas_remaining is i64; clamp to 0 before converting to u64"
+        )]
+        let gas_after = self.current_call_frame.gas_remaining.max(0) as u64;
+        // Prefer the explicit opcode-overhead cost written by CALL/CREATE handlers;
+        // fall back to the gas diff for all other opcodes.
+        let gas_cost = self
+            .opcode_tracer
+            .last_opcode_gas_cost
+            .take()
+            .unwrap_or_else(|| gas_before_op.saturating_sub(gas_after));
+        // refund-after-op matches geth's structLogger timing: for SSTORE and
+        // (pre-London) SELFDESTRUCT, the refund counter shown is the value
+        // *after* the opcode's accounting applied.
+        let refund_after = self.substate.refunded_gas;
+        let err_str = error.get().map(|e| e.to_string());
+        self.opcode_tracer
+            .finalize_step(gas_cost, refund_after, err_str.as_deref());
     }
 
     /// Executes precompile and handles the output that it returns, generating a report.

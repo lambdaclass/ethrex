@@ -2588,7 +2588,7 @@ impl LEVM {
         // Assertion: a deploy frame must leave non-empty code at the sender.
         if prefix.deploy_index.is_some() {
             let code = vm.db.get_account_code(sender).map_err(VMError::from)?;
-            if code.bytecode.is_empty() {
+            if code.is_empty() {
                 return Ok(FrameValidationOutcome {
                     passed: false,
                     violation: Some(format!("{:?}", FrameSimViolation::DeployInstalledNoCode)),
@@ -2743,7 +2743,7 @@ impl LEVM {
         const PREDEPLOY_NONCE: u64 = 1;
 
         let current = db.get_account_code(EXPIRY_VERIFIER_PREDEPLOY.address)?;
-        if current.bytecode.as_ref() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
+        if current.code() == EXPIRY_VERIFIER_RUNTIME_BYTECODE.as_slice() {
             return Ok(());
         }
         let code = Code::from_bytecode(
@@ -2755,7 +2755,7 @@ impl LEVM {
         // reconstructor reproduces the same post-state (it takes nonce from
         // prestate otherwise).
         if let Some(recorder) = db.bal_recorder_mut() {
-            recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.bytecode.clone());
+            recorder.record_code_change(EXPIRY_VERIFIER_PREDEPLOY.address, code.code_bytes());
             recorder.record_nonce_change(EXPIRY_VERIFIER_PREDEPLOY.address, PREDEPLOY_NONCE);
         }
         let acc = db
@@ -2929,10 +2929,11 @@ pub fn generic_system_contract_levm(
         ..Default::default()
     };
 
-    // Invariant relied upon below: with a zero gas price a system call charges no
-    // gas to the SYSTEM_ADDRESS sender and pays no fee to the coinbase, so the only
-    // state change left to undo afterwards is the sender's nonce bump. If this ever
-    // becomes non-zero, the post-call cleanup must be revisited.
+    // Invariant: with a zero gas price (and `is_system_call` making the hook
+    // skip the sender path entirely) a system call leaves no SYSTEM_ADDRESS
+    // state behind — no nonce bump, no balance change, not even a read. If
+    // this ever becomes non-zero, the hook's system-call branches must be
+    // revisited.
     debug_assert!(
         env.gas_price.is_zero() && env.base_fee_per_gas.is_zero(),
         "system calls must run with a zero gas price"
@@ -2973,15 +2974,7 @@ pub fn generic_system_contract_levm(
         recorder.exit_system_call();
     }
 
-    let report = result?;
-
-    // Undo the sender nonce bump: it's the only state change a system call leaves
-    // behind given that the gas price is set to zero.
-    if let Some(account) = db.current_accounts_state.get_mut(&system_address) {
-        account.info.nonce = account.info.nonce.saturating_sub(1);
-    }
-
-    Ok(report)
+    result
 }
 
 #[allow(unreachable_code)]

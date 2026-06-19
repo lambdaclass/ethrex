@@ -343,17 +343,13 @@ impl OpcodeHandler for OpExtCodeCopyHandler {
             vm.validation_check_extcode_target(address)?;
         }
 
-        // Ensure the account is loaded even for size=0, so that access tracking
-        // (used by parallel BAL validation) records this address.
-        let _ = vm.db.get_account(address)?;
+        // EELS reads the account's code unconditionally (even for size=0), so
+        // fetch the code — not just the account — to keep the read observable
+        // for execution witnesses (EIP-8025) and parallel-BAL access tracking.
+        let code = vm.db.get_account_code(address)?;
 
         if len > 0 {
-            let data = vm
-                .db
-                .get_account_code(address)?
-                .dispatch_buf()
-                .get(src_offset..)
-                .unwrap_or_default();
+            let data = code.dispatch_buf().get(src_offset..).unwrap_or_default();
             let data = data.get(..len).unwrap_or(data);
 
             vm.current_call_frame.memory.store_data(dst_offset, data)?;
