@@ -47,7 +47,10 @@ pub fn secp256r1_verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
     sec1[1..].copy_from_slice(pk);
 
     // The message is already hashed; import it as a SHA-256-sized digest and
-    // verify directly rather than re-hashing.
+    // verify directly rather than re-hashing. `import_less_safe` is sound here
+    // per EIP-7951: the precompile's `msg` parameter is *defined* as a 32-byte
+    // SHA-256 prehash, not raw data, so importing it as a `SHA256` digest
+    // preserves the verifier's `ECDSA_P256_SHA256_FIXED` hash-function contract.
     let Ok(digest) = Digest::import_less_safe(msg, &SHA256) else {
         return false;
     };
