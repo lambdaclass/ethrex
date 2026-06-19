@@ -47,7 +47,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 // Base price for each test transaction.
 pub const BASE_PRICE_IN_WEI: u64 = 10_u64.pow(9);
-pub const TEST_GENESIS: &str = include_str!("fixtures/l1_genesis.json");
+pub const TEST_GENESIS: &str = include_str!("../../../fixtures/genesis/l1.json");
 
 thread_local! {
     /// Per-OS-thread merkleization pool, lazily built on first use. Mirrors the
@@ -184,7 +184,7 @@ fn eip1559_tx_for_test(nonce: u64) -> Transaction {
 }
 
 pub async fn setup_store() -> Store {
-    let genesis: &str = include_str!("fixtures/l1_genesis.json");
+    let genesis: &str = include_str!("../../../fixtures/genesis/l1.json");
     let genesis: Genesis = serde_json::from_str(genesis).expect("Fatal: test config is invalid");
     let mut store =
         Store::new("test-store", EngineType::InMemory).expect("Fail to create in-memory db test");

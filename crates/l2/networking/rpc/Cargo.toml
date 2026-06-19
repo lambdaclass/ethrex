@@ -40,6 +40,10 @@ url.workspace = true
 [lib]
 path = "./lib.rs"
 
+[dev-dependencies]
+# Pulls in ethrex-rpc's `test_utils` for this crate's tests only (stripped on publish).
+ethrex-rpc = { workspace = true, features = ["test-utils"] }
+
 [features]
 eip-8025 = ["ethrex-rpc/eip-8025"]
 
