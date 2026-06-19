@@ -1503,6 +1503,28 @@ impl Store {
         .await
     }
 
+    /// Test-only helper: point the in-memory latest-block-header cache at the
+    /// canonical block at `number`, so `get_latest_block_number` reports it.
+    /// Loads the real stored header (rather than synthesizing one) so its hash
+    /// matches the block on disk — `get_canonical_block_hash_sync` serves the
+    /// head from this cache. Production code updates it via `forkchoice_update`
+    /// / `add_initial_state`. Requires the canonical mapping and header for
+    /// `number` to already be stored.
+    #[cfg(test)]
+    pub async fn set_latest_block_number_for_test(
+        &self,
+        number: BlockNumber,
+    ) -> Result<(), StoreError> {
+        let hash = self
+            .get_canonical_block_hash_sync(number)?
+            .ok_or_else(|| StoreError::Custom(format!("no canonical hash at {number}")))?;
+        let header = self
+            .get_block_header_by_hash(hash)?
+            .ok_or_else(|| StoreError::Custom(format!("no header for block {number}")))?;
+        self.latest_block_header.update(header);
+        Ok(())
+    }
+
     /// Obtain safe block number
     pub async fn get_safe_block_number(&self) -> Result<Option<BlockNumber>, StoreError> {
         let key = chain_data_key(ChainDataIndex::SafeBlockNumber);
