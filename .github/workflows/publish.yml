@@ -5,6 +5,10 @@ name: Publish crates to crates.io
 # It does NOT fire on `vX.Y.Z-rc.W` pre-release creation, so release candidates
 # never publish to crates.io (crates.io versions are immutable).
 on:
+  # TEMP-DEBUG (revert before merge): run the publish workflow in dry-run on this
+  # PR branch to validate it in CI. Delete this `push:` block before merging.
+  push:
+    branches: [fix-publish-rlp-devdeps]
   release:
     types: [released]
   workflow_dispatch:
@@ -33,7 +37,10 @@ jobs:
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+          # TEMP-DEBUG (revert before merge): dry-run for everything except a real
+          # release, so the `push:` trigger above never publishes for real. Restore
+          # `github.event_name == 'workflow_dispatch' && inputs.dry_run` before merging.
+          DRY_RUN: ${{ github.event_name != 'release' }}
         run: |
           set -euo pipefail
           # Topological order: each crate is published after all of its dependencies.
@@ -58,7 +65,20 @@ jobs:
           for c in "${CRATES[@]}"; do
             echo "::group::$c"
             if [ "${DRY_RUN:-false}" = "true" ]; then
-              cargo package -p "$c" --no-verify --list
+              # TEMP-DEBUG (revert before merge): full publish dry-run (packaging +
+              # index resolution + verify build) instead of just `cargo package
+              # --list`. Dependents legitimately can't resolve siblings that aren't
+              # published yet, so tolerate ONLY that specific error; fail on anything
+              # else. Restore `cargo package -p "$c" --no-verify --list` before merge.
+              OUTPUT=$(cargo publish -p "$c" --dry-run 2>&1) || {
+                echo "$OUTPUT"
+                if echo "$OUTPUT" | grep -q "no matching package named"; then
+                  echo "$c: sibling dep not on crates.io yet (expected in dry-run), continuing"
+                  echo "::endgroup::"
+                  continue
+                fi
+                exit 1
+              }
             else
               OUTPUT=$(cargo publish -p "$c" 2>&1) || {
                 echo "$OUTPUT"
