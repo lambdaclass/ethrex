@@ -62,6 +62,10 @@ const STATICCALL: u8 = 0xfa;
 const CREATE: u8 = 0xf0;
 const LOG0: u8 = 0xa0;
 const LOG1: u8 = 0xa1;
+const REVERT: u8 = 0xfd;
+const JUMPDEST: u8 = 0x5b;
+const JUMPI: u8 = 0x57;
+const EQ: u8 = 0x14;
 const LOG2: u8 = 0xa2;
 
 // ==================== Constants ====================
@@ -409,6 +413,32 @@ fn call_value(target: Address, value: U256) -> Vec<u8> {
     out.push(GAS);
     out.push(CALL);
     out.push(POP);
+    out
+}
+
+/// CALL `target` with 32 bytes of calldata at mem[0..32]; REVERT the caller if
+/// the subcall reverted. Models a wallet-injected assertion suffix.
+fn call_assertion(target: Address) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend(push1(32)); // retSize
+    out.extend(push1(0)); // retOffset
+    out.extend(push1(32)); // argsSize
+    out.extend(push1(0)); // argsOffset
+    out.extend(push1(0)); // value
+    out.extend(push20(target));
+    out.push(GAS);
+    out.push(CALL);
+    out.push(0x15); // ISZERO -> 1 if reverted
+    out.extend(push1(0));
+    let revert_dest_idx = out.len() - 1;
+    out.push(JUMPI);
+    out.push(STOP);
+    let revert_dest = out.len();
+    out[revert_dest_idx] = revert_dest as u8;
+    out.push(JUMPDEST);
+    out.extend(push1(0));
+    out.extend(push1(0));
+    out.push(REVERT);
     out
 }
 
@@ -1330,6 +1360,81 @@ fn index_out_of_bounds_halts() {
         .gas_price(0)
         .run();
     assert!(!report.is_success(), "index >= count must halt");
+}
+
+// ==================== WALLET ASSERTION SUFFIX ====================
+
+// Wallet injects a trailing CALL to an assertion contract that reads the tx's
+// slot_changes count via TXTRACE and reverts if it exceeds the expected count.
+// Models the hidden-approval-drain PoC.
+
+/// Assertion contract: REVERT if slot_changes count != calldata[0..32].
+fn assertion_suffix_code() -> Vec<u8> {
+    let mut code = Vec::new();
+    code.extend(push1(0));
+    code.push(0x35); // CALLDATALOAD
+    code.extend(txtrace(0x01, 0x00));
+    code.push(EQ);
+    code.push(0x15); // ISZERO
+    code.extend(push1(0));
+    let revert_dest_idx = code.len() - 1;
+    code.push(JUMPI);
+    code.push(STOP);
+    let revert_dest = code.len();
+    code[revert_dest_idx] = revert_dest as u8;
+    code.push(JUMPDEST);
+    code.extend(push1(0));
+    code.extend(push1(0));
+    code.push(REVERT);
+    code
+}
+
+#[test]
+fn assertion_suffix_passes_when_no_hidden_write() {
+    // Target writes one slot, CALLs assertion with expected count == 1. Live
+    // count == 1, assertion passes.
+    let assertion_addr = other_addr();
+    let target_code = {
+        let mut c = sstore(0x01, U256::from(42));
+        c.extend(mstore_word(U256::one()));
+        c.extend(call_assertion(assertion_addr));
+        c
+    };
+
+    let (report, _db) = Harness::new()
+        .account(contract_addr(), contract_acct(target_code, U256::zero()))
+        .account(assertion_addr, contract_acct(assertion_suffix_code(), U256::zero()))
+        .run();
+    assert!(
+        report.is_success(),
+        "tx should succeed when no hidden write: {:?}",
+        report.result
+    );
+}
+
+#[test]
+fn assertion_suffix_reverts_on_hidden_slot_write() {
+    // Target writes one slot + a hidden slot (simulating approve(MAX_UINT)),
+    // CALLs assertion with expected count == 1. Live count == 2, assertion
+    // reverts, tx fails.
+    let assertion_addr = other_addr();
+    let target_code = {
+        let mut c = sstore(0x01, U256::from(42));
+        c.extend(sstore(0x02, U256::MAX)); // hidden approval
+        c.extend(mstore_word(U256::one()));
+        c.extend(call_assertion(assertion_addr));
+        c
+    };
+
+    let (report, _db) = Harness::new()
+        .account(contract_addr(), contract_acct(target_code, U256::zero()))
+        .account(assertion_addr, contract_acct(assertion_suffix_code(), U256::zero()))
+        .run();
+    assert!(
+        !report.is_success(),
+        "tx must fail when assertion detects a hidden slot write: {:?}",
+        report.result
+    );
 }
 
 // ==================== GAS PAYER ====================
