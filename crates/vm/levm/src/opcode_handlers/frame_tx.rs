@@ -336,17 +336,13 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
                 length,
             )?)?;
 
-        // Frame-context check must precede the zero-length early return so
-        // that FRAMEDATACOPY outside a frame tx halts exactly like INVALID
-        // regardless of operands (consensus parity with other clients).
+        // Frame-context and frame_index checks precede the zero-length early
+        // return: an out-of-bounds frameIndex halts exceptionally even when
+        // length == 0 (EIP-8141 §FRAMEDATACOPY, consensus parity with FRAMEDATALOAD).
         let ctx = vm
             .frame_tx_context
             .as_ref()
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
-
-        if length == 0 {
-            return Ok(OpcodeResult::Continue);
-        }
 
         let frame_index = u64::try_from(frame_index).map_err(|_| ExceptionalHalt::InvalidOpcode)?;
         let idx = index_to_usize(frame_index)?;
@@ -355,6 +351,10 @@ impl OpcodeHandler for OpFrameDataCopyHandler {
             .frames
             .get(idx)
             .ok_or(ExceptionalHalt::InvalidOpcode)?;
+
+        if length == 0 {
+            return Ok(OpcodeResult::Continue);
+        }
 
         let data = &frame.data;
         let mut buf = vec![0u8; length];
