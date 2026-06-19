@@ -160,14 +160,15 @@ pub async fn apply_fork_choice(
         return Err(InvalidForkChoice::UnlinkedHead);
     };
 
-    // If the state can't be constructed from the DB, we ignore it and log a warning.
+    // If the state can't be constructed from the DB, the caller starts a sync
+    // toward the head instead of ignoring the FCU.
     // TODO(#5564): handle arbitrary reorgs
     if !store.has_state_root(link_header.state_root)? {
         warn!(
             link_block=%link_block_hash,
             link_number=%link_header.number,
             head_number=%head.number,
-            "FCU head state not reachable from DB state. Ignoring fork choice update. This is expected if the consensus client is currently syncing. Otherwise, if consensus is synced and this is a consistent message it can be fixed by removing the DB and re-syncing the execution client."
+            "FCU head state not reachable from DB state. Starting sync toward head. This is expected if the consensus client is currently syncing."
         );
         return Err(InvalidForkChoice::StateNotReachable);
     }
