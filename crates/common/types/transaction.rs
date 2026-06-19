@@ -1311,6 +1311,7 @@ impl Transaction {
         public_key: &[u8; 65],
         crypto: &dyn Crypto,
     ) -> Result<Address, CryptoError> {
+        // There is no signature to verify.
         if let Transaction::PrivilegedL2Transaction(tx) = self {
             return Ok(tx.from);
         }
