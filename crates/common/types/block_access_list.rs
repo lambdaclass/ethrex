@@ -1574,6 +1574,10 @@ impl BlockAccessListRecorder {
         // derives BAL balance changes by diffing pre-tx vs final post-tx account state
         // (block_access_lists.py:update_builder_from_tx), so only the final 0 matters.
         //
+        // In practice `pre_balance` is always 0 here: under EIP-6780, track_selfdestruct
+        // only runs for accounts created and destroyed in the same tx. The non-zero branch
+        // below mirrors EELS's general pre/post diff and guards future spec/fixture changes.
+        //
         // If the pre-tx balance was also 0, this is a net-zero round-trip (0→X→0) and the
         // change MUST NOT be recorded (EIP-7928). Otherwise record a single (idx, 0).
         // If initial_balance was never set, treat it as 0 (contract created with no value).
@@ -1875,7 +1879,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         assert!(item.added_storage.is_empty());
     }
 
@@ -1916,7 +1920,7 @@ mod synthesize_tests {
         let item = result.get(&addr(8)).expect("expected entry");
         let expected_hash = keccak(&last);
         assert_eq!(item.code_hash, Some(expected_hash));
-        assert_eq!(item.code.as_ref().unwrap().bytecode, last);
+        assert_eq!(item.code.as_ref().unwrap().code(), &last[..]);
     }
 
     /// When a slot has multiple StorageChanges, the last post_value wins.
@@ -1994,7 +1998,7 @@ mod synthesize_tests {
         let expected_hash = keccak(&bytecode);
         assert_eq!(item.code_hash, Some(expected_hash));
         assert!(item.code.is_some());
-        assert_eq!(item.code.as_ref().unwrap().bytecode, bytecode);
+        assert_eq!(item.code.as_ref().unwrap().code(), &bytecode[..]);
         let key = H256::from_uint(&U256::zero());
         assert_eq!(item.added_storage.get(&key), Some(&U256::from(7)));
     }

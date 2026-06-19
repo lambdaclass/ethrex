@@ -307,6 +307,12 @@ pub struct CallFrameBackup {
     /// BAL checkpoint for EIP-7928 - used to restore state changes on revert
     /// while preserving touched_addresses.
     pub bal_checkpoint: Option<BlockAccessListCheckpoint>,
+    /// Code hashes this frame inserted into the by-hash code cache
+    /// (`GeneralizedDatabase::codes`) for codes it deployed. Removed from the
+    /// cache on revert: a stale entry would make a later read of the same
+    /// hash (from a pre-existing account) hit the cache instead of the store,
+    /// hiding the read from execution-witness recording (EIP-8025).
+    pub inserted_code_hashes: Vec<H256>,
 }
 
 impl CallFrameBackup {
@@ -332,6 +338,7 @@ impl CallFrameBackup {
         self.original_accounts_info.clear();
         self.original_account_storage_slots.clear();
         self.bal_checkpoint = None;
+        self.inserted_code_hashes.clear();
     }
 
     /// Merges `other` into `self`, per-address. For slots present in both,
@@ -349,6 +356,7 @@ impl CallFrameBackup {
         }
         self.original_accounts_info
             .extend(other.original_accounts_info);
+        self.inserted_code_hashes.extend(other.inserted_code_hashes);
         // Don't extend bal_checkpoint - it's specific to each call frame
     }
 }
@@ -410,13 +418,13 @@ impl CallFrame {
 
     #[inline(always)]
     pub fn next_opcode(&self) -> u8 {
-        if self.pc < self.bytecode.bytecode.len() {
-            #[expect(unsafe_code, reason = "bounds checked above")]
-            unsafe {
-                *self.bytecode.bytecode.get_unchecked(self.pc)
-            }
-        } else {
-            0
+        // SAFETY: pc reaches at most bytecode_len + 32 (a PUSH32 at the last real
+        // byte advances 33 total: +1 in the dispatch loop, +32 in the handler).
+        // dispatch_buf() is bytecode_len + BYTECODE_PADDING (33) long, so the read
+        // is always in bounds.
+        #[expect(unsafe_code, reason = "pc bounded by padded bytecode len")]
+        unsafe {
+            *self.bytecode.dispatch_buf().get_unchecked(self.pc)
         }
     }
 
@@ -540,16 +548,22 @@ impl<'a> VM<'a> {
             }
         }
 
+        // Propagate code-cache insertions so a revert of the parent also
+        // evicts codes deployed by the (committed) child frame.
+        self.current_call_frame
+            .call_frame_backup
+            .inserted_code_hashes
+            .extend(child_call_frame_backup.inserted_code_hashes.iter().copied());
+
         Ok(())
     }
 
     #[inline(always)]
-    pub fn advance_pc(&mut self, count: usize) -> Result<(), VMError> {
-        self.current_call_frame.pc = self
-            .current_call_frame
-            .pc
-            .checked_add(count)
-            .ok_or(InternalError::Overflow)?;
-        Ok(())
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "pc bounded by padded bytecode len"
+    )]
+    pub fn advance_pc(&mut self) {
+        self.current_call_frame.pc += 1;
     }
 }

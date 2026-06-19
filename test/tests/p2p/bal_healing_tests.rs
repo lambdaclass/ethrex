@@ -251,7 +251,7 @@ fn apply_bal_code_deployment() {
 
     let stored_code = store.get_account_code(code_hash).unwrap();
     assert!(stored_code.is_some(), "code should be stored in the store");
-    assert_eq!(stored_code.unwrap().bytecode, bytecode);
+    assert_eq!(stored_code.unwrap().code_bytes(), bytecode);
 }
 
 #[test]

@@ -182,11 +182,15 @@ pub fn apply_bal(
 fn store_code_sync(store: &Store, code: Code) -> Result<(), SyncError> {
     let hash_key_bytes = code.hash.0.to_vec();
     let mut buf = Vec::new();
-    code.bytecode.encode(&mut buf);
+    // Encode the logical (unpadded) bytecode + logical length, matching the
+    // store's canonical `encode_code`/metadata format (main pads `Code.bytecode`
+    // with 33 trailing STOPs for the hot dispatch path; the persisted form is the
+    // unpadded `code()` / `len()`, read back via the canonical decode).
+    code.code().encode(&mut buf);
     // `Arc<[u32]>` has no `RLPEncode` impl; encode through an owned `Vec<u32>` to match the
     // store's `encode_code` write format (read back via `<Vec<u32>>::decode`).
     code.jump_targets.to_vec().encode(&mut buf);
-    let metadata = (code.bytecode.len() as u64).to_be_bytes().to_vec();
+    let metadata = (code.len() as u64).to_be_bytes().to_vec();
 
     store.write(ACCOUNT_CODES, hash_key_bytes.clone(), buf)?;
     store.write(ACCOUNT_CODE_METADATA, hash_key_bytes, metadata)?;

@@ -71,8 +71,16 @@ impl OpcodeHandler for OpCallHandler {
         } else {
             vm.db.get_account(callee)?.is_empty()
         };
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, callee, vm.env.config.fork)?;
+        // Detect a 7702 delegation without reading the delegate account: per
+        // EELS the delegate access cost is gas-checked first, so an OOG must
+        // not leak the delegate read into execution witnesses (EIP-8025).
+        let (callee_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, callee, vm.env.config.fork)?;
+        let is_delegation_7702 = delegation.is_some();
+        let (eip7702_gas_consumed, code_address) = match delegation {
+            Some((auth_address, access_cost)) => (access_cost, auth_address),
+            None => (0, callee),
+        };
         let create_cost = if address_is_empty {
             gas_cost::CALL_TO_EMPTY_ACCOUNT
         } else {
@@ -95,13 +103,17 @@ impl OpcodeHandler for OpCallHandler {
 
         // `create_cost` is EIP-8037 state gas (charged via `increase_state_gas`
         // below) and must not appear in the regular-gas check.
-        if is_delegation_7702 {
+        let bytecode = if let Some((auth_address, access_cost)) = delegation {
             vm.current_call_frame.check_gas(
                 static_cost
-                    .checked_add(eip7702_gas_consumed)
+                    .checked_add(access_cost)
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
-        }
+            vm.substate.add_accessed_address(auth_address);
+            vm.db.get_account_code(auth_address)?.clone()
+        } else {
+            callee_code
+        };
 
         let fork = vm.env.config.fork;
 
@@ -232,8 +244,16 @@ impl OpcodeHandler for OpCallCodeHandler {
         )?;
 
         vm.substate.add_accessed_address(address);
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address, vm.env.config.fork)?;
+        // Detect a 7702 delegation without reading the delegate account: per
+        // EELS the delegate access cost is gas-checked first, so an OOG must
+        // not leak the delegate read into execution witnesses (EIP-8025).
+        let (target_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, address, vm.env.config.fork)?;
+        let is_delegation_7702 = delegation.is_some();
+        let (eip7702_gas_consumed, code_address) = match delegation {
+            Some((auth_address, access_cost)) => (access_cost, auth_address),
+            None => (0, address),
+        };
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -248,13 +268,17 @@ impl OpcodeHandler for OpCallCodeHandler {
             0,
         );
 
-        if is_delegation_7702 {
+        let bytecode = if let Some((auth_address, access_cost)) = delegation {
             vm.current_call_frame.check_gas(
                 static_cost
-                    .checked_add(eip7702_gas_consumed)
+                    .checked_add(access_cost)
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
-        }
+            vm.substate.add_accessed_address(auth_address);
+            vm.db.get_account_code(auth_address)?.clone()
+        } else {
+            target_code
+        };
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -336,8 +360,16 @@ impl OpcodeHandler for OpDelegateCallHandler {
             vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
 
         vm.substate.add_accessed_address(address);
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address, vm.env.config.fork)?;
+        // Detect a 7702 delegation without reading the delegate account: per
+        // EELS the delegate access cost is gas-checked first, so an OOG must
+        // not leak the delegate read into execution witnesses (EIP-8025).
+        let (target_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, address, vm.env.config.fork)?;
+        let is_delegation_7702 = delegation.is_some();
+        let (eip7702_gas_consumed, code_address) = match delegation {
+            Some((auth_address, access_cost)) => (access_cost, auth_address),
+            None => (0, address),
+        };
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -352,13 +384,17 @@ impl OpcodeHandler for OpDelegateCallHandler {
             0,
         );
 
-        if is_delegation_7702 {
+        let bytecode = if let Some((auth_address, access_cost)) = delegation {
             vm.current_call_frame.check_gas(
                 static_cost
-                    .checked_add(eip7702_gas_consumed)
+                    .checked_add(access_cost)
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
-        }
+            vm.substate.add_accessed_address(auth_address);
+            vm.db.get_account_code(auth_address)?.clone()
+        } else {
+            target_code
+        };
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -441,8 +477,16 @@ impl OpcodeHandler for OpStaticCallHandler {
             vm.check_call_static_gas(args_offset, args_len, return_offset, return_len, address, 0)?;
 
         vm.substate.add_accessed_address(address);
-        let (is_delegation_7702, eip7702_gas_consumed, code_address, bytecode) =
-            eip7702_get_code(vm.db, &mut vm.substate, address, vm.env.config.fork)?;
+        // Detect a 7702 delegation without reading the delegate account: per
+        // EELS the delegate access cost is gas-checked first, so an OOG must
+        // not leak the delegate read into execution witnesses (EIP-8025).
+        let (target_code, delegation) =
+            eip7702_peek_delegation(vm.db, &vm.substate, address, vm.env.config.fork)?;
+        let is_delegation_7702 = delegation.is_some();
+        let (eip7702_gas_consumed, code_address) = match delegation {
+            Some((auth_address, access_cost)) => (access_cost, auth_address),
+            None => (0, address),
+        };
 
         // BAL touches the target before the delegation gas check.
         vm.record_bal_call_touch(
@@ -457,13 +501,17 @@ impl OpcodeHandler for OpStaticCallHandler {
             0,
         );
 
-        if is_delegation_7702 {
+        let bytecode = if let Some((auth_address, access_cost)) = delegation {
             vm.current_call_frame.check_gas(
                 static_cost
-                    .checked_add(eip7702_gas_consumed)
+                    .checked_add(access_cost)
                     .ok_or(ExceptionalHalt::OutOfGas)?,
             )?;
-        }
+            vm.substate.add_accessed_address(auth_address);
+            vm.db.get_account_code(auth_address)?.clone()
+        } else {
+            target_code
+        };
 
         #[expect(clippy::as_conversions, reason = "safe")]
         let gas_left = (vm.current_call_frame.gas_remaining as u64)
@@ -617,14 +665,10 @@ impl OpcodeHandler for OpSelfDestructHandler {
         let to = vm.current_call_frame.to;
 
         let target_account_is_cold = vm.substate.add_accessed_address(beneficiary);
-        let target_account_is_empty = vm.db.get_account(beneficiary)?.is_empty();
-        let balance = vm.db.get_account(to)?.info.balance;
 
-        // EIP-7928 (Amsterdam): Two-phase gas check for SELFDESTRUCT.
-        // First check base cost (SELFDESTRUCT + cold access) before state access,
-        // then record BAL tracking, then charge the full cost including NEW_ACCOUNT.
-        // This ensures the beneficiary is recorded in BAL even when the full
-        // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
+        // EELS (Amsterdam) checks the base cost (SELFDESTRUCT + cold access)
+        // BEFORE the beneficiary/self state reads: an OOG here must not leak
+        // those reads into execution witnesses (EIP-8025).
         if vm.env.config.fork >= Fork::Amsterdam {
             let base_cost =
                 gas_cost::selfdestruct_base(target_account_is_cold, vm.env.config.fork)?;
@@ -633,7 +677,17 @@ impl OpcodeHandler for OpSelfDestructHandler {
             if vm.current_call_frame.gas_remaining < (base_cost as i64) {
                 return Err(ExceptionalHalt::OutOfGas.into());
             }
+        }
 
+        let target_account_is_empty = vm.db.get_account(beneficiary)?.is_empty();
+        let balance = vm.db.get_account(to)?.info.balance;
+
+        // EIP-7928 (Amsterdam): Two-phase gas check for SELFDESTRUCT.
+        // Base cost was checked above before state access; now record BAL
+        // tracking, then charge the full cost including NEW_ACCOUNT. This
+        // ensures the beneficiary is recorded in BAL even when the full
+        // selfdestruct cost (with NEW_ACCOUNT) would cause OOG.
+        if vm.env.config.fork >= Fork::Amsterdam {
             // State access: record BAL tracking between the two gas phases
             let accessed_slots = vm.substate.get_accessed_storage_slots(&to);
             if let Some(recorder) = vm.db.bal_recorder.as_mut() {

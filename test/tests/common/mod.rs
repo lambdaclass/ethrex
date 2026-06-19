@@ -1,6 +1,7 @@
 mod base64_tests;
 #[cfg(feature = "c-kzg")]
 mod blobs_bundle_tests;
+mod code_serde_tests;
 mod eip7702_authorization_tests;
 mod logs_bloom_validation_tests;
 mod requests_eip8282_tests;
