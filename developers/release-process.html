@@ -34,7 +34,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-bf7d17f3.js";
+            window.path_to_searchindex_js = "../searchindex-97b1fc13.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-7e7556e2.js"></script>
@@ -189,7 +189,7 @@
 </ul>
 <h2 id="2nd---bump-version"><a class="header" href="#2nd---bump-version">2nd - Bump version</a></h2>
 <p>The version must be updated to <code>X.Y.Z</code> in the release branch. There are multiple <code>Cargo.toml</code> and <code>Cargo.lock</code> files that need to be updated.</p>
-<p>First, we need to update the version of the workspace package. You can find it in the <code>Cargo.toml</code> file in the root directory, under the <code>[workspace.package]</code> section.</p>
+<p>First, we need to update the version of the workspace package. You can find it in the <code>Cargo.toml</code> file in the root directory, under the <code>[workspace.package]</code> section. This is also the version the library crates are published under on crates.io when the release is finalized, so it must be a clean semver version (the <code>-rc.W</code> suffix lives only on the git tag).</p>
 <p>Then, we need to update five more <code>Cargo.toml</code> files that are not part of the workspace but fulfill the role of packages in the monorepo. These are located in the following paths:</p>
 <ul>
 <li><code>crates/guest-program/bin/sp1/Cargo.toml</code></li>
@@ -304,6 +304,21 @@ git push origin &lt;release_version&gt;
 <li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z</code>, <code>ghcr.io/lambdaclass/ethrex:latest</code></li>
 <li><code>ghcr.io/lambdaclass/ethrex:X.Y.Z-l2</code>, <code>ghcr.io/lambdaclass/ethrex:l2</code></li>
 </ul>
+<p>Promoting the pre-release to a full release also publishes ethrex’s library crates to crates.io — see the next section.</p>
+<h3 id="publishing-to-cratesio"><a class="header" href="#publishing-to-cratesio">Publishing to crates.io</a></h3>
+<p>Promoting the pre-release to a full release (the <code>released</code> event from the step above) triggers the <code>publish.yml</code> workflow, which runs <code>cargo publish</code> for ethrex’s publishable library crates in dependency order, at the workspace version <code>X.Y.Z</code>.</p>
+<blockquote class="blockquote-tag blockquote-tag-note">
+<p class="blockquote-tag-title"><svg viewbox="0 0 16 16" width="18" height="18"><path d="M0 8a8 8 0 1 1 16 0A8 8 0 0 1 0 8Zm8-6.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13ZM6.5 7.75A.75.75 0 0 1 7.25 7h1a.75.75 0 0 1 .75.75v2.75h.25a.75.75 0 0 1 0 1.5h-2a.75.75 0 0 1 0-1.5h.25v-2h-.25a.75.75 0 0 1-.75-.75ZM8 6a1 1 0 1 1 0-2 1 1 0 0 1 0 2Z"></path></svg>Note</p>
+<p>Only the <strong>final</strong> release publishes to crates.io. Pre-release (<code>vX.Y.Z-rc.W</code>) tags do <strong>not</strong>: the <code>released</code> event does not fire for pre-releases, and crates.io versions are immutable, so a release candidate must never claim the version before it has been tested.</p>
+</blockquote>
+<p>The crates are published at the <code>[workspace.package].version</code> bumped in step 2; the <code>-rc.W</code> suffix lives only on the git tag and never reaches crates.io.</p>
+<p>This requires a one-time organizational setup before the first release that publishes:</p>
+<ul>
+<li>A <code>CRATES_IO_TOKEN</code> repository secret with publish rights for the crates.</li>
+<li>A <code>crates-release-prod</code> GitHub environment (the workflow runs inside it).</li>
+<li>crates.io ownership of the crate names (the first publish under the token claims them).</li>
+</ul>
+<p>The workflow is idempotent: a crate version already on crates.io is skipped, so re-running after a partial failure is safe. To validate without publishing, run it manually from the Actions tab (the <code>workflow_dispatch</code> trigger) with the dry-run input checked — it lists each crate’s package contents instead of publishing.</p>
 <h2 id="5th---update-homebrew"><a class="header" href="#5th---update-homebrew">5th - Update Homebrew</a></h2>
 <p>Disclaimer: We should automate this</p>
 <ol>
@@ -394,6 +409,8 @@ docker push ghcr.io/lambdaclass/ethrex:l2
 <ul>
 <li>Delete the PAT for security (<a href="https://github.com/settings/tokens">here</a>)</li>
 </ul>
+<h3 id="failure-on-the-cratesio-publish-workflow"><a class="header" href="#failure-on-the-cratesio-publish-workflow">Failure on the crates.io publish workflow</a></h3>
+<p>If <code>publish.yml</code> fails partway through, fix the cause and re-run the workflow. Crates already published at the release version are skipped (the run tolerates an “already exists” error), so it resumes from the first crate that has not been published yet. Because crates are published in dependency order, a metadata or ordering error in one crate blocks the crates that depend on it, while the ones published before it stay published (crates.io versions cannot be unpublished or overwritten — a fix requires a new version).</p>
 
                     </main>
 
