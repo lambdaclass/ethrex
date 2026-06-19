@@ -6,7 +6,11 @@ use crate::provider::Crypto;
 /// P-256 (secp256r1) verify is overridden here to use the assembly-optimized
 /// `aws-lc-rs` backend when the `aws-lc-rs` feature is enabled, since the
 /// portable `p256` default does two constant-time scalar muls with no
-/// Shamir/basepoint optimization and is a P256VERIFY hot-path outlier. This
+/// Shamir/basepoint optimization and is a P256VERIFY hot-path outlier. On the
+/// host the BLS12-381 (EIP-2537) defaults likewise route through the
+/// assembly-optimized `blst` backend (the `blst` feature, default-on); zkVM
+/// guest builds compile both backends out and use their own `Crypto` providers
+/// instead of this type. This
 /// struct exists so callers outside zkVM contexts have a concrete type to
 /// instantiate.
 #[derive(Debug)]

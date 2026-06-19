@@ -515,19 +515,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bls12_381"
-version = "0.8.0"
-source = "git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors#78cad0378b17fc3157b83f514be192bf46edf9a1"
-dependencies = [
- "digest 0.10.7",
- "ff 0.13.1",
- "group 0.13.0",
- "pairing 0.23.0",
- "rand_core 0.6.4",
- "subtle",
-]
-
-[[package]]
 name = "blst"
 version = "0.3.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1029,7 +1016,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -1050,7 +1037,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -1079,15 +1066,14 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
  "aws-lc-rs",
- "bls12_381 0.8.0",
+ "blst",
  "ethereum-types",
- "ff 0.13.1",
  "hex-literal",
  "k256",
  "kzg-rs",
@@ -1103,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1120,7 +1106,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "ethrex-common",
  "serde",
@@ -1131,7 +1117,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "ethereum-types",
@@ -1140,7 +1126,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1161,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1179,7 +1165,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -1738,7 +1724,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a575df5f985fe1cd5b2b05664ff6accfc46559032b954529fd225a2168d27b0f"
 dependencies = [
  "bitvec",
- "bls12_381 0.7.1",
+ "bls12_381",
  "ff 0.12.1",
  "group 0.12.1",
  "rand_core 0.6.4",
@@ -3839,7 +3825,7 @@ dependencies = [
  "ark-std 0.4.0",
  "bitvec",
  "blake2",
- "bls12_381 0.7.1",
+ "bls12_381",
  "byteorder",
  "cfg-if",
  "group 0.12.1",

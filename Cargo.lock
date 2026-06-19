@@ -3789,7 +3789,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3841,7 +3841,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-benches"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "criterion 0.5.1",
@@ -3859,7 +3859,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-blockchain"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "crossbeam",
@@ -3887,7 +3887,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-common"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "crc32fast",
@@ -3921,7 +3921,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-config"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "ethrex-common",
  "ethrex-p2p",
@@ -3932,22 +3932,21 @@ dependencies = [
 
 [[package]]
 name = "ethrex-crypto"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "ark-bn254",
  "ark-ec",
  "ark-ff 0.5.0",
  "aws-lc-rs",
- "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
+ "blst",
  "c-kzg",
+ "criterion 0.5.1",
  "ethereum-types 0.15.1",
- "ff 0.13.1",
  "hex-literal 0.4.1",
  "k256",
  "kzg-rs",
  "malachite 0.6.1",
  "num-bigint 0.4.6",
- "openvm-kzg",
  "p256",
  "ripemd",
  "secp256k1",
@@ -3958,7 +3957,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-dev"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "envy",
@@ -3977,8 +3976,9 @@ dependencies = [
 
 [[package]]
 name = "ethrex-guest-program"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
+ "bls12_381 0.8.0 (git+https://github.com/lambdaclass/bls12_381?branch=expose-affine-constructors)",
  "bytes",
  "ethereum-types 0.15.1",
  "ethrex-common",
@@ -3986,12 +3986,14 @@ dependencies = [
  "ethrex-l2-common",
  "ethrex-rlp",
  "ethrex-vm",
+ "ff 0.13.1",
  "hex",
  "k256",
  "libssz",
  "libssz-derive",
  "libssz-merkle",
  "libssz-types",
+ "openvm-kzg",
  "risc0-build",
  "rkyv",
  "serde",
@@ -4005,7 +4007,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "agg_mode_sdk",
  "alloy",
@@ -4059,7 +4061,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-common"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4077,7 +4079,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-prover"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -4116,7 +4118,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-l2-rpc"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "axum 0.8.9",
  "bytes",
@@ -4146,7 +4148,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-levm"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
@@ -4163,7 +4165,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-metrics"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "axum 0.8.9",
  "ethrex-common",
@@ -4178,7 +4180,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-monitor"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "chrono",
@@ -4207,7 +4209,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-p2p"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -4255,7 +4257,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-prover"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bincode 1.3.3",
  "bytes",
@@ -4285,7 +4287,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-repl"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "clap",
  "colored 2.2.0",
@@ -4303,7 +4305,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rlp"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "criterion 0.7.0",
@@ -4318,7 +4320,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-rpc"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "axum 0.8.9",
  "axum-extra",
@@ -4362,7 +4364,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "ethereum-types 0.15.1",
@@ -4386,7 +4388,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-sdk-contract-utils"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "thiserror 2.0.18",
  "tracing",
@@ -4394,7 +4396,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4417,7 +4419,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-storage-rollup"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "async-trait",
  "bincode 1.3.3",
@@ -4434,7 +4436,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-test"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4476,7 +4478,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-trie"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4494,7 +4496,7 @@ dependencies = [
 
 [[package]]
 name = "ethrex-vm"
-version = "16.0.0"
+version = "17.0.0"
 dependencies = [
  "bytes",
  "derive_more 1.0.0",
