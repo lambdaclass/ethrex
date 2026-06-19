@@ -1599,6 +1599,71 @@ async fn mempool_fee_bump_replaces_pending_frame_tx() {
     );
 }
 
+#[tokio::test]
+async fn mempool_frame_tx_replaces_same_nonce_non_frame_tx() {
+    // Regression for the EIP-8141 review fix: a frame tx that replaces a
+    // same-(sender, nonce) NON-frame tx must evict the predecessor, not orphan
+    // it. `find_tx_to_replace` (used during admission) matches any tx type and
+    // validated the fee bump, but the locked removal in `add_transaction`
+    // previously only consulted `check_frame_tx_sender_pending`, which sees frame
+    // predecessors only — so a same-nonce legacy/EIP-1559 tx survived in the pool
+    // while its (sender, nonce) index slot was overwritten by the frame tx.
+    let store = setup_hegota_store_funded().await;
+    let blockchain = Blockchain::default_with_store(store);
+
+    let sender = Address::from_low_u64_be(FRAME_TX_SELF_SENDER);
+
+    // Directly insert a low-fee NON-frame tx at nonce 0 under the same sender.
+    // Direct insertion lets us pin the tracked sender without needing the
+    // sender's private key (a regular tx's sender is signature-derived).
+    let regular_tx = Transaction::EIP1559Transaction(EIP1559Transaction {
+        chain_id: 0,
+        nonce: 0,
+        max_priority_fee_per_gas: 100_000_000,
+        max_fee_per_gas: 100_000_000,
+        gas_limit: 21_000,
+        to: TxKind::Call(Address::from_low_u64_be(0x1234)),
+        value: U256::zero(),
+        data: Bytes::new(),
+        access_list: vec![],
+        ..Default::default()
+    });
+    let regular_hash = regular_tx.hash();
+    blockchain
+        .mempool
+        .add_transaction(
+            regular_hash,
+            sender,
+            MempoolTransaction::new(regular_tx, sender),
+            None,
+        )
+        .expect("direct insert of non-frame tx must succeed");
+
+    // Submit a frame tx at the same nonce with strictly higher fees: a valid
+    // fee-bump replacement of the non-frame predecessor.
+    let frame_tx = Transaction::FrameTransaction(funded_frame_tx(200_000_000, 200_000_000));
+    let frame_hash = blockchain
+        .add_transaction_to_pool(frame_tx)
+        .await
+        .expect("frame tx must be admitted as a same-nonce fee-bump replacement");
+
+    // The non-frame predecessor must be evicted, not orphaned.
+    assert!(
+        !blockchain
+            .mempool
+            .contains_tx(regular_hash)
+            .expect("contains_tx"),
+        "same-nonce non-frame tx must be evicted when replaced by a frame tx"
+    );
+    assert!(
+        blockchain
+            .mempool
+            .contains_tx(frame_hash)
+            .expect("contains_tx"),
+        "replacing frame tx must be present in the pool"
+    );
+}
+
 /// Like `setup_hegota_store_funded` but with a caller-chosen sender balance, for
 /// tight-balance assertions.
 async fn setup_hegota_store_with_balance(balance: U256) -> Store {

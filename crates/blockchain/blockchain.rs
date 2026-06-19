@@ -2774,9 +2774,10 @@ impl Blockchain {
         // For a frame tx, the same-nonce predecessor must NOT be removed here:
         // `add_transaction` removes it only AFTER the locked paymaster re-check
         // passes, so a rejected fee-bump leaves the original pending tx intact
-        // (atomic replacement, review fix 2). The hash `add_transaction` removes
-        // (via `check_frame_tx_sender_pending`) is the same same-nonce hash
-        // `find_tx_to_replace` returns, so the success path is unchanged.
+        // (atomic replacement, review fix 2). `add_transaction` removes whatever
+        // occupies the sender's nonce slot (any tx type), which is the same
+        // same-nonce hash `find_tx_to_replace` returns, so the success path is
+        // unchanged — including when the predecessor is a non-frame tx.
         let is_frame = matches!(transaction, Transaction::FrameTransaction(_));
         if let Some(tx_to_replace) = tx_to_replace
             && !is_frame

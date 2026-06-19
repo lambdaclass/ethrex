@@ -1376,7 +1376,7 @@ mod frame_tx_7702_delegation_tests {
                 if acc.info.code_hash == code_hash {
                     return Ok(CodeMetadata {
                         #[expect(clippy::as_conversions, reason = "test helper")]
-                        length: acc.code.bytecode.len() as u64,
+                        length: acc.code.len() as u64,
                     });
                 }
             }
@@ -1407,7 +1407,7 @@ mod frame_tx_7702_delegation_tests {
     /// The decision predicate from `execute_frame_tx`: default-code runs only when
     /// the *resolved* bytecode is empty AND the target has no delegation.
     fn runs_default_code(is_delegation_7702: bool, bytecode: &Code) -> bool {
-        bytecode.bytecode.is_empty() && !is_delegation_7702
+        bytecode.is_empty() && !is_delegation_7702
     }
 
     /// Positive case: a 7702-delegated EOA must resolve to the delegatee's bytecode.
@@ -1450,7 +1450,8 @@ mod frame_tx_7702_delegation_tests {
             "code_address must point at the delegatee, not the delegator"
         );
         assert_eq!(
-            code.bytecode, delegatee_code,
+            code.code_bytes(),
+            delegatee_code,
             "returned bytecode must be the delegatee's code, not the 0xef0100 indicator"
         );
         assert!(
@@ -1483,7 +1484,7 @@ mod frame_tx_7702_delegation_tests {
         assert!(is_delegation, "delegation indicator must still be detected");
         assert_eq!(code_address, delegatee);
         assert!(
-            code.bytecode.is_empty(),
+            code.is_empty(),
             "delegatee has no code, so resolved bytecode is empty"
         );
         assert!(
@@ -1516,7 +1517,7 @@ mod frame_tx_7702_delegation_tests {
             code_address, eoa_addr,
             "code_address falls back to the target when no delegation"
         );
-        assert!(code.bytecode.is_empty(), "plain EOA has no code");
+        assert!(code.is_empty(), "plain EOA has no code");
         assert!(
             runs_default_code(is_delegation, &code),
             "plain EOA with no code and no delegation must take the default-code branch"
@@ -1551,7 +1552,8 @@ mod frame_tx_7702_delegation_tests {
             "code_address is the target itself when no delegation"
         );
         assert_eq!(
-            code.bytecode, contract_code,
+            code.code_bytes(),
+            contract_code,
             "regular contract bytecode passes through unchanged"
         );
         assert!(
@@ -1659,7 +1661,7 @@ mod validation_observer_tests {
                 if acc.info.code_hash == code_hash {
                     return Ok(CodeMetadata {
                         #[expect(clippy::as_conversions, reason = "test helper")]
-                        length: acc.code.bytecode.len() as u64,
+                        length: acc.code.len() as u64,
                     });
                 }
             }
@@ -2106,7 +2108,7 @@ mod frame_validation_prefix_tests {
             for acc in self.accounts.values() {
                 if acc.info.code_hash == code_hash {
                     return Ok(CodeMetadata {
-                        length: acc.code.bytecode.len() as u64,
+                        length: acc.code.len() as u64,
                     });
                 }
             }

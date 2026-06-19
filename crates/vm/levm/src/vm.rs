@@ -1712,22 +1712,44 @@ impl<'a> VM<'a> {
             .ok_or(VMError::Internal(InternalError::Overflow))?;
         self.increase_account_balance(self.env.coinbase, coinbase_fee)?;
 
-        // Derive top-level status from SENDER frames: if any SENDER frame
-        // reverted OR was skipped (failed atomic batch), the transaction's
-        // execution failed (analogous to status 0 in standard transactions).
-        // VERIFY frames are authentication, not execution — their failure
-        // makes the TX invalid (handled above).
-        let any_sender_reverted =
-            frame_tx
-                .frames
-                .iter()
-                .zip(ctx.frame_results.iter())
-                .any(|(frame, (status, _, _))| {
-                    frame.execution_mode() == FrameMode::Sender
-                        && *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS
-                });
+        // EIP-8141: finalize self-destructs at tx end, mirroring the default
+        // finalize hook ordering (refund -> coinbase -> delete). SELFDESTRUCT is
+        // unrestricted during frame execution (the banned-opcode set only applies
+        // to the mempool validation prefix), so a frame may mark same-tx-created
+        // accounts for deletion (EIP-6780). Without this they leak into the
+        // post-state. `iter_selfdestruct` walks the full substate chain, so a
+        // single call here covers every committed frame. Any EIP-7708 burn logs
+        // emitted (rare: only when a destroyed account later received ETH in the
+        // same tx) are appended to the tx-level aggregate `all_logs`: the per-frame
+        // consensus receipts have no slot for end-of-tx logs, but the header and
+        // receipt blooms are derived from these aggregate logs (receipt.rs,
+        // payload.rs), so they must be recorded there.
+        let logs_before = self.substate.current_logs().len();
+        crate::hooks::default_hook::delete_self_destruct_accounts(self)?;
+        let mut logs_after = self.substate.current_logs();
+        if logs_after.len() > logs_before {
+            all_logs.extend(logs_after.split_off(logs_before));
+        }
 
-        let result = if any_sender_reverted {
+        // Derive top-level status from ALL frames: the transaction succeeded
+        // only if every executed frame succeeded; a reverted or skipped frame of
+        // ANY mode (SENDER, DEFAULT, VERIFY) yields a failed top-level status
+        // (analogous to status 0 in standard transactions). This MUST match the
+        // consensus-receipt derivation in `Receipt` decoding (receipt.rs), which
+        // re-derives `succeeded` from the per-frame statuses ALONE — the
+        // consensus `frame_receipt` carries no frame mode, so an all-frames rule
+        // is the only definition the encode side (here) and a wire/trie decode
+        // can compute identically. Deriving from SENDER frames only would make a
+        // freshly-executed receipt's `status` disagree with the same receipt
+        // decoded from consensus bytes. (A reverted VERIFY frame already
+        // invalidated the tx above via `tx_invalid`; this additionally covers
+        // reverted SENDER/DEFAULT frames, which do not.)
+        let any_frame_reverted = ctx
+            .frame_results
+            .iter()
+            .any(|(status, _, _)| *status != ethrex_common::types::FRAME_RECEIPT_STATUS_SUCCESS);
+
+        let result = if any_frame_reverted {
             TxResult::Revert(VMError::RevertOpcode)
         } else {
             TxResult::Success

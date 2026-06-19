@@ -512,10 +512,20 @@ impl Mempool {
                 }
             }
 
-            // Re-check passed: now remove the old tx (releasing its reservation)
-            // so the new one can take its slot. Done only after the re-check so a
-            // rejection leaves the original pending tx intact.
-            if let Some(old_hash) = existing_frame_hash {
+            // Re-check passed: now remove whatever tx currently occupies this
+            // sender's nonce slot (releasing any reservation) so the new frame tx
+            // can take it. Done only after the re-check so a rejection leaves the
+            // original pending tx intact. The predecessor may be a NON-frame tx:
+            // `find_tx_to_replace` (which validated the fee bump in
+            // `validate_transaction`) matches any tx type, but
+            // `check_frame_tx_sender_pending`/`existing_frame_hash` only sees frame
+            // predecessors. Removing by the (sender, nonce) slot — instead of just
+            // `existing_frame_hash` — covers both, so a same-nonce legacy/EIP-1559
+            // tx is properly replaced rather than orphaned in the pool (its index
+            // entry is overwritten below while the tx itself leaks). When the
+            // predecessor is the same-nonce frame tx, the slot already points to it,
+            // so this is equivalent to the previous `existing_frame_hash` removal.
+            if let Some(&old_hash) = inner.txs_by_sender_nonce.get(&(sender, nonce)) {
                 inner.remove_transaction_with_lock(&old_hash)?;
             }
         }
