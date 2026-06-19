@@ -1091,7 +1091,7 @@ impl LEVM {
                 .is_some_and(|a| a.storage.contains_key(key))
         });
 
-        // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
+        // Already-owned Arcs from the caller; per-thread/per-tx uses below are pointer clones.
         let arc_bal = bal;
         let arc_idx = validation_index;
 
@@ -1122,6 +1122,7 @@ impl LEVM {
             .into_par_iter()
             .map(|tx_idx| -> Result<_, EvmError> {
                 let (tx, sender) = &txs_with_sender[tx_idx];
+                // Small capacity hint — per-tx DBs materialize only touched accounts via lazy_bal cursor.
                 let mut tx_db = GeneralizedDatabase::new_with_shared_base_and_capacity(
                     store.clone(),
                     system_seed.clone(),
