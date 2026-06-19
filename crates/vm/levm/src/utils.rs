@@ -6,10 +6,11 @@ use crate::{
     db::gen_db::GeneralizedDatabase,
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
-        self, BLOB_GAS_PER_BLOB, CREATE_ACCESS_AMSTERDAM, CREATE_BASE_COST, STANDARD_TOKEN_COST,
-        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, TRANSFER_LOG_COST_AMSTERDAM,
-        TX_VALUE_COST_AMSTERDAM, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
-        cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
+        self, ACCOUNT_WRITE_AMSTERDAM, BLOB_GAS_PER_BLOB, CREATE_ACCESS_AMSTERDAM,
+        CREATE_BASE_COST, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
+        STATE_BYTES_PER_NEW_ACCOUNT, TRANSFER_LOG_COST_AMSTERDAM, TX_VALUE_COST_AMSTERDAM,
+        WARM_ADDRESS_ACCESS_COST, cold_account_access_cost, cost_per_state_byte,
+        floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
     },
     vm::{Substate, VM},
 };
@@ -322,8 +323,36 @@ pub struct IntrinsicGas {
 
 impl<'a> VM<'a> {
     /// Sets the account code as the EIP7702 determines.
+    /// EIP-8037 Rule 1 (Amsterdam+): an INVALID EIP-7702 authorization is skipped
+    /// without per-auth processing, so the worst-case intrinsic gas charged for it
+    /// from the auth-list length must be credited back. Its entire state-gas portion
+    /// `(STATE_BYTES_PER_NEW_ACCOUNT + STATE_BYTES_PER_AUTH_BASE) × CPSB`
+    /// (`state_gas_auth_total`) is refilled to the reservoir and the tx-level state
+    /// refund channel, and the `ACCOUNT_WRITE` regular surcharge is refunded — so the
+    /// net per-tx state gas of a skipped authorization is zero (the report subtracts
+    /// `state_refund`). Pre-Amsterdam has no state-gas dimension and uses the legacy
+    /// auth-cost model, so this is a no-op there.
+    fn refund_skipped_authorization(&mut self, refunded_gas: &mut u64) -> Result<(), VMError> {
+        if self.env.config.fork < Fork::Amsterdam {
+            return Ok(());
+        }
+        self.state_gas_reservoir = self
+            .state_gas_reservoir
+            .checked_add(self.state_gas_auth_total)
+            .ok_or(InternalError::Overflow)?;
+        self.state_refund = self
+            .state_refund
+            .checked_add(self.state_gas_auth_total)
+            .ok_or(InternalError::Overflow)?;
+        *refunded_gas = refunded_gas
+            .checked_add(ACCOUNT_WRITE_AMSTERDAM)
+            .ok_or(InternalError::Overflow)?;
+        Ok(())
+    }
+
     pub fn eip7702_set_access_code(&mut self) -> Result<(), VMError> {
         let mut refunded_gas: u64 = 0;
+
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
         // If transaction execution results in failure (any exceptional condition or code reverting), setting delegation designations is not rolled back.
@@ -333,18 +362,21 @@ impl<'a> VM<'a> {
 
             // 1. Verify the chain id is either 0 or the chain’s current ID.
             if chain_id_not_zero && chain_id_not_equals_this_chain_id {
+                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
             // 2. Verify the nonce is less than 2**64 - 1.
             // NOTE: nonce is a u64, it's always less than or equal to u64::MAX
             if auth_tuple.nonce == u64::MAX {
+                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
             // 3. authority = ecrecover(keccak(MAGIC || rlp([chain_id, address, nonce])), y_parity, r, s)
             //      s value must be less than or equal to secp256k1n/2, as specified in EIP-2.
             let Some(authority_address) = eip7702_recover_address(&auth_tuple, self.crypto)? else {
+                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             };
 
@@ -370,6 +402,7 @@ impl<'a> VM<'a> {
             }
 
             if !empty_or_delegated {
+                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
@@ -377,6 +410,7 @@ impl<'a> VM<'a> {
             // If it doesn't exist, it means the nonce is zero. The get_account() function will return Account::default()
             // If it has nonce, the account.info.nonce should equal auth_tuple.nonce
             if authority_info.nonce != auth_tuple.nonce {
+                self.refund_skipped_authorization(&mut refunded_gas)?;
                 continue;
             }
 
