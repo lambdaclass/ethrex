@@ -17,7 +17,6 @@ use ethrex_metrics::rpc::initialize_rpc_metrics;
 use ethrex_p2p::rlpx::initiator::RLPxInitiator;
 use ethrex_p2p::{
     DiscoveryConfig,
-    discovery::IpPredictor,
     network::P2PContext,
     peer_handler::PeerHandler,
     peer_table::{PeerTable, PeerTableServer},
@@ -37,7 +36,7 @@ use std::env;
 use std::{
     fs,
     io::IsTerminal,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::{Arc, RwLock},
     time::{SystemTime, UNIX_EPOCH},
@@ -503,23 +502,15 @@ pub fn get_local_p2p_node(opts: &Options, signer: &SecretKey) -> (Node, NetworkC
         local_ipv6().ok(),
     );
 
-    // When no explicit external IP is provided and the resolved announce address is
-    // private or unspecified, defer endpoint advertisement until the IP predictor
-    // learns the public external IP from discv4/discv5 PONG votes.
-    let announce_addr = if opts.nat_extip.is_none() && IpPredictor::is_private_ip(external_addr) {
-        let unspecified = if external_addr.is_ipv6() {
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED)
-        } else {
-            IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-        };
-        info!(
-            detected = %external_addr,
-            "Detected IP is private; endpoint advertisement deferred until public IP is learned via PONG voting"
-        );
-        unspecified
-    } else {
-        external_addr
-    };
+    // Advertise the detected address immediately, even when it is RFC1918 private.
+    // On a flat private network (local / kurtosis devnet) the private IP is the
+    // address peers actually reach us at, and tooling such as ethereum-package
+    // snapshots `admin_nodeInfo` at startup to seed other nodes' bootnodes; an
+    // advertised `0.0.0.0` there is undiallable and breaks discovery permanently.
+    // For a genuinely NAT'd public node the IpPredictor upgrades this to the public
+    // IP once PONG votes reach quorum (see IpPredictor::finalize_ip_vote_round, which
+    // prefers a public winner and only falls back to a private one).
+    let announce_addr = external_addr;
 
     let node = Node::new(announce_addr, udp_port, tcp_port, local_public_key);
     let network_config = NetworkConfig {
@@ -1007,5 +998,17 @@ mod tests {
     #[should_panic(expected = "--p2p.addr and --nat.extip must use the same address family")]
     fn family_mismatch_panics() {
         let _ = resolve_p2p_endpoints(Some("0.0.0.0"), Some("::1"), None, None);
+    }
+
+    /// Regression: on a flat private network (docker / kurtosis devnet) with no
+    /// `--nat.extip` or `--p2p.addr`, the detected RFC1918 IP must be announced
+    /// as-is. Previously `get_local_p2p_node` clobbered any private IP to `0.0.0.0`,
+    /// producing an undiallable `enode://...@0.0.0.0` that broke peer discovery.
+    #[test]
+    fn no_flags_announces_detected_private_ip() {
+        let docker_ip = ip("172.16.0.10");
+        let (bind, ext) = resolve_p2p_endpoints(None, None, Some(docker_ip), None);
+        assert_eq!(bind, docker_ip);
+        assert_eq!(ext, docker_ip, "private IP must be announced, not 0.0.0.0");
     }
 }
