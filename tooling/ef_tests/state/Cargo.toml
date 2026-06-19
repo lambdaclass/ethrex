@@ -8,7 +8,10 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 ethrex-blockchain = { path = "../../../crates/blockchain", default-features = false }
 ethrex-common = { path = "../../../crates/common", default-features = false }
-ethrex-crypto = { path = "../../../crates/common/crypto", default-features = false }
+# blst enables the host BLS12-381 (EIP-2537) backend so the EF state-test
+# vectors that exercise the BLS precompiles run against blst, not the
+# error-returning no-backend default.
+ethrex-crypto = { path = "../../../crates/common/crypto", default-features = false, features = ["blst"] }
 ethrex-storage = { path = "../../../crates/storage" }
 ethrex-rlp = { path = "../../../crates/common/rlp" }
 ethrex-vm = { path = "../../../crates/vm", default-features = false }

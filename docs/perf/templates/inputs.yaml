@@ -1,0 +1,57 @@
+# Input Diversity Template
+# Copy this file to your experiment directory and fill in the values.
+# Example: docs/perf/experiments/001-optimization-name/inputs.yaml
+#
+# IMPORTANT: Never benchmark with a single input type.
+# Select diverse inputs to ensure optimizations generalize.
+
+inputs:
+  # Light workload - lower bound, sanity check
+  - name: "light"
+    path: ""            # Path to input file or block range
+    description: "Few transactions, minimal complexity"
+    characteristics:
+      - "low tx count"
+      - "no precompiles"
+
+  # Heavy storage - tests state operations
+  - name: "storage_heavy"
+    path: ""
+    description: "Many SLOAD/SSTORE operations"
+    characteristics:
+      - "high storage access"
+      - "state-intensive"
+
+  # Precompile heavy - tests crypto patches (if applicable)
+  - name: "precompile_heavy"
+    path: ""
+    description: "Many precompile calls"
+    characteristics:
+      - "ECRECOVER calls"
+      # Add other precompiles as needed:
+      # - "BN254 calls"
+      # - "BLS12-381 calls"
+
+  # Typical workload - representative case
+  - name: "typical"
+    path: ""
+    description: "Representative average workload"
+    characteristics:
+      - "mixed transactions"
+      - "realistic gas usage"
+
+# For random/synthetic inputs
+# random:
+#   seed: 12345          # Deterministic seed for reproducibility
+#   count: 5             # Number of random inputs generated
+#   parameters:
+#     min_txs: 10
+#     max_txs: 100
+#     include_precompiles: true
+
+# Weights for calculating weighted average improvement
+# weights:
+#   light: 0.1
+#   storage_heavy: 0.2
+#   precompile_heavy: 0.2
+#   typical: 0.5

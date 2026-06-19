@@ -99,14 +99,12 @@ impl RpcHandler for SponsoredTx {
                 .map_err(RpcErr::from)?
                 .unwrap_or_default();
 
-            if code.bytecode.len() != EIP7702_DELEGATED_CODE_LEN
-                || code.bytecode[..3] != DELGATION_PREFIX
-            {
+            if code.len() != EIP7702_DELEGATED_CODE_LEN || code.code()[..3] != DELGATION_PREFIX {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call non delegated account".to_string(),
                 ));
             }
-            let address = Address::from_slice(&code.bytecode[3..]);
+            let address = Address::from_slice(&code.code()[3..EIP7702_DELEGATED_CODE_LEN]);
             if address.is_zero() {
                 return Err(RpcErr::InvalidEthrexL2Message(
                     "Invalid tx trying to call non delegated account".to_string(),

@@ -5,7 +5,7 @@ These are the official execution spec tests. There are two kinds: `state tests` 
 ### State tests
 
 The state tests are individual transactions not related one to each other that test particular behavior of the EVM. Tests are usually run for multiple forks and the result of execution may vary between forks.
-See [docs](https://eest.ethereum.org/v4.1.0/consuming_tests/state_test/).
+See [docs](https://steel.ethereum.foundation/docs/execution-specs/mainnet/running_tests/test_formats/state_test/).
 
 To run the test first:
 
@@ -29,7 +29,7 @@ make run-evm-ef-tests
 
 
 The blockchain tests test block validation and the consensus rules of the Ethereum blockchain. Tests are usually run for multiple forks.
-See [docs](https://eest.ethereum.org/v4.1.0/consuming_tests/blockchain_test).
+See [docs](https://steel.ethereum.foundation/docs/execution-specs/mainnet/running_tests/test_formats/blockchain_test/).
 
 To run the tests first:
 

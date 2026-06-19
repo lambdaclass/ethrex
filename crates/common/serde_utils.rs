@@ -709,13 +709,18 @@ pub mod block_access_list {
         {
             let value = Option::<String>::deserialize(d)?;
             match value {
-                Some(s) if !s.is_empty() => hex::decode(s.trim_start_matches("0x"))
-                    .map_err(|e| D::Error::custom(e.to_string()))
-                    .and_then(|b| {
-                        BlockAccessList::decode(&b)
-                            .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
-                    })
-                    .map(Some),
+                // An empty hex string ("0x") encodes the absence of a BAL, not an
+                // empty list. Treat it as None so pre-Amsterdam newPayload calls
+                // (which send "0x") deserialize instead of failing RLP decode.
+                Some(s) if !s.trim_start_matches("0x").is_empty() => {
+                    hex::decode(s.trim_start_matches("0x"))
+                        .map_err(|e| D::Error::custom(e.to_string()))
+                        .and_then(|b| {
+                            BlockAccessList::decode(&b)
+                                .map_err(|_| D::Error::custom("Failed to RLP decode BAL"))
+                        })
+                        .map(Some)
+                }
                 _ => Ok(None),
             }
         }
