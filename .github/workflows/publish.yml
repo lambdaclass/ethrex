@@ -30,6 +30,54 @@ jobs:
         with:
           toolchain: stable
 
+      - name: Guard against an unpublishable dependency cycle
+        run: |
+          python3 - <<'PY'
+          import json, subprocess, sys
+          meta = json.loads(subprocess.check_output(["cargo", "metadata", "--format-version", "1"]))
+          # Keep in sync with the CRATES list in the next step.
+          PUB = {
+              "ethrex-rlp", "ethrex-crypto", "ethrex-sdk-contract-utils", "ethrex-trie",
+              "ethrex-common", "ethrex-metrics", "ethrex-levm", "ethrex-l2-common",
+              "ethrex-storage", "ethrex-vm", "ethrex-storage-rollup", "ethrex-blockchain",
+              "ethrex-p2p", "ethrex-rpc", "ethrex-l2-rpc", "ethrex-sdk",
+          }
+          adj = {n: set() for n in PUB}
+          for p in meta["packages"]:
+              if p["name"] not in PUB:
+                  continue
+              for d in p["dependencies"]:
+                  if d["name"] not in PUB:
+                      continue
+                  # cargo publish keeps normal + build deps always, and dev-deps only
+                  # if they carry a version (path-only dev-deps are stripped on publish).
+                  kept = d.get("kind") in (None, "build") or (d.get("kind") == "dev" and d.get("req") != "*")
+                  if kept:
+                      adj[p["name"]].add(d["name"])
+          color = {n: 0 for n in PUB}
+          cyc = []
+          def dfs(u, st):
+              color[u] = 1
+              for v in sorted(adj[u]):
+                  if color[v] == 1:
+                      cyc.extend(st[st.index(v):] + [v])
+                      return True
+                  if color[v] == 0 and dfs(v, st + [v]):
+                      return True
+              color[u] = 2
+              return False
+          for n in sorted(PUB):
+              if color[n] == 0 and dfs(n, [n]):
+                  break
+          if cyc:
+              print("Unpublishable dependency cycle among published crates:")
+              print("  " + " -> ".join(cyc))
+              print("A versioned dev/build-dependency points at a crate published later;")
+              print("make such dev-deps path-only (no version) so they are stripped on publish.")
+              sys.exit(1)
+          print("OK: kept-edge dependency graph is acyclic (a valid publish order exists).")
+          PY
+
       - name: Publish crates in dependency order
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
@@ -58,7 +106,15 @@ jobs:
           for c in "${CRATES[@]}"; do
             echo "::group::$c"
             if [ "${DRY_RUN:-false}" = "true" ]; then
-              cargo package -p "$c" --no-verify --list
+              # Real publish dry-run: packaging + index resolution + verify build.
+              # On a dry-run nothing is actually published, so crates later in the
+              # order can't resolve their siblings yet -- tolerate ONLY that error
+              # (the cycle guard above catches genuinely unpublishable graphs).
+              OUTPUT=$(cargo publish -p "$c" --dry-run 2>&1) || {
+                echo "$OUTPUT"
+                echo "$OUTPUT" | grep -q "no matching package named" || exit 1
+                echo "$c: sibling not on crates.io yet (expected during a dry-run)"
+              }
             else
               OUTPUT=$(cargo publish -p "$c" 2>&1) || {
                 echo "$OUTPUT"
