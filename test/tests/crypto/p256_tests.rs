@@ -15,6 +15,10 @@ use p256::ecdsa::{SigningKey, signature::hazmat::PrehashSigner};
 /// below compares a backend against itself and passes vacuously. Fail loudly
 /// rather than let the suite silently verify nothing.
 #[test]
+// The whole point is to assert on a compile-time const: it must fail the build's
+// test run loudly when this differential suite is compiled without the native
+// backend, rather than passing vacuously.
+#[allow(clippy::assertions_on_constants)]
 fn native_backend_is_active() {
     assert!(
         NATIVE_P256_BACKEND,
