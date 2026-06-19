@@ -22,6 +22,10 @@
 
 - Pad `Code` bytecode with 33 trailing `STOP` bytes so the hot dispatch fetch and `pc` advance drop their bounds checks (~8% fewer instructions, ~13% fewer branches on dispatch). The logical length is tracked separately and `Code` is encapsulated so all consumers read the true length [#6866](https://github.com/lambdaclass/ethrex/pull/6866)
 
+### 2026-06-10
+
+- Route the native P256VERIFY (secp256r1, RIP-7212/EIP-7951) precompile through the `aws-lc-rs` (AWS-LC) backend, replacing the pure-Rust `p256` path on `NativeCrypto`; zkVM guest builds keep the portable backend [#6828](https://github.com/lambdaclass/ethrex/pull/6828)
+
 ### 2026-06-05
 
 - Route the native BLS12-381 (EIP-2537) precompiles through the `blst` backend, replacing the pure-Rust path whose Fermat field inversion made `BLS12_G1ADD`/`BLS12_G2ADD` time-per-gas outliers; ~7.7x faster G1ADD, ~5.6x faster G2ADD (zkVM guest builds keep the portable backend) [#6792](https://github.com/lambdaclass/ethrex/pull/6792)
