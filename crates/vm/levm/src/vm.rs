@@ -1069,7 +1069,8 @@ impl<'a> VM<'a> {
             // `state_gas_used` / `state_gas_reservoir` / `state_gas_spill`. This is what makes
             // it safe to omit any state-gas refill on a precompile revert (no
             // `refill_frame_state_gas` needed here). The assert below guards the invariant.
-            #[cfg(debug_assertions)]
+            // Not `#[cfg(debug_assertions)]`-gated: `debug_assert_eq!` still type-checks its
+            // operands in release, so gating the binding alone breaks the release build.
             let state_gas_used_before_precompile = self.state_gas_used;
 
             let call_frame = &mut self.current_call_frame;
