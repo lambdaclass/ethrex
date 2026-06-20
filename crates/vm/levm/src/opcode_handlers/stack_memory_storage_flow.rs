@@ -354,9 +354,10 @@ impl OpcodeHandler for OpSStoreHandler {
             //     Net 9900. EELS net 9900. OK.
             let (remove_slot_cost, restore_empty_slot_cost, restore_slot_cost): (i64, i64, i64) =
                 if fork >= Fork::Amsterdam {
-                    // remove = STORAGE_CLEAR_REFUND_AMSTERDAM (12480);
-                    // both restore deltas = STORAGE_WRITE - WARM = 10000 - 100 = 9900.
-                    (STORAGE_CLEAR_REFUND_AMSTERDAM, 9900, 9900)
+                    // remove = STORAGE_CLEAR_REFUND_AMSTERDAM (12480); both restore deltas
+                    // = STORAGE_WRITE (10000): EELS refunds STORAGE_WRITE on restore-to-original
+                    // (storage.py), and the access component is charged separately (XOR cold/warm).
+                    (STORAGE_CLEAR_REFUND_AMSTERDAM, 10000, 10000)
                 } else {
                     // EIP-2929
                     (4800, 19900, 2800)
