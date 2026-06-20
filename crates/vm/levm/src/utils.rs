@@ -468,8 +468,12 @@ impl<'a> VM<'a> {
             //   set (auth.address != 0): refund AUTH_BASE if already delegated now or
             //     at tx start (no new indicator bytes are created).
             if self.env.config.fork >= Fork::Amsterdam {
-                let auth_base_refills = if auth_tuple.address == Address::zero() {
-                    1 + u64::from(delegated_now && !pre_delegated)
+                let auth_base_refills: u64 = if auth_tuple.address == Address::zero() {
+                    if delegated_now && !pre_delegated {
+                        2
+                    } else {
+                        1
+                    }
                 } else {
                     u64::from(delegated_now || pre_delegated)
                 };
