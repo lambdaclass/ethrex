@@ -1128,9 +1128,7 @@ impl<'a> VM<'a> {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
                 // EIP-8037: no account is created, refund the new-account state gas.
-                if new_account_charged {
-                    self.credit_state_gas_refund(self.state_gas_new_account)?;
-                }
+                self.refund_new_account_state_gas(new_account_charged)?;
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -1143,9 +1141,7 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
-            if new_account_charged {
-                self.credit_state_gas_refund(self.state_gas_new_account)?;
-            }
+            self.refund_new_account_state_gas(new_account_charged)?;
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
         }
@@ -1207,9 +1203,7 @@ impl<'a> VM<'a> {
             // EIP-8037: a failed precompile call transfers no value, so no account is
             // created — refund the new-account state gas (EELS `generic_call`
             // `credit_state_gas_refund(NEW_ACCOUNT)` on child error).
-            if new_account_charged && !ctx_result.is_success() {
-                self.credit_state_gas_refund(self.state_gas_new_account)?;
-            }
+            self.refund_new_account_state_gas(new_account_charged && !ctx_result.is_success())?;
 
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
@@ -1397,9 +1391,7 @@ impl<'a> VM<'a> {
                 // new-account state gas (value transfer to an empty account) is separate
                 // and refunded here on child failure, mirroring EELS `generic_call`
                 // `credit_state_gas_refund(NEW_ACCOUNT)`.
-                if new_account_state_gas_charged {
-                    self.credit_state_gas_refund(self.state_gas_new_account)?;
-                }
+                self.refund_new_account_state_gas(new_account_state_gas_charged)?;
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };

@@ -902,6 +902,18 @@ impl<'a> VM<'a> {
         Ok(())
     }
 
+    /// Refund the EIP-8037 new-account state gas when `charged` is true. Used by the
+    /// CALL paths where a value-bearing call to an empty account charged the new-account
+    /// state gas but no account ends up created (insufficient balance, max depth, child
+    /// revert / failed precompile).
+    #[inline]
+    pub fn refund_new_account_state_gas(&mut self, charged: bool) -> Result<(), VMError> {
+        if charged {
+            self.credit_state_gas_refund(self.state_gas_new_account)?;
+        }
+        Ok(())
+    }
+
     /// EIP-8037 `refill_frame_state_gas`: roll back this frame's state gas in LIFO
     /// order on revert or exceptional halt, mirroring EELS `refill_frame_state_gas`.
     ///
