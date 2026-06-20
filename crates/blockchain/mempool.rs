@@ -787,10 +787,11 @@ pub fn transaction_intrinsic_gas(
     header: &BlockHeader,
     config: &ChainConfig,
 ) -> Result<u64, MempoolError> {
-    // Amsterdam (EIP-8037): the VM splits intrinsic into (regular, state) and uses
-    // `REGULAR_GAS_CREATE = 9000` + `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` for CREATE
-    // instead of the legacy `TX_CREATE_GAS_COST = 53000`. Mempool admission must
-    // match VM charge or we spuriously reject (or admit) transactions.
+    // Amsterdam (EIP-2780/8037/8038): the VM splits intrinsic into (regular, state).
+    // A CREATE tx pays `TX_BASE (12000) + CREATE_ACCESS (11000)` regular +
+    // `STATE_BYTES_PER_NEW_ACCOUNT * cpsb` state, instead of the legacy
+    // `TX_CREATE_GAS_COST = 53000`. Mempool admission must match the VM charge or we
+    // spuriously reject (or admit) transactions.
     //
     // The VM enforces `gas_limit >= max(intrinsic_regular + intrinsic_state,
     // floor)` via two separate checks in `validate_gas_allowance` +

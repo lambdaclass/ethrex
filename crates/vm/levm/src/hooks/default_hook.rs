@@ -4,7 +4,7 @@ use crate::{
     errors::{ContextResult, ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         STANDARD_TOKEN_COST, cold_account_access_cost, floor_tokens_in_access_list,
-        total_cost_floor_per_token,
+        total_cost_floor_per_token, tx_base_cost,
     },
     hooks::hook::Hook,
     utils::*,
@@ -300,8 +300,6 @@ pub fn refund_sender(
     // Block header gas_used = max(regular_dimension, state_dimension) per EIP-7778.
     // Receipt cumulative_gas_used = post-refund total (what user pays).
     if vm.env.config.fork >= Fork::Amsterdam {
-        // EIP-7623 floor applies to the regular (non-state) gas component only.
-        let floor = vm.get_min_gas_used()?;
         // EIP-8037: state_gas_used is already net (signed, credits applied inline).
         // Subtract state_refund (EIP-7702 tx-level channel) and clamp at zero.
         let state_refund_signed =
@@ -322,8 +320,10 @@ pub fn refund_sender(
             .saturating_sub(vm.intrinsic_state_gas)
             .saturating_sub(vm.state_gas_reservoir_initial)
             .saturating_sub(vm.state_gas_spill);
-        let effective_regular = regular_gas.max(floor);
-        ctx_result.gas_used = effective_regular
+        // EIP-7778: block regular dimension is the unfloored, pre-refund regular gas
+        // (EELS `tx_regular_gas = tx_gas_used_before_refund - state_gas`). The floor
+        // and refund apply only to the user payment (`gas_spent`), not block gas_used.
+        ctx_result.gas_used = regular_gas
             .checked_add(state_gas)
             .ok_or(InternalError::Overflow)?;
         // User pays post-refund gas (with floor)
@@ -506,14 +506,14 @@ pub fn validate_min_gas_limit(vm: &mut VM<'_>, intrinsic: &IntrinsicGas) -> Resu
             .ok_or(InternalError::Overflow)?;
     }
 
-    // floor_cost_by_tokens = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
+    // floor_cost_by_tokens = tx_base_cost(fork) + total_cost_floor_per_token(fork) * tokens
     // EIP-7976 (Amsterdam+) raises the floor multiplier from 10 to 16.
-    // EIP-2780 DECISION: floor base stays TX_BASE_COST (21000); the data floor is
-    // not decomposed (see `VM::get_min_gas_used`).
+    // The floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, 12000 at Amsterdam
+    // (EIP-2780 lowers the flat base; EELS `data_floor_gas_cost` adds `GasCosts.TX_BASE`).
     let floor_cost_by_tokens = tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
-        .checked_add(TX_BASE_COST)
+        .checked_add(tx_base_cost(fork))
         .ok_or(InternalError::Overflow)?;
 
     // EIP-8037 (Amsterdam+): Regular gas is capped at TX_MAX_GAS_LIMIT — reject if

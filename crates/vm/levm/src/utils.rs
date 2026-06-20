@@ -782,21 +782,15 @@ impl<'a> VM<'a> {
                 .ok_or(InternalError::Overflow)?;
         }
 
-        // min_gas_used = TX_BASE_COST + total_cost_floor_per_token(fork) * tokens
-        // EIP-7976 (Amsterdam+) raises TOTAL_COST_FLOOR_PER_TOKEN from 10 to 16.
-        //
-        // EIP-2780 DECISION: the calldata-floor base stays TX_BASE_COST (21000)
-        // at Amsterdam, NOT tx_base_cost(fork) (12000). EIP-2780 decomposes only
-        // the intrinsic-regular base into resource-based charges; it leaves the
-        // EIP-7623/7976 data floor unchanged. Lowering the floor base to 12000
-        // would weaken the minimum-gas guard, which the EIP does not do
-        // (EELS calculate_intrinsic_cost: data_floor_gas_cost uses TX_BASE).
+        // EELS `data_floor_gas_cost = total_floor_tokens * TX_DATA_TOKEN_FLOOR + TX_BASE`.
+        // Floor base is `tx_base_cost(fork)`: 21000 pre-Amsterdam, 12000 at Amsterdam
+        // (EIP-2780). EIP-7976 raises the per-token rate from 10 to 16.
         let mut min_gas_used: u64 = tokens_in_calldata
             .checked_mul(total_cost_floor_per_token(fork))
             .ok_or(InternalError::Overflow)?;
 
         min_gas_used = min_gas_used
-            .checked_add(TX_BASE_COST)
+            .checked_add(tx_base_cost(fork))
             .ok_or(InternalError::Overflow)?;
 
         Ok(min_gas_used)
@@ -1027,12 +1021,11 @@ pub fn intrinsic_gas_floor(tx: &Transaction, fork: Fork) -> Result<u64, VMError>
             .ok_or(InternalError::Overflow)?;
     }
 
-    // EIP-2780 DECISION: floor base stays TX_BASE_COST (21000) at Amsterdam,
-    // mirroring `VM::get_min_gas_used`. The floor is unchanged by EIP-2780.
+    // Floor base `tx_base_cost(fork)` (12000 at Amsterdam); mirrors `get_min_gas_used`.
     tokens_in_calldata
         .checked_mul(total_cost_floor_per_token(fork))
         .ok_or(InternalError::Overflow)?
-        .checked_add(TX_BASE_COST)
+        .checked_add(tx_base_cost(fork))
         .ok_or(InternalError::Overflow.into())
 }
 

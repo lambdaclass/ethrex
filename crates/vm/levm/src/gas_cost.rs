@@ -173,7 +173,6 @@ pub fn cost_per_state_byte(_block_gas_limit: u64) -> u64 {
     1530
 }
 
-pub const REGULAR_GAS_CREATE: u64 = 9000; // replaces CREATE_BASE_COST for Amsterdam
 pub const CODE_DEPOSIT_REGULAR_COST_PER_WORD: u64 = 6; // keccak hash cost per 32-byte word
 
 // Calldata costs
@@ -637,8 +636,10 @@ fn compute_gas_create(
         0
     };
 
+    // EIP-8038: CREATE/CREATE2 opcode regular base is CREATE_ACCESS (11000);
+    // the new-account leaf is charged separately in state gas.
     let create_base_cost = if fork >= Fork::Amsterdam {
-        REGULAR_GAS_CREATE
+        CREATE_ACCESS_AMSTERDAM
     } else {
         CREATE_BASE_COST
     };
