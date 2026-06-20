@@ -162,10 +162,13 @@ impl Hook for DefaultHook {
             // the recipient this tx, since emptiness is evaluated post-auth.)
             // EIP-2780: precompile recipients are exempt from the top-level
             // new-account state charge (EELS interpreter.py: `recipient_is_precompile`).
+            // The charge is deferred to `run_execution` (charged from the reservoir there)
+            // so an OOG reverts the tx rather than invalidating the block; the emptiness
+            // check must happen here, before the value transfer materializes the account.
             let to_is_precompile =
                 crate::precompiles::is_precompile(&to, vm.env.config.fork, vm.vm_type);
             if recipient_is_empty && !to_is_precompile && !vm.tx.value().is_zero() {
-                vm.increase_state_gas(vm.state_gas_new_account)?;
+                vm.pending_top_frame_state_gas = vm.state_gas_new_account;
             }
 
             // If the recipient is a 7702-delegated account, charge an additional

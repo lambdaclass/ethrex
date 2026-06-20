@@ -517,6 +517,12 @@ pub struct VM<'a> {
     pub cost_per_state_byte: u64,
     /// EIP-8037: State gas for new account creation (STATE_BYTES_PER_NEW_ACCOUNT * cost_per_state_byte).
     pub state_gas_new_account: u64,
+    /// EIP-2780 top-frame new-account state gas pending for the top-level value
+    /// transfer to an empty recipient. Captured in `prepare_execution` (before the
+    /// value transfer, while the recipient is still empty) and charged at the start
+    /// of `run_execution` so an OOG reverts the tx (EELS charges it inside
+    /// `process_message`) instead of invalidating the block.
+    pub pending_top_frame_state_gas: u64,
     /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
     pub state_gas_storage_set: u64,
     /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
@@ -731,6 +737,7 @@ impl<'a> VM<'a> {
             state_gas_spill: 0,
             cost_per_state_byte: cpsb,
             state_gas_new_account,
+            pending_top_frame_state_gas: 0,
             state_gas_storage_set,
             state_gas_auth_total,
             state_gas_auth_base,
@@ -1033,6 +1040,8 @@ impl<'a> VM<'a> {
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
             && self.current_call_frame.bytecode.is_empty()
+            // A pending EIP-2780 top-frame state charge must be applied via run_execution.
+            && self.pending_top_frame_state_gas == 0
             // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
@@ -1056,6 +1065,22 @@ impl<'a> VM<'a> {
                 gas_spent: self.current_call_frame.gas_limit,
                 output: Bytes::new(),
             });
+        }
+
+        // EIP-2780 top-frame new-account state charge (deferred from prepare_execution):
+        // charged from the state-gas reservoir at the top of the frame, mirroring EELS
+        // `process_message`. If it cannot be covered the tx reverts (consuming all gas),
+        // rather than being rejected as an invalid transaction.
+        if self.pending_top_frame_state_gas > 0 {
+            let pending = std::mem::take(&mut self.pending_top_frame_state_gas);
+            if self.increase_state_gas(pending).is_err() {
+                return Ok(ContextResult {
+                    result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
+                    gas_used: self.current_call_frame.gas_limit,
+                    gas_spent: self.current_call_frame.gas_limit,
+                    output: Bytes::new(),
+                });
+            }
         }
 
         #[expect(clippy::as_conversions, reason = "remaining gas conversion")]
@@ -1678,6 +1703,7 @@ mod state_gas_tests {
             state_gas_spill: 0,
             cost_per_state_byte: 0,
             state_gas_new_account: 0,
+            pending_top_frame_state_gas: 0,
             state_gas_storage_set: 0,
             state_gas_auth_total: 0,
             state_gas_auth_base: 0,
