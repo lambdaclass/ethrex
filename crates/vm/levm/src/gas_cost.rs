@@ -205,6 +205,10 @@ pub const CREATE_ACCESS_AMSTERDAM: u64 = 11000;
 pub const TX_VALUE_COST_AMSTERDAM: u64 = 4244;
 pub const TRANSFER_LOG_COST_AMSTERDAM: u64 = 1756;
 
+// EIP-8038: regular cost per EIP-7702 authorization, in addition to ACCOUNT_WRITE.
+// 101 bytes * 16 (calldata floor) + ECRECOVER (3000) + COLD_ACCOUNT_ACCESS (3000) + 2*WARM (200).
+pub const PER_AUTH_BASE_COST_AMSTERDAM: u64 = 7816;
+
 /// Transaction base cost (sender-side). EIP-2780 lowers the flat 21000 base to
 /// 12000 at Amsterdam (ECDSA recovery + sender account access + write); the
 /// remaining cost is recovered via resource-based recipient/value charges.

@@ -7,10 +7,10 @@ use crate::{
     errors::{ExceptionalHalt, InternalError, TxValidationError, VMError},
     gas_cost::{
         self, ACCOUNT_WRITE_AMSTERDAM, BLOB_GAS_PER_BLOB, CREATE_ACCESS_AMSTERDAM,
-        CREATE_BASE_COST, STANDARD_TOKEN_COST, STATE_BYTES_PER_AUTH_TOTAL,
-        STATE_BYTES_PER_NEW_ACCOUNT, TRANSFER_LOG_COST_AMSTERDAM, TX_VALUE_COST_AMSTERDAM,
-        WARM_ADDRESS_ACCESS_COST, cold_account_access_cost, cost_per_state_byte,
-        floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
+        CREATE_BASE_COST, PER_AUTH_BASE_COST_AMSTERDAM, STANDARD_TOKEN_COST,
+        STATE_BYTES_PER_AUTH_TOTAL, STATE_BYTES_PER_NEW_ACCOUNT, TRANSFER_LOG_COST_AMSTERDAM,
+        TX_VALUE_COST_AMSTERDAM, WARM_ADDRESS_ACCESS_COST, cold_account_access_cost,
+        cost_per_state_byte, floor_tokens_in_access_list, total_cost_floor_per_token, tx_base_cost,
     },
     vm::{Substate, VM},
 };
@@ -441,6 +441,11 @@ impl<'a> VM<'a> {
                         .state_refund
                         .checked_add(refund)
                         .ok_or(InternalError::Overflow)?;
+                    // EIP-8038: the ACCOUNT_WRITE charged per auth at intrinsic time is
+                    // not needed for an existing authority; refund it (regular counter).
+                    refunded_gas = refunded_gas
+                        .checked_add(ACCOUNT_WRITE_AMSTERDAM)
+                        .ok_or(InternalError::Overflow)?;
                 } else {
                     refunded_gas = refunded_gas
                         .checked_add(REFUND_AUTH_PER_EXISTING_ACCOUNT)
@@ -718,8 +723,12 @@ impl<'a> VM<'a> {
         };
 
         if fork >= Fork::Amsterdam {
-            // EIP-8037: per-auth regular cost is PER_AUTH_BASE_COST, state is STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte
-            let regular_auth_cost = PER_AUTH_BASE_COST
+            // EIP-8038: per-auth regular = ACCOUNT_WRITE + PER_AUTH_BASE_COST_AMSTERDAM;
+            // ACCOUNT_WRITE is refunded for existing authorities (process_authorization_list).
+            // State is STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte.
+            let regular_auth_cost = ACCOUNT_WRITE_AMSTERDAM
+                .checked_add(PER_AUTH_BASE_COST_AMSTERDAM)
+                .ok_or(InternalError::Overflow)?
                 .checked_mul(amount_of_auth_tuples)
                 .ok_or(InternalError::Overflow)?;
             regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
@@ -967,7 +976,12 @@ pub fn intrinsic_gas_dimensions(
     };
 
     if fork >= Fork::Amsterdam {
-        let regular_auth_cost = PER_AUTH_BASE_COST
+        // EIP-8038: ACCOUNT_WRITE + PER_AUTH_BASE_COST_AMSTERDAM per auth (charged amount;
+        // ACCOUNT_WRITE is refunded for existing authorities at execution). Mirrors
+        // `VM::get_intrinsic_gas`.
+        let regular_auth_cost = ACCOUNT_WRITE_AMSTERDAM
+            .checked_add(PER_AUTH_BASE_COST_AMSTERDAM)
+            .ok_or(InternalError::Overflow)?
             .checked_mul(amount_of_auth_tuples)
             .ok_or(InternalError::Overflow)?;
         regular_gas = regular_gas.checked_add(regular_auth_cost).ok_or(OutOfGas)?;
