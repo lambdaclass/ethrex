@@ -1,4 +1,5 @@
 name: Publish crates to crates.io
+run-name: Publish crates to crates.io${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && ' (dry run)' || '' }}
 
 # `released` fires only when a release is promoted to a full (non-pre-release)
 # release — i.e. step 4 of the release process, after the RC has been tested.
