@@ -516,23 +516,36 @@ pub fn sstore(
 ) -> Result<u64, VMError> {
     let static_gas = SSTORE_STATIC;
 
+    // EIP-8038 (Amsterdam): access (cold XOR warm) is always charged; STORAGE_WRITE
+    // (10000) is added separately on the first change to the slot this tx. The cold
+    // access is the full cost, not a surcharge on top of the warm cost.
+    if fork >= Fork::Amsterdam {
+        let access = if storage_slot_was_cold {
+            cold_storage_access_cost(fork)
+        } else {
+            SSTORE_DEFAULT_DYNAMIC
+        };
+        let write = if current_value == original_value && new_value != current_value {
+            STORAGE_WRITE_AMSTERDAM
+        } else {
+            0
+        };
+        return static_gas
+            .checked_add(access)
+            .ok_or(OutOfGas)?
+            .checked_add(write)
+            .ok_or(OutOfGas.into());
+    }
+
     let mut base_dynamic_gas = if new_value == current_value {
         SSTORE_DEFAULT_DYNAMIC
     } else if current_value == original_value {
-        // First change in this tx (C == O, N != C). EIP-8038 charges a flat
-        // STORAGE_WRITE surcharge (10000) on top of the access component for
-        // both zero-original (0 -> x) and non-zero-original (x -> y) first changes.
-        // The state cost (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte, EIP-8037)
-        // is charged separately for the 0 -> nonzero case.
-        if fork >= Fork::Amsterdam {
-            STORAGE_WRITE_AMSTERDAM
-        } else if original_value.is_zero() {
+        if original_value.is_zero() {
             SSTORE_STORAGE_CREATION
         } else {
             SSTORE_STORAGE_MODIFICATION
         }
     } else {
-        // "Written again" (C != O): only the access component is charged, no surcharge.
         SSTORE_DEFAULT_DYNAMIC
     };
     // https://eips.ethereum.org/EIPS/eip-2929
