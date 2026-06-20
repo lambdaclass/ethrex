@@ -352,6 +352,10 @@ impl<'a> VM<'a> {
 
     pub fn eip7702_set_access_code(&mut self) -> Result<(), VMError> {
         let mut refunded_gas: u64 = 0;
+        // EELS `delegated_before_tx`: whether each authority was already delegated at
+        // tx start. The first time an authority is seen its code is still the pre-tx
+        // code (auth processing runs before execution), so we cache it then.
+        let mut delegated_before_tx: FxHashMap<Address, bool> = FxHashMap::default();
 
         // IMPORTANT:
         // If any of the below steps fail, immediately stop processing that tuple and continue to the next tuple in the list. It will in the case of multiple tuples for the same authority, set the code using the address in the last valid occurrence.
@@ -390,8 +394,12 @@ impl<'a> VM<'a> {
             // 5. Verify the code of authority is either empty or already delegated.
             // Check this BEFORE recording to BAL so we can release the borrow on authority_code.
             let authority_code_is_empty = authority_code.is_empty();
-            let empty_or_delegated =
-                authority_code_is_empty || code_has_delegation(authority_code.code())?;
+            let delegated_now = code_has_delegation(authority_code.code())?;
+            let empty_or_delegated = authority_code_is_empty || delegated_now;
+            // First sighting of an authority captures its pre-tx delegation state.
+            let pre_delegated = *delegated_before_tx
+                .entry(authority_address)
+                .or_insert(delegated_now);
 
             // Record authority as touched for BAL per EIP-7928, even if validation fails later.
             // This ensures authority appears in BAL with empty change set when:
@@ -453,30 +461,32 @@ impl<'a> VM<'a> {
                 }
             }
 
-            // EIP-7702: refill the
-            // `STATE_BYTES_PER_AUTH_BASE * cpsb` portion of intrinsic state gas
-            // when no new delegation indicator bytes are written. That covers
-            // two cases:
-            //   1. Authority's code slot already holds a delegation indicator
-            //      (overwrite or clear in place — PR #2836).
-            //   2. The auth is a clear (`auth.address == 0x00`) against an
-            //      authority with no prior code — also writes zero bytes
-            //      (PR #2848).
-            // Step 5 already restricts non-empty pre-state code to a valid
-            // delegation indicator, so checking `!authority_code_is_empty` is
-            // equivalent to EELS's `code_hash != EMPTY_CODE_HASH`.
-            let writes_no_new_indicator =
-                !authority_code_is_empty || auth_tuple.address == Address::zero();
-            if self.env.config.fork >= Fork::Amsterdam && writes_no_new_indicator {
-                let refund = self.state_gas_auth_base;
-                self.state_gas_reservoir = self
-                    .state_gas_reservoir
-                    .checked_add(refund)
-                    .ok_or(InternalError::Overflow)?;
-                self.state_refund = self
-                    .state_refund
-                    .checked_add(refund)
-                    .ok_or(InternalError::Overflow)?;
+            // EIP-7702 AUTH_BASE state-gas refill, mirroring EELS `set_delegation`:
+            //   clear (auth.address == 0): refund AUTH_BASE; +AUTH_BASE more if the
+            //     slot was delegated this tx but not at tx start (delegated_now &&
+            //     !delegated_before_tx), undoing the prior auth's AUTH_BASE charge.
+            //   set (auth.address != 0): refund AUTH_BASE if already delegated now or
+            //     at tx start (no new indicator bytes are created).
+            if self.env.config.fork >= Fork::Amsterdam {
+                let auth_base_refills = if auth_tuple.address == Address::zero() {
+                    1 + u64::from(delegated_now && !pre_delegated)
+                } else {
+                    u64::from(delegated_now || pre_delegated)
+                };
+                if auth_base_refills > 0 {
+                    let refund = self
+                        .state_gas_auth_base
+                        .checked_mul(auth_base_refills)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_gas_reservoir = self
+                        .state_gas_reservoir
+                        .checked_add(refund)
+                        .ok_or(InternalError::Overflow)?;
+                    self.state_refund = self
+                        .state_refund
+                        .checked_add(refund)
+                        .ok_or(InternalError::Overflow)?;
+                }
             }
 
             // 8. Set the code of authority to be 0xef0100 || address. This is a delegation designation.
