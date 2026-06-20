@@ -298,6 +298,10 @@ pub struct CallFrame {
     /// Read in `handle_return_create` to refund the unconditional new-account
     /// state gas on the success path (no new account leaf is created).
     pub target_alive: bool,
+    /// EIP-8037: whether the parent charged new-account state gas for this CALL
+    /// (value transfer to an empty account). Refunded on child revert/error,
+    /// mirroring EELS `generic_call` `credit_state_gas_refund(NEW_ACCOUNT)`.
+    pub new_account_state_gas_charged: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default)]
@@ -413,6 +417,7 @@ impl CallFrame {
             state_gas_used_at_entry: 0,
             frame_state_gas_spilled: 0,
             target_alive: false,
+            new_account_state_gas_charged: false,
         }
     }
 

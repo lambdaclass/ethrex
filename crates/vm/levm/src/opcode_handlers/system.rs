@@ -1204,6 +1204,13 @@ impl<'a> VM<'a> {
                 TxResult::Revert(_) => FAIL,
             })?;
 
+            // EIP-8037: a failed precompile call transfers no value, so no account is
+            // created — refund the new-account state gas (EELS `generic_call`
+            // `credit_state_gas_refund(NEW_ACCOUNT)` on child error).
+            if new_account_charged && !ctx_result.is_success() {
+                self.credit_state_gas_refund(self.state_gas_new_account)?;
+            }
+
             // Transfer value from caller to callee.
             if should_transfer_value && ctx_result.is_success() {
                 self.transfer(msg_sender, to, value)?;
@@ -1246,6 +1253,7 @@ impl<'a> VM<'a> {
             // Store BAL checkpoint in the call frame's backup for restoration on revert
             new_call_frame.call_frame_backup.bal_checkpoint = bal_checkpoint;
             new_call_frame.state_gas_used_at_entry = self.state_gas_used;
+            new_call_frame.new_account_state_gas_charged = new_account_charged;
 
             self.add_callframe(new_call_frame);
 
@@ -1331,6 +1339,7 @@ impl<'a> VM<'a> {
             frame_state_gas_spilled: child_frame_state_gas_spilled,
             call_frame_backup,
             stack,
+            new_account_state_gas_charged,
             ..
         } = executed_call_frame;
 
@@ -1383,9 +1392,14 @@ impl<'a> VM<'a> {
                     .ok_or(InternalError::Overflow)?;
             }
             TxResult::Revert(_) => {
-                // EIP-8037: the child already self-refilled its state gas via
-                // `refill_frame_state_gas` in `handle_opcode_error`, so no parent-side
-                // state-gas reabsorption is needed here.
+                // EIP-8037: the child already self-refilled its execution state gas via
+                // `refill_frame_state_gas` in `handle_opcode_error`. The parent-charged
+                // new-account state gas (value transfer to an empty account) is separate
+                // and refunded here on child failure, mirroring EELS `generic_call`
+                // `credit_state_gas_refund(NEW_ACCOUNT)`.
+                if new_account_state_gas_charged {
+                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                }
                 self.current_call_frame.stack.push(FAIL)?;
             }
         };
