@@ -208,6 +208,7 @@ impl OpcodeHandler for OpCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            needs_state_gas,
         )
     }
 }
@@ -336,6 +337,7 @@ impl OpcodeHandler for OpCallCodeHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false,
         )
     }
 }
@@ -453,6 +455,7 @@ impl OpcodeHandler for OpDelegateCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false,
         )
     }
 }
@@ -568,6 +571,7 @@ impl OpcodeHandler for OpStaticCallHandler {
             return_len,
             bytecode,
             is_delegation_7702,
+            false,
         )
     }
 }
@@ -1114,6 +1118,7 @@ impl<'a> VM<'a> {
         ret_size: usize,
         bytecode: Code,
         is_delegation_7702: bool,
+        new_account_charged: bool,
     ) -> Result<OpcodeResult, VMError> {
         // Clear callframe subreturn data
         self.current_call_frame.sub_return_data.clear();
@@ -1122,6 +1127,10 @@ impl<'a> VM<'a> {
         if should_transfer_value && !value.is_zero() {
             let sender_balance = self.db.get_account(msg_sender)?.info.balance;
             if sender_balance < value {
+                // EIP-8037: no account is created, refund the new-account state gas.
+                if new_account_charged {
+                    self.credit_state_gas_refund(self.state_gas_new_account)?;
+                }
                 self.early_revert_message_call(gas_limit, "OutOfFund".to_string())?;
                 return Ok(OpcodeResult::Continue);
             }
@@ -1134,6 +1143,9 @@ impl<'a> VM<'a> {
             .checked_add(1)
             .ok_or(InternalError::Overflow)?;
         if new_depth > 1024 {
+            if new_account_charged {
+                self.credit_state_gas_refund(self.state_gas_new_account)?;
+            }
             self.early_revert_message_call(gas_limit, "MaxDepth".to_string())?;
             return Ok(OpcodeResult::Continue);
         }
