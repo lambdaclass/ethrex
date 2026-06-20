@@ -1,4 +1,5 @@
 name: Publish crates to crates.io
+run-name: Publish crates to crates.io${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) && ' (dry run)' || '' }}
 
 # `released` fires only when a release is promoted to a full (non-pre-release)
 # release — i.e. step 4 of the release process, after the RC has been tested.
@@ -58,7 +59,14 @@ jobs:
           for c in "${CRATES[@]}"; do
             echo "::group::$c"
             if [ "${DRY_RUN:-false}" = "true" ]; then
-              cargo package -p "$c" --no-verify --list
+              # Real publish dry-run: packaging + index resolution + verify build.
+              # On a dry-run nothing is actually published, so crates later in the
+              # order can't resolve their siblings yet -- tolerate ONLY that error.
+              OUTPUT=$(cargo publish -p "$c" --dry-run 2>&1) || {
+                echo "$OUTPUT"
+                echo "$OUTPUT" | grep -q "no matching package named" || exit 1
+                echo "$c: sibling not on crates.io yet (expected during a dry-run)"
+              }
             else
               OUTPUT=$(cargo publish -p "$c" 2>&1) || {
                 echo "$OUTPUT"
