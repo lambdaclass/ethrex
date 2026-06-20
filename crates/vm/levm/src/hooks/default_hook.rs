@@ -160,7 +160,11 @@ impl Hook for DefaultHook {
             // value transfer will materialize a new account: charge the
             // new-account state gas. (Skipped if a 7702 auth already materialized
             // the recipient this tx, since emptiness is evaluated post-auth.)
-            if recipient_is_empty && !vm.tx.value().is_zero() {
+            // EIP-2780: precompile recipients are exempt from the top-level
+            // new-account state charge (EELS interpreter.py: `recipient_is_precompile`).
+            let to_is_precompile =
+                crate::precompiles::is_precompile(&to, vm.env.config.fork, vm.vm_type);
+            if recipient_is_empty && !to_is_precompile && !vm.tx.value().is_zero() {
                 vm.increase_state_gas(vm.state_gas_new_account)?;
             }
 
