@@ -172,10 +172,10 @@ impl Hook for DefaultHook {
             }
 
             // If the recipient is a 7702-delegated account, charge an additional
-            // cold account access for resolving the delegation target.
+            // cold account access for resolving the delegation target. Deferred to
+            // run_execution (like the state charge) so an OOG reverts the tx.
             if recipient_is_delegated {
-                vm.current_call_frame
-                    .increase_consumed_gas(cold_account_access_cost(vm.env.config.fork))?;
+                vm.pending_top_frame_regular_gas = cold_account_access_cost(vm.env.config.fork);
             }
         }
 

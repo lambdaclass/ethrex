@@ -523,6 +523,10 @@ pub struct VM<'a> {
     /// of `run_execution` so an OOG reverts the tx (EELS charges it inside
     /// `process_message`) instead of invalidating the block.
     pub pending_top_frame_state_gas: u64,
+    /// EIP-2780 top-frame regular gas pending for a 7702-delegated recipient (the
+    /// extra COLD_ACCOUNT_ACCESS to resolve the delegation). Deferred to
+    /// `run_execution` for the same revert-not-invalidate reason as the state charge.
+    pub pending_top_frame_regular_gas: u64,
     /// EIP-8037: State gas for storage slot creation (STATE_BYTES_PER_STORAGE_SET * cost_per_state_byte).
     pub state_gas_storage_set: u64,
     /// EIP-8037: State gas for EIP-7702 auth total (STATE_BYTES_PER_AUTH_TOTAL * cost_per_state_byte).
@@ -738,6 +742,7 @@ impl<'a> VM<'a> {
             cost_per_state_byte: cpsb,
             state_gas_new_account,
             pending_top_frame_state_gas: 0,
+            pending_top_frame_regular_gas: 0,
             state_gas_storage_set,
             state_gas_auth_total,
             state_gas_auth_base,
@@ -1040,8 +1045,9 @@ impl<'a> VM<'a> {
     fn is_simple_transfer_fast_path(&self) -> bool {
         !self.current_call_frame.is_create
             && self.current_call_frame.bytecode.is_empty()
-            // A pending EIP-2780 top-frame state charge must be applied via run_execution.
+            // A pending EIP-2780 top-frame charge must be applied via run_execution.
             && self.pending_top_frame_state_gas == 0
+            && self.pending_top_frame_regular_gas == 0
             // Privileged L2 txs can leave gas negative; let the slow path surface that as OOG.
             && self.current_call_frame.gas_remaining >= 0
             && self.tx.authorization_list().is_none()
@@ -1071,9 +1077,17 @@ impl<'a> VM<'a> {
         // charged from the state-gas reservoir at the top of the frame, mirroring EELS
         // `process_message`. If it cannot be covered the tx reverts (consuming all gas),
         // rather than being rejected as an invalid transaction.
-        if self.pending_top_frame_state_gas > 0 {
-            let pending = std::mem::take(&mut self.pending_top_frame_state_gas);
-            if self.increase_state_gas(pending).is_err() {
+        if self.pending_top_frame_state_gas > 0 || self.pending_top_frame_regular_gas > 0 {
+            let pending_state = std::mem::take(&mut self.pending_top_frame_state_gas);
+            let pending_regular = std::mem::take(&mut self.pending_top_frame_regular_gas);
+            // State charge first, then the 7702-delegation regular cold-access (EELS order).
+            let charged = (pending_state == 0 || self.increase_state_gas(pending_state).is_ok())
+                && (pending_regular == 0
+                    || self
+                        .current_call_frame
+                        .increase_consumed_gas(pending_regular)
+                        .is_ok());
+            if !charged {
                 return Ok(ContextResult {
                     result: TxResult::Revert(ExceptionalHalt::OutOfGas.into()),
                     gas_used: self.current_call_frame.gas_limit,
@@ -1704,6 +1718,7 @@ mod state_gas_tests {
             cost_per_state_byte: 0,
             state_gas_new_account: 0,
             pending_top_frame_state_gas: 0,
+            pending_top_frame_regular_gas: 0,
             state_gas_storage_set: 0,
             state_gas_auth_total: 0,
             state_gas_auth_base: 0,
