@@ -475,6 +475,15 @@ impl BlockAccessList {
                 }
             }
             for slot_change in &account.storage_changes {
+                // EIP-7928: a slot listed in storage_changes must carry at least one
+                // change; an empty slot_changes set is a malformed (no-op) entry.
+                if slot_change.slot_changes.is_empty() {
+                    return Err(format!(
+                        "Block access list storage_changes slot {:#x} for account {:#x} \
+                         has an empty change set",
+                        slot_change.slot, account.address
+                    ));
+                }
                 for window in slot_change.slot_changes.windows(2) {
                     if window[0].block_access_index >= window[1].block_access_index {
                         return Err(format!(
