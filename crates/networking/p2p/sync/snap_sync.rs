@@ -68,13 +68,24 @@ impl SnapBlockSyncState {
     /// Obtain the current head from where to start or resume block sync
     pub async fn get_current_head(&self) -> Result<H256, SyncError> {
         if let Some(head) = self.store.get_header_download_checkpoint().await? {
-            Ok(head)
-        } else {
-            self.store
-                .get_latest_canonical_block_hash()
-                .await?
-                .ok_or(SyncError::NoLatestCanonical)
+            // A checkpoint pointing at a header we never stored (a crash
+            // between the checkpoint write and the header write) would make
+            // every resume fail with the same recoverable error, retrying
+            // forever. Restart header download from the canonical head
+            // instead; the checkpoint is overwritten by the first stored
+            // batch.
+            if self.store.get_block_number(head).await?.is_some() {
+                return Ok(head);
+            }
+            warn!(
+                checkpoint = %head,
+                "Header download checkpoint has no stored header; restarting header download from the canonical head"
+            );
         }
+        self.store
+            .get_latest_canonical_block_hash()
+            .await?
+            .ok_or(SyncError::NoLatestCanonical)
     }
 
     /// Stores incoming headers to the Store and saves their hashes
@@ -88,13 +99,15 @@ impl SnapBlockSyncState {
             block_hashes.push(header.hash());
             block_headers_vec.push(header);
         }
+        let checkpoint = *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?;
+        // Store the headers before the checkpoint that references them: a
+        // crash after the headers commit only re-downloads a suffix, while a
+        // crash after a checkpoint-first write leaves a dangling checkpoint.
+        self.store.add_block_headers(block_headers_vec).await?;
         self.store
-            .set_header_download_checkpoint(
-                *block_hashes.last().ok_or(SyncError::InvalidRangeReceived)?,
-            )
+            .set_header_download_checkpoint(checkpoint)
             .await?;
         self.block_hashes.extend_from_slice(&block_hashes);
-        self.store.add_block_headers(block_headers_vec).await?;
         Ok(())
     }
 }
@@ -236,6 +249,7 @@ pub async fn sync_cycle_snap(
                 tokio_util::sync::CancellationToken::new(),
                 sync_head,
                 store.clone(),
+                diagnostics,
             )
             .await;
         }
@@ -1302,4 +1316,52 @@ async fn insert_storages(
     async_fs::remove_dir_all(&get_rocksdb_temp_storage_dir(datadir)).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod block_sync_state_tests {
+    use super::*;
+    use ethrex_storage::EngineType;
+
+    // A crash between writing the header-download checkpoint and the headers
+    // themselves leaves a checkpoint pointing at an unknown header. Resuming
+    // from it must fall back to the canonical head instead of failing with
+    // the same recoverable error on every retry, forever.
+    #[tokio::test]
+    async fn dangling_header_checkpoint_falls_back_to_canonical_head() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let dangling = H256::random();
+        store
+            .set_header_download_checkpoint(dangling)
+            .await
+            .expect("write checkpoint");
+        let state = SnapBlockSyncState::new(store.clone());
+        let head = state.get_current_head().await.expect("resume head");
+        let canonical = store
+            .get_latest_canonical_block_hash()
+            .await
+            .expect("read canonical")
+            .expect("canonical head");
+        assert_eq!(
+            head, canonical,
+            "resume returned a checkpoint whose header was never stored"
+        );
+    }
+
+    #[tokio::test]
+    async fn valid_header_checkpoint_is_resumed() {
+        let store = Store::new("", EngineType::InMemory).expect("in-memory store");
+        let header = BlockHeader::default();
+        let hash = header.hash();
+        store
+            .add_block_headers(vec![header])
+            .await
+            .expect("store header");
+        store
+            .set_header_download_checkpoint(hash)
+            .await
+            .expect("write checkpoint");
+        let state = SnapBlockSyncState::new(store.clone());
+        assert_eq!(state.get_current_head().await.expect("resume head"), hash);
+    }
 }

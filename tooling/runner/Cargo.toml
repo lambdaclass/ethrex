@@ -8,7 +8,9 @@ license = "MIT OR Apache-2.0"
 ethrex-levm = { path = "../../crates/vm/levm" }
 ethrex-vm.workspace = true
 ethrex-common.workspace = true
-ethrex-crypto.workspace = true
+# blst enables the host BLS12-381 (EIP-2537) backend for blocks that hit the
+# BLS precompiles (otherwise the no-backend trait default returns an error).
+ethrex-crypto = { workspace = true, features = ["blst"] }
 ethrex-storage.workspace = true
 ethrex-blockchain.workspace = true
 hex.workspace = true
